@@ -13,6 +13,7 @@
 import {
   ApplicationEventMetadata,
   ApplicationProjectEvent,
+  ApplicationThreadGroupEvent,
   type ApplicationStoredEvent,
   CommandId,
   EventId,
@@ -46,6 +47,13 @@ import {
 /** A project event before the store assigns its sequence. */
 export type UnsequencedProjectEvent = ApplicationProjectEvent extends infer Event
   ? Event extends ApplicationProjectEvent
+    ? Omit<Event, "sequence">
+    : never
+  : never;
+
+/** A thread group event before the store assigns its sequence. */
+export type UnsequencedThreadGroupEvent = ApplicationThreadGroupEvent extends infer Event
+  ? Event extends ApplicationThreadGroupEvent
     ? Omit<Event, "sequence">
     : never
   : never;
