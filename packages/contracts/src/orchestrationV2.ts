@@ -32,6 +32,7 @@ import {
   RunId,
   RuntimeRequestId,
   ScheduledTaskId,
+  ThreadGroupId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
@@ -65,6 +66,7 @@ import {
 } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
+import { OrchestrationThreadGroupShell } from "./threadGroup.ts";
 import {
   TurnTokenUsage,
   ToolActivitySurface,
@@ -414,6 +416,12 @@ export const OrchestrationV2AppThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Fractional-index slot in the user-arranged active order. */
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Chat group the thread works in; absent on threads persisted before groups. */
+  groupId: Schema.optional(Schema.NullOr(ThreadGroupId)),
+  /** Thread this one was handed off from. */
+  handedOffFrom: Schema.optional(Schema.NullOr(ThreadId)),
+  /** Thread this one handed off to; lists show it dimmed. */
+  handedOffTo: Schema.optional(Schema.NullOr(ThreadId)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1912,6 +1920,10 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Slot in the user-arranged active order; omitted by pre-reorder servers. */
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Chat group the thread works in; omitted by servers that predate groups. */
+  groupId: Schema.optional(Schema.NullOr(ThreadGroupId)),
+  handedOffFrom: Schema.optional(Schema.NullOr(ThreadId)),
+  handedOffTo: Schema.optional(Schema.NullOr(ThreadId)),
   /**
    * Omitted by servers that predate server-side visited tracking; clients fall
    * back to their local visited state when the field is absent.
@@ -1941,6 +1953,8 @@ export type OrchestrationV2ThreadShellSnapshot = typeof OrchestrationV2ThreadShe
 export const OrchestrationV2ShellSnapshot = Schema.Struct({
   ...OrchestrationV2ThreadShellSnapshot.fields,
   projects: Schema.Array(OrchestrationProjectShell),
+  /** Groups of active projects; omitted by servers and caches that predate groups. */
+  groups: Schema.optional(Schema.Array(OrchestrationThreadGroupShell)),
 });
 export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.Type;
 
@@ -1967,6 +1981,16 @@ export const OrchestrationV2ShellStreamItem = Schema.Union([
     kind: Schema.Literal("project.removed"),
     sequence: NonNegativeInt,
     projectId: ProjectId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("thread-group.updated"),
+    sequence: NonNegativeInt,
+    group: OrchestrationThreadGroupShell,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("thread-group.removed"),
+    sequence: NonNegativeInt,
+    groupId: ThreadGroupId,
   }),
   Schema.Struct({
     kind: Schema.Literal("thread.updated"),
@@ -2624,6 +2648,8 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    /** Server-only: clients join groups through ThreadGroupService. */
+    groupId: Schema.optional(Schema.NullOr(ThreadGroupId)),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -2754,6 +2780,10 @@ export const OrchestrationV2Command = Schema.Union([
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request (#8160); absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+    /** Server-only group membership and handoff links; absent leaves them unchanged. */
+    groupId: Schema.optional(Schema.NullOr(ThreadGroupId)),
+    handedOffFrom: Schema.optional(Schema.NullOr(ThreadId)),
+    handedOffTo: Schema.optional(Schema.NullOr(ThreadId)),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),
@@ -3194,6 +3224,8 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  /** Starts the thread inside this group; it must belong to `projectId`. */
+  groupId: Schema.optional(ThreadGroupId),
   initialMessage: Schema.optional(
     Schema.Struct({
       messageId: Schema.optional(MessageId),
