@@ -296,6 +296,10 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const committedEvents = yield* PubSub.unbounded<ApplicationStoredEvent>();
+  // Repeats the WHERE of idx_orchestration_events_application_high_water
+  // (migration 061) term for term; INDEXED BY fails on any other shape.
+  const applicationEventFilter = sql`aggregate_kind IN ('project', 'thread-group')
+    OR (application_event_version = 2 AND aggregate_kind = 'thread')`;
 
   const appendProjectEventRow = SqlSchema.findOne({
     Request: AppendProjectEventRequestSchema,
@@ -421,8 +425,7 @@ const makeEventStore = Effect.gen(function* () {
           ${
             input.onlyAgentEvents === true
               ? sql`application_event_version = 2 AND aggregate_kind = 'thread'`
-              : sql`aggregate_kind = 'project'
-                    OR (application_event_version = 2 AND aggregate_kind = 'thread')`
+              : applicationEventFilter
           }
         )
         AND ${sql.and([
@@ -582,10 +585,7 @@ const makeEventStore = Effect.gen(function* () {
       FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water
       WHERE sequence > ${input.afterSequence}
         AND sequence <= ${input.throughSequence}
-        AND (
-          aggregate_kind = 'project'
-          OR (application_event_version = 2 AND aggregate_kind = 'thread')
-        )
+        AND (${applicationEventFilter})
     `.pipe(
       Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.getReplayStats:query")),
       Effect.map((rows) => ({
@@ -617,8 +617,7 @@ const makeEventStore = Effect.gen(function* () {
   const latestApplicationSequence = sql<{ readonly sequence: number | null }>`
     SELECT MAX(sequence) AS sequence
     FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water
-    WHERE aggregate_kind = 'project'
-      OR (application_event_version = 2 AND aggregate_kind = 'thread')
+    WHERE ${applicationEventFilter}
   `.pipe(
     Effect.map((rows) => rows[0]?.sequence ?? 0),
     Effect.mapError(
