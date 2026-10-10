@@ -165,25 +165,29 @@ Tool results name the group they touched, so the chat transcript shows it.
 
 ## Data and plumbing
 
-Follow the existing orchestration-v2 path, using `activeOrderKey` as the reference for a field
-that travels end to end (see `Orchestrator.ts`, `ProjectionStore.ts`, `models.ts`,
-`threadSort.ts`).
+The orchestration-v2 event log is thread-scoped (every event carries a `threadId` and every
+command routes to one thread), so a group is **not** a v2 thread aggregate. It is a new
+application aggregate kind, `thread-group`, built the same way projects are
+(`ApplicationProjectEvent` in `packages/contracts/src/applicationEvent.ts`, applied by
+`ProjectStoreV2`). Membership lives on the thread and travels like `activeOrderKey` does
+(`Orchestrator.ts`, `ProjectionStore.ts`, `models.ts`).
 
-- **Contracts** (`packages/contracts/src/orchestrationV2.ts`): `ThreadGroupId`,
-  `OrchestrationV2ThreadGroup`; add `groupId`, `handedOffFrom`, `handedOffTo` to
-  `OrchestrationV2AppThread`, `OrchestrationV2ThreadShell` and their JSON variants; add
-  `groupId` to `OrchestrationV2ThreadLaunchInput`.
-- **Commands/events**: `thread-group.create`, `thread-group.update`, `thread-group.delete`,
-  `thread.group.set` (move/detach), `thread.handoff`; matching events
-  `thread-group.created|updated|deleted|settled`, `thread.group-set`, `thread.handed-off`.
-- **Storage**: migration `061_ThreadGroups` adds `orchestration_v2_projection_thread_groups`
-  (`group_id` PK, `project_id`, `updated_at`, `payload_json`, index on `project_id`). Thread
-  fields ride in the existing thread `payload_json`; no thread table migration.
-- **Projection**: `ProjectionStore` handles the new events, keeps each group's derived status
-  (most urgent child status) and settle state, and includes groups in the shell stream the
-  sidebar subscribes to.
-- **Client** (`packages/client-runtime`): `presentThreadGroup`, groups in shell state, group
-  commands in `threadCommands.ts`.
+- **Contracts**: `ThreadGroupId`; `thread-group.created|meta-updated|deleted` application
+  events (meta-updated payload is partial: absent = unchanged, null = clear); optional
+  `groupId`, `handedOffFrom`, `handedOffTo` on `OrchestrationV2AppThread`,
+  `OrchestrationV2ThreadShell` and their JSON variants; the same fields on
+  `thread.metadata.update`; optional `groupId` on `thread.create` and
+  `OrchestrationV2ThreadLaunchInput`.
+- **Storage**: a new migration adds `projection_thread_groups`, mirroring
+  `projection_projects`. Thread fields ride in the existing thread `payload_json`; no thread
+  table migration.
+- **Server**: `ThreadGroupStore` (apply/get/list/shells, like `ProjectStoreV2`) and a group
+  service that creates, updates and deletes groups and moves threads (by dispatching
+  `thread.metadata.update`). Group shells reach clients the way project shells do.
+- **Derived state**: a group's aggregate status (most urgent child status) and auto-settle are
+  computed from its member threads on the client and in the group service, not stored.
+- **Client** (`packages/client-runtime`): `presentThreadGroup`, group shells in state, group
+  command helpers.
 - **Web**: sidebar tree in `Sidebar.tsx` / `Sidebar.logic.ts`; header in the chat header
   component; new `GroupSurface` registered with the right-panel surfaces; handoff action.
 - **MCP**: new `apps/server/src/mcp/toolkits/group/` toolkit.
