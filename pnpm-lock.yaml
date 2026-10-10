@@ -1813,6 +1813,9 @@ importers:
       '@electron/osx-sign':
         specifier: 2.7.0
         version: 2.7.0
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../packages/contracts
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../packages/shared
@@ -1841,6 +1844,9 @@ importers:
       '@types/pngjs':
         specifier: 6.0.5
         version: 6.0.5
+      fontkitten:
+        specifier: 1.0.3
+        version: 1.0.3
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

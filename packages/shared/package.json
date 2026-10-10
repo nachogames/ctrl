@@ -27,6 +27,14 @@
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
     },
+    "./appIconArtwork": {
+      "types": "./src/appIconArtwork.ts",
+      "import": "./src/appIconArtwork.ts"
+    },
+    "./appIcons": {
+      "types": "./src/appIcons.ts",
+      "import": "./src/appIcons.ts"
+    },
     "./themePreview": {
       "types": "./src/themePreview.ts",
       "import": "./src/themePreview.ts"
