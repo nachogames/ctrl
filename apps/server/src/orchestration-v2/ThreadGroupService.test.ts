@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  type OrchestrationV2Command,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
   ProjectId,
@@ -357,5 +358,69 @@ it.effect("prunes only groups without live threads", () => {
     yield* service.pruneEmptyGroups;
     assert.isTrue(Option.isSome(yield* groups.getShell(groupId)));
     assert.isTrue(Option.isNone(yield* groups.getShell(otherGroupId)));
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it("only thread group commands change membership", () => {
+  const base = { commandId: CommandId.make("command:guard"), threadId: a };
+  const create = {
+    type: "thread.create",
+    createdBy: "user",
+    creationSource: "web",
+    ...base,
+    projectId,
+    title: "Chat",
+    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+  } as OrchestrationV2Command;
+  assert.isFalse(ThreadGroupService.clientCommandChangesGroupMembership(create));
+  assert.isTrue(
+    ThreadGroupService.clientCommandChangesGroupMembership({
+      ...create,
+      groupId,
+    } as OrchestrationV2Command),
+  );
+  assert.isFalse(
+    ThreadGroupService.clientCommandChangesGroupMembership({
+      type: "thread.metadata.update",
+      ...base,
+      title: "Renamed",
+    }),
+  );
+  for (const link of [{ groupId: null }, { handedOffFrom: b }, { handedOffTo: null }]) {
+    assert.isTrue(
+      ThreadGroupService.clientCommandChangesGroupMembership({
+        type: "thread.metadata.update",
+        ...base,
+        ...link,
+      }),
+    );
+  }
+});
+
+it.effect("runs client mutations and reports no group after a delete", () => {
+  const threads = new Map([[a, shell(a)]]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const created = yield* ThreadGroupService.mutateThreadGroup(service, {
+      type: "thread-group.create",
+      commandId: CommandId.make("command:rpc:create"),
+      groupId,
+      projectId,
+      threadIds: [a],
+      title: "From the client",
+    });
+    assert.equal(created.group?.title, "From the client");
+    const deleted = yield* ThreadGroupService.mutateThreadGroup(service, {
+      type: "thread-group.delete",
+      commandId: CommandId.make("command:rpc:delete"),
+      groupId,
+    });
+    assert.isNull(deleted.group);
   }).pipe(Effect.provide(makeLayer(threads, dispatched)));
 });

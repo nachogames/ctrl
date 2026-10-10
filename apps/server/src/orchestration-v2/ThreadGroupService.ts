@@ -1,9 +1,11 @@
 import {
   CommandId,
   type OrchestrationThreadGroupShell,
+  type OrchestrationV2Command,
   type OrchestrationV2ThreadShell,
   ProjectId,
   ThreadGroupId,
+  type ThreadGroupMutation,
   type ThreadGroupUpdatePayload,
   ThreadId,
 } from "@t3tools/contracts";
@@ -499,3 +501,61 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ThreadGroupService, make);
+
+/** Runs one client mutation. Delete and detaching moves report no group. */
+export const mutateThreadGroup = Effect.fn("mutateThreadGroup")(function* (
+  service: ThreadGroupService["Service"],
+  mutation: ThreadGroupMutation,
+) {
+  switch (mutation.type) {
+    case "thread-group.create":
+      return {
+        group: yield* service.create({
+          commandId: mutation.commandId,
+          groupId: mutation.groupId,
+          projectId: mutation.projectId,
+          threadIds: mutation.threadIds,
+          ...(mutation.title === undefined ? {} : { title: mutation.title }),
+          ...(mutation.goal === undefined ? {} : { goal: mutation.goal }),
+        }),
+      };
+    case "thread-group.update":
+      return {
+        group: yield* service.update({
+          commandId: mutation.commandId,
+          groupId: mutation.groupId,
+          patch: mutation.patch,
+        }),
+      };
+    case "thread-group.delete":
+      yield* service.delete({ commandId: mutation.commandId, groupId: mutation.groupId });
+      return { group: null };
+    case "thread-group.move-thread":
+      return {
+        group: yield* service.moveThread({
+          commandId: mutation.commandId,
+          threadId: mutation.threadId,
+          groupId: mutation.groupId,
+        }),
+      };
+  }
+});
+
+/**
+ * Group membership and handoff links change only through ThreadGroupService,
+ * which checks the group and its project. Client dispatches cannot set them.
+ */
+export function clientCommandChangesGroupMembership(command: OrchestrationV2Command): boolean {
+  switch (command.type) {
+    case "thread.create":
+      return command.groupId != null;
+    case "thread.metadata.update":
+      return (
+        command.groupId !== undefined ||
+        command.handedOffFrom !== undefined ||
+        command.handedOffTo !== undefined
+      );
+    default:
+      return false;
+  }
+}
