@@ -34,6 +34,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
+import * as ThreadGroupStore from "../ThreadGroupStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderAuthService from "../../provider/ProviderAuthService.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -308,6 +309,7 @@ export function layerWithRegistry<Error>(
     EventStore.layer,
     ProjectionStore.layer,
     ProjectStore.layer,
+    ThreadGroupStore.layer,
     CommandReceiptStore.layer,
     EffectOutbox.layer,
     TurnItemPositionStore.layer,

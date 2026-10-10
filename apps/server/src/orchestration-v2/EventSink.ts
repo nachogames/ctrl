@@ -9,6 +9,7 @@ import {
   RuntimeRequestId,
   NodeId,
   type ProjectId,
+  type ThreadGroupId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -23,7 +24,10 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
-import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
+import type {
+  UnsequencedProjectEvent,
+  UnsequencedThreadGroupEvent,
+} from "../persistence/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -31,6 +35,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as ThreadGroupStore from "./ThreadGroupStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 /**
@@ -168,6 +173,31 @@ export interface EventSinkV2Shape {
     readonly rejectedAt: DateTime.Utc;
     readonly error: string;
   }) => Effect.Effect<CommandReceiptStore.ProjectCommandReceiptV2, EventSinkV2Error>;
+  /**
+   * Append a thread group event, fold it into its row and record the receipt in
+   * one transaction. A reused command id commits nothing and returns its receipt.
+   */
+  readonly commitThreadGroupCommand: (input: {
+    readonly commandId: CommandId;
+    readonly groupId: ThreadGroupId;
+    readonly commandType: string;
+    readonly acceptedAt: DateTime.Utc;
+    readonly event: UnsequencedThreadGroupEvent;
+  }) => Effect.Effect<
+    {
+      readonly receipt: CommandReceiptStore.ThreadGroupCommandReceiptV2;
+      readonly committed: boolean;
+    },
+    EventSinkV2Error
+  >;
+  /** Record a rejected thread group command, or return the receipt its id already has. */
+  readonly commitRejectedThreadGroupCommand: (input: {
+    readonly commandId: CommandId;
+    readonly groupId: ThreadGroupId;
+    readonly commandType: string;
+    readonly rejectedAt: DateTime.Utc;
+    readonly error: string;
+  }) => Effect.Effect<CommandReceiptStore.ThreadGroupCommandReceiptV2, EventSinkV2Error>;
   readonly stream: (input?: {
     readonly threadId?: ThreadId;
     readonly afterSequence?: number;
@@ -199,6 +229,7 @@ const layerBase: Layer.Layer<
   | EventStore.EventStoreV2
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
+  | ThreadGroupStore.ThreadGroupStoreV2
   | SqlClient.SqlClient
   | TurnItemPositionStore.TurnItemPositionStoreV2
 > = Layer.effect(
@@ -210,6 +241,7 @@ const layerBase: Layer.Layer<
     const eventStore = yield* EventStore.EventStoreV2;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
+    const threadGroupStore = yield* ThreadGroupStore.ThreadGroupStoreV2;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
     const liveEventsByType = new Map<
@@ -678,6 +710,70 @@ const layerBase: Layer.Layer<
       );
     });
 
+    const existingThreadGroupReceipt = (commandId: CommandId) =>
+      commandReceipts.getThreadGroupByCommandId(commandId).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(`Command ${commandId} was already used by another aggregate.` as const),
+            onSome: Effect.succeed,
+          }),
+        ),
+      );
+
+    const commitThreadGroupCommandEffect = Effect.fn(
+      "orchestrationV2.EventSink.commitThreadGroupCommand",
+    )(function* (input: Parameters<EventSinkV2Shape["commitThreadGroupCommand"]>[0]) {
+      const result = yield* commitThenPublish(
+        Effect.gen(function* () {
+          const reserved: CommandReceiptStore.ThreadGroupCommandReceiptV2 = {
+            commandId: input.commandId,
+            groupId: input.groupId,
+            commandType: input.commandType,
+            acceptedAt: input.acceptedAt,
+            resultSequence: 0,
+            status: "accepted",
+            error: null,
+          };
+          if (!(yield* commandReceipts.insertIfAbsent(reserved))) {
+            return {
+              receipt: yield* existingThreadGroupReceipt(input.commandId),
+              event: undefined,
+            };
+          }
+          const event = yield* eventStore.appendThreadGroupEvent(input.event);
+          yield* threadGroupStore.apply(event);
+          const receipt = { ...reserved, resultSequence: event.sequence };
+          yield* commandReceipts.upsert(receipt);
+          return { receipt, event };
+        }),
+        (result) =>
+          result.event === undefined ? Effect.void : eventStore.publishCommitted([result.event]),
+      );
+      return { receipt: result.receipt, committed: result.event !== undefined };
+    });
+
+    const commitRejectedThreadGroupCommandEffect = Effect.fn(
+      "orchestrationV2.EventSink.commitRejectedThreadGroupCommand",
+    )(function* (input: Parameters<EventSinkV2Shape["commitRejectedThreadGroupCommand"]>[0]) {
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const receipt: CommandReceiptStore.ThreadGroupCommandReceiptV2 = {
+            commandId: input.commandId,
+            groupId: input.groupId,
+            commandType: input.commandType,
+            acceptedAt: input.rejectedAt,
+            resultSequence: yield* eventStore.latestApplicationSequence,
+            status: "rejected",
+            error: input.error,
+          };
+          return (yield* commandReceipts.insertIfAbsent(receipt))
+            ? receipt
+            : yield* existingThreadGroupReceipt(input.commandId);
+        }),
+      );
+    });
+
     const catchUp = (input: {
       readonly afterSequence: number;
       readonly throughSequence: number;
@@ -840,6 +936,20 @@ const layerBase: Layer.Layer<
               new EventSinkWriteError({ commandId: input.commandId, eventCount: 0, cause }),
           ),
         ),
+      commitThreadGroupCommand: (input) =>
+        commitThreadGroupCommandEffect(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EventSinkWriteError({ commandId: input.commandId, eventCount: 1, cause }),
+          ),
+        ),
+      commitRejectedThreadGroupCommand: (input) =>
+        commitRejectedThreadGroupCommandEffect(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new EventSinkWriteError({ commandId: input.commandId, eventCount: 0, cause }),
+          ),
+        ),
       stream: (input) =>
         stream(input).pipe(
           Stream.mapError(
@@ -894,6 +1004,7 @@ export const layer: Layer.Layer<
       CommandReceiptStore.layer,
       EffectOutbox.layer,
       ProjectStore.layer,
+      ThreadGroupStore.layer,
       TurnItemPositionStore.layer,
     ),
   ),

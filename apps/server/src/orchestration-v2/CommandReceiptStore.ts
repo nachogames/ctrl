@@ -1,4 +1,4 @@
-import { CommandId, NonNegativeInt, ProjectId, ThreadId } from "@t3tools/contracts";
+import { CommandId, NonNegativeInt, ProjectId, ThreadGroupId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -69,7 +69,19 @@ export const ProjectCommandReceiptV2 = Schema.Struct({
 });
 export type ProjectCommandReceiptV2 = typeof ProjectCommandReceiptV2.Type;
 
-type AnyCommandReceiptV2 = CommandReceiptV2 | ProjectCommandReceiptV2;
+/** Receipt for a thread group command; shares the receipt table with other commands. */
+export const ThreadGroupCommandReceiptV2 = Schema.Struct({
+  commandId: CommandId,
+  groupId: ThreadGroupId,
+  commandType: Schema.String,
+  acceptedAt: Schema.DateTimeUtc,
+  resultSequence: NonNegativeInt,
+  status: CommandReceiptV2Status,
+  error: Schema.NullOr(Schema.String),
+});
+export type ThreadGroupCommandReceiptV2 = typeof ThreadGroupCommandReceiptV2.Type;
+
+type AnyCommandReceiptV2 = CommandReceiptV2 | ProjectCommandReceiptV2 | ThreadGroupCommandReceiptV2;
 
 export interface CommandReceiptStoreV2Shape {
   readonly insertIfAbsent: (
@@ -86,6 +98,10 @@ export interface CommandReceiptStoreV2Shape {
   readonly getProjectByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<Option.Option<ProjectCommandReceiptV2>, CommandReceiptStoreV2Error>;
+  /** A thread group command's receipt; none when the command id belongs to another aggregate. */
+  readonly getThreadGroupByCommandId: (
+    commandId: CommandId,
+  ) => Effect.Effect<Option.Option<ThreadGroupCommandReceiptV2>, CommandReceiptStoreV2Error>;
 }
 
 export class CommandReceiptStoreV2 extends Context.Service<
@@ -109,6 +125,13 @@ const decodeProjectReceipt = Schema.decodeUnknownEffect(
   })),
 );
 
+const decodeThreadGroupReceipt = Schema.decodeUnknownEffect(
+  ThreadGroupCommandReceiptV2.mapFields((fields) => ({
+    ...fields,
+    acceptedAt: Schema.DateTimeUtcFromString,
+  })),
+);
+
 function fromApplicationReceipt(receipt: OrchestrationCommandReceipts.OrchestrationCommandReceipt) {
   return decodeReceipt({
     commandId: receipt.commandId,
@@ -126,9 +149,11 @@ function toApplicationReceipt(
 ): OrchestrationCommandReceipts.OrchestrationCommandReceipt {
   return {
     commandId: receipt.commandId,
-    ...("projectId" in receipt
-      ? { aggregateKind: "project" as const, aggregateId: receipt.projectId }
-      : { aggregateKind: "thread" as const, aggregateId: receipt.threadId }),
+    ...("groupId" in receipt
+      ? { aggregateKind: "thread-group" as const, aggregateId: receipt.groupId }
+      : "projectId" in receipt
+        ? { aggregateKind: "project" as const, aggregateId: receipt.projectId }
+        : { aggregateKind: "thread" as const, aggregateId: receipt.threadId }),
     commandType: receipt.commandType,
     acceptedAt: DateTime.formatIso(receipt.acceptedAt),
     resultSequence: receipt.resultSequence,
@@ -194,6 +219,23 @@ const layerBase: Layer.Layer<
               : decodeProjectReceipt({
                   commandId: receipt.value.commandId,
                   projectId: receipt.value.aggregateId,
+                  commandType: receipt.value.commandType,
+                  acceptedAt: receipt.value.acceptedAt,
+                  resultSequence: receipt.value.resultSequence,
+                  status: receipt.value.status,
+                  error: receipt.value.error,
+                }).pipe(Effect.map(Option.some)),
+          ),
+          Effect.mapError((cause) => new CommandReceiptStoreReadError({ commandId, cause })),
+        ),
+      getThreadGroupByCommandId: (commandId) =>
+        receipts.getByCommandId({ commandId }).pipe(
+          Effect.flatMap((receipt) =>
+            Option.isNone(receipt) || receipt.value.aggregateKind !== "thread-group"
+              ? Effect.succeed(Option.none())
+              : decodeThreadGroupReceipt({
+                  commandId: receipt.value.commandId,
+                  groupId: receipt.value.aggregateId,
                   commandType: receipt.value.commandType,
                   acceptedAt: receipt.value.acceptedAt,
                   resultSequence: receipt.value.resultSequence,

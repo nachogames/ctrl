@@ -193,4 +193,7 @@ export const ApplicationThreadGroupEvent = Schema.Union([
 export type ApplicationThreadGroupEvent = typeof ApplicationThreadGroupEvent.Type;
 
 /** Events exposed by the retained application event source. */
-export type ApplicationStoredEvent = ApplicationProjectEvent | OrchestrationV2StoredEvent;
+export type ApplicationStoredEvent =
+  | ApplicationProjectEvent
+  | ApplicationThreadGroupEvent
+  | OrchestrationV2StoredEvent;

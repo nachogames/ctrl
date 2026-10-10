@@ -133,6 +133,7 @@ import {
   dedupeShellEnrichment,
   loadShellSnapshotParts,
   shellStreamItemFromEnrichmentRefresh,
+  shellStreamItemFromThreadGroup,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
@@ -160,6 +161,7 @@ import {
   projectThreadProjectionForWire,
 } from "./orchestration-v2/WireProjection.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import * as ThreadGroupStore from "./orchestration-v2/ThreadGroupStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
@@ -945,6 +947,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
     const projects = yield* ProjectStore.ProjectStoreV2;
+    const threadGroups = yield* ThreadGroupStore.ThreadGroupStoreV2;
     const projectService = yield* ProjectService.ProjectService;
     const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
 
@@ -1004,6 +1007,16 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       });
     });
 
+    const threadGroupItem = Effect.fn("ws.orchestrationV2.threadGroupShellItem")(function* (
+      stored: Extract<ShellApplicationEvent, { readonly aggregateKind: "thread-group" }>,
+    ) {
+      const group =
+        stored.type === "thread-group.deleted"
+          ? Option.none()
+          : yield* threadGroups.getShell(stored.aggregateId);
+      return shellStreamItemFromThreadGroup({ stored, group: Option.getOrNull(group) });
+    });
+
     // Coalescing makes each per-thread shell read represent every event
     // for that thread in the current window; reading only the affected
     // threads keeps the cost of a busy stream independent of how many
@@ -1016,7 +1029,9 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         (stored) =>
           Effect.gen(function* () {
             if ("aggregateKind" in stored) {
-              return yield* projectItem(stored);
+              return stored.aggregateKind === "project"
+                ? yield* projectItem(stored)
+                : yield* threadGroupItem(stored);
             }
             const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
             return shellStreamItemFromThreadShell({ stored, shell });

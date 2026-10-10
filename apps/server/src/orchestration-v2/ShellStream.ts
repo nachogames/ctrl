@@ -1,6 +1,7 @@
 import type {
   ApplicationStoredEvent,
   OrchestrationProjectShell,
+  OrchestrationThreadGroupShell,
   OrchestrationV2ArchivedShellStreamItem,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadShell,
@@ -60,29 +61,34 @@ export const loadShellSnapshotParts = <E1, E2, E3, E4>(input: {
     };
   });
 
+type ShellAggregateEvent<Kind extends "project" | "thread-group"> = Pick<
+  Extract<ApplicationStoredEvent, { readonly aggregateKind: Kind }>,
+  "aggregateKind" | "aggregateId" | "type" | "sequence"
+>;
+
 export type ShellApplicationEvent =
-  | Pick<
-      Extract<ApplicationStoredEvent, { readonly aggregateKind: "project" }>,
-      "aggregateKind" | "aggregateId" | "type" | "sequence"
-    >
+  | ShellAggregateEvent<"project">
+  | ShellAggregateEvent<"thread-group">
   | {
       readonly sequence: number;
       readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId">;
     };
 
-/** Shell updates refetch an aggregate; drop transcript bodies before retaining an event. */
+/** Shell updates refetch an aggregate; drop bodies before retaining an event. */
 export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellApplicationEvent {
-  return "aggregateKind" in stored
-    ? {
-        aggregateKind: stored.aggregateKind,
-        aggregateId: stored.aggregateId,
-        type: stored.type,
-        sequence: stored.sequence,
-      }
-    : { sequence: stored.sequence, event: { threadId: stored.event.threadId } };
+  if (!("aggregateKind" in stored)) {
+    return { sequence: stored.sequence, event: { threadId: stored.event.threadId } };
+  }
+  // TypeScript cannot correlate the four fields across the project/group union.
+  return {
+    aggregateKind: stored.aggregateKind,
+    aggregateId: stored.aggregateId,
+    type: stored.type,
+    sequence: stored.sequence,
+  } as ShellApplicationEvent;
 }
 
-/** Keep only the newest shell-relevant event per project/thread aggregate. */
+/** Keep only the newest shell-relevant event per project, group or thread. */
 export function coalesceShellApplicationEvents<A extends ShellApplicationEvent>(
   events: ReadonlyArray<A>,
 ): ReadonlyArray<A> {
@@ -90,13 +96,30 @@ export function coalesceShellApplicationEvents<A extends ShellApplicationEvent>(
   for (const stored of events) {
     const key =
       "aggregateKind" in stored
-        ? `project:${stored.aggregateId}`
+        ? `${stored.aggregateKind}:${stored.aggregateId}`
         : `thread:${stored.event.threadId}`;
     latestByAggregate.set(key, stored);
   }
   return Array.from(latestByAggregate.values()).sort(
     (left, right) => left.sequence - right.sequence,
   );
+}
+
+/** A group delta; a deleted group, or one whose project is gone, is removed. */
+export function shellStreamItemFromThreadGroup(input: {
+  readonly stored: ShellAggregateEvent<"thread-group">;
+  readonly group: OrchestrationThreadGroupShell | null;
+}): Extract<
+  OrchestrationV2ShellStreamItem,
+  { readonly kind: "thread-group.updated" | "thread-group.removed" }
+> {
+  return input.group === null || input.stored.type === "thread-group.deleted"
+    ? {
+        kind: "thread-group.removed",
+        sequence: input.stored.sequence,
+        groupId: input.stored.aggregateId,
+      }
+    : { kind: "thread-group.updated", sequence: input.stored.sequence, group: input.group };
 }
 
 /**

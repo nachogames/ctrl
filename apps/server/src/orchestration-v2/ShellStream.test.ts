@@ -5,6 +5,7 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadShell,
+  OrchestrationThreadGroupShell,
 } from "@t3tools/contracts";
 import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -25,10 +26,12 @@ import {
   dedupeShellEnrichment,
   loadShellSnapshotParts,
   shellStreamItemFromEnrichmentRefresh,
+  shellStreamItemFromThreadGroup,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
   skipUnchangedThreadShells,
+  toShellApplicationEvent,
 } from "./ShellStream.ts";
 
 function project(sequence: number, id: string): ApplicationStoredEvent {
@@ -630,4 +633,65 @@ describe("skipUnchangedThreadShells", () => {
       expect(sent).toEqual([1, 2, 3]);
     }),
   );
+});
+
+function threadGroup(sequence: number, id: string): ApplicationStoredEvent {
+  return {
+    sequence,
+    aggregateKind: "thread-group",
+    aggregateId: id,
+    type: "thread-group.meta-updated",
+  } as ApplicationStoredEvent;
+}
+
+describe("thread group shell events", () => {
+  it("keeps a group and a project with the same id apart when coalescing", () => {
+    expect(
+      coalesceShellApplicationEvents([
+        project(1, "shared"),
+        threadGroup(2, "shared"),
+        threadGroup(3, "shared"),
+      ]).map((event) => event.sequence),
+    ).toEqual([1, 3]);
+  });
+
+  it("retains only the aggregate fields of a group event", () => {
+    expect(
+      toShellApplicationEvent({
+        ...threadGroup(4, "group-1"),
+        payload: { groupId: "group-1", title: "Huge", updatedAt: "x" },
+      } as ApplicationStoredEvent),
+    ).toEqual({
+      aggregateKind: "thread-group",
+      aggregateId: "group-1",
+      type: "thread-group.meta-updated",
+      sequence: 4,
+    });
+  });
+
+  it("turns a deleted or unreadable group into a removal", () => {
+    const group = { id: "group-1" } as OrchestrationThreadGroupShell;
+    const stored = (type: "thread-group.meta-updated" | "thread-group.deleted") =>
+      ({ aggregateKind: "thread-group", aggregateId: "group-1", type, sequence: 9 }) as Extract<
+        ReturnType<typeof toShellApplicationEvent>,
+        { readonly aggregateKind: "thread-group" }
+      >;
+    expect(
+      shellStreamItemFromThreadGroup({ stored: stored("thread-group.meta-updated"), group }),
+    ).toEqual({
+      kind: "thread-group.updated",
+      sequence: 9,
+      group,
+    });
+    expect(
+      shellStreamItemFromThreadGroup({ stored: stored("thread-group.deleted"), group }),
+    ).toEqual({
+      kind: "thread-group.removed",
+      sequence: 9,
+      groupId: "group-1",
+    });
+    expect(
+      shellStreamItemFromThreadGroup({ stored: stored("thread-group.meta-updated"), group: null }),
+    ).toEqual({ kind: "thread-group.removed", sequence: 9, groupId: "group-1" });
+  });
 });
