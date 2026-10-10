@@ -8,6 +8,7 @@ import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import { FileDiff } from "@pierre/diffs/react";
 import { parseDiffFromFile } from "@pierre/diffs";
 import { useMemo, useState } from "react";
+import { APP_BASE_NAME } from "../../branding";
 import { getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
 import { useTheme } from "../../hooks/useTheme";
@@ -217,8 +218,8 @@ export function CaptureShortcutConfig({
       ) : (
         <>
           <p className="text-muted-foreground">
-            Allow T3 Code to read your desktop settings. You'll review any changes here before
-            saving.
+            Allow {APP_BASE_NAME} to read your desktop settings. You'll review any changes here
+            before saving.
           </p>
           <Button
             disabled={actionBusy || !supported}
