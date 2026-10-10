@@ -239,3 +239,10 @@ Plan 1 shipped the data layer. Its reviews left these requirements for later pla
   test the fork rule (forks currently keep the source's `groupId` and clear handoff links).
 - **Later migration:** the original `idx_orchestration_events_application_high_water` index is kept
   only so older builds can open the same database; drop it once that no longer matters.
+
+## Backlog
+
+- **Move chat to project.** T3 Code fixes a thread's project once it has messages (only drafts can
+  move). Add "Move to project…" for existing chats (including no-project chats in `~/.t3/scratch`),
+  alongside "Move to group…", with the workspace consequences made explicit (a no-project chat has
+  no git workspace; moving it into a project points it at that project's checkout or a new worktree).
