@@ -55,6 +55,7 @@ import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import { IS_NIGHTLY_BUILD, NightlyMobileBetaRow } from "../NightlyMobileBeta";
+import { AppIconPicker } from "./AppIconPicker";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import {
   canCheckForUpdate,
@@ -540,6 +541,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(theme !== "system" ? ["Theme"] : []),
       ...(!followSystem ? ["Follow system"] : []),
       ...(themeHalves !== null ? ["Theme mix"] : []),
+      ...(settings.appIcon !== DEFAULT_UNIFIED_SETTINGS.appIcon ? ["App icon"] : []),
       ...(settings.appearanceContrast !== DEFAULT_UNIFIED_SETTINGS.appearanceContrast
         ? ["Contrast"]
         : []),
@@ -672,6 +674,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.browserRecordingShowMousePresses,
       settings.browserLinkTarget,
       settings.browserAutoShowFloatingPreview,
+      settings.appIcon,
       settings.appearanceContrast,
       settings.diffColorScheme,
       settings.chatWidth,
@@ -789,6 +792,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       return;
     }
     updateSettings({
+      appIcon: DEFAULT_UNIFIED_SETTINGS.appIcon,
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
@@ -1421,6 +1425,25 @@ export function AppearanceSettingsPanel() {
                 updateSettings({ persistComposerContextStrip: Boolean(checked) })
               }
               aria-label="Keep composer context visible in active threads"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("app-icon")}
+          description="Keycap used for the dock, window and browser tab icon and the in-app logo. Installers keep the solid key."
+          resetAction={
+            settings.appIcon !== DEFAULT_UNIFIED_SETTINGS.appIcon ? (
+              <SettingResetButton
+                label="app icon"
+                onClick={() => updateSettings({ appIcon: DEFAULT_UNIFIED_SETTINGS.appIcon })}
+              />
+            ) : null
+          }
+          control={
+            <AppIconPicker
+              value={settings.appIcon}
+              onChange={(appIcon) => updateSettings({ appIcon })}
             />
           }
         />

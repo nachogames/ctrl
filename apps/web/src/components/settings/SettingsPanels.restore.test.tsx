@@ -88,4 +88,15 @@ describe("restoring V2 settings", () => {
     expect(state.confirm).toHaveBeenCalledOnce();
     expect(state.update).not.toHaveBeenCalled();
   });
+
+  it("restores the app icon to the solid keycap", async () => {
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, appIcon: "mac" };
+    hooks.beginRender();
+    const restore = useSettingsRestore();
+
+    expect(restore.changedSettingLabels).toEqual(["App icon"]);
+    await restore.restoreDefaults();
+
+    expect(state.update.mock.calls[0]?.[0].appIcon).toBe("solid");
+  });
 });
