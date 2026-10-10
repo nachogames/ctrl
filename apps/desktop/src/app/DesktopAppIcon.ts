@@ -109,6 +109,11 @@ export const make = Effect.gen(function* () {
       resolveRuntimePath(design, "ico"),
       resolveRuntimePath(design, "png"),
     ]);
+    if (Option.isNone(environment.platform === "win32" ? ico : png)) {
+      yield* Effect.logWarning(
+        `App icon "${design}" has no runtime icon file; using the bundled icon instead.`,
+      );
+    }
     return {
       ico: Option.orElse(ico, () => bundled.ico),
       icns: bundled.icns,
