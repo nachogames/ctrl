@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   ForwardCompatibleOptional,
   ProjectId,
+  ThreadGroupId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -281,3 +282,10 @@ export const ScopedThreadRef = Schema.Struct({
   threadId: ThreadId,
 });
 export type ScopedThreadRef = typeof ScopedThreadRef.Type;
+
+/** A group id is unique only within its environment; clients always pair them. */
+export const ScopedThreadGroupRef = Schema.Struct({
+  environmentId: EnvironmentId,
+  groupId: ThreadGroupId,
+});
+export type ScopedThreadGroupRef = typeof ScopedThreadGroupRef.Type;
