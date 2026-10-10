@@ -28,6 +28,7 @@ import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordin
 import { VoiceInputProvider } from "./features/voice-input/VoiceInputProvider";
 import { GlobalVoiceInputControl } from "./features/voice-input/GlobalVoiceInputControl";
 import { NativeLayoutMetricsProvider } from "./native/native-layout-metrics";
+import { useLauncherIconSync } from "./features/settings/appearance/useLauncherIconSync";
 
 import "../global.css";
 
@@ -73,6 +74,7 @@ export default function App() {
 }
 
 function AppContent() {
+  useLauncherIconSync();
   const { themeAppearance } = useAppearancePreferences();
   const navigationTheme = useMobileNavigationTheme();
 

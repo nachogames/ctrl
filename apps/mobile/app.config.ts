@@ -1,6 +1,11 @@
 import type { ExpoConfig } from "expo/config";
 
-import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
+import {
+  APP_ICON_DESIGNS,
+  BRAND_ASSET_PATHS,
+  resolveAndroidAppIconAssetPaths,
+  resolveAppIconDesignAssetPaths,
+} from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 type AppVariant = "development" | "preview" | "production";
@@ -110,6 +115,34 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
+const APP_ICON_BRAND = {
+  development: "development",
+  preview: "nightly",
+  production: "production",
+} as const;
+const appIconBrand = APP_ICON_BRAND[APP_VARIANT];
+const appIconPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
+  "./plugins/withCtrlAppIcons.cjs",
+  {
+    ios: {
+      outline: fromRepoRoot(resolveAppIconDesignAssetPaths(appIconBrand, "outline").iosPng),
+      mac: fromRepoRoot(resolveAppIconDesignAssetPaths(appIconBrand, "mac").iosPng),
+    },
+    android: {
+      backgroundImage: variant.assets.androidAdaptiveBackgroundImage ?? null,
+      backgroundColor: variant.assets.androidAdaptiveBackgroundColor,
+      designs: Object.fromEntries(
+        APP_ICON_DESIGNS.map((design) => [
+          design,
+          {
+            ...resolveAndroidAppIconAssetPaths(design),
+            legacy: fromRepoRoot(resolveAppIconDesignAssetPaths(appIconBrand, design).iosPng),
+          },
+        ]),
+      ),
+    },
+  },
+];
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
@@ -466,6 +499,7 @@ const config: ExpoConfig = {
     "./plugins/withAndroidModernAlertDialog.cjs",
     "./plugins/withAndroidPredictiveBackCompat.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
+    appIconPlugin,
     ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
