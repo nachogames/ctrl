@@ -9,12 +9,15 @@ import {
   NonNegativeInt,
   ProjectId,
   ProviderItemId,
+  ThreadGroupId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type { OrchestrationV2StoredEvent } from "./orchestrationV2.ts";
 import { ProjectScript, StoredProjectIcon } from "./project.ts";
+import { ThreadGroupUpdatePayload } from "./threadGroup.ts";
+import { ThreadPullRequestLink } from "./threadPullRequest.ts";
 
 /**
  * Which client dispatched the command that produced this event (#7774).
@@ -119,6 +122,75 @@ export const ApplicationProjectEvent = Schema.Union([
   ApplicationProjectDeletedEvent,
 ]);
 export type ApplicationProjectEvent = typeof ApplicationProjectEvent.Type;
+
+export const ApplicationThreadGroupCreatedPayload = Schema.Struct({
+  groupId: ThreadGroupId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  goal: Schema.NullOr(TrimmedNonEmptyString),
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  pullRequest: Schema.NullOr(ThreadPullRequestLink),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type ApplicationThreadGroupCreatedPayload = typeof ApplicationThreadGroupCreatedPayload.Type;
+
+/** Absent fields stay unchanged; null clears them. */
+export const ApplicationThreadGroupMetaUpdatedPayload = Schema.Struct({
+  groupId: ThreadGroupId,
+  ...ThreadGroupUpdatePayload.fields,
+  updatedAt: IsoDateTime,
+});
+export type ApplicationThreadGroupMetaUpdatedPayload =
+  typeof ApplicationThreadGroupMetaUpdatedPayload.Type;
+
+export const ApplicationThreadGroupDeletedPayload = Schema.Struct({
+  groupId: ThreadGroupId,
+  deletedAt: IsoDateTime,
+});
+export type ApplicationThreadGroupDeletedPayload = typeof ApplicationThreadGroupDeletedPayload.Type;
+
+const ApplicationThreadGroupEventBaseFields = {
+  sequence: NonNegativeInt,
+  eventId: EventId,
+  aggregateKind: Schema.Literal("thread-group"),
+  aggregateId: ThreadGroupId,
+  occurredAt: IsoDateTime,
+  commandId: Schema.NullOr(CommandId),
+  causationEventId: Schema.NullOr(EventId),
+  correlationId: Schema.NullOr(CommandId),
+  metadata: ApplicationEventMetadata,
+} as const;
+
+export const ApplicationThreadGroupCreatedEvent = Schema.Struct({
+  ...ApplicationThreadGroupEventBaseFields,
+  type: Schema.Literal("thread-group.created"),
+  payload: ApplicationThreadGroupCreatedPayload,
+});
+export type ApplicationThreadGroupCreatedEvent = typeof ApplicationThreadGroupCreatedEvent.Type;
+
+export const ApplicationThreadGroupMetaUpdatedEvent = Schema.Struct({
+  ...ApplicationThreadGroupEventBaseFields,
+  type: Schema.Literal("thread-group.meta-updated"),
+  payload: ApplicationThreadGroupMetaUpdatedPayload,
+});
+export type ApplicationThreadGroupMetaUpdatedEvent =
+  typeof ApplicationThreadGroupMetaUpdatedEvent.Type;
+
+export const ApplicationThreadGroupDeletedEvent = Schema.Struct({
+  ...ApplicationThreadGroupEventBaseFields,
+  type: Schema.Literal("thread-group.deleted"),
+  payload: ApplicationThreadGroupDeletedPayload,
+});
+export type ApplicationThreadGroupDeletedEvent = typeof ApplicationThreadGroupDeletedEvent.Type;
+
+export const ApplicationThreadGroupEvent = Schema.Union([
+  ApplicationThreadGroupCreatedEvent,
+  ApplicationThreadGroupMetaUpdatedEvent,
+  ApplicationThreadGroupDeletedEvent,
+]);
+export type ApplicationThreadGroupEvent = typeof ApplicationThreadGroupEvent.Type;
 
 /** Events exposed by the retained application event source. */
 export type ApplicationStoredEvent = ApplicationProjectEvent | OrchestrationV2StoredEvent;
