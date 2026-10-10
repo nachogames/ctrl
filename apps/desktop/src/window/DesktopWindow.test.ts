@@ -35,7 +35,7 @@ vi.mock("electron", async (importOriginal) => ({
   },
 }));
 
-import * as DesktopAssets from "../app/DesktopAssets.ts";
+import * as DesktopAppIcon from "../app/DesktopAppIcon.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
@@ -164,14 +164,13 @@ const layerElectronApp = Layer.mock(ElectronApp.ElectronApp)({
   quit: Effect.void,
 });
 
-const layerDesktopAssets = Layer.succeed(DesktopAssets.DesktopAssets, {
+const layerDesktopAppIcon = Layer.mock(DesktopAppIcon.DesktopAppIcon)({
   iconPaths: Effect.succeed({
     ico: Option.none<string>(),
     icns: Option.none<string>(),
     png: Option.none<string>(),
   }),
-  resolveResourcePath: () => Effect.succeed(Option.none<string>()),
-} satisfies DesktopAssets.DesktopAssets["Service"]);
+});
 
 const layerDesktopServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
   getState: Effect.die("unexpected getState"),
@@ -295,7 +294,7 @@ function layerTest(input: {
   return DesktopWindow.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        layerDesktopAssets,
+        layerDesktopAppIcon,
         Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
           register: () => Effect.void,
           recordMetrics: () => Effect.void,
@@ -420,7 +419,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
     const layer = DesktopWindow.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
-          layerDesktopAssets,
+          layerDesktopAppIcon,
           Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
             register: () => Effect.void,
             recordMetrics: () => Effect.void,

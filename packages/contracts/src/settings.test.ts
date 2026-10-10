@@ -4,9 +4,11 @@ import * as Schema from "effect/Schema";
 import type { CommandId, ProjectId } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
+  APP_ICONS,
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   requiredScopesForProjectMutation,
   resolveProviderInstanceEnabled,
@@ -1085,5 +1087,27 @@ describe("requiredScopesForProjectMutation", () => {
         scripts: [],
       }),
     ).toEqual(["orchestration:operate", "settings:write"]);
+  });
+});
+
+describe("ClientSettings appIcon", () => {
+  it("defaults to the solid keycap when existing settings omit appIcon", () => {
+    const settings = decodeClientSettings({ chatWidth: "wide", wordWrap: false });
+    expect(settings.appIcon).toBe("solid");
+    expect(settings.chatWidth).toBe("wide");
+    expect(settings.wordWrap).toBe(false);
+    expect(DEFAULT_CLIENT_SETTINGS.appIcon).toBe("solid");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("appIcon");
+  });
+
+  it.each(APP_ICONS)("round-trips the %s design", (appIcon) => {
+    const settings = decodeClientSettings({ appIcon });
+    expect(encodeClientSettings(settings).appIcon).toBe(appIcon);
+    expect(decodeClientSettingsPatch({ appIcon }).appIcon).toBe(appIcon);
+  });
+
+  it.each(["round", "", null, 1])("rejects unsupported design %s", (appIcon) => {
+    expect(() => decodeClientSettings({ appIcon })).toThrow();
+    expect(() => decodeClientSettingsPatch({ appIcon })).toThrow();
   });
 });

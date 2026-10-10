@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./appHome": {
+      "types": "./src/appHome.ts",
+      "import": "./src/appHome.ts"
+    },
     "./authScopeOptions": {
       "types": "./src/authScopeOptions.ts",
       "import": "./src/authScopeOptions.ts"
@@ -26,6 +30,14 @@
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
+    },
+    "./appIconArtwork": {
+      "types": "./src/appIconArtwork.ts",
+      "import": "./src/appIconArtwork.ts"
+    },
+    "./appIcons": {
+      "types": "./src/appIcons.ts",
+      "import": "./src/appIcons.ts"
     },
     "./themePreview": {
       "types": "./src/themePreview.ts",

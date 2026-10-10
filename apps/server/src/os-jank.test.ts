@@ -8,7 +8,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import { assert, it, vi } from "vite-plus/test";
 
-import { fixPath, hydratePosixHome } from "./os-jank.ts";
+import { fixPath, hydratePosixHome, resolveBaseDir } from "./os-jank.ts";
 
 vi.mock("node:child_process", { spy: true });
 
@@ -119,4 +119,16 @@ effectIt.effect("repairs Windows PATH even when the desktop marks it prepared", 
     assert.deepEqual(commands, ["node"]);
     assert.equal(env.PATH, "C:\\Tools;C:\\Windows");
   }),
+);
+
+effectIt.effect("defaults the base dir to ~/.ctrl and keeps explicit homes", () =>
+  Effect.gen(function* () {
+    assert.equal(yield* resolveBaseDir(undefined), "/Users/alice/.ctrl");
+    assert.equal(yield* resolveBaseDir("   "), "/Users/alice/.ctrl");
+    assert.equal(yield* resolveBaseDir("~/.t3"), "/Users/alice/.t3");
+    assert.equal(yield* resolveBaseDir("/srv/ctrl-home"), "/srv/ctrl-home");
+  }).pipe(
+    Effect.provideService(HostProcess.HomeDirectory, "/Users/alice"),
+    Effect.provide(NodeServices.layer),
+  ),
 );

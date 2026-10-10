@@ -1,9 +1,11 @@
+import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../../components/AppText";
 import { SymbolView } from "../../../components/AppSymbol";
 
 export function SettingsChoiceRow(props: {
+  readonly leading?: ReactNode;
   readonly label: string;
   readonly description: string;
   readonly selected: boolean;
@@ -23,6 +25,7 @@ export function SettingsChoiceRow(props: {
       disabled={props.disabled}
       onPress={props.onPress}
     >
+      {props.leading}
       <View className="min-w-0 flex-1 gap-1">
         <Text className="text-lg text-foreground android:text-base">{props.label}</Text>
         <Text className="text-sm leading-normal text-foreground-muted">{props.description}</Text>

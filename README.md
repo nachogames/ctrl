@@ -1,16 +1,18 @@
-# T3 Code
+<p align="center"><img src="assets/prod/logo.svg" width="96" alt="Ctrl keycap logo"></p>
 
-T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+# Ctrl
 
-Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, and Google Antigravity. If they're set up on your computer, T3 Code can control them.
+Ctrl is a control surface for the coding agents on your machine (Claude Code, Codex, Cursor, Grok Build, OpenCode and Google Antigravity), with web, desktop and mobile clients.
 
-## "Wait, what are you selling me?"
+> [!NOTE]
+> **Ctrl is a personal fork of [T3 Code](https://github.com/pingdotgg/t3code).** Nearly everything here is the T3 team's work: Theo, Julius and every T3 Code contributor built the app, the server and the clients this fork stands on. Thank you. Ctrl mostly changes the name, the keycap icon and a few personal preferences, and it tracks upstream closely. If you want the real thing, with releases, support and the mobile apps in the stores, use [T3 Code](https://t3.codes). Bugs that also happen in T3 Code belong [upstream](https://github.com/pingdotgg/t3code/issues). T3 Code's MIT license and copyright notice are kept unchanged in [LICENSE](LICENSE).
 
-Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
-
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
+Ctrl installs alongside T3 Code: it keeps its data in `~/.ctrl` (override with `T3CODE_HOME`) and uses its own app ids, so the two never share state. Ctrl shares the `t3code://` URL schemes with an installed T3 Code, so sign-in and deep links open whichever app registered last.
 
 ## Installation
+
+> [!IMPORTANT]
+> The install commands, package-manager entries and store links below come from upstream and install **official T3 Code**, not Ctrl. Ctrl has no published releases; build it from source (see the contributing section at the end).
 
 > [!WARNING]
 > T3 Code currently supports Codex, Claude, Cursor, Grok Build, OpenCode, and Antigravity. Install and authenticate at least one provider before use:
@@ -40,7 +42,7 @@ To try it once without installing, run `npx t3@latest` instead.
 
 ### Desktop app
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
+These install official T3 Code. Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
 
 #### Windows (`winget`)
 
