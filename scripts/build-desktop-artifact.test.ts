@@ -53,6 +53,7 @@ import {
   resolveFffNativeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
+  resolveDesktopRuntimeAppIconAssets,
   resolveDesktopProductName,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
@@ -288,6 +289,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       linuxIconPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     });
+  });
+
+  it("stages runtime-only keycap designs per channel", () => {
+    assert.deepStrictEqual(resolveDesktopRuntimeAppIconAssets("0.0.17-nightly.20260413.42")[1], {
+      design: "mac",
+      macPng: "assets/nightly/nightly-mac-macos-1024.png",
+      linuxPng: "assets/nightly/nightly-mac-ios-1024.png",
+      windowsIco: "assets/nightly/nightly-mac-windows.ico",
+    });
+    assert.deepStrictEqual(
+      resolveDesktopRuntimeAppIconAssets("0.0.17").map((asset) => asset.design),
+      ["outline", "mac"],
+    );
   });
 
   it("switches the bundled splash and favicon branding for nightly versions", () => {

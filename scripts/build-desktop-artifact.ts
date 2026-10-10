@@ -27,6 +27,7 @@ import serverPackageJson from "../apps/server/package.json" with { type: "json" 
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 import {
   BRAND_ASSET_PATHS,
+  resolveAppIconDesignAssetPaths,
   resolveWebAssetBrandForChannel,
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
@@ -2724,6 +2725,49 @@ export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIcon
   };
 }
 
+export interface DesktopRuntimeAppIconAsset {
+  readonly design: "outline" | "mac";
+  readonly macPng: string;
+  readonly linuxPng: string;
+  readonly windowsIco: string;
+}
+
+/** Keycap designs the app can switch to at runtime; solid is the bundled icon. */
+export function resolveDesktopRuntimeAppIconAssets(
+  version: string,
+): ReadonlyArray<DesktopRuntimeAppIconAsset> {
+  const brand = resolveDesktopWebAssetBrand(version);
+  return (["outline", "mac"] as const).map((design) => {
+    const paths = resolveAppIconDesignAssetPaths(brand, design);
+    return {
+      design,
+      macPng: paths.macPng,
+      linuxPng: paths.universalPng,
+      windowsIco: paths.windowsIco,
+    };
+  });
+}
+
+const stageRuntimeAppIcons = Effect.fn("stageRuntimeAppIcons")(function* (
+  platform: typeof BuildPlatform.Type,
+  stageResourcesDir: string,
+  repoRoot: string,
+  assets: ReadonlyArray<DesktopRuntimeAppIconAsset>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const asset of assets) {
+    const directory = path.join(stageResourcesDir, "app-icons", asset.design);
+    yield* fs.makeDirectory(directory, { recursive: true });
+    if (platform === "win") {
+      yield* fs.copyFile(path.join(repoRoot, asset.windowsIco), path.join(directory, "icon.ico"));
+    } else {
+      const source = platform === "mac" ? asset.macPng : asset.linuxPng;
+      yield* fs.copyFile(path.join(repoRoot, source), path.join(directory, "icon.png"));
+    }
+  }
+});
+
 export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefined): string {
   return `http://localhost:${mockUpdateServerPort ?? 3000}`;
 }
@@ -3791,6 +3835,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       windowsIconIco: path.join(repoRoot, iconAssets.windowsIconIco),
     },
     options.verbose,
+  );
+
+  yield* stageRuntimeAppIcons(
+    options.platform,
+    stageResourcesDir,
+    repoRoot,
+    resolveDesktopRuntimeAppIconAssets(appVersion),
   );
 
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
