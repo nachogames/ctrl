@@ -24,6 +24,7 @@ import {
   OrchestrationV2ThreadProjectionJson,
   ScheduledTaskId,
   type ServerProvider,
+  ThreadGroupId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -42,6 +43,8 @@ import * as TestClock from "effect/testing/TestClock";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as ThreadGroupStore from "./ThreadGroupStore.ts";
+import { sequenced, threadGroupCreatedEvent } from "./testkit/threadGroupFixtures.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -120,6 +123,7 @@ function makeHarness(options: HarnessOptions = {}) {
   const layerThreadManagement = ThreadManagement.layer.pipe(Layer.provide(layerOrchestrator));
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
   const layerOutbox = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
+  const layerThreadGroups = ThreadGroupStore.layer.pipe(Layer.provide(layerDatabase));
   const createWorktree = vi.fn(
     options.createWorktree ??
       ((input) =>
@@ -197,6 +201,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerExternalServices,
         layerThreadManagement,
         layerReceipts,
+        layerThreadGroups,
         IdAllocator.layer,
       ),
     ),
@@ -233,6 +238,7 @@ function makeHarness(options: HarnessOptions = {}) {
       layerThreadManagement,
       layerTitleRegeneration,
       layerOutbox,
+      layerThreadGroups,
       layerDatabase,
       layerExternalServices,
     ),
@@ -2269,3 +2275,34 @@ it.effect.each([0, 1])("releases an async setup before its completion with exit 
     }).pipe(Effect.provide(harness.layer));
   }),
 );
+
+it.effect("launches into a group of its project and rejects a foreign one", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    const ownGroup = ThreadGroupId.make("group:launch:own");
+    const foreignGroup = ThreadGroupId.make("group:launch:foreign");
+    yield* groups.apply(sequenced(threadGroupCreatedEvent({ groupId: ownGroup, projectId }), 1));
+    yield* groups.apply(
+      sequenced(threadGroupCreatedEvent({ groupId: foreignGroup, projectId: otherProjectId }), 2),
+    );
+
+    const launched = yield* launches.launch({
+      ...launchInput({ command: "command:launch:grouped", thread: "thread:launch:grouped" }),
+      groupId: ownGroup,
+    });
+    assert.equal((yield* threads.getThreadShell(launched.threadId))?.groupId, ownGroup);
+
+    const failed = yield* launches
+      .launch({
+        ...launchInput({ command: "command:launch:foreign", thread: "thread:launch:foreign" }),
+        groupId: foreignGroup,
+      })
+      .pipe(Effect.flip);
+    assert.equal(failed.operation, "resolve-group");
+    assert.equal(failed.cause, "Thread group belongs to another project.");
+    assert.isNull(yield* threads.getThreadShell(ThreadId.make("thread:launch:foreign")));
+  }).pipe(Effect.provide(harness.layer));
+});

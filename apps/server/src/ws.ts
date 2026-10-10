@@ -1980,6 +1980,7 @@ const layerWsRpc = (
                     runtimeMode: input.runtimeMode,
                     interactionMode: input.interactionMode,
                     workspaceStrategy: input.workspaceStrategy,
+                    ...(input.groupId === undefined ? {} : { groupId: input.groupId }),
                     ...(input.initialMessage === undefined
                       ? {}
                       : {
