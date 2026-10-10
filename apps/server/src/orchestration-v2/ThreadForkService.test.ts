@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  ThreadGroupId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -83,9 +84,12 @@ function makeSourceRun(status: OrchestrationV2Run["status"]): OrchestrationV2Run
   };
 }
 
-function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2ThreadProjection {
+function makeSourceProjection(
+  sourceRun: OrchestrationV2Run,
+  thread: OrchestrationV2AppThread = makeSourceThread(),
+): OrchestrationV2ThreadProjection {
   return {
-    thread: makeSourceThread(),
+    thread,
     runs: [sourceRun],
     attempts: [],
     nodes: [],
@@ -106,11 +110,11 @@ function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2Thr
   };
 }
 
-const planFork = (sourceRun: OrchestrationV2Run) =>
+const planFork = (sourceRun: OrchestrationV2Run, sourceThread?: OrchestrationV2AppThread) =>
   Effect.gen(function* () {
     const service = yield* ThreadForkService.ThreadForkServiceV2;
     return yield* service.plan({
-      sourceProjection: makeSourceProjection(sourceRun),
+      sourceProjection: makeSourceProjection(sourceRun, sourceThread),
       sourceRun,
       sourceProviderThread: undefined,
       canonicalSourcePoint: {
@@ -165,6 +169,21 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
       threadId: sourceThreadId,
       runId: sourceRunId,
     });
+  }),
+);
+
+it.effect("keeps the source's group but not its handoff links", () =>
+  Effect.gen(function* () {
+    const groupId = ThreadGroupId.make("group:fork-source");
+    const result = yield* planFork(makeSourceRun("completed"), {
+      ...makeSourceThread(),
+      groupId,
+      handedOffFrom: ThreadId.make("thread:fork-source-predecessor"),
+      handedOffTo: ThreadId.make("thread:fork-source-successor"),
+    });
+    assert.equal(result.targetThread.groupId, groupId);
+    assert.isNull(result.targetThread.handedOffFrom);
+    assert.isNull(result.targetThread.handedOffTo);
   }),
 );
 

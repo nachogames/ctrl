@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ProviderThreadId,
+  ThreadGroupId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -112,6 +113,31 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
     type: "node",
     nodeId: parentNodeId,
   });
+});
+
+it("does not put a subagent child in its parent's group or handoff chain", () => {
+  const parentThread: OrchestrationV2AppThread = {
+    ...makeParentThread(),
+    groupId: ThreadGroupId.make("group:subagent-parent"),
+    handedOffFrom: ThreadId.make("thread:subagent-parent-predecessor"),
+    handedOffTo: ThreadId.make("thread:subagent-parent-successor"),
+  };
+  const childThread = makeSubagentChildThread({
+    parentThread,
+    childThreadId,
+    parentNodeId: NodeId.make("node:subagent-parent"),
+    activeProviderThreadId: null,
+    providerInstanceId: childProviderInstanceId,
+    modelSelection: childModelSelection,
+    title: "Ungrouped child",
+    now: childCreatedAt,
+    createdBy: "agent",
+    creationSource: "provider",
+  });
+
+  assert.isNull(childThread.groupId ?? null);
+  assert.isNull(childThread.handedOffFrom ?? null);
+  assert.isNull(childThread.handedOffTo ?? null);
 });
 
 it("attributes native subagent prompts to their parent thread", () => {
