@@ -4,7 +4,7 @@ import type { ColorValue } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
-import { useAppIconDesign } from "../lib/useAppIconDesign";
+import { useAppIconDesign } from "../state/use-app-icon-design";
 
 const ThemedPath = withUniwind(Path);
 
