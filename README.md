@@ -7,7 +7,7 @@ Ctrl is a control surface for the coding agents on your machine (Claude Code, Co
 > [!NOTE]
 > **Ctrl is a personal fork of [T3 Code](https://github.com/pingdotgg/t3code).** Nearly everything here is the T3 team's work: Theo, Julius and every T3 Code contributor built the app, the server and the clients this fork stands on. Thank you. Ctrl mostly changes the name, the keycap icon and a few personal preferences, and it tracks upstream closely. If you want the real thing, with releases, support and the mobile apps in the stores, use [T3 Code](https://t3.codes). Bugs that also happen in T3 Code belong [upstream](https://github.com/pingdotgg/t3code/issues). T3 Code's MIT license and copyright notice are kept unchanged in [LICENSE](LICENSE).
 
-Ctrl installs alongside T3 Code: it keeps its data in `~/.ctrl` (override with `T3CODE_HOME`) and uses its own app ids, so the two never share state.
+Ctrl installs alongside T3 Code: it keeps its data in `~/.ctrl` (override with `T3CODE_HOME`) and uses its own app ids, so the two never share state. Ctrl shares the `t3code://` URL schemes with an installed T3 Code, so sign-in and deep links open whichever app registered last.
 
 ## Installation
 
