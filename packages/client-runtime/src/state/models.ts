@@ -399,7 +399,9 @@ export function presentThreadGroup(
     (thread) =>
       thread.groupId === group.id &&
       thread.projectId === group.projectId &&
-      thread.deletedAt === null,
+      thread.deletedAt === null &&
+      // Subagents belong to their parent thread, never to a group.
+      thread.lineage.relationshipToParent !== "subagent",
   );
   return { ...group, environmentId, threadIds: orderThreadGroupMembers(members), source: group };
 }

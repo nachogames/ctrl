@@ -65,4 +65,17 @@ describe("thread group presentation", () => {
     expect(group.environmentId).toBe(environmentId);
     expect(group.source).toBe(v2ThreadGroup);
   });
+
+  it("leaves subagent threads out of the group", () => {
+    const parent = member("parent", "2026-06-20T01:00:00.000Z");
+    const subagent = member("parent:subagent", "2026-06-20T02:00:00.000Z", {
+      lineage: {
+        parentThreadId: parent.id,
+        relationshipToParent: "subagent",
+        rootThreadId: parent.id,
+      },
+    });
+    const group = presentThreadGroup(environmentId, v2ThreadGroup, [parent, subagent]);
+    expect(group.threadIds).toEqual(["parent"]);
+  });
 });

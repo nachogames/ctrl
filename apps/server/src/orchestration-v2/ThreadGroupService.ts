@@ -187,18 +187,24 @@ export const make = Effect.gen(function* () {
       cause,
     });
 
-  /** Not archived, not deleted threads of the project. */
+  // Subagents belong to their parent thread, never to a group, so membership,
+  // emptiness and ungroup reads skip them.
+  const isSubagent = (thread: OrchestrationV2ThreadShell) =>
+    thread.lineage.relationshipToParent === "subagent";
+
+  /** Not archived, not deleted, non-subagent threads of the project. */
   const listActive = (projectId: ProjectId, groupId?: ThreadGroupId) =>
     threads
-      .listProjectThreads({ projectId, includeSubagents: true })
+      .listProjectThreads({ projectId, includeSubagents: false })
       .pipe(Effect.mapError(readThreadsError(groupId)));
 
-  /** Archived, not deleted threads of the project. Loads the whole archive, so read it last. */
+  /** Archived, not deleted, non-subagent threads of the project. Loads the whole archive, so read it last. */
   const listArchived = (projectId: ProjectId, groupId?: ThreadGroupId) =>
     threads.getShellSnapshot({ location: "archive" }).pipe(
       Effect.map((snapshot) =>
         snapshot.archivedThreads.filter(
-          (thread) => thread.projectId === projectId && thread.deletedAt === null,
+          (thread) =>
+            thread.projectId === projectId && thread.deletedAt === null && !isSubagent(thread),
         ),
       ),
       Effect.mapError(readThreadsError(groupId)),

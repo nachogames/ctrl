@@ -38,10 +38,21 @@ const shell = (id: ThreadId, overrides: Partial<OrchestrationV2ThreadShell> = {}
     branch: "feat/auth-refactor",
     worktreePath: "/repo-worktrees/auth",
     groupId: null,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
     archivedAt: null,
     deletedAt: null,
     ...overrides,
   }) as OrchestrationV2ThreadShell;
+
+const subagentShell = (
+  id: ThreadId,
+  parentThreadId: ThreadId,
+  overrides: Partial<OrchestrationV2ThreadShell> = {},
+) =>
+  shell(id, {
+    lineage: { parentThreadId, relationshipToParent: "subagent", rootThreadId: parentThreadId },
+    ...overrides,
+  });
 
 function makeLayer(
   threads: Map<ThreadId, OrchestrationV2ThreadShell>,
@@ -62,7 +73,8 @@ function makeLayer(
                 (thread) =>
                   thread.projectId === input.projectId &&
                   thread.archivedAt === null &&
-                  thread.deletedAt === null,
+                  thread.deletedAt === null &&
+                  (input.includeSubagents || thread.lineage.relationshipToParent !== "subagent"),
               ),
             ),
           getShellSnapshot: (options) =>
@@ -250,6 +262,41 @@ it.effect("deletes the old group when its last thread moves out", () => {
     assert.isNotNull(
       Option.getOrThrow(yield* groups.get(groupId, { includeDeleted: true })).deletedAt,
     );
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("moving the parent out prunes a group whose other threads are subagents", () => {
+  const liveChild = ThreadId.make("thread-a:subagent");
+  const archivedChild = ThreadId.make("thread-a:subagent:archived");
+  const threads = new Map([
+    [a, shell(a)],
+    [liveChild, subagentShell(liveChild, a, { groupId })],
+    [
+      archivedChild,
+      subagentShell(archivedChild, a, {
+        groupId,
+        archivedAt: DateTime.makeUnsafe("2026-10-10T06:00:00.000Z"),
+      }),
+    ],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    yield* service.create({
+      commandId: CommandId.make("command:subagent-group"),
+      groupId,
+      projectId,
+      threadIds: [a],
+    });
+
+    yield* service.moveThread({
+      commandId: CommandId.make("command:subagent-group:detach"),
+      threadId: a,
+      groupId: null,
+    });
+    assert.isTrue(Option.isNone(yield* groups.getShell(groupId)));
   }).pipe(Effect.provide(makeLayer(threads, dispatched)));
 });
 
