@@ -63,6 +63,10 @@ export function makeSubagentChildThread(input: {
     linkedPullRequest: null,
     pullRequests: [],
     historyOrigin: undefined,
+    // Subagents belong to their parent, not to its group or handoff chain.
+    groupId: null,
+    handedOffFrom: null,
+    handedOffTo: null,
     providerInstanceId: input.providerInstanceId,
     modelSelection: input.modelSelection,
     activeProviderThreadId: input.activeProviderThreadId,

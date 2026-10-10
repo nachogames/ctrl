@@ -120,8 +120,11 @@ export function mergeShellSnapshotProjects(
   }
 
   const previousById = new Map(previous.projects.map((project) => [project.id, project] as const));
+  // An older server or cache omits `groups`; keep what we had rather than wipe it.
+  const groups = next.groups ?? previous.groups;
   return {
     ...next,
+    ...(groups === undefined ? {} : { groups }),
     projects: next.projects.map((project) => {
       const prior = previousById.get(project.id);
       if (resolvedRootSet?.has(project.workspaceRoot) === true) {
@@ -192,6 +195,18 @@ export function applyShellStreamEvent(
         ...snapshot,
         threads: snapshot.threads.filter((thread) => thread.id !== event.threadId),
         archivedThreads: snapshot.archivedThreads.filter((thread) => thread.id !== event.threadId),
+        snapshotSequence: event.sequence,
+      };
+    case "thread-group.updated":
+      return {
+        ...snapshot,
+        groups: upsertById(snapshot.groups ?? [], event.group),
+        snapshotSequence: event.sequence,
+      };
+    case "thread-group.removed":
+      return {
+        ...snapshot,
+        groups: (snapshot.groups ?? []).filter((group) => group.id !== event.groupId),
         snapshotSequence: event.sequence,
       };
     default:

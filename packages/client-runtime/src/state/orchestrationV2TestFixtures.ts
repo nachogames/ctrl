@@ -1,8 +1,10 @@
 import {
   ProjectId,
   ProviderInstanceId,
+  ThreadGroupId,
   ThreadId,
   type OrchestrationProjectShell,
+  type OrchestrationThreadGroupShell,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
@@ -21,6 +23,23 @@ export const v2Project: OrchestrationProjectShell = {
   repositoryIdentity: null,
   defaultModelSelection: null,
   scripts: [],
+  createdAt: "2026-06-20T00:00:00.000Z",
+  updatedAt: "2026-06-20T00:00:00.000Z",
+};
+
+export const v2ThreadGroup: OrchestrationThreadGroupShell = {
+  id: ThreadGroupId.make("group-v2"),
+  projectId: v2ProjectId,
+  title: "Auth refactor",
+  goal: null,
+  branch: "feat/auth-refactor",
+  worktreePath: "/workspace/project-worktrees/auth",
+  pullRequest: null,
+  lastHandoff: null,
+  pinnedAt: null,
+  snoozedUntil: null,
+  settledAt: null,
+  manualResources: [],
   createdAt: "2026-06-20T00:00:00.000Z",
   updatedAt: "2026-06-20T00:00:00.000Z",
 };

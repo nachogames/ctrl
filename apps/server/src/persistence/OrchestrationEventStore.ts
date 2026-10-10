@@ -13,6 +13,7 @@
 import {
   ApplicationEventMetadata,
   ApplicationProjectEvent,
+  ApplicationThreadGroupEvent,
   type ApplicationStoredEvent,
   CommandId,
   EventId,
@@ -22,6 +23,7 @@ import {
   OrchestrationV2StoredEvent,
   ProjectId,
   StoredProjectIcon,
+  ThreadGroupId,
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -50,6 +52,13 @@ export type UnsequencedProjectEvent = ApplicationProjectEvent extends infer Even
     : never
   : never;
 
+/** A thread group event before the store assigns its sequence. */
+export type UnsequencedThreadGroupEvent = ApplicationThreadGroupEvent extends infer Event
+  ? Event extends ApplicationThreadGroupEvent
+    ? Omit<Event, "sequence">
+    : never
+  : never;
+
 /** OrchestrationEventStore - Service tag for the shared application event log. */
 export class OrchestrationEventStore extends Context.Service<
   OrchestrationEventStore,
@@ -58,6 +67,11 @@ export class OrchestrationEventStore extends Context.Service<
     readonly appendProjectEvent: (
       event: UnsequencedProjectEvent,
     ) => Effect.Effect<ApplicationProjectEvent, OrchestrationEventStoreError>;
+
+    /** Append one thread group event to the shared application log. */
+    readonly appendThreadGroupEvent: (
+      event: UnsequencedThreadGroupEvent,
+    ) => Effect.Effect<ApplicationThreadGroupEvent, OrchestrationEventStoreError>;
 
     /** Append V2 agent events to the same globally ordered application log. */
     readonly appendAgentEvents: (input: {
@@ -179,13 +193,31 @@ const ProjectEventPersistedRowSchema = Schema.Struct({
   metadata: EventMetadataFromJsonString,
 });
 
+const decodeThreadGroupEvent = Schema.decodeUnknownEffect(ApplicationThreadGroupEvent);
+const ThreadGroupEventType = Schema.Literals([
+  "thread-group.created",
+  "thread-group.meta-updated",
+  "thread-group.deleted",
+]);
+const AppendThreadGroupEventRequestSchema = Schema.Struct({
+  ...AppendProjectEventRequestSchema.fields,
+  streamId: ThreadGroupId,
+  type: ThreadGroupEventType,
+});
+const ThreadGroupEventPersistedRowSchema = Schema.Struct({
+  ...ProjectEventPersistedRowSchema.fields,
+  type: ThreadGroupEventType,
+  aggregateKind: Schema.Literal("thread-group"),
+  aggregateId: ThreadGroupId,
+});
+
 const READ_PAGE_SIZE = 500;
 
 interface ApplicationEventRow {
   readonly sequence: number;
   readonly event_id: string;
   readonly command_id: string | null;
-  readonly aggregate_kind: "project" | "thread";
+  readonly aggregate_kind: "project" | "thread-group" | "thread";
   readonly stream_id: string;
   readonly event_type: string;
   readonly occurred_at: string;
@@ -260,13 +292,40 @@ const rowToProjectEvent = Effect.fn("OrchestrationEventStore.rowToProjectEvent")
   });
 });
 
+const rowToThreadGroupEvent = Effect.fn("OrchestrationEventStore.rowToThreadGroupEvent")(function* (
+  row: ApplicationEventRow,
+) {
+  return yield* decodeThreadGroupEvent({
+    sequence: row.sequence,
+    eventId: row.event_id,
+    type: row.event_type,
+    aggregateKind: row.aggregate_kind,
+    aggregateId: row.stream_id,
+    occurredAt: row.occurred_at,
+    commandId: row.command_id,
+    causationEventId: row.causation_event_id,
+    correlationId: row.correlation_id,
+    payload: yield* decodeJson(row.payload_json),
+    metadata: yield* decodeJson(row.metadata_json),
+  });
+});
+
 function rowToApplicationStoredEvent(
   row: ApplicationEventRow,
 ): Effect.Effect<ApplicationStoredEvent, Schema.SchemaError> {
-  return row.aggregate_kind === "project" ? rowToProjectEvent(row) : rowToV2StoredEvent(row);
+  switch (row.aggregate_kind) {
+    case "project":
+      return rowToProjectEvent(row);
+    case "thread-group":
+      return rowToThreadGroupEvent(row);
+    case "thread":
+      return rowToV2StoredEvent(row);
+  }
 }
 
-function inferActorKind(event: UnsequencedProjectEvent): typeof ActorKind.Type {
+function inferActorKind(
+  event: UnsequencedProjectEvent | UnsequencedThreadGroupEvent,
+): typeof ActorKind.Type {
   if (event.commandId !== null && event.commandId.startsWith("provider:")) {
     return "provider";
   }
@@ -296,6 +355,10 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const committedEvents = yield* PubSub.unbounded<ApplicationStoredEvent>();
+  // Repeats the WHERE of idx_orchestration_events_application_high_water_v2
+  // (migration 061) term for term; INDEXED BY fails on any other shape.
+  const applicationEventFilter = sql`aggregate_kind IN ('project', 'thread-group')
+    OR (application_event_version = 2 AND aggregate_kind = 'thread')`;
 
   const appendProjectEventRow = SqlSchema.findOne({
     Request: AppendProjectEventRequestSchema,
@@ -382,6 +445,90 @@ const makeEventStore = Effect.gen(function* () {
       ),
     );
 
+  const appendThreadGroupEventRow = SqlSchema.findOne({
+    Request: AppendThreadGroupEventRequestSchema,
+    Result: ThreadGroupEventPersistedRowSchema,
+    execute: (request) =>
+      sql`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json,
+          application_event_version
+        )
+        VALUES (
+          ${request.eventId},
+          'thread-group',
+          ${request.streamId},
+          COALESCE(
+            (
+              SELECT stream_version + 1
+              FROM orchestration_events
+              WHERE aggregate_kind = 'thread-group'
+                AND stream_id = ${request.streamId}
+              ORDER BY stream_version DESC
+              LIMIT 1
+            ),
+            0
+          ),
+          ${request.type},
+          ${request.occurredAt},
+          ${request.commandId},
+          ${request.causationEventId},
+          ${request.correlationId},
+          ${request.actorKind},
+          ${request.payloadJson},
+          ${request.metadataJson},
+          2
+        )
+        RETURNING
+          sequence,
+          event_id AS "eventId",
+          event_type AS "type",
+          aggregate_kind AS "aggregateKind",
+          stream_id AS "aggregateId",
+          occurred_at AS "occurredAt",
+          command_id AS "commandId",
+          causation_event_id AS "causationEventId",
+          correlation_id AS "correlationId",
+          payload_json AS "payload",
+          metadata_json AS "metadata"
+      `,
+  });
+
+  const appendThreadGroupEvent: OrchestrationEventStore["Service"]["appendThreadGroupEvent"] = (
+    event,
+  ) =>
+    appendThreadGroupEventRow({
+      eventId: event.eventId,
+      streamId: event.aggregateId,
+      type: event.type,
+      causationEventId: event.causationEventId,
+      correlationId: event.correlationId,
+      actorKind: inferActorKind(event),
+      occurredAt: event.occurredAt,
+      commandId: event.commandId,
+      payloadJson: event.payload,
+      metadataJson: event.metadata,
+    }).pipe(
+      Effect.flatMap((row) => decodeThreadGroupEvent(row)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "OrchestrationEventStore.appendThreadGroupEvent:insert",
+          "OrchestrationEventStore.appendThreadGroupEvent:decode",
+        ),
+      ),
+    );
+
   const readApplicationRows = (input: {
     readonly afterSequence: number;
     readonly throughSequence?: number;
@@ -413,7 +560,7 @@ const makeEventStore = Effect.gen(function* () {
           ? sql`INDEXED BY idx_orch_events_command_id`
           : input.onlyAgentEvents === true
             ? sql``
-            : sql`INDEXED BY idx_orchestration_events_application_high_water`
+            : sql`INDEXED BY idx_orchestration_events_application_high_water_v2`
       }
       WHERE sequence > ${input.afterSequence}
         AND sequence <= ${input.throughSequence ?? Number.MAX_SAFE_INTEGER}
@@ -421,8 +568,7 @@ const makeEventStore = Effect.gen(function* () {
           ${
             input.onlyAgentEvents === true
               ? sql`application_event_version = 2 AND aggregate_kind = 'thread'`
-              : sql`aggregate_kind = 'project'
-                    OR (application_event_version = 2 AND aggregate_kind = 'thread')`
+              : applicationEventFilter
           }
         )
         AND ${sql.and([
@@ -579,13 +725,10 @@ const makeEventStore = Effect.gen(function* () {
       SELECT
         COUNT(*) AS "eventCount",
         COALESCE(SUM(octet_length(payload_json)), 0) AS "rawPayloadBytes"
-      FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water
+      FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water_v2
       WHERE sequence > ${input.afterSequence}
         AND sequence <= ${input.throughSequence}
-        AND (
-          aggregate_kind = 'project'
-          OR (application_event_version = 2 AND aggregate_kind = 'thread')
-        )
+        AND (${applicationEventFilter})
     `.pipe(
       Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.getReplayStats:query")),
       Effect.map((rows) => ({
@@ -616,9 +759,8 @@ const makeEventStore = Effect.gen(function* () {
   // The OR planner otherwise scans every V2 event instead of seeking the final sequence.
   const latestApplicationSequence = sql<{ readonly sequence: number | null }>`
     SELECT MAX(sequence) AS sequence
-    FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water
-    WHERE aggregate_kind = 'project'
-      OR (application_event_version = 2 AND aggregate_kind = 'thread')
+    FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water_v2
+    WHERE ${applicationEventFilter}
   `.pipe(
     Effect.map((rows) => rows[0]?.sequence ?? 0),
     Effect.mapError(
@@ -700,6 +842,7 @@ const makeEventStore = Effect.gen(function* () {
 
   return {
     appendProjectEvent,
+    appendThreadGroupEvent,
     appendAgentEvents,
     readAgentEvents,
     getAgentReplayStats,

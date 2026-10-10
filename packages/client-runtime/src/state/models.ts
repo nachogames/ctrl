@@ -5,6 +5,7 @@ import type {
   EnvironmentId,
   MessageId,
   OrchestrationProjectShell,
+  OrchestrationThreadGroupShell,
   OrchestrationV2ProviderGoal,
   OrchestrationV2RunStatus,
   OrchestrationV2ProviderFailureClass,
@@ -14,6 +15,7 @@ import type {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  ThreadGroupId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -132,6 +134,11 @@ export interface EnvironmentThreadShell {
   readonly pinOrderKey: string | null;
   /** Slot in the user-arranged active order; null for keyless active threads. */
   readonly activeOrderKey: string | null;
+  /** Chat group the thread works in; null when ungrouped or unknown to the server. */
+  readonly groupId: ThreadGroupId | null;
+  readonly handedOffFrom: ThreadId | null;
+  /** Set once this thread handed off; lists show it dimmed. */
+  readonly handedOffTo: ThreadId | null;
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
@@ -276,6 +283,9 @@ export function presentThreadShell(
     autoSettleDisabledAt: nullableIso(thread.autoSettleDisabledAt ?? null),
     pinOrderKey: thread.pinOrderKey ?? null,
     activeOrderKey: thread.activeOrderKey ?? null,
+    groupId: thread.groupId ?? null,
+    handedOffFrom: thread.handedOffFrom ?? null,
+    handedOffTo: thread.handedOffTo ?? null,
     ...(thread.lastVisitedAt === undefined
       ? {}
       : { lastVisitedAt: nullableIso(thread.lastVisitedAt) }),
@@ -333,4 +343,65 @@ export function resolveThreadWorkingStartedAt(input: {
     return valid(run.startedAt) ?? valid(run.requestedAt);
   }
   return null;
+}
+
+export interface EnvironmentThreadGroup extends OrchestrationThreadGroupShell {
+  readonly environmentId: EnvironmentId;
+  /** Live members: each handoff chain in order, chains by creation time. */
+  readonly threadIds: ReadonlyArray<ThreadId>;
+  readonly source: OrchestrationThreadGroupShell;
+}
+
+/**
+ * Members in display order. A chat follows the one it was handed off from;
+ * chains start at chats with no source in the group. Links that loop or point
+ * outside the group never drop a chat.
+ */
+export function orderThreadGroupMembers(
+  threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id" | "createdAt" | "handedOffFrom">>,
+): ReadonlyArray<ThreadId> {
+  const byCreation = [...threads].sort(
+    (left, right) =>
+      DateTime.toEpochMillis(left.createdAt) - DateTime.toEpochMillis(right.createdAt) ||
+      left.id.localeCompare(right.id),
+  );
+  const ids = new Set(byCreation.map((thread) => thread.id));
+  const successors = new Map<ThreadId, Array<(typeof byCreation)[number]>>();
+  for (const thread of byCreation) {
+    const source = thread.handedOffFrom;
+    if (source == null || source === thread.id || !ids.has(source)) continue;
+    const list = successors.get(source) ?? [];
+    list.push(thread);
+    successors.set(source, list);
+  }
+  const ordered: Array<ThreadId> = [];
+  const seen = new Set<ThreadId>();
+  const visit = (thread: (typeof byCreation)[number]) => {
+    if (seen.has(thread.id)) return;
+    seen.add(thread.id);
+    ordered.push(thread.id);
+    for (const next of successors.get(thread.id) ?? []) visit(next);
+  };
+  for (const thread of byCreation) {
+    if (thread.handedOffFrom == null || !ids.has(thread.handedOffFrom)) visit(thread);
+  }
+  // Chats in a handoff loop have no root; keep them by creation time.
+  for (const thread of byCreation) visit(thread);
+  return ordered;
+}
+
+export function presentThreadGroup(
+  environmentId: EnvironmentId,
+  group: OrchestrationThreadGroupShell,
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+): EnvironmentThreadGroup {
+  const members = threads.filter(
+    (thread) =>
+      thread.groupId === group.id &&
+      thread.projectId === group.projectId &&
+      thread.deletedAt === null &&
+      // Subagents belong to their parent thread, never to a group.
+      thread.lineage.relationshipToParent !== "subagent",
+  );
+  return { ...group, environmentId, threadIds: orderThreadGroupMembers(members), source: group };
 }

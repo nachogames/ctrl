@@ -5,6 +5,7 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadShell,
+  OrchestrationThreadGroupShell,
 } from "@t3tools/contracts";
 import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -25,10 +26,12 @@ import {
   dedupeShellEnrichment,
   loadShellSnapshotParts,
   shellStreamItemFromEnrichmentRefresh,
+  shellStreamItemFromThreadGroup,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
   skipUnchangedThreadShells,
+  toShellApplicationEvent,
 } from "./ShellStream.ts";
 
 function project(sequence: number, id: string): ApplicationStoredEvent {
@@ -62,9 +65,11 @@ describe("buildActiveShellSnapshot", () => {
       archivedAt: "2026-07-30T00:00:00.000Z" as never,
     });
 
+    const group = { id: "group-1" } as OrchestrationThreadGroupShell;
     expect(
       buildActiveShellSnapshot({
         projects: [],
+        groups: [group],
         threads: {
           schemaVersion: 1,
           snapshotSequence: 4,
@@ -77,6 +82,7 @@ describe("buildActiveShellSnapshot", () => {
       schemaVersion: 1,
       snapshotSequence: 7,
       projects: [],
+      groups: [group],
       threads: [active],
       archivedThreads: [],
     });
@@ -131,16 +137,19 @@ describe("loadShellSnapshotParts", () => {
           }),
         ),
         listProjects: step("list projects", []),
+        listGroups: step("list groups", []),
         latestSequence: step("latest sequence", 7),
       });
 
       expect(steps).toEqual([
         "read threads:in transaction",
         "list projects:in transaction",
+        "list groups:in transaction",
         "latest sequence:in transaction",
         "decode threads:out of transaction",
       ]);
       expect(snapshot.snapshotSequence).toBe(7);
+      expect(snapshot.groups).toEqual([]);
       expect(snapshot.threads.threads).toEqual([thread]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
@@ -274,9 +283,20 @@ describe("shellStreamItemFromEnrichmentRefresh", () => {
       }),
     ).toEqual({
       kind: "snapshot",
-      snapshot: emptyShellSnapshot,
+      snapshot: { ...emptyShellSnapshot, groups: [] },
       resolvedRepositoryIdentityRoots: ["/workspace/a", "/workspace/b"],
     });
+  });
+
+  it("keeps groups out of the metadata-only frame", () => {
+    const item = shellStreamItemFromEnrichmentRefresh({
+      snapshot: {
+        ...emptyShellSnapshot,
+        groups: [{ id: "group-1" }],
+      } as unknown as OrchestrationV2ShellSnapshot,
+      changes: [{ workspaceRoot: "/workspace/a" }],
+    });
+    expect(item.snapshot.groups).toEqual([]);
   });
 });
 
@@ -288,6 +308,7 @@ describe("shellStreamItemsFromInitialSnapshot", () => {
         { id: "project-a", workspaceRoot: "/workspace/a" },
         { id: "project-b", workspaceRoot: "/workspace/b" },
       ],
+      groups: [{ id: "group-1" }],
       threads: [shellFixture({})],
       archivedThreads: [shellFixture({ id: ThreadId.make("thread-archived"), archivedAt: null })],
     } as unknown as OrchestrationV2ShellSnapshot;
@@ -302,6 +323,7 @@ describe("shellStreamItemsFromInitialSnapshot", () => {
       kind: "snapshot",
       snapshot: {
         projects: [{ id: "project-a", workspaceRoot: "/workspace/a" }],
+        groups: [],
         threads: [],
         archivedThreads: [],
       },
@@ -325,7 +347,7 @@ describe("shellStreamItemsFromInitialSnapshot", () => {
       { kind: "snapshot", snapshot },
       {
         kind: "snapshot",
-        snapshot,
+        snapshot: { ...snapshot, groups: [] },
         resolvedRepositoryIdentityRoots: ["/workspace/a"],
       },
     ]);
@@ -630,4 +652,65 @@ describe("skipUnchangedThreadShells", () => {
       expect(sent).toEqual([1, 2, 3]);
     }),
   );
+});
+
+function threadGroup(sequence: number, id: string): ApplicationStoredEvent {
+  return {
+    sequence,
+    aggregateKind: "thread-group",
+    aggregateId: id,
+    type: "thread-group.meta-updated",
+  } as ApplicationStoredEvent;
+}
+
+describe("thread group shell events", () => {
+  it("keeps a group and a project with the same id apart when coalescing", () => {
+    expect(
+      coalesceShellApplicationEvents([
+        project(1, "shared"),
+        threadGroup(2, "shared"),
+        threadGroup(3, "shared"),
+      ]).map((event) => event.sequence),
+    ).toEqual([1, 3]);
+  });
+
+  it("retains only the aggregate fields of a group event", () => {
+    expect(
+      toShellApplicationEvent({
+        ...threadGroup(4, "group-1"),
+        payload: { groupId: "group-1", title: "Huge", updatedAt: "x" },
+      } as ApplicationStoredEvent),
+    ).toEqual({
+      aggregateKind: "thread-group",
+      aggregateId: "group-1",
+      type: "thread-group.meta-updated",
+      sequence: 4,
+    });
+  });
+
+  it("turns a deleted or unreadable group into a removal", () => {
+    const group = { id: "group-1" } as OrchestrationThreadGroupShell;
+    const stored = (type: "thread-group.meta-updated" | "thread-group.deleted") =>
+      ({ aggregateKind: "thread-group", aggregateId: "group-1", type, sequence: 9 }) as Extract<
+        ReturnType<typeof toShellApplicationEvent>,
+        { readonly aggregateKind: "thread-group" }
+      >;
+    expect(
+      shellStreamItemFromThreadGroup({ stored: stored("thread-group.meta-updated"), group }),
+    ).toEqual({
+      kind: "thread-group.updated",
+      sequence: 9,
+      group,
+    });
+    expect(
+      shellStreamItemFromThreadGroup({ stored: stored("thread-group.deleted"), group }),
+    ).toEqual({
+      kind: "thread-group.removed",
+      sequence: 9,
+      groupId: "group-1",
+    });
+    expect(
+      shellStreamItemFromThreadGroup({ stored: stored("thread-group.meta-updated"), group: null }),
+    ).toEqual({ kind: "thread-group.removed", sequence: 9, groupId: "group-1" });
+  });
 });

@@ -1,3 +1,4 @@
+import * as ThreadGroupPruneWorker from "./ThreadGroupPruneWorker.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -29,6 +30,8 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as ThreadGroupStore from "./ThreadGroupStore.ts";
+import * as ThreadGroupService from "./ThreadGroupService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
@@ -74,6 +77,7 @@ const layerStores = Layer.mergeAll(
   layerEventStoreProvided,
   ProjectionStore.layer,
   ProjectStore.layer,
+  ThreadGroupStore.layer,
   layerCommandReceiptStoreProvided,
   EffectOutbox.layer,
   TurnItemPositionStore.layer,
@@ -242,6 +246,16 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
 const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImporter.pipe(
   Layer.provide(Layer.merge(layerOrchestratorProvided, layerLegacyV1ThreadImporterProvided)),
 );
+export const layerThreadGroupService = ThreadGroupService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ThreadGroupStore.layer,
+      layerEventSinkProvided,
+      IdAllocator.layer,
+      layerThreadManagementProvided,
+    ),
+  ),
+);
 export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe(
   Layer.provide(layerProjectService),
 );
@@ -256,6 +270,7 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
       layerManagedProjectFoldersProvided,
       layerThreadManagementProvided,
       layerCommandReceiptStoreProvided,
+      ThreadGroupStore.layer,
       IdAllocator.layer,
     ),
   ),
@@ -344,6 +359,10 @@ export const layer = Layer.mergeAll(
 export const layerProduction = Layer.mergeAll(
   layer.pipe(Layer.provide(layerProjectService)),
   layerProjectService,
+  layerThreadGroupService,
+  ThreadGroupPruneWorker.layer.pipe(
+    Layer.provide(Layer.merge(layerThreadGroupService, layerEventSinkProvided)),
+  ),
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
   layerThreadLifecycleProvided,

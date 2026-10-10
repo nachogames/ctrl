@@ -1,7 +1,12 @@
 import { ProjectId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { v2Project, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+import {
+  v2Project,
+  v2ShellSnapshot,
+  v2ThreadGroup,
+  v2ThreadShell,
+} from "./orchestrationV2TestFixtures.ts";
 import {
   applyShellStreamEvent,
   mergeShellSnapshotProjects,
@@ -501,5 +506,72 @@ describe("reuseUnchangedThreadShells", () => {
     expect(reuseUnchangedThreadShells({ ...v2ShellSnapshot, threads: [other] }, incoming)).toBe(
       incoming,
     );
+  });
+});
+
+describe("thread group shell deltas", () => {
+  it("applies group deltas to a snapshot cached before groups existed", () => {
+    const cached = { ...v2ShellSnapshot, snapshotSequence: 2 };
+    const added = applyShellStreamEvent(cached, {
+      kind: "thread-group.updated",
+      sequence: 3,
+      group: v2ThreadGroup,
+    });
+    expect(added.groups).toEqual([v2ThreadGroup]);
+    const renamed = applyShellStreamEvent(added, {
+      kind: "thread-group.updated",
+      sequence: 4,
+      group: { ...v2ThreadGroup, title: "Renamed" },
+    });
+    expect(renamed.groups?.map((group) => group.title)).toEqual(["Renamed"]);
+    const removed = applyShellStreamEvent(renamed, {
+      kind: "thread-group.removed",
+      sequence: 5,
+      groupId: v2ThreadGroup.id,
+    });
+    expect(removed.groups).toEqual([]);
+    expect(removed.snapshotSequence).toBe(5);
+  });
+
+  it("ignores a stale group delta", () => {
+    const snapshot = { ...v2ShellSnapshot, snapshotSequence: 6, groups: [v2ThreadGroup] };
+    expect(
+      applyShellStreamEvent(snapshot, {
+        kind: "thread-group.removed",
+        sequence: 6,
+        groupId: v2ThreadGroup.id,
+      }),
+    ).toBe(snapshot);
+  });
+
+  it("keeps groups through a repository identity enrichment snapshot", () => {
+    const previous = { ...v2ShellSnapshot, groups: [v2ThreadGroup] };
+    const merged = mergeShellSnapshotProjects(previous, v2ShellSnapshot, {
+      resolvedRepositoryIdentityRoots: [],
+    });
+    expect(merged.groups).toEqual([v2ThreadGroup]);
+  });
+
+  it("ignores the empty groups an enrichment snapshot carries", () => {
+    const previous = { ...v2ShellSnapshot, groups: [v2ThreadGroup] };
+    const merged = mergeShellSnapshotProjects(
+      previous,
+      { ...v2ShellSnapshot, groups: [] },
+      { resolvedRepositoryIdentityRoots: [] },
+    );
+    expect(merged.groups).toEqual([v2ThreadGroup]);
+  });
+
+  it("keeps previous groups when an authoritative snapshot omits groups", () => {
+    const previous = { ...v2ShellSnapshot, groups: [v2ThreadGroup] };
+    const { groups: _omitted, ...withoutGroups } = { ...v2ShellSnapshot, groups: [] };
+    const merged = mergeShellSnapshotProjects(previous, withoutGroups);
+    expect(merged.groups).toEqual([v2ThreadGroup]);
+  });
+
+  it("replaces groups when an authoritative snapshot carries them", () => {
+    const previous = { ...v2ShellSnapshot, groups: [v2ThreadGroup] };
+    const merged = mergeShellSnapshotProjects(previous, { ...v2ShellSnapshot, groups: [] });
+    expect(merged.groups).toEqual([]);
   });
 });

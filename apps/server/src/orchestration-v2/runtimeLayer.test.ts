@@ -26,6 +26,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RunId,
+  ThreadGroupId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -482,6 +483,57 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
 );
 
 it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
+  it.effect("carries group membership and handoff links through commands and shells", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-group-membership");
+      const sourceThreadId = ThreadId.make("runtime-layer-group-membership-source");
+      const groupId = ThreadGroupId.make("group:runtime-layer-membership");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-group-membership-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-group-membership-project"),
+        title: "Grouped",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feat/groups",
+        worktreePath: null,
+        groupId,
+      });
+      assert.equal((yield* orchestrator.getThreadShell(threadId))?.groupId, groupId);
+
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-group-membership-handoff"),
+        threadId,
+        handedOffFrom: sourceThreadId,
+        handedOffTo: null,
+      });
+      const linked = yield* orchestrator.getThreadShell(threadId);
+      assert.equal(linked?.groupId, groupId);
+      assert.equal(linked?.handedOffFrom, sourceThreadId);
+      assert.isNull(linked?.handedOffTo);
+
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-group-membership-detach"),
+        threadId,
+        groupId: null,
+      });
+      const listed = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      );
+      assert.isNull(listed?.groupId);
+      assert.equal(listed?.handedOffFrom, sourceThreadId);
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.groupId);
+    }),
+  );
+
   it.effect("emits model updates separately from provider switches", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

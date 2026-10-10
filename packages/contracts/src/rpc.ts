@@ -362,6 +362,11 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  ThreadGroupMutation,
+  ThreadGroupMutationError,
+  ThreadGroupMutationResult,
+} from "./threadGroup.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -376,6 +381,9 @@ export const WS_METHODS = {
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
+
+  // Thread group methods
+  threadGroupsMutate: "threadGroups.mutate",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -1217,6 +1225,12 @@ const WsProjectsMutateRpc = Rpc.make(WS_METHODS.projectsMutate, {
   error: Schema.Union([ProjectMutationError, EnvironmentAuthorizationError]),
 });
 
+const WsThreadGroupsMutateRpc = Rpc.make(WS_METHODS.threadGroupsMutate, {
+  payload: ThreadGroupMutation,
+  success: ThreadGroupMutationResult,
+  error: Schema.Union([ThreadGroupMutationError, EnvironmentAuthorizationError]),
+});
+
 // Finds or creates the Scratch project rooted at ServerConfig.scratchWorkspaceRoot.
 const WsProjectsEnsureScratchRpc = Rpc.make(WS_METHODS.projectsEnsureScratch, {
   payload: Schema.Struct({}),
@@ -1945,6 +1959,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsCreateNewRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
+  WsThreadGroupsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAgentSessionsScanRpc,

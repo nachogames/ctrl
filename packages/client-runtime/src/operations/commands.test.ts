@@ -13,6 +13,7 @@ import {
   ProviderDriverKind,
   RunId,
   RuntimeRequestId,
+  ThreadGroupId,
   ThreadId,
   TurnItemId,
   WS_METHODS,
@@ -20,6 +21,7 @@ import {
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
   type ProjectMutation,
+  type ThreadGroupMutation,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -41,11 +43,14 @@ import {
   archiveThread,
   cancelQueuedRun,
   createProject,
+  createThreadGroup,
+  deleteThreadGroup,
   dismissThreadUserInput,
   editQueuedRun,
   forkThreadFromRun,
   interruptThreadTurn,
   mergeThreadBack,
+  moveThreadToGroup,
   promoteQueuedRun,
   reorderActiveThread,
   reorderQueuedRun,
@@ -54,6 +59,7 @@ import {
   startThreadTurn,
   unsettleThread,
   updateProject,
+  updateThreadGroup,
   updateThreadMetadata,
 } from "./commands.ts";
 
@@ -75,6 +81,7 @@ const TARGET = new PrimaryConnectionTarget({
 const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(function* (input: {
   readonly commands: OrchestrationV2Command[];
   readonly projects: ProjectMutation[];
+  readonly threadGroups?: ThreadGroupMutation[];
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
@@ -101,6 +108,11 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           projection: input.projection ?? v2Projection,
           resumed: false,
         };
+      }),
+    [WS_METHODS.threadGroupsMutate]: (mutation: ThreadGroupMutation) =>
+      Effect.sync(() => {
+        input.threadGroups?.push(mutation);
+        return { group: null };
       }),
     [WS_METHODS.projectsMutate]: (mutation: ProjectMutation) =>
       Effect.sync(() => {
@@ -149,6 +161,43 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  it.effect("routes thread group changes through the thread group transport", () =>
+    Effect.gen(function* () {
+      const threadGroups: ThreadGroupMutation[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], threadGroups });
+      const provide = Effect.provideService(
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisor,
+      );
+      const groupId = ThreadGroupId.make("group-1");
+      const commandId = "00000000-0000-4000-8000-000000000000";
+
+      yield* createThreadGroup({
+        groupId,
+        projectId: ProjectId.make("project-1"),
+        threadIds: [ThreadId.make("thread-1")],
+      }).pipe(provide);
+      yield* updateThreadGroup({ groupId, patch: { goal: null } }).pipe(provide);
+      yield* moveThreadToGroup({ threadId: ThreadId.make("thread-2"), groupId: null }).pipe(
+        provide,
+      );
+      yield* deleteThreadGroup({ groupId }).pipe(provide);
+
+      expect(threadGroups).toEqual([
+        {
+          type: "thread-group.create",
+          commandId,
+          groupId: "group-1",
+          projectId: "project-1",
+          threadIds: ["thread-1"],
+        },
+        { type: "thread-group.update", commandId, groupId: "group-1", patch: { goal: null } },
+        { type: "thread-group.move-thread", commandId, threadId: "thread-2", groupId: null },
+        { type: "thread-group.delete", commandId, groupId: "group-1" },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("routes projects through the event-sourced project transport", () =>
     Effect.gen(function* () {
       const projects: ProjectMutation[] = [];

@@ -2211,6 +2211,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
+      ...(command.groupId == null ? {} : { groupId: command.groupId }),
       activeProviderThreadId: null,
       lineage: {
         parentThreadId: null,
@@ -2954,6 +2955,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
+            ...(command.groupId === undefined ? {} : { groupId: command.groupId }),
+            ...(command.handedOffFrom === undefined
+              ? {}
+              : { handedOffFrom: command.handedOffFrom }),
+            ...(command.handedOffTo === undefined ? {} : { handedOffTo: command.handedOffTo }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
             ...(command.linkedPullRequest === undefined
               ? {}

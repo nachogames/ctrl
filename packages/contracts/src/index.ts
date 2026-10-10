@@ -40,6 +40,7 @@ export * from "./applicationEvent.ts";
 export * from "./orchestratorMcp.ts";
 export * from "./threadMetadataMcp.ts";
 export * from "./threadPullRequest.ts";
+export * from "./threadGroup.ts";
 export * from "./threadSearch.ts";
 export * from "./threadTitle.ts";
 export * from "./t3ProjectFile.ts";

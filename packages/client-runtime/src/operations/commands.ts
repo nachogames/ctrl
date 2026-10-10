@@ -23,6 +23,9 @@ import {
   type RunId,
   type RuntimeMode,
   type RuntimeRequestId,
+  type ThreadGroupId,
+  type ThreadGroupMutation,
+  type ThreadGroupUpdatePayload,
   type ThreadId,
   type ThreadEnvMode,
   type UploadChatAttachment,
@@ -65,6 +68,31 @@ export interface UpdateProjectInput extends CommandMetadata {
 export interface DeleteProjectInput extends CommandMetadata {
   readonly projectId: ProjectId;
   readonly force?: boolean;
+}
+
+export interface CreateThreadGroupInput extends CommandMetadata {
+  readonly groupId: ThreadGroupId;
+  readonly projectId: ProjectId;
+  /** The first thread supplies the group's default workspace. */
+  readonly threadIds: ReadonlyArray<ThreadId>;
+  readonly title?: string;
+  readonly goal?: string | null;
+}
+
+export interface UpdateThreadGroupInput extends CommandMetadata {
+  readonly groupId: ThreadGroupId;
+  /** Absent fields stay unchanged; null clears them. */
+  readonly patch: ThreadGroupUpdatePayload;
+}
+
+export interface DeleteThreadGroupInput extends CommandMetadata {
+  readonly groupId: ThreadGroupId;
+}
+
+export interface MoveThreadToGroupInput extends CommandMetadata {
+  readonly threadId: ThreadId;
+  /** Null detaches the thread; it keeps its branch and worktree. */
+  readonly groupId: ThreadGroupId | null;
 }
 
 export interface CreateThreadInput extends CommandMetadata {
@@ -389,6 +417,55 @@ export const deleteProject = Effect.fn("EnvironmentCommands.deleteProject")(func
     commandId: yield* allocateCommandId(input),
     projectId: input.projectId,
     ...(input.force === undefined ? {} : { force: input.force }),
+  });
+});
+
+const mutateThreadGroup = (mutation: ThreadGroupMutation) =>
+  request(WS_METHODS.threadGroupsMutate, mutation);
+
+export const createThreadGroup = Effect.fn("EnvironmentCommands.createThreadGroup")(function* (
+  input: CreateThreadGroupInput,
+) {
+  return yield* mutateThreadGroup({
+    type: "thread-group.create",
+    commandId: yield* allocateCommandId(input),
+    groupId: input.groupId,
+    projectId: input.projectId,
+    threadIds: input.threadIds,
+    ...(input.title === undefined ? {} : { title: input.title }),
+    ...(input.goal === undefined ? {} : { goal: input.goal }),
+  });
+});
+
+export const updateThreadGroup = Effect.fn("EnvironmentCommands.updateThreadGroup")(function* (
+  input: UpdateThreadGroupInput,
+) {
+  return yield* mutateThreadGroup({
+    type: "thread-group.update",
+    commandId: yield* allocateCommandId(input),
+    groupId: input.groupId,
+    patch: input.patch,
+  });
+});
+
+export const deleteThreadGroup = Effect.fn("EnvironmentCommands.deleteThreadGroup")(function* (
+  input: DeleteThreadGroupInput,
+) {
+  return yield* mutateThreadGroup({
+    type: "thread-group.delete",
+    commandId: yield* allocateCommandId(input),
+    groupId: input.groupId,
+  });
+});
+
+export const moveThreadToGroup = Effect.fn("EnvironmentCommands.moveThreadToGroup")(function* (
+  input: MoveThreadToGroupInput,
+) {
+  return yield* mutateThreadGroup({
+    type: "thread-group.move-thread",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    groupId: input.groupId,
   });
 });
 

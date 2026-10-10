@@ -54,6 +54,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as ThreadGroupStore from "./ThreadGroupStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
@@ -3455,6 +3456,7 @@ it.effect("publishes live events in commit order across concurrent writers", () 
           layerPausingOutbox,
           layerCommandReceiptStoreProvided,
           ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
+          ThreadGroupStore.layer.pipe(Layer.provide(layerDatabase)),
           TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
         ),
       ),

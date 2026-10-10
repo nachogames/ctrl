@@ -42,6 +42,7 @@ import * as EventSink from "../src/orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../src/orchestration-v2/ThreadManagementService.ts";
 import * as ProjectStore from "../src/orchestration-v2/ProjectStore.ts";
+import * as ThreadGroupStore from "../src/orchestration-v2/ThreadGroupStore.ts";
 import * as ProjectService from "../src/project/ProjectService.ts";
 import * as ProjectEnrichmentService from "../src/project/ProjectEnrichmentService.ts";
 import * as OrchestrationHttp from "../src/orchestration-v2/http.ts";
@@ -109,9 +110,10 @@ const layerEnrichment = Layer.unwrap(
     });
   }),
 );
-// The transfer history has no project events, so shell streams never read a project shell.
+// The transfer history has no project or group events, so shell streams never read their shells.
 const layerServices = layerManagement.pipe(
   Layer.provideMerge(ProjectStore.layer),
+  Layer.provideMerge(ThreadGroupStore.layer),
   Layer.provideMerge(Layer.mock(ProjectService.ProjectService)({})),
   Layer.provideMerge(layerEnrichment),
   Layer.provideMerge(layerPersistence),

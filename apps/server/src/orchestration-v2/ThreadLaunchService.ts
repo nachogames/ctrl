@@ -14,6 +14,7 @@ import {
   type ProviderDriverKind,
   type ProviderInteractionMode,
   ProjectId,
+  type ThreadGroupId,
   type RunId,
   type RuntimeMode,
   type ScheduledTaskId,
@@ -47,6 +48,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
+import * as ThreadGroupStore from "./ThreadGroupStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
@@ -83,6 +85,8 @@ export interface ThreadLaunchInput {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
+  /** Start the thread inside this group; it must belong to `projectId`. */
+  readonly groupId?: ThreadGroupId;
   readonly initialMessage?: ThreadLaunchInitialMessage;
   readonly importedNativeThread?: {
     readonly ref: {
@@ -126,6 +130,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   {
     operation: Schema.Literals([
       "resolve-project",
+      "resolve-group",
       "read-receipt",
       "generate-metadata",
       "provision-worktree",
@@ -207,6 +212,7 @@ const make = Effect.gen(function* () {
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const threadGroups = yield* ThreadGroupStore.ThreadGroupStoreV2;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
@@ -756,6 +762,20 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
+      if (input.groupId !== undefined) {
+        const group = yield* threadGroups
+          .get(input.groupId)
+          .pipe(Effect.mapError(mapError(input, "resolve-group")));
+        if (Option.isNone(group)) {
+          return yield* mapError(input, "resolve-group")("Thread group not found.");
+        }
+        if (group.value.projectId !== input.projectId) {
+          return yield* mapError(
+            input,
+            "resolve-group",
+          )("Thread group belongs to another project.");
+        }
+      }
       if (input.reuseExistingThread === true && input.threadId === undefined) {
         return yield* mapError(
           input,
@@ -831,6 +851,7 @@ const make = Effect.gen(function* () {
                 commandId: input.commandId,
                 threadId: candidateThreadId,
                 expectedEmpty: true,
+                ...(input.groupId === undefined ? {} : { groupId: input.groupId }),
               })
             : threads.dispatch({
                 type: "thread.create",
@@ -843,6 +864,7 @@ const make = Effect.gen(function* () {
                 interactionMode: input.interactionMode,
                 branch: initialBranch,
                 worktreePath: initialWorktreePath,
+                ...(input.groupId === undefined ? {} : { groupId: input.groupId }),
                 ...(input.importedNativeThread === undefined
                   ? {}
                   : { importedNativeThread: input.importedNativeThread }),
