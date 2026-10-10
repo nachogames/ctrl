@@ -144,6 +144,31 @@ it.effect("creates a group from its threads with the first thread's workspace", 
   }).pipe(Effect.provide(makeLayer(threads, dispatched)));
 });
 
+it.effect("a retried create does not rejoin threads to a group that was pruned", () => {
+  const threads = new Map([[a, shell(a)]]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const input = {
+      commandId: CommandId.make("command:pruned"),
+      groupId,
+      projectId,
+      threadIds: [a],
+    };
+    yield* service.create(input);
+    // The thread left (e.g. a crash before the join, then a restart prune removed the group).
+    threads.set(a, { ...threads.get(a)!, groupId: null });
+    yield* service.pruneEmptyGroups;
+    const dispatchCount = dispatched.length;
+
+    const error = yield* service.create(input).pipe(Effect.flip);
+    assert.equal(error._tag, "ThreadGroupNotFoundError");
+    assert.equal(dispatched.length, dispatchCount);
+    assert.isNull(threads.get(a)?.groupId);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
 it.effect("rejects a thread from another project and commits nothing", () => {
   const threads = new Map([
     [a, shell(a)],

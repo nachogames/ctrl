@@ -334,35 +334,43 @@ export const make = Effect.gen(function* () {
         }
       }
       const pullRequest = resolveThreadCurrentPullRequestLink(first.pullRequests ?? []);
-      yield* commit({
-        type: "thread-group.create",
-        commandId: input.commandId,
-        groupId: input.groupId,
-        projectId: input.projectId,
-        title:
-          input.title ??
-          defaultThreadGroupTitle({ pullRequest, branch: first.branch, fallback: first.title }),
-        goal: input.goal ?? null,
-        branch: first.branch,
-        worktreePath: first.worktreePath,
-        pullRequest,
-      });
       const previousGroups = new Set<ThreadGroupId>();
+      // Commit and join under one lock, so a prune cannot delete the group between them.
       yield* groupLocks.withLock(
         input.groupId,
-        Effect.forEach(
-          members,
-          (member) => {
-            if (member.groupId === input.groupId) return Effect.void;
-            if (member.groupId != null) previousGroups.add(member.groupId);
-            return setThreadGroup(
-              CommandId.make(`${input.commandId}:join:${member.id}`),
-              member.id,
-              input.groupId,
-            );
-          },
-          { concurrency: 1, discard: true },
-        ),
+        Effect.gen(function* () {
+          yield* commitLocked({
+            type: "thread-group.create",
+            commandId: input.commandId,
+            groupId: input.groupId,
+            projectId: input.projectId,
+            title:
+              input.title ??
+              defaultThreadGroupTitle({ pullRequest, branch: first.branch, fallback: first.title }),
+            goal: input.goal ?? null,
+            branch: first.branch,
+            worktreePath: first.worktreePath,
+            pullRequest,
+          });
+          // A retried create replays as accepted even after the group was pruned or deleted.
+          const group = yield* readGroup(input.groupId);
+          if (Option.isNone(group) || group.value.deletedAt !== null) {
+            return yield* new ThreadGroupNotFoundError({ groupId: input.groupId });
+          }
+          yield* Effect.forEach(
+            members,
+            (member) => {
+              if (member.groupId === input.groupId) return Effect.void;
+              if (member.groupId != null) previousGroups.add(member.groupId);
+              return setThreadGroup(
+                CommandId.make(`${input.commandId}:join:${member.id}`),
+                member.id,
+                input.groupId,
+              );
+            },
+            { concurrency: 1, discard: true },
+          );
+        }),
       );
       yield* Effect.forEach(previousGroups, pruneIfEmpty, { concurrency: 1, discard: true });
       return yield* readShell(input.groupId);
