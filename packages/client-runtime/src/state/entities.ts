@@ -1,8 +1,10 @@
 import {
   EnvironmentId,
   ProjectId,
+  ThreadGroupId,
   ThreadId,
   type ScopedProjectRef,
+  type ScopedThreadGroupRef,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -29,6 +31,17 @@ export class InvalidScopedThreadKeyError extends Schema.TaggedError<InvalidScope
   }
 }
 
+export class InvalidScopedThreadGroupKeyError extends Schema.TaggedError<InvalidScopedThreadGroupKeyError>()(
+  "InvalidScopedThreadGroupKeyError",
+  {
+    key: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Invalid scoped thread group atom key: ${JSON.stringify(this.key)}.`;
+  }
+}
+
 export class InvalidScopedProjectRefCollectionKeyError extends Schema.TaggedError<InvalidScopedProjectRefCollectionKeyError>()(
   "InvalidScopedProjectRefCollectionKeyError",
   {
@@ -51,6 +64,11 @@ export function projectKey(ref: ScopedProjectRef): string {
 
 export function threadKey(ref: ScopedThreadRef): string {
   return `${ref.environmentId}\u0000${ref.threadId}`;
+}
+
+/** Group ids are unique only within an environment, so keys always carry both. */
+export function threadGroupKey(ref: ScopedThreadGroupRef): string {
+  return `${ref.environmentId}\u0000${ref.groupId}`;
 }
 
 export function projectRefCollectionKey(refs: ReadonlyArray<ScopedProjectRef>): string {
@@ -89,6 +107,17 @@ export function parseThreadKey(key: string): ScopedThreadRef {
   return {
     environmentId: EnvironmentId.make(key.slice(0, separator)),
     threadId: ThreadId.make(key.slice(separator + 1)),
+  };
+}
+
+export function parseThreadGroupKey(key: string): ScopedThreadGroupRef {
+  const separator = key.indexOf("\u0000");
+  if (separator < 0) {
+    throw new InvalidScopedThreadGroupKeyError({ key });
+  }
+  return {
+    environmentId: EnvironmentId.make(key.slice(0, separator)),
+    groupId: ThreadGroupId.make(key.slice(separator + 1)),
   };
 }
 
