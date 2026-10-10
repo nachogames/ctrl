@@ -1455,6 +1455,13 @@ export function threadShellFromProjection(
     ...(projection.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: projection.thread.activeOrderKey }),
+    ...(projection.thread.groupId === undefined ? {} : { groupId: projection.thread.groupId }),
+    ...(projection.thread.handedOffFrom === undefined
+      ? {}
+      : { handedOffFrom: projection.thread.handedOffFrom }),
+    ...(projection.thread.handedOffTo === undefined
+      ? {}
+      : { handedOffTo: projection.thread.handedOffTo }),
     lineage: projection.thread.lineage,
     forkedFrom: projection.thread.forkedFrom,
     activeProviderThreadId: projection.thread.activeProviderThreadId,
@@ -1723,6 +1730,13 @@ function shellFromState(input: {
     ...(input.state.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: input.state.thread.activeOrderKey }),
+    ...(input.state.thread.groupId === undefined ? {} : { groupId: input.state.thread.groupId }),
+    ...(input.state.thread.handedOffFrom === undefined
+      ? {}
+      : { handedOffFrom: input.state.thread.handedOffFrom }),
+    ...(input.state.thread.handedOffTo === undefined
+      ? {}
+      : { handedOffTo: input.state.thread.handedOffTo }),
     lineage: input.state.thread.lineage,
     forkedFrom: input.state.thread.forkedFrom,
     activeProviderThreadId: input.state.thread.activeProviderThreadId,
