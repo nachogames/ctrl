@@ -42,8 +42,14 @@ Reference mockup: `docs/superpowers/specs/2026-10-10-ctrl-branding/variants.html
   - Desktop: dock icon (macOS, via the existing `app.dock.setIcon` path in `DesktopAppIdentity`)
     and window icon (Windows/Linux `BrowserWindow.setIcon`).
   - Web: the document favicon links are swapped live.
-- Not switchable at runtime (documented limitation): the bundled .app/installer icon and the
-  mobile launcher icon (alternate-icon native setup is out of scope).
+- Mobile app: the same `appIcon` choice appears in the mobile settings (a new "App icon" row in the
+  existing settings screens) and switches the in-app marks instantly **and the home-screen launcher
+  icon**, via a small local Expo module `modules/ctrl-app-icon` (following the existing
+  `modules/t3-*` pattern) plus a config plugin: iOS `setAlternateIconName` with the three designs
+  registered as alternate icons (solid is the primary icon); Android activity-aliases (one per
+  design, solid enabled by default) toggled with `PackageManager.setComponentEnabledSetting`.
+  Android may briefly restart the launcher entry when switching; that is expected platform behavior.
+- Not switchable at runtime (documented limitation): the bundled desktop .app/installer icon.
 
 ## Rename
 
