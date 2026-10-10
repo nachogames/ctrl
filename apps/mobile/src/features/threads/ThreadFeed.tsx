@@ -97,6 +97,7 @@ import {
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { isPdfFile } from "../../lib/filePreview";
 import { flattenThemeColor } from "../../lib/mobileTheme";
+import { MOBILE_APP_BASE_NAME } from "../../lib/mobileBranding";
 import { PresentationSource } from "../../components/NativePresentation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
@@ -1725,7 +1726,7 @@ function renderFeedEntry(
             </Text>
           ) : presentation.attribution === "t3code" ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
-              Sent by T3 Code
+              Sent by {MOBILE_APP_BASE_NAME}
             </Text>
           ) : presentation.attribution === "agent" ? (
             <AgentMessageAttribution

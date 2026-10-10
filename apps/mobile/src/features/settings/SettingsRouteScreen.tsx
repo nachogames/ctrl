@@ -1,4 +1,5 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { MOBILE_APP_BASE_NAME } from "../../lib/mobileBranding";
 import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation } from "@react-navigation/native";
 import { Platform, View } from "react-native";
@@ -212,7 +213,11 @@ function SettingsIndexSections() {
 
       <SettingsSection title="App">
         <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
-        <SettingsRow icon="info.circle" label="About T3 Code" target="SettingsAbout" />
+        <SettingsRow
+          icon="info.circle"
+          label={`About ${MOBILE_APP_BASE_NAME}`}
+          target="SettingsAbout"
+        />
       </SettingsSection>
     </>
   );

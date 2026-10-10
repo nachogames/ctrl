@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
+import { MOBILE_APP_BASE_NAME } from "../../lib/mobileBranding";
 import {
   type AppUpdateCheckState,
   isAppUpdateCheckAvailable,
@@ -20,7 +21,7 @@ export function SettingsAboutRouteScreen() {
   const insets = useSafeAreaInsets();
 
   return (
-    <SettingsScreen title="About T3 Code">
+    <SettingsScreen title={`About ${MOBILE_APP_BASE_NAME}`}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}

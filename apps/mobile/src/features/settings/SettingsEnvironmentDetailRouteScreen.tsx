@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { MOBILE_APP_BASE_NAME } from "../../lib/mobileBranding";
 import { ScreenScrollView } from "../../components/ScreenScrollView";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
@@ -227,7 +228,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
             {notice ? <Text className="px-2 text-sm text-foreground-muted">{notice}</Text> : null}
             {config ? (
               <>
-                <SettingsSection title="T3 Code">
+                <SettingsSection title={MOBILE_APP_BASE_NAME}>
                   <View className="gap-1 p-4">
                     <Text className="text-base text-foreground">Version {version}</Text>
                     {running ? (
