@@ -38,4 +38,44 @@ describe("applyLauncherIcon", () => {
     await expect(applyLauncherIcon("outline")).resolves.toBe("applied");
     expect(mocks.native!.setAppIcon).toHaveBeenCalledWith("outline");
   });
+
+  it("runs overlapping switches in order so the last request wins", async () => {
+    let active = "solid";
+    const events: string[] = [];
+    let releaseFirstSet!: () => void;
+    let firstSetStarted!: () => void;
+    const firstSetPending = new Promise<void>((resolve) => {
+      firstSetStarted = resolve;
+    });
+    mocks.native!.getAppIcon.mockImplementation(async () => {
+      events.push(`get:${active}`);
+      return active;
+    });
+    mocks.native!.setAppIcon.mockImplementation((design: string) => {
+      events.push(`set:${design}`);
+      if (design !== "outline") {
+        active = design;
+        return Promise.resolve();
+      }
+      firstSetStarted();
+      return new Promise<void>((resolve) => {
+        releaseFirstSet = () => {
+          active = design;
+          resolve();
+        };
+      });
+    });
+    const { applyLauncherIcon } = await load();
+
+    const first = applyLauncherIcon("outline");
+    const second = applyLauncherIcon("mac");
+    await firstSetPending;
+    expect(events).toEqual(["get:solid", "set:outline"]);
+    releaseFirstSet();
+
+    await expect(first).resolves.toBe("applied");
+    await expect(second).resolves.toBe("applied");
+    expect(events).toEqual(["get:solid", "set:outline", "get:outline", "set:mac"]);
+    expect(active).toBe("mac");
+  });
 });
