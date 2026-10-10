@@ -482,8 +482,20 @@
   <body>
     <div id="root">
       <div id="boot-shell">
-        <div id="boot-shell-card" aria-label="T3 Code splash screen">
-          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
+        <div id="boot-shell-card" aria-label="Ctrl splash screen">
+          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="Ctrl" />
+          <script>
+            try {
+              var storedClientSettings = JSON.parse(
+                localStorage.getItem("t3code:client-settings:v1") || "null",
+              );
+              var storedAppIcon = storedClientSettings && storedClientSettings.appIcon;
+              if (storedAppIcon === "outline" || storedAppIcon === "mac") {
+                document.getElementById("boot-shell-logo").src =
+                  "/app-icons/" + storedAppIcon + "/apple-touch-icon.png";
+              }
+            } catch (error) {}
+          </script>
         </div>
       </div>
     </div>
