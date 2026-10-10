@@ -31,11 +31,13 @@ export default Effect.gen(function* () {
   `;
 
   // Thread group events join the application log. Replay reads it with
-  // INDEXED BY this partial index, so the index must cover the new kind and
+  // INDEXED BY this partial index, so it must cover the new kind and
   // OrchestrationEventStore's filter must repeat this WHERE term for term.
-  yield* sql`DROP INDEX IF EXISTS idx_orchestration_events_application_high_water`;
+  // The old idx_orchestration_events_application_high_water stays as it was:
+  // older builds name it with INDEXED BY and its original WHERE, and SQLite
+  // fails their queries ("no query solution") if its predicate changes.
   yield* sql`
-    CREATE INDEX idx_orchestration_events_application_high_water
+    CREATE INDEX IF NOT EXISTS idx_orchestration_events_application_high_water_v2
     ON orchestration_events(sequence)
     WHERE aggregate_kind IN ('project', 'thread-group')
       OR (application_event_version = 2 AND aggregate_kind = 'thread')

@@ -40,9 +40,39 @@ layer("061_ThreadGroups", (it) => {
       );
       const indexes = yield* sql<{ readonly sql: string }>`
         SELECT sql FROM sqlite_master
-        WHERE type = 'index' AND name = 'idx_orchestration_events_application_high_water'
+        WHERE type = 'index' AND name = 'idx_orchestration_events_application_high_water_v2'
       `;
       assert.include(indexes[0]?.sql ?? "", "'thread-group'");
+    }),
+  );
+
+  it.effect("keeps the old application index so older builds still plan their queries", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 61 });
+
+      const indexes = yield* sql<{ readonly sql: string }>`
+        SELECT sql FROM sqlite_master
+        WHERE type = 'index' AND name = 'idx_orchestration_events_application_high_water'
+      `;
+      const definition = indexes[0]?.sql ?? "";
+      assert.include(definition, "WHERE aggregate_kind = 'project'");
+      assert.notInclude(definition, "'thread-group'");
+
+      // The query an older build runs; SQLite rejects it if the index predicate changed.
+      const plan = yield* sql<{ readonly detail: string }>`
+        EXPLAIN QUERY PLAN
+        SELECT sequence
+        FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water
+        WHERE aggregate_kind = 'project'
+          OR (application_event_version = 2 AND aggregate_kind = 'thread')
+        ORDER BY sequence DESC
+        LIMIT 1
+      `;
+      assert.match(
+        plan.map((row) => row.detail).join("\n"),
+        /USING (COVERING )?INDEX idx_orchestration_events_application_high_water\b/,
+      );
     }),
   );
 });

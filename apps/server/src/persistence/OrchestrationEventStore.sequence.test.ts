@@ -255,7 +255,7 @@ it.effect("uses indexed high-water lookups for populated history without OR scan
     );
     assert.match(
       applicationPlan.map((row) => row.detail).join("\n"),
-      /SEARCH orchestration_events USING INDEX idx_orchestration_events_application_high_water/,
+      /SEARCH orchestration_events USING INDEX idx_orchestration_events_application_high_water_v2\b/,
     );
     assert.match(
       agentPlan.map((row) => row.detail).join("\n"),

@@ -355,7 +355,7 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 const makeEventStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const committedEvents = yield* PubSub.unbounded<ApplicationStoredEvent>();
-  // Repeats the WHERE of idx_orchestration_events_application_high_water
+  // Repeats the WHERE of idx_orchestration_events_application_high_water_v2
   // (migration 061) term for term; INDEXED BY fails on any other shape.
   const applicationEventFilter = sql`aggregate_kind IN ('project', 'thread-group')
     OR (application_event_version = 2 AND aggregate_kind = 'thread')`;
@@ -560,7 +560,7 @@ const makeEventStore = Effect.gen(function* () {
           ? sql`INDEXED BY idx_orch_events_command_id`
           : input.onlyAgentEvents === true
             ? sql``
-            : sql`INDEXED BY idx_orchestration_events_application_high_water`
+            : sql`INDEXED BY idx_orchestration_events_application_high_water_v2`
       }
       WHERE sequence > ${input.afterSequence}
         AND sequence <= ${input.throughSequence ?? Number.MAX_SAFE_INTEGER}
@@ -725,7 +725,7 @@ const makeEventStore = Effect.gen(function* () {
       SELECT
         COUNT(*) AS "eventCount",
         COALESCE(SUM(octet_length(payload_json)), 0) AS "rawPayloadBytes"
-      FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water
+      FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water_v2
       WHERE sequence > ${input.afterSequence}
         AND sequence <= ${input.throughSequence}
         AND (${applicationEventFilter})
@@ -759,7 +759,7 @@ const makeEventStore = Effect.gen(function* () {
   // The OR planner otherwise scans every V2 event instead of seeking the final sequence.
   const latestApplicationSequence = sql<{ readonly sequence: number | null }>`
     SELECT MAX(sequence) AS sequence
-    FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water
+    FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water_v2
     WHERE ${applicationEventFilter}
   `.pipe(
     Effect.map((rows) => rows[0]?.sequence ?? 0),
