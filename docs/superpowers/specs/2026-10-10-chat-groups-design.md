@@ -221,3 +221,21 @@ application aggregate kind, `thread-group`, built the same way projects are
 3. Chat header and Group panel (without Running).
 4. Handoff and the MCP tools.
 5. Running: server attribution, then Docker, then manual resources.
+
+## Follow-ups recorded after Plan 1 (data foundation)
+
+Plan 1 shipped the data layer. Its reviews left these requirements for later plans:
+
+- **Plan 2 (sidebar/header/panel):** a thread whose `groupId` points at a deleted or unknown group
+  renders as ungrouped; subagents never appear in group member lists; `create`/`moveThread` should
+  reject subagent thread ids (today they succeed with no visible effect); surface specific errors
+  from `threadGroups.mutate` instead of the generic "Failed to change the thread group.";
+  check whether moving a chat bumping its `updatedAt` affects sidebar sort order.
+- **Plan 4 (handoff/new chat in group/AI tools):** launch-into-group, new-chat-in-group and handoff
+  must go through a ThreadGroupService helper that holds the group lock (today `launchThread` with a
+  `groupId` checks the group without the lock, so a concurrent delete/prune can leave a thread
+  pointing at a deleted group); the reuse-existing-thread path must prune the thread's old group;
+  move the launch group check after the receipt short-circuit so retries stay idempotent; decide and
+  test the fork rule (forks currently keep the source's `groupId` and clear handoff links).
+- **Later migration:** the original `idx_orchestration_events_application_high_water` index is kept
+  only so older builds can open the same database; drop it once that no longer matters.
