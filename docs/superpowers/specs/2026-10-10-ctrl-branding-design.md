@@ -65,3 +65,14 @@ Reference mockup: `docs/superpowers/specs/2026-10-10-ctrl-branding/variants.html
 - Desktop: test that the dock/window icon is applied for each choice.
 - `vp run icons:check` passes after export.
 - Visual check of sidebar/onboarding/settings in the dev web app for each choice.
+
+## README and repository presentation
+
+- Rewrite the top of `README.md` for Ctrl: the solid keycap logo, the name, a one-line description,
+  and a prominent, warm note that Ctrl is a personal fork of [T3 Code](https://github.com/pingdotgg/t3code)
+  built on the T3 team's work, linking upstream and keeping its license and attribution intact.
+  Keep upstream's install/contribution content below, adjusted where it would mislead (e.g. the
+  `curl t3.codes` installer installs official T3 Code, not Ctrl; say so).
+- Generate a 1280×640 GitHub social-preview PNG (keycap + "Ctrl" + "a fork of T3 Code") at
+  `assets/social-preview.png`. GitHub has no API for social previews; the user uploads it in
+  Settings → General → Social preview.
