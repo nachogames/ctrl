@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 /** Build the regular navigation shell without duplicating the archive dataset. */
 export function buildActiveShellSnapshot(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
+  readonly groups: ReadonlyArray<OrchestrationThreadGroupShell>;
   readonly threads: OrchestrationV2ThreadShellSnapshot;
   readonly snapshotSequence: number;
 }): OrchestrationV2ShellSnapshot {
@@ -29,21 +30,23 @@ export function buildActiveShellSnapshot(input: {
     schemaVersion: input.threads.schemaVersion,
     snapshotSequence: input.snapshotSequence,
     projects: input.projects,
+    groups: input.groups,
     threads: input.threads.threads,
     archivedThreads: [],
   };
 }
 
 /**
- * Loads the thread shell, projects and sequence for the shell snapshots.
+ * Loads the thread shell, projects, groups and sequence for the shell snapshots.
  * One transaction covers the reads so they agree; the threads are decoded
  * after it commits, because the server shares one SQLite connection and
  * decoding a large shell takes longer than reading it.
  */
-export const loadShellSnapshotParts = <E1, E2, E3, E4>(input: {
+export const loadShellSnapshotParts = <E1, E2, E3, E4, E5>(input: {
   readonly sql: SqlClient.SqlClient;
   readonly readThreads: Effect.Effect<Effect.Effect<OrchestrationV2ThreadShellSnapshot, E2>, E1>;
   readonly listProjects: Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, E3>;
+  readonly listGroups: Effect.Effect<ReadonlyArray<OrchestrationThreadGroupShell>, E5>;
   readonly latestSequence: Effect.Effect<number, E4>;
 }) =>
   Effect.gen(function* () {
@@ -51,11 +54,13 @@ export const loadShellSnapshotParts = <E1, E2, E3, E4>(input: {
       Effect.all({
         decodeThreads: input.readThreads,
         projects: input.listProjects,
+        groups: input.listGroups,
         snapshotSequence: input.latestSequence,
       }),
     );
     return {
       projects: read.projects,
+      groups: read.groups,
       threads: yield* read.decodeThreads,
       snapshotSequence: read.snapshotSequence,
     };
@@ -195,6 +200,7 @@ export function shellStreamItemFromEnrichmentRefresh(input: {
       projects: input.snapshot.projects.filter((project) =>
         resolvedRepositoryIdentityRoots.includes(project.workspaceRoot),
       ),
+      groups: [],
       threads: [],
       archivedThreads: [],
     },
@@ -226,6 +232,7 @@ export function shellStreamItemsFromInitialSnapshot(input: {
         projects: input.snapshot.projects.filter((project) =>
           input.resolvedRepositoryIdentityRoots.includes(project.workspaceRoot),
         ),
+        groups: [],
         threads: [],
         archivedThreads: [],
       },

@@ -65,9 +65,11 @@ describe("buildActiveShellSnapshot", () => {
       archivedAt: "2026-07-30T00:00:00.000Z" as never,
     });
 
+    const group = { id: "group-1" } as OrchestrationThreadGroupShell;
     expect(
       buildActiveShellSnapshot({
         projects: [],
+        groups: [group],
         threads: {
           schemaVersion: 1,
           snapshotSequence: 4,
@@ -80,6 +82,7 @@ describe("buildActiveShellSnapshot", () => {
       schemaVersion: 1,
       snapshotSequence: 7,
       projects: [],
+      groups: [group],
       threads: [active],
       archivedThreads: [],
     });
@@ -134,16 +137,19 @@ describe("loadShellSnapshotParts", () => {
           }),
         ),
         listProjects: step("list projects", []),
+        listGroups: step("list groups", []),
         latestSequence: step("latest sequence", 7),
       });
 
       expect(steps).toEqual([
         "read threads:in transaction",
         "list projects:in transaction",
+        "list groups:in transaction",
         "latest sequence:in transaction",
         "decode threads:out of transaction",
       ]);
       expect(snapshot.snapshotSequence).toBe(7);
+      expect(snapshot.groups).toEqual([]);
       expect(snapshot.threads.threads).toEqual([thread]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
@@ -277,9 +283,20 @@ describe("shellStreamItemFromEnrichmentRefresh", () => {
       }),
     ).toEqual({
       kind: "snapshot",
-      snapshot: emptyShellSnapshot,
+      snapshot: { ...emptyShellSnapshot, groups: [] },
       resolvedRepositoryIdentityRoots: ["/workspace/a", "/workspace/b"],
     });
+  });
+
+  it("keeps groups out of the metadata-only frame", () => {
+    const item = shellStreamItemFromEnrichmentRefresh({
+      snapshot: {
+        ...emptyShellSnapshot,
+        groups: [{ id: "group-1" }],
+      } as unknown as OrchestrationV2ShellSnapshot,
+      changes: [{ workspaceRoot: "/workspace/a" }],
+    });
+    expect(item.snapshot.groups).toEqual([]);
   });
 });
 
@@ -291,6 +308,7 @@ describe("shellStreamItemsFromInitialSnapshot", () => {
         { id: "project-a", workspaceRoot: "/workspace/a" },
         { id: "project-b", workspaceRoot: "/workspace/b" },
       ],
+      groups: [{ id: "group-1" }],
       threads: [shellFixture({})],
       archivedThreads: [shellFixture({ id: ThreadId.make("thread-archived"), archivedAt: null })],
     } as unknown as OrchestrationV2ShellSnapshot;
@@ -305,6 +323,7 @@ describe("shellStreamItemsFromInitialSnapshot", () => {
       kind: "snapshot",
       snapshot: {
         projects: [{ id: "project-a", workspaceRoot: "/workspace/a" }],
+        groups: [],
         threads: [],
         archivedThreads: [],
       },
@@ -328,7 +347,7 @@ describe("shellStreamItemsFromInitialSnapshot", () => {
       { kind: "snapshot", snapshot },
       {
         kind: "snapshot",
-        snapshot,
+        snapshot: { ...snapshot, groups: [] },
         resolvedRepositoryIdentityRoots: ["/workspace/a"],
       },
     ]);

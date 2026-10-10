@@ -973,6 +973,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
           sql,
           readThreads: threadManagement.readShellSnapshot({ location: "active" }),
           listProjects: projects.listShells(),
+          listGroups: threadGroups.listShells(),
           latestSequence: applicationEvents.latestApplicationSequence,
         }),
       );
@@ -1759,6 +1760,7 @@ const layerWsRpc = (
           sql,
           readThreads: threadManagement.readShellSnapshot({ location: "archive" }),
           listProjects: projectStore.listShells(),
+          listGroups: Effect.succeed([]),
           latestSequence: applicationEvents.latestApplicationSequence,
         });
         return {
