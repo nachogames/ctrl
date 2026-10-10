@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./appHome": {
+      "types": "./src/appHome.ts",
+      "import": "./src/appHome.ts"
+    },
     "./authScopeOptions": {
       "types": "./src/authScopeOptions.ts",
       "import": "./src/authScopeOptions.ts"
