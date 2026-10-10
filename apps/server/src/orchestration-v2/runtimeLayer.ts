@@ -1,3 +1,4 @@
+import * as ThreadGroupPruneWorker from "./ThreadGroupPruneWorker.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -359,6 +360,9 @@ export const layerProduction = Layer.mergeAll(
   layer.pipe(Layer.provide(layerProjectService)),
   layerProjectService,
   layerThreadGroupService,
+  ThreadGroupPruneWorker.layer.pipe(
+    Layer.provide(Layer.merge(layerThreadGroupService, layerEventSinkProvided)),
+  ),
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
   layerThreadLifecycleProvided,
