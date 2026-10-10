@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 
-// Renders the Android launcher and splash artwork from the Icon Composer SVG sources.
+// Renders the Android launcher and splash artwork from the shared keycap artwork and the
+// Icon Composer background sources.
 //
 // Icon Composer exports already contain a rounded-square silhouette, and Android masks
 // the central 72dp of a 108dp adaptive canvas, so exporting them as a foreground produces
-// a double-framed icon with the letters cropped by the mask. Instead, each variant gets a
-// full-bleed background layer (the artwork behind the wordmark) and a shared transparent
-// foreground that keeps the wordmark inside the safe zone.
+// a double-framed icon with the keycap cropped by the mask. Instead, each variant gets a
+// full-bleed background layer (the artwork behind the keycap mark) and a transparent
+// foreground per design that keeps the keycap inside the safe zone.
 //
 // The Android 12+ splash screen masks its icon to a circle covering the central two thirds
 // of a 288dp canvas, which is the same proportion the launcher crops. Composing the two
-// adaptive layers into one 288dp image therefore makes the splash frame the wordmark
+// adaptive layers into one 288dp image therefore makes the splash frame the keycap
 // exactly like the launcher icon does.
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -22,18 +23,28 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import sharp from "sharp";
 
+import { APP_ICON_ARTWORK } from "@t3tools/shared/appIcons";
+import { renderAppIconPaths, type AppIconShape } from "@t3tools/shared/appIconArtwork";
+
+import {
+  APP_ICON_DESIGNS,
+  resolveAndroidAppIconAssetPaths,
+  type AppIconDesign,
+} from "./lib/brand-assets.ts";
+
 type IconVariant = "dev" | "nightly" | "prod";
 
 // 108dp at xxxhdpi. Expo's prebuild derives every launcher density bucket from this.
 const ADAPTIVE_CANVAS = 432;
 // 288dp at xxxhdpi: the full Android 12+ splash canvas, so the icon needs no upscaling.
 const SPLASH_CANVAS = 1152;
-// Icon Composer's layer sources use a 128pt viewBox; the wordmark path spans this box.
-const TEXT = { x: 15.53, y: 37, width: 94.5, height: 57 };
-// Wordmark width as a fraction of the 108dp canvas. The visible area is 72dp (66dp
-// guaranteed), so 0.48 leaves the letters at ~72% of the mask with room for the
-// launcher's own zoom effects.
-const WORDMARK_FRACTION = 0.48;
+// The keycap occupies 16..112 of the 128-unit layer grid.
+const MARK_BOX = { x: 16, y: 16, size: 96 };
+// Keycap width as a fraction of the 108dp canvas: 54dp inside the 66dp guaranteed safe zone.
+const MARK_FRACTION = 0.5;
+// Android's monochrome and notification icons are flat silhouettes and may run larger.
+const NOTIFICATION_CANVAS = 96;
+const NOTIFICATION_FRACTION = 0.9;
 // Icon Composer positions layers on a 1024pt canvas, with translation relative to center.
 const COMPOSER_CANVAS_PT = 1024;
 const SVG_DENSITY = 300;
@@ -46,11 +57,10 @@ export class AndroidIconRenderError extends Schema.TaggedError<AndroidIconRender
   { layer: Schema.String, cause: Schema.Defect() },
 ) {}
 
-const wordmarkTransform = (size: number) => {
-  const scale = (size * WORDMARK_FRACTION) / TEXT.width;
-  const tx = (size - TEXT.width * scale) / 2 - TEXT.x * scale;
-  const ty = (size - TEXT.height * scale) / 2 - TEXT.y * scale;
-  return `translate(${tx.toFixed(3)} ${ty.toFixed(3)}) scale(${scale.toFixed(4)})`;
+export const markTransform = (size: number, fraction: number) => {
+  const scale = (size * fraction) / MARK_BOX.size;
+  const offset = (size - MARK_BOX.size * scale) / 2 - MARK_BOX.x * scale;
+  return `translate(${offset.toFixed(3)} ${offset.toFixed(3)}) scale(${scale.toFixed(4)})`;
 };
 
 const canvasSvg = (size: number, inner: string) =>
@@ -103,23 +113,38 @@ const readLayerSource = Effect.fn("androidIcons.readLayerSource")(function* (
   );
 });
 
-const renderForeground = Effect.fn("androidIcons.renderForeground")(function* (
-  repositoryRoot: string,
-  size: number,
-) {
-  const text = yield* readLayerSource(repositoryRoot, "prod", "text.svg");
-  const paths = text.match(/<path[^>]*\/>/g) ?? [];
-  return yield* rasterize(
-    "foreground",
-    canvasSvg(size, `<g transform="${wordmarkTransform(size)}">${paths.join("")}</g>`),
+const shapesMarkup = (shapes: ReadonlyArray<AppIconShape>, currentColor?: string) =>
+  renderAppIconPaths(shapes, currentColor === undefined ? {} : { currentColor })
+    .split("\n")
+    .join("");
+
+const renderMark = (layer: string, shapes: string, size: number, fraction: number) =>
+  rasterize(
+    layer,
+    canvasSvg(size, `<g transform="${markTransform(size, fraction)}">${shapes}</g>`),
     size,
   );
-});
+
+const renderForeground = (design: AppIconDesign, size: number) =>
+  renderMark(
+    `foreground-${design}`,
+    shapesMarkup(APP_ICON_ARTWORK[design].color),
+    size,
+    MARK_FRACTION,
+  );
+
+const renderMonochrome = (design: AppIconDesign, size: number) =>
+  renderMark(
+    `monochrome-${design}`,
+    shapesMarkup(APP_ICON_ARTWORK[design].mono, "#FFFFFF"),
+    size,
+    MARK_FRACTION,
+  );
 
 const renderDevelopmentBackground = Effect.fn("androidIcons.renderDevelopmentBackground")(
   function* (repositoryRoot: string, size: number) {
-    // The annotation layer shares the wordmark's coordinate space, so it is scaled and
-    // centered the same way to keep the dimension lines around the letters.
+    // The annotation layer shares the keycap's coordinate space, so it is scaled and
+    // centered the same way to keep the dimension lines around the keycap.
     const annotations = yield* readLayerSource(repositoryRoot, "dev", "annotations.svg");
     const defs = annotations.match(/<defs>[\s\S]*?<\/defs>/)?.[0] ?? "";
     const body = annotations.replace(/^[\s\S]*?<\/defs>/, "").replace(/<\/svg>\s*$/, "");
@@ -127,7 +152,7 @@ const renderDevelopmentBackground = Effect.fn("androidIcons.renderDevelopmentBac
     const background = yield* rasterize("dev-background", fullBleed(paper), size);
     const overlay = yield* rasterize(
       "dev-annotations",
-      canvasSvg(size, `${defs}<g transform="${wordmarkTransform(size)}">${body}</g>`),
+      canvasSvg(size, `${defs}<g transform="${markTransform(size, MARK_FRACTION)}">${body}</g>`),
       size,
     );
     return yield* composite("dev-background", background, [{ input: overlay }]);
@@ -202,16 +227,40 @@ const renderSplashIcon = Effect.fn("androidIcons.renderSplashIcon")(function* (
   variant: IconVariant,
 ) {
   const background = yield* renderBackground(repositoryRoot, variant, SPLASH_CANVAS);
-  const foreground = yield* renderForeground(repositoryRoot, SPLASH_CANVAS);
+  const foreground = yield* renderForeground("solid", SPLASH_CANVAS);
   return yield* composite(`${variant}-splash`, background, [{ input: foreground }]);
 });
 
-const exportAndroidIcons = Effect.gen(function* () {
+export const exportAndroidIcons = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const repositoryRoot = path.resolve(import.meta.dirname, "..");
+  const designOutputs = yield* Effect.forEach(APP_ICON_DESIGNS, (design) =>
+    Effect.gen(function* () {
+      const paths = resolveAndroidAppIconAssetPaths(design);
+      return [
+        [
+          paths.foreground.replace("./assets/", ""),
+          yield* renderForeground(design, ADAPTIVE_CANVAS),
+        ],
+        [
+          paths.monochrome.replace("./assets/", ""),
+          yield* renderMonochrome(design, ADAPTIVE_CANVAS),
+        ],
+      ] as const;
+    }),
+  );
   const outputs = [
-    ["android-icon-foreground.png", yield* renderForeground(repositoryRoot, ADAPTIVE_CANVAS)],
+    ...designOutputs.flat(),
+    [
+      "android-notification-icon.png",
+      yield* renderMark(
+        "notification",
+        shapesMarkup(APP_ICON_ARTWORK.solid.mono, "#FFFFFF"),
+        NOTIFICATION_CANVAS,
+        NOTIFICATION_FRACTION,
+      ),
+    ],
     [
       "android-icon-background-dev.png",
       yield* renderDevelopmentBackground(repositoryRoot, ADAPTIVE_CANVAS),
