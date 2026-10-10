@@ -31,6 +31,106 @@ export const BRAND_ASSET_PATHS = {
   developmentWebAppleTouchIconPng: "assets/dev/blueprint-web-apple-touch-180.png",
 } as const;
 
+export const APP_ICON_DESIGNS = ["outline", "solid", "mac"] as const;
+export type AppIconDesign = (typeof APP_ICON_DESIGNS)[number];
+export type IconBrand = WebAssetBrand;
+
+export interface AppIconDesignAssetPaths {
+  readonly iconComposerProject: string;
+  readonly iosPng: string;
+  readonly macPng: string;
+  readonly universalPng: string;
+  readonly windowsIco: string;
+  /** Only the bundled (solid) design ships a favicon.ico; live swaps use PNG links. */
+  readonly webFaviconIco: string | null;
+  readonly webFavicon16Png: string;
+  readonly webFavicon32Png: string;
+  readonly webAppleTouchPng: string;
+}
+
+const SOLID_ASSET_PATHS: Record<IconBrand, AppIconDesignAssetPaths> = {
+  development: {
+    iconComposerProject: BRAND_ASSET_PATHS.developmentIconComposerProject,
+    iosPng: BRAND_ASSET_PATHS.developmentIosIconPng,
+    macPng: BRAND_ASSET_PATHS.developmentDesktopIconPng,
+    universalPng: BRAND_ASSET_PATHS.developmentUniversalIconPng,
+    windowsIco: BRAND_ASSET_PATHS.developmentWindowsIconIco,
+    webFaviconIco: BRAND_ASSET_PATHS.developmentWebFaviconIco,
+    webFavicon16Png: BRAND_ASSET_PATHS.developmentWebFavicon16Png,
+    webFavicon32Png: BRAND_ASSET_PATHS.developmentWebFavicon32Png,
+    webAppleTouchPng: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
+  },
+  nightly: {
+    iconComposerProject: BRAND_ASSET_PATHS.nightlyIconComposerProject,
+    iosPng: BRAND_ASSET_PATHS.nightlyIosIconPng,
+    macPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
+    universalPng: BRAND_ASSET_PATHS.nightlyLinuxIconPng,
+    windowsIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
+    webFaviconIco: BRAND_ASSET_PATHS.nightlyWebFaviconIco,
+    webFavicon16Png: BRAND_ASSET_PATHS.nightlyWebFavicon16Png,
+    webFavicon32Png: BRAND_ASSET_PATHS.nightlyWebFavicon32Png,
+    webAppleTouchPng: BRAND_ASSET_PATHS.nightlyWebAppleTouchIconPng,
+  },
+  production: {
+    iconComposerProject: BRAND_ASSET_PATHS.productionIconComposerProject,
+    iosPng: BRAND_ASSET_PATHS.productionIosIconPng,
+    macPng: BRAND_ASSET_PATHS.productionMacIconPng,
+    universalPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
+    windowsIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
+    webFaviconIco: BRAND_ASSET_PATHS.productionWebFaviconIco,
+    webFavicon16Png: BRAND_ASSET_PATHS.productionWebFavicon16Png,
+    webFavicon32Png: BRAND_ASSET_PATHS.productionWebFavicon32Png,
+    webAppleTouchPng: BRAND_ASSET_PATHS.productionWebAppleTouchIconPng,
+  },
+};
+
+const BRAND_DIRECTORY: Record<IconBrand, string> = {
+  development: "assets/dev",
+  nightly: "assets/nightly",
+  production: "assets/prod",
+};
+const BRAND_FILE_PREFIX: Record<IconBrand, string> = {
+  development: "blueprint",
+  nightly: "nightly",
+  production: "black",
+};
+
+export function resolveAppIconDesignAssetPaths(
+  brand: IconBrand,
+  design: AppIconDesign,
+): AppIconDesignAssetPaths {
+  if (design === "solid") return SOLID_ASSET_PATHS[brand];
+  const directory = BRAND_DIRECTORY[brand];
+  const stem = `${directory}/${BRAND_FILE_PREFIX[brand]}-${design}`;
+  return {
+    iconComposerProject: `${directory}/app-icon-${design}.icon`,
+    iosPng: `${stem}-ios-1024.png`,
+    macPng: `${stem}-macos-1024.png`,
+    universalPng: `${stem}-ios-1024.png`,
+    windowsIco: `${stem}-windows.ico`,
+    webFaviconIco: null,
+    webFavicon16Png: `${stem}-web-favicon-16x16.png`,
+    webFavicon32Png: `${stem}-web-favicon-32x32.png`,
+    webAppleTouchPng: `${stem}-web-apple-touch-180.png`,
+  };
+}
+
+/** Android launcher layers, relative to apps/mobile. Solid keeps Expo's adaptive icon files. */
+export function resolveAndroidAppIconAssetPaths(design: AppIconDesign): {
+  readonly foreground: string;
+  readonly monochrome: string;
+} {
+  return design === "solid"
+    ? {
+        foreground: "./assets/android-icon-foreground.png",
+        monochrome: "./assets/android-icon-mark.png",
+      }
+    : {
+        foreground: `./assets/android-icon-foreground-${design}.png`,
+        monochrome: `./assets/android-icon-mark-${design}.png`,
+      };
+}
+
 export type WebAssetBrand = "development" | "nightly" | "production";
 
 export const WEB_ASSET_CHANNELS = ["latest", "nightly"] as const;
@@ -100,6 +200,24 @@ export function resolveWebIconOverrides(
       sourceRelativePath: sourcePaths.appleTouchIconPng,
       targetRelativePath: `${targetDirectory}/${WEB_ICON_TARGET_FILENAMES.appleTouchIconPng}`,
     },
+    ...APP_ICON_DESIGNS.flatMap((design) => {
+      const paths = resolveAppIconDesignAssetPaths(brand, design);
+      const target = `${targetDirectory}/app-icons/${design}`;
+      return [
+        {
+          sourceRelativePath: paths.webFavicon16Png,
+          targetRelativePath: `${target}/favicon-16x16.png`,
+        },
+        {
+          sourceRelativePath: paths.webFavicon32Png,
+          targetRelativePath: `${target}/favicon-32x32.png`,
+        },
+        {
+          sourceRelativePath: paths.webAppleTouchPng,
+          targetRelativePath: `${target}/apple-touch-icon.png`,
+        },
+      ];
+    }),
   ];
 }
 
