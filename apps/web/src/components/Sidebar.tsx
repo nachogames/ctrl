@@ -185,6 +185,7 @@ import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
+  resolveSidebarEnvironmentScope,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
@@ -2404,13 +2405,7 @@ export default function Sidebar() {
   const environments = useEnvironmentIdentities();
   const storedEnvironmentScopeId = useUiStateStore((store) => store.sidebarEnvironmentScopeId);
   const setEnvironmentScopeId = useUiStateStore((store) => store.setSidebarEnvironmentScopeId);
-  // The machine filter applies only while that machine is still saved and
-  // there is more than one; otherwise the sidebar shows everything.
-  const environmentScopeId =
-    environments.length > 1 &&
-    environments.some((environment) => environment.environmentId === storedEnvironmentScopeId)
-      ? (storedEnvironmentScopeId as EnvironmentId)
-      : null;
+  const environmentScopeId = resolveSidebarEnvironmentScope(environments, storedEnvironmentScopeId);
   const projects = useMemo(
     () =>
       environmentScopeId === null
@@ -2715,11 +2710,24 @@ export default function Sidebar() {
   // only after every catalog environment has a live project snapshot. Cached
   // or disconnected environments cannot establish that the project is gone.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
+  // Under a machine filter the project may just live on another machine, so
+  // the scope only goes inactive there and is checked again under All.
   useEffect(() => {
-    if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
+    if (
+      projectScopeKey !== null &&
+      environmentScopeId === null &&
+      allProjectSnapshotsReady &&
+      scopedProjectGroup === null
+    ) {
       setProjectScopeKey(null);
     }
-  }, [allProjectSnapshotsReady, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+  }, [
+    allProjectSnapshotsReady,
+    environmentScopeId,
+    projectScopeKey,
+    scopedProjectGroup,
+    setProjectScopeKey,
+  ]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -2949,7 +2957,14 @@ export default function Sidebar() {
     ],
     [activeThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads],
   );
-  const searchEnvironmentIds = useConnectedEnvironmentIds();
+  const connectedEnvironmentIds = useConnectedEnvironmentIds();
+  const searchEnvironmentIds = useMemo(
+    () =>
+      environmentScopeId === null
+        ? connectedEnvironmentIds
+        : connectedEnvironmentIds.filter((environmentId) => environmentId === environmentScopeId),
+    [connectedEnvironmentIds, environmentScopeId],
+  );
   // useThreadSearch owns the debounce and the two-character floor.
   const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
   const threadSearchMatchByKey = useMemo(
@@ -4993,10 +5008,25 @@ export default function Sidebar() {
       // the palette picker.
       if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
         if (isMobile) setOpenMobile(false);
+        // Under a machine filter, context from another machine (a thread
+        // opened from a notification, say) must not pull the new thread there.
+        const onScopedMachine = (environmentId: EnvironmentId) =>
+          environmentScopeId === null || environmentId === environmentScopeId;
+        const { activeDraftThread, activeThread } = newThreadContext;
+        const scopedDefaultProjectRef = projectGroups[0]?.memberProjectRefs.find((projectRef) =>
+          onScopedMachine(projectRef.environmentId),
+        );
         void startNewThreadFromContext({
-          activeDraftThread: newThreadContext.activeDraftThread,
-          activeThread: newThreadContext.activeThread ?? undefined,
-          defaultProjectRef: newThreadContext.defaultProjectRef,
+          activeDraftThread:
+            activeDraftThread && onScopedMachine(activeDraftThread.environmentId)
+              ? activeDraftThread
+              : null,
+          activeThread:
+            activeThread && onScopedMachine(activeThread.environmentId) ? activeThread : undefined,
+          defaultProjectRef:
+            environmentScopeId === null
+              ? newThreadContext.defaultProjectRef
+              : (scopedDefaultProjectRef ?? null),
           handleNewThread: newThreadContext.handleNewThread,
         });
         return;
@@ -5004,7 +5034,7 @@ export default function Sidebar() {
       if (isMobile) setOpenMobile(false);
       openCommandPalette({ open: "new-thread-in" });
     },
-    [isMobile, newThreadContext, projectGroups.length, setOpenMobile],
+    [environmentScopeId, isMobile, newThreadContext, projectGroups, setOpenMobile],
   );
 
   // The button mirrors chat.new: in multi-project setups both route through
@@ -5641,7 +5671,20 @@ export default function Sidebar() {
             settledThreads.length ===
             0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
+              {projects.length === 0 && environmentScopeId !== null ? (
+                <>
+                  <span>
+                    No projects on {environmentLabelById.get(environmentScopeId) ?? "this machine"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setEnvironmentScopeId(null)}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                  >
+                    Show all machines
+                  </button>
+                </>
+              ) : projects.length === 0 ? (
                 <>
                   <span>No projects yet</span>
                   <button
