@@ -2555,6 +2555,10 @@ export default function Sidebar() {
       }),
     [projectOrder, projects],
   );
+  // Read at click time by New thread, which defaults to the top project of
+  // the filtered machine in the same manual order the shortcut uses.
+  const orderedProjectsRef = useRef(orderedProjects);
+  orderedProjectsRef.current = orderedProjects;
   const unsortedProjectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
@@ -5017,7 +5021,12 @@ export default function Sidebar() {
               handleNewThread: newThreadContext.handleNewThread,
             },
             environmentScopeId,
-            projectGroupsRef.current[0]?.memberProjectRefs[0] ?? null,
+            orderedProjectsRef.current[0]
+              ? scopeProjectRef(
+                  orderedProjectsRef.current[0].environmentId,
+                  orderedProjectsRef.current[0].id,
+                )
+              : null,
           ),
         );
         return;

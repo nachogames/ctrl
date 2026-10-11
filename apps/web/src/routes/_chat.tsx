@@ -17,6 +17,7 @@ import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useScratchProject } from "../hooks/useScratchProject";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { scopeThreadActionContext, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { resolveSidebarEnvironmentScope } from "../components/Sidebar.logic";
 import { useUiStateStore } from "../uiStateStore";
@@ -35,8 +36,14 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
-  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
-    useHandleNewThread();
+  const {
+    activeDraftThread,
+    activeThread,
+    defaultProjectRef,
+    handleNewThread,
+    orderedProjects,
+    routeThreadRef,
+  } = useHandleNewThread();
   const canOperatePreview = useEnvironmentScope(
     routeThreadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
@@ -68,6 +75,15 @@ function ChatRouteGlobalShortcuts() {
     [environmentScopeId, primaryEnvironmentId, projectGroupingSettings, projects],
   );
   const projectGroupCount = projectGroups.length;
+  // Same manual order as the unfiltered default, so the shortcut and the
+  // sidebar button pick the same project.
+  const scopedDefaultProjectRef = useMemo(() => {
+    if (environmentScopeId === null) return null;
+    const project = orderedProjects.find(
+      (candidate) => candidate.environmentId === environmentScopeId,
+    );
+    return project ? scopeProjectRef(project.environmentId, project.id) : null;
+  }, [environmentScopeId, orderedProjects]);
   const newThreadContext = useMemo(
     () =>
       scopeThreadActionContext(
@@ -78,7 +94,7 @@ function ChatRouteGlobalShortcuts() {
           handleNewThread,
         },
         environmentScopeId,
-        projectGroups[0]?.memberProjectRefs[0] ?? null,
+        scopedDefaultProjectRef,
       ),
     [
       activeDraftThread,
@@ -86,7 +102,7 @@ function ChatRouteGlobalShortcuts() {
       defaultProjectRef,
       environmentScopeId,
       handleNewThread,
-      projectGroups,
+      scopedDefaultProjectRef,
     ],
   );
   const terminalOpen = useTerminalUiStateStore((state) =>
@@ -144,7 +160,10 @@ function ChatRouteGlobalShortcuts() {
 
       if (command === "chat.newWithoutProject") {
         const environmentId = scratchEnvironmentId(
-          activeThread?.environmentId ?? activeDraftThread?.environmentId ?? primaryEnvironmentId,
+          newThreadContext.activeThread?.environmentId ??
+            newThreadContext.activeDraftThread?.environmentId ??
+            environmentScopeId ??
+            primaryEnvironmentId,
         );
         if (environmentId === null) return;
         event.preventDefault();
@@ -217,10 +236,9 @@ function ChatRouteGlobalShortcuts() {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [
-    activeDraftThread,
-    activeThread,
     clearSelection,
     canOperatePreview,
+    environmentScopeId,
     keybindings,
     newThreadContext,
     previewOpen,

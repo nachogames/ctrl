@@ -472,6 +472,7 @@ export function useHandleNewThread() {
       ? scopeProjectRef(orderedProjects[0].environmentId, orderedProjects[0].id)
       : null,
     handleNewThread,
+    orderedProjects,
     routeDraftId,
     routeThreadRef,
   };
