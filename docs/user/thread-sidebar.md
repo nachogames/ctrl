@@ -80,8 +80,9 @@ edge to pin a thread. Section labels stay readable for the whole drag, and the s
 thread is over takes the accent color. Section labels also
 identify empty sections and a collapsed settled shelf.
 
-Drag within the pinned or active section to change its order. Other rows slide aside to show the
-spot where the thread will land. Drops into either section keep the position you choose. On
+Drag within the pinned section to change its order. Other rows slide aside to show the spot
+where the thread will land. On web and desktop, the active list is grouped by project and
+sorted by recent activity, so a thread dropped there lands at its place in that order. On
 mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
@@ -94,10 +95,10 @@ On web and desktop, the list also animates section changes made with thread acti
 preference. While dragging, rows follow the insertion gap without replaying a second transition
 after the drop.
 
-New threads appear above the active threads you have arranged. Settling clears a thread's active
-position, so using **Un-settle** returns it to the top. Pinning and snoozing preserve its active
-position until you move it again. Thread activity does not change the order. The settled shelf
-continues to use settlement time.
+On mobile, new threads appear above the active threads you have arranged. Settling clears a
+thread's active position, so using **Un-settle** returns it to the top. Pinning and snoozing
+preserve its active position until you move it again. Thread activity does not change that order.
+The settled shelf continues to use settlement time.
 
 If dragging is unavailable for one environment, update the T3 Code server running in that
 environment. Pinned and active reordering require server support. Threads from older servers keep
@@ -121,8 +122,20 @@ of the active list when it finishes, fails, or needs an approval or answer. The 
 lists the thread you last sent work to first. Pinned threads stay in the pinned section. Each
 device keeps its own choice.
 
-While this is on, the active list is ordered by when each thread last came back to you, so you
-cannot drag or move threads within it. Your saved order returns when you turn it off.
+On mobile, while this is on, the active list is ordered by when each thread last came back to
+you, so you cannot drag or move threads within it. Your saved order returns when you turn it off.
+
+### Chat groups
+
+On web and desktop, chats in a group sit under the group's row: in the active list beneath
+their project, or in **Pinned**, **Snoozed**, or **Settled** wherever the group is. Click the
+row to show or hide its chats; the group with the open chat stays open. A collapsed group shows
+its pull request number and its most urgent status, and hovering it shows how many chats it holds.
+
+Right-click a group to rename, pin, snooze, settle, or ungroup it. Settling a group settles its
+chats, and un-settling it brings them back. A group also settles on its own once every chat in it
+is settled. In a grouped chat's menu, **Pin group** and **Snooze group** act on the whole group,
+while **Settle thread** still acts on that chat. **Ungroup** keeps every chat.
 
 ## Settle finished work
 
