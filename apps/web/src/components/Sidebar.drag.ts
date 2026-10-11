@@ -12,6 +12,10 @@ import {
 const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 const hidden = { ...stationary, scaleY: 0 };
 type ThreadItem = Extract<SidebarListItem, { kind: "thread" }>;
+// Matches sidebarListItemId for project headings.
+const PROJECT_HEADING_ID_PREFIX = "sidebar-project-";
+const isUngroupedThread = (item: SidebarListItem): item is ThreadItem =>
+  item.kind === "thread" && (item.groupKey ?? null) === null;
 type Layout = Parameters<SortingStrategy>[0];
 const isShelfHeader = (item: SidebarListItem | undefined) =>
   item?.kind === "marker" &&
@@ -126,7 +130,9 @@ export function createSidebarSortingStrategy(input: {
     if (active?.kind !== "thread" || !over || !rects[0]) return [];
     const target = resolveSidebarDropTarget(items, active.key, sidebarListItemId(over));
     if (!target) return [];
-    const groups: Record<SidebarSection, ThreadItem[]> = {
+    // Every non-marker row by section, in list order. Project headings belong
+    // to Active; group rows and their members keep their section.
+    const rows: Record<SidebarSection, SidebarListItem[]> = {
       pinned: [],
       active: [],
       working: [],
@@ -135,6 +141,7 @@ export function createSidebarSortingStrategy(input: {
     };
     let cardHeight = input.cardHeight;
     let slimHeight = input.slimHeight;
+    let activeHeight: number | undefined;
     let headerScale: number | undefined;
     for (const [index, item] of items.entries()) {
       if (item.kind === "marker") {
@@ -144,34 +151,64 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
-      // Group and project-heading rows are not projected by this preview yet.
-      if (item.kind !== "thread") continue;
-      if (item.section === "pinned" || item.section === "active" || item.section === "working")
-        cardHeight ??= rects[index]?.height;
-      else slimHeight ??= rects[index]?.height;
-      if (item.key !== active.key) groups[item.section].push(item);
+      if (item.kind === "thread") {
+        const height = rects[index]?.height;
+        if (!isUngroupedThread(item)) slimHeight ??= height;
+        else if (item.section === "pinned" || item.section === "working") cardHeight ??= height;
+        else if (item.section === "active") activeHeight ??= height;
+        else slimHeight ??= height;
+        if (item.key === active.key) continue;
+      }
+      rows[item.kind === "project-heading" ? "active" : item.section].push(item);
     }
     // Cards are 4.875rem + 0.25rem padding; slim rows/placeholders are h-9.
     const scale =
       slimHeight !== undefined ? slimHeight / 36 : (headerScale ?? (cardHeight ?? 82) / 82);
     cardHeight ??= 82 * scale;
     slimHeight ??= 36 * scale;
+    // Active tree rows are slim; a measured row wins.
+    activeHeight ??= slimHeight;
     const labelHeight = (input.boundaryLabelHeight ?? 0) * scale;
-    const group = groups[target.section];
-    const order =
-      target.section === "pinned"
-        ? target.pinnedOrder
-        : target.section === "settled"
-          ? input.settledOrder
-          : (input.activeOrder ?? target.activeOrder);
-    const ranks = new Map(order.map((key, index) => [key, index]));
-    const rank = ranks.get(active.key) ?? Number.POSITIVE_INFINITY;
-    const index = group.findIndex(
-      (item) => (ranks.get(item.key) ?? Number.POSITIVE_INFINITY) > rank,
+    const moved: ThreadItem = { ...active, section: target.section };
+    if (target.section === "active" && input.activeOrder !== undefined) {
+      // A time-ordered Active section lands the row at its time slot.
+      const byId = new Map(rows.active.map((item) => [sidebarListItemId(item), item] as const));
+      rows.active = input.activeOrder.flatMap((id): SidebarListItem[] => {
+        if (id === active.key) return [moved];
+        const existing = byId.get(id);
+        if (existing) return [existing];
+        // A drop can open a project heading that is not rendered yet.
+        return id.startsWith(PROJECT_HEADING_ID_PREFIX)
+          ? [{ kind: "project-heading", key: id.slice(PROJECT_HEADING_ID_PREFIX.length) }]
+          : [];
+      });
+    } else {
+      const order =
+        target.section === "pinned"
+          ? target.pinnedOrder
+          : target.section === "settled"
+            ? input.settledOrder
+            : (input.activeOrder ?? target.activeOrder);
+      const ranks = new Map(order.map((key, index) => [key, index]));
+      const rank = ranks.get(active.key) ?? Number.POSITIVE_INFINITY;
+      // Only ungrouped chats are ranked; group rows and members stay above them.
+      const list = rows[target.section];
+      const index = list.findIndex(
+        (item) =>
+          isUngroupedThread(item) && (ranks.get(item.key) ?? Number.POSITIVE_INFINITY) > rank,
+      );
+      list.splice(index < 0 ? list.length : index, 0, moved);
+    }
+    // A heading whose last row left goes with it.
+    rows.active = rows.active.filter(
+      (item, index, list) =>
+        item.kind !== "project-heading" ||
+        (list[index + 1] !== undefined && list[index + 1]!.kind !== "project-heading"),
     );
-    group.splice(index < 0 ? group.length : index, 0, { ...active, section: target.section });
     const settledOrder = (
-      input.settledOrder.length > 0 ? input.settledOrder : groups.settled.map((item) => item.key)
+      input.settledOrder.length > 0
+        ? input.settledOrder
+        : rows.settled.flatMap((item) => (isUngroupedThread(item) ? [item.key] : []))
     ).filter((key) => key !== active.key || target.section === "settled");
     const visible = input.settledExpanded
       ? settledOrder.slice(0, input.settledVisibleCount ?? settledOrder.length)
@@ -180,39 +217,51 @@ export function createSidebarSortingStrategy(input: {
     if (routeKey && settledOrder.includes(routeKey) && !visible.includes(routeKey)) {
       visible.push(routeKey);
     }
-    groups.settled = visible.map((key) => ({ kind: "thread", key, section: "settled" }));
+    rows.settled = [
+      ...rows.settled.filter((item) => !isUngroupedThread(item)),
+      ...visible.map((key): SidebarListItem => ({ kind: "thread", key, section: "settled" })),
+    ];
     const projected: SidebarListItem[] = [];
     const marker = (name: SidebarListMarker) => projected.push({ kind: "marker", marker: name });
     const section = (name: "active" | "settled") => {
-      if (groups[name].length > 0) projected.push(...groups[name]);
+      if (rows[name].length > 0) projected.push(...rows[name]);
       else marker(`${name}-placeholder`);
     };
     marker("pinned-header");
-    projected.push(...groups.pinned);
+    projected.push(...rows.pinned);
     marker("pinned-divider");
     section("active");
     if (items.some((item) => item.kind === "marker" && item.marker === "working-header")) {
       marker("working-header");
-      projected.push(...groups.working);
+      projected.push(...rows.working);
     }
     if (
-      groups.snoozed.length > 0 ||
+      rows.snoozed.length > 0 ||
       ((active.section !== "snoozed" || (input.snoozedThreadCount ?? 0) > 1) &&
         items.some((item) => item.kind === "marker" && item.marker === "snoozed-header"))
     ) {
       marker("snoozed-header");
-      projected.push(...groups.snoozed);
+      projected.push(...rows.snoozed);
     }
     marker("settled-header");
     section("settled");
+    const fallbackHeight = (item: SidebarListItem) => {
+      switch (item.kind) {
+        case "project-heading":
+          return 28 * scale;
+        case "group":
+          return 32 * scale;
+        case "marker":
+          return slimHeight;
+        case "thread":
+          if (!isUngroupedThread(item)) return slimHeight;
+          if (item.section === "pinned" || item.section === "working") return cardHeight;
+          return item.section === "active" ? activeHeight : slimHeight;
+      }
+    };
     const heights = projected.map((item) => {
       const index = indices.get(sidebarListItemId(item));
       const rect = index === undefined ? undefined : rects[index];
-      const fallback =
-        item.kind === "thread" &&
-        (item.section === "pinned" || item.section === "active" || item.section === "working")
-          ? cardHeight
-          : slimHeight;
       const moved = item.kind === "thread" && item.key === active.key;
       return item.kind === "marker" &&
         (item.marker === "pinned-header" || item.marker === "pinned-divider")
@@ -220,8 +269,8 @@ export function createSidebarSortingStrategy(input: {
         : item.kind === "marker" && item.marker.endsWith("placeholder")
           ? slimHeight
           : moved
-            ? fallback
-            : (rect?.height ?? fallback);
+            ? fallbackHeight(item)
+            : (rect?.height ?? fallbackHeight(item));
     });
     const firstShelf = items.findIndex(isShelfHeader);
     const shelfRect = rects[firstShelf];

@@ -10,6 +10,7 @@ import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { threadEnvironment } from "./threads";
 
 export const environmentThreadGroups = createEnvironmentThreadGroupAtoms({
@@ -32,6 +33,11 @@ export function useThreadGroup(ref: ScopedThreadGroupRef | null): EnvironmentThr
   return useAtomValue(
     ref === null ? EMPTY_THREAD_GROUP_ATOM : environmentThreadGroups.threadGroupAtom(ref),
   );
+}
+
+/** Imperative read for menus that snapshot state when they open. */
+export function readThreadGroup(ref: ScopedThreadGroupRef): EnvironmentThreadGroup | null {
+  return appAtomRegistry.get(environmentThreadGroups.threadGroupAtom(ref));
 }
 
 /** Keyed by `threadGroupKey`, so same-id groups on two environments stay apart. */

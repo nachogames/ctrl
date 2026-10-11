@@ -21,7 +21,9 @@ import {
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
+import { isThreadGroupSnoozed } from "../components/threadGroupMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { readThreadGroup } from "../state/threadGroups";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
@@ -47,6 +49,7 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
+import { useThreadGroupActions } from "./useThreadGroupActions";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -100,6 +103,7 @@ export function useThreadActionMenu(input: {
     deleteThread,
     markThreadUnread,
   } = useThreadActions();
+  const groupActions = useThreadGroupActions();
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -147,6 +151,12 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        // Only a group the environment knows, in the chat's own project, places the chat.
+        const candidateGroup =
+          thread.groupId === null
+            ? null
+            : readThreadGroup({ environmentId: threadRef.environmentId, groupId: thread.groupId });
+        const group = candidateGroup?.projectId === thread.projectId ? candidateGroup : null;
         const items = buildThreadActionMenuItems({
           canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
           branch: thread.branch ?? null,
@@ -160,6 +170,13 @@ export function useThreadActionMenu(input: {
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           supports,
           snoozePresets,
+          group:
+            group === null
+              ? null
+              : {
+                  isPinned: group.pinnedAt !== null,
+                  isSnoozed: isThreadGroupSnoozed(group, now.getTime()),
+                },
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -184,6 +201,15 @@ export function useThreadActionMenu(input: {
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
           }
+          return;
+        }
+        if (action.startsWith("snooze-group:")) {
+          if (group === null) return;
+          const preset =
+            action === "snooze-group:custom"
+              ? await requestCustomSnooze()
+              : snoozePresets.find((candidate) => `snooze-group:${candidate.id}` === action);
+          if (preset) await groupActions.snoozeGroup(group, preset.snoozedUntil);
           return;
         }
         const reportFailure = async (
@@ -244,6 +270,18 @@ export function useThreadActionMenu(input: {
             await reportFailure("Failed to unpin thread", () => confirmAndUnpinThread(threadRef));
             return;
           }
+          case "pin-group":
+            if (group) await groupActions.pinGroup(group);
+            return;
+          case "unpin-group":
+            if (group) await groupActions.unpinGroup(group);
+            return;
+          case "unsnooze-group":
+            if (group) await groupActions.unsnoozeGroup(group);
+            return;
+          case "open-group-panel":
+            if (group) groupActions.openGroupPanel(group, thread.id);
+            return;
           case "auto-settle:enabled":
           case "auto-settle:disabled":
             await reportFailure("Failed to update auto-settle", () =>
@@ -349,6 +387,7 @@ export function useThreadActionMenu(input: {
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
+      groupActions,
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,

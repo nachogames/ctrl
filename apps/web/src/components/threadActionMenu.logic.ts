@@ -1,6 +1,8 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
+import { groupSnoozeChildren } from "./threadGroupMenu.logic";
+
 /**
  * Ids for the per-thread action menu. Snooze presets are dispatched as
  * `snooze:<presetId>` so the union stays closed while the preset list
@@ -20,6 +22,12 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "pin-group"
+  | "unpin-group"
+  | "snooze-group"
+  | `snooze-group:${string}`
+  | "unsnooze-group"
+  | "open-group-panel"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -99,6 +107,14 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /**
+   * The chat's known group. Membership places the chat, so Pin and Snooze act
+   * on the group instead; Settle still acts on the chat.
+   */
+  readonly group?: {
+    readonly isPinned: boolean;
+    readonly isSnoozed: boolean;
+  } | null;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -106,6 +122,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
   return ![
     "new-thread-on-branch",
     "project-settings",
+    "open-group-panel",
     "mark-unread",
     "copy",
     "copy-path",
@@ -122,6 +139,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
+  const group = state.group ?? null;
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.branch
       ? [
@@ -132,13 +150,19 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    ...(state.supports.pinning
+    ...(group
       ? [
-          state.isPinned
-            ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
-            : { id: "pin" as const, label: "Pin thread", icon: "pin" },
+          group.isPinned
+            ? { id: "unpin-group" as const, label: "Unpin group", icon: "pin-off" }
+            : { id: "pin-group" as const, label: "Pin group", icon: "pin" },
         ]
-      : []),
+      : state.supports.pinning
+        ? [
+            state.isPinned
+              ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
+              : { id: "pin" as const, label: "Pin thread", icon: "pin" },
+          ]
+        : []),
     // Both lifecycle actions stay available on pinned threads: settling
     // clears the pin ("done" beats "keep on top"), and snoozing hides the
     // card until wake with the pin intact.
@@ -149,7 +173,19 @@ export function buildThreadActionMenuItems(
             : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
         ]
       : []),
-    ...(state.supports.snooze
+    ...(state.supports.snooze && group
+      ? [
+          group.isSnoozed
+            ? { id: "unsnooze-group" as const, label: "Wake group", icon: "clock" }
+            : {
+                id: "snooze-group" as const,
+                label: "Snooze group",
+                icon: "clock",
+                children: groupSnoozeChildren(state.snoozePresets),
+              },
+        ]
+      : []),
+    ...(state.supports.snooze && !group
       ? [
           state.isSnoozed
             ? { id: "unsnooze" as const, label: "Wake thread", icon: "clock" }
@@ -168,6 +204,7 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
+    ...(group ? [{ id: "open-group-panel" as const, label: "Open group panel" }] : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration
       ? [

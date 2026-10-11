@@ -1039,6 +1039,12 @@ function timestampMsOrNull(value: string | null | undefined): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
+/** "3 hours ago" → "3 hours"; rows have no room for the suffix. */
+export function compactSidebarTimeLabel(label: string): string {
+  if (label === "just now") return "now";
+  return label.endsWith(" ago") ? label.slice(0, -4) : label;
+}
+
 /** Recent-activity time for sidebar sorting; never reads updatedAt. */
 export function sidebarActivityMs(thread: {
   readonly createdAt: string;

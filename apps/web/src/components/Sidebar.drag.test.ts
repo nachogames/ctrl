@@ -32,17 +32,26 @@ function layout(
   over: string,
   scale = 1,
   cardHeight = 82,
+  activeHeight = cardHeight,
 ) {
   let top = 100;
   const rects = items.map((item) => {
     const height =
       item.kind === "thread"
-        ? (item.section === "pinned" || item.section === "active" ? cardHeight : 36) * scale
-        : item.kind !== "marker"
-          ? 36 * scale
-          : item.marker === "pinned-header" || item.marker === "pinned-divider"
-            ? 0
-            : (item.marker.endsWith("placeholder") ? 0 : 32) * scale;
+        ? ((item.groupKey ?? null) !== null
+            ? 36
+            : item.section === "pinned"
+              ? cardHeight
+              : item.section === "active"
+                ? activeHeight
+                : 36) * scale
+        : item.kind === "project-heading"
+          ? 28 * scale
+          : item.kind === "group"
+            ? 32 * scale
+            : item.marker === "pinned-header" || item.marker === "pinned-divider"
+              ? 0
+              : (item.marker.endsWith("placeholder") ? 0 : 32) * scale;
     const rect = { top, height, bottom: top + height, left: 0, right: 260, width: 260 };
     top += height + 1;
     return rect;
@@ -62,9 +71,10 @@ function preview(
   active: string,
   over: string,
   scale = 1,
+  activeHeight = 82,
 ) {
   const strategy = createSidebarSortingStrategy(input);
-  const args = layout(input.items, active, over, scale);
+  const args = layout(input.items, active, over, scale, 82, activeHeight);
   return new Map(
     input.items.map((item, index) => [sidebarListItemId(item), strategy({ ...args, index })]),
   );
@@ -538,11 +548,12 @@ describe("sidebar drag projection", () => {
     expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(0);
   });
 
+  // Active tree rows are slim, so an arriving row reserves 36px.
   it.each([
-    ["p", -83, -1],
-    ["s", 0, 82],
+    ["p", -83, -47],
+    ["s", 0, 36],
   ] as const)(
-    "replaces the empty Active target when %s enters",
+    "replaces the empty Active target with a slim row when %s enters",
     (active, dividerOffset, settledOffset) => {
       const items = [
         pinnedHeader,
@@ -604,6 +615,63 @@ describe("sidebar drag projection", () => {
       expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(83);
     },
   );
+
+  it("moves headings, group rows and members around an Active row dragged to Pinned", () => {
+    const items: SidebarListItem[] = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      marker("active-placeholder"),
+      { kind: "project-heading", key: "one" },
+      { kind: "group", key: "g", section: "active" },
+      { kind: "thread", key: "m1", section: "active", groupKey: "g" },
+      { kind: "project-heading", key: "two" },
+      thread("a1", "active"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const result = preview({ items, settledOrder: [], settledExpanded: true }, "a1", "p", 1, 36);
+    // The lifted row opens a full card above p.
+    expect(result.get("p")?.y).toBe(83);
+    expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(83);
+    // Structural rows follow; the placeholder they replace gave back its gap.
+    expect(result.get("sidebar-project-one")?.y).toBe(82);
+    expect(result.get("sidebar-group-g")?.y).toBe(82);
+    expect(result.get("m1")?.y).toBe(82);
+    // Project two's only row left, so its heading hides with it.
+    expect(result.get("sidebar-project-two")?.scaleY).toBe(0);
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(82 - 29 - 37);
+  });
+
+  it("previews a time-ordered drop into a new project heading", () => {
+    const items: SidebarListItem[] = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      marker("active-placeholder"),
+      { kind: "project-heading", key: "one" },
+      thread("a1", "active"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const result = preview(
+      {
+        items,
+        settledOrder: [],
+        settledExpanded: true,
+        activeOrder: ["sidebar-project-two", "p", "sidebar-project-one", "a1"],
+      },
+      "p",
+      "a1",
+      1,
+      36,
+    );
+    // p leaves Pinned (-83) and lands under a heading not yet rendered (+29),
+    // as a slim row (+37), above project one; the placeholder gives back its gap (-1).
+    expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(-83);
+    expect(result.get("sidebar-project-one")?.y).toBe(-83 + 29 + 37 - 1);
+    expect(result.get("a1")?.y).toBe(-83 + 29 + 37 - 1);
+  });
 
   it("removes the snoozed header when its last row leaves", () => {
     const items = [

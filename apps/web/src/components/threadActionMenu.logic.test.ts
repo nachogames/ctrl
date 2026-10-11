@@ -222,6 +222,38 @@ describe("buildThreadActionMenuItems", () => {
     );
     expect(archiveItem?.disabled).toBe(true);
   });
+
+  it("acts on the group for pin and snooze when the chat is in a group", () => {
+    const lifecycle = (state: ThreadActionMenuState) =>
+      ids(state).filter((id) => /pin|snooze|settle|group/.test(id) && id !== "auto-settle");
+    expect(lifecycle({ ...baseState, group: { isPinned: false, isSnoozed: false } })).toEqual([
+      "pin-group",
+      "settle",
+      "snooze-group",
+      "open-group-panel",
+    ]);
+    expect(
+      lifecycle({
+        ...baseState,
+        isPinned: true,
+        isSettled: true,
+        group: { isPinned: true, isSnoozed: true },
+      }),
+    ).toEqual(["unpin-group", "unsettle", "unsnooze-group", "open-group-panel"]);
+    expect(allIds({ ...baseState, group: { isPinned: false, isSnoozed: false } })).toContain(
+      "snooze-group:hour",
+    );
+  });
+
+  it("keeps the group panel reachable for read-only connections", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      group: { isPinned: false, isSnoozed: false },
+    });
+    expect(items.find((item) => item.id === "open-group-panel")?.disabled).toBeUndefined();
+    expect(items.find((item) => item.id === "pin-group")?.disabled).toBe(true);
+  });
 });
 
 describe("buildDraftActionMenuItems", () => {
