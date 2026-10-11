@@ -71,7 +71,12 @@ export function GroupRunningSection(props: {
 
   return (
     <>
-      {rows.length === 0 ? (
+      {/* Before the first scan arrives nothing is known, so claim nothing. */}
+      {query.data == null ? (
+        <p className="px-1.5 text-muted-foreground text-sm">
+          {query.error === null ? "Checking…" : "Could not check what is running"}
+        </p>
+      ) : rows.length === 0 ? (
         <p className="px-1.5 text-muted-foreground text-sm">Nothing running</p>
       ) : (
         <ul className="flex flex-col gap-0.5">
