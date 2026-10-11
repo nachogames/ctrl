@@ -22,6 +22,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  groupExpandedById?: Record<string, boolean>;
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -43,6 +44,8 @@ export interface UiProjectState {
 }
 
 export interface UiThreadState {
+  // Keyed by threadGroupKey. Holds only open groups; collapsed is the default.
+  groupExpandedById: Record<string, boolean>;
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
@@ -62,6 +65,7 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   sidebarProjectScopeKey: null,
+  groupExpandedById: {},
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -148,6 +152,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    groupExpandedById: sanitizeBooleanRecord(parsed.groupExpandedById),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -226,6 +231,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        groupExpandedById: state.groupExpandedById,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         sidebarProjectScopeKey: state.sidebarProjectScopeKey,
@@ -379,6 +385,28 @@ export function setProjectExpanded(
   };
 }
 
+/** A forced group (it holds the open chat) is shown open without touching the persisted value. */
+export function resolveGroupExpanded(
+  groupExpandedById: Readonly<Record<string, boolean>>,
+  key: string,
+  options: { readonly forced: boolean },
+): boolean {
+  return options.forced || (groupExpandedById[key] ?? false);
+}
+
+export function setGroupExpanded(state: UiState, key: string, expanded: boolean): UiState {
+  if (expanded) {
+    return state.groupExpandedById[key] === true
+      ? state
+      : { ...state, groupExpandedById: { ...state.groupExpandedById, [key]: true } };
+  }
+  if (!(key in state.groupExpandedById)) {
+    return state;
+  }
+  const { [key]: _removed, ...groupExpandedById } = state.groupExpandedById;
+  return { ...state, groupExpandedById };
+}
+
 export function reorderProjects(
   state: UiState,
   currentProjectOrder: readonly string[],
@@ -431,6 +459,7 @@ interface UiStateStore extends UiState {
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
+  setGroupExpanded: (key: string, expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
@@ -453,6 +482,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
+  setGroupExpanded: (key, expanded) => set((state) => setGroupExpanded(state, key, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
