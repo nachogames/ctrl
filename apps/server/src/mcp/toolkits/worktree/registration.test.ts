@@ -26,6 +26,9 @@ import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ThreadGroupLaunchService from "../../../orchestration-v2/ThreadGroupLaunchService.ts";
+import * as ThreadGroupService from "../../../orchestration-v2/ThreadGroupService.ts";
+import * as ThreadGroupStore from "../../../orchestration-v2/ThreadGroupStore.ts";
 import * as PreviewManager from "../../../preview/Manager.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
@@ -55,6 +58,9 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
+  Layer.mock(ThreadGroupService.ThreadGroupService)({}),
+  Layer.mock(ThreadGroupLaunchService.ThreadGroupLaunchService)({}),
+  Layer.mock(ThreadGroupStore.ThreadGroupStoreV2)({}),
 );
 
 const ToolsListPayload = Schema.fromJsonString(

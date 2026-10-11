@@ -1006,3 +1006,35 @@ it("names the attempted mutation and the cause for operation failures", () => {
   assert.equal(message("thread-group.move-thread", 42), "Failed to move the thread.");
   assert.equal(message("thread-group.move-thread"), "Failed to move the thread.");
 });
+
+it.effect("two concurrent resource changes both land", () => {
+  const threads = new Map([[a, shell(a)]]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    yield* service.create({
+      commandId: CommandId.make("command:res"),
+      groupId,
+      projectId,
+      threadIds: [a],
+    });
+    const add = (id: string) =>
+      service.updateManualResources(groupId, CommandId.make(`command:res:${id}`), (current) =>
+        // Yield mid-change, so an unlocked read-modify-write would drop one add.
+        Effect.yieldNow.pipe(
+          Effect.as([...current, { id, name: id, url: null, kind: "server" as const }]),
+        ),
+      );
+    yield* Effect.all([add("web"), add("api")], { concurrency: "unbounded" });
+    const group = yield* service.updateManualResources(
+      groupId,
+      CommandId.make("command:res:none"),
+      () => Effect.succeed(null),
+    );
+    assert.deepEqual(group.manualResources.map((resource) => resource.id).toSorted(), [
+      "api",
+      "web",
+    ]);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});

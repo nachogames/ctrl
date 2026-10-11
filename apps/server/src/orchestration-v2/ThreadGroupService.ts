@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ThreadShell,
   ProjectId,
   ThreadGroupId,
+  type ThreadGroupManualResource,
   type ThreadGroupMutation,
   type ThreadGroupUpdatePayload,
   ThreadId,
@@ -222,6 +223,18 @@ export class ThreadGroupService extends Context.Service<
       launch: Effect.Effect<A, E, R>,
       options?: { readonly reusedThreadId?: ThreadId },
     ) => Effect.Effect<A, E | ThreadGroupServiceError, R>;
+    /**
+     * Read-modify-write of the group's registered resources under its lock,
+     * so two concurrent changes cannot lose one. `change` returns the new list,
+     * or null to leave it as it is.
+     */
+    readonly updateManualResources: <E>(
+      groupId: ThreadGroupId,
+      commandId: CommandId,
+      change: (
+        current: ReadonlyArray<ThreadGroupManualResource>,
+      ) => Effect.Effect<ReadonlyArray<ThreadGroupManualResource> | null, E>,
+    ) => Effect.Effect<OrchestrationThreadGroupShell, E | ThreadGroupServiceError>;
   }
 >()("t3/orchestration-v2/ThreadGroupService") {}
 
@@ -504,6 +517,28 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const updateManualResources: ThreadGroupService["Service"]["updateManualResources"] = (
+    groupId,
+    commandId,
+    change,
+  ) =>
+    Effect.gen(function* () {
+      yield* groupLocks.withLock(
+        groupId,
+        Effect.gen(function* () {
+          const next = yield* change((yield* readShell(groupId)).manualResources);
+          if (next === null) return;
+          yield* commitLocked({
+            type: "thread-group.meta.update",
+            commandId,
+            groupId,
+            patch: { manualResources: next },
+          });
+        }),
+      );
+      return yield* readShell(groupId);
+    }).pipe(Effect.withSpan("ThreadGroupService.updateManualResources"));
+
   const deleteGroup: ThreadGroupService["Service"]["delete"] = Effect.fn(
     "ThreadGroupService.delete",
   )(function* (input) {
@@ -769,6 +804,7 @@ export const make = Effect.gen(function* () {
     pruneIfEmpty,
     pruneEmptyGroups,
     withGroupLaunch,
+    updateManualResources,
   });
 });
 

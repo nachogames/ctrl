@@ -110,6 +110,19 @@ export function summarizeT3ToolCalls(
       id(asRecord(call.output?.thread)?.threadId) ??
       id(call.input?.threadId),
   );
+  // One group reads as its title; several read as a count.
+  const groupTitles = new Set(selected.map((call) => id(asRecord(call.output?.group)?.title)));
+  const groupTitle = groupTitles.size === 1 ? [...groupTitles][0] : undefined;
+  const groupCount = quantity(
+    countEntities(
+      selected.map((call) => id(asRecord(call.output?.group)?.id) ?? id(call.input?.groupId)),
+    ),
+    "group",
+  );
+  const groups = groupTitle ?? groupCount;
+  const namedGroups = groupTitle === undefined ? groupCount : `group ${groupTitle}`;
+  const chatTitle = (call: (typeof selected)[number] | undefined) =>
+    id(call?.output?.title) ?? id(call?.input?.title);
   let label: string;
   switch (action) {
     case "thread-send": {
@@ -323,6 +336,52 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("cwd")), "repository", "repositories"),
       );
       break;
+    case "group-read":
+      label = phrase("Read", "read", namedGroups);
+      break;
+    case "group-create":
+      label = phrase("Created", "create", namedGroups);
+      break;
+    case "group-update":
+      label = phrase("Updated", "update", namedGroups);
+      break;
+    case "group-new-thread":
+    case "group-handoff": {
+      // One finished call names its chat: `Auth refactor → "Write auth tests"`.
+      const title = completed.length === 1 ? chatTitle(completed[0]) : undefined;
+      const target =
+        title === undefined
+          ? `${quantity(selected.length, "chat")} in ${groups}`
+          : `${groups} → "${title}"`;
+      label =
+        action === "group-handoff"
+          ? completed.length > 0
+            ? `Handed off to ${target}`
+            : "Tried to hand off to a new chat"
+          : title === undefined
+            ? phrase("Started", "start", target)
+            : target;
+      break;
+    }
+    case "group-move-thread": {
+      const chats = quantity(countEntities(threadIds), "chat");
+      label =
+        completed.length > 0 && selected.every((call) => call.output?.group === null)
+          ? `Took ${chats} out of ${chats === "1 chat" ? "its group" : "their groups"}`
+          : phrase("Moved", "move", `${chats} to ${namedGroups}`);
+      break;
+    }
+    case "group-resource": {
+      const removing = selected.every((call) => call.input?.action === "remove");
+      const adding = selected.every((call) => call.input?.action === "add");
+      const resources = quantity(selected.length, "resource");
+      label = adding
+        ? phrase("Added", "add", `${resources} to ${namedGroups}`)
+        : removing
+          ? phrase("Removed", "remove", `${resources} from ${namedGroups}`)
+          : phrase("Updated", "update", `resources of ${namedGroups}`);
+      break;
+    }
     case "environment-read":
       label = phrase("Checked", "check", `environment preferences ${times}`);
       break;

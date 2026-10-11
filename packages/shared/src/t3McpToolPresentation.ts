@@ -48,6 +48,13 @@ export type T3McpToolSummaryAction =
   | "project-update"
   | "project-delete"
   | "project-clone"
+  | "group-read"
+  | "group-create"
+  | "group-update"
+  | "group-new-thread"
+  | "group-handoff"
+  | "group-move-thread"
+  | "group-resource"
   | "environment-read"
   | "environment-update"
   | "attachment-prepare"
@@ -304,6 +311,22 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_project_update: tool(["Update", "Updating", "Updated", "a project"], "project-update"),
   t3_project_delete: tool(["Delete", "Deleting", "Deleted", "a project"], "project-delete"),
   t3_project_clone: tool(["Clone", "Cloning", "Cloned", "a repository"], "project-clone"),
+  t3_group_read: tool(["Read", "Reading", "Read", "a chat group"], "group-read"),
+  t3_group_create: tool(["Create", "Creating", "Created", "a chat group"], "group-create"),
+  t3_group_update: tool(["Update", "Updating", "Updated", "a chat group"], "group-update"),
+  t3_group_new_thread: tool(
+    ["Start", "Starting", "Started", "a chat in a group"],
+    "group-new-thread",
+  ),
+  t3_group_handoff: tool(
+    ["Hand off", "Handing off", "Handed off", "to a new chat"],
+    "group-handoff",
+  ),
+  t3_group_move_thread: tool(
+    ["Move", "Moving", "Moved", "a chat between groups"],
+    "group-move-thread",
+  ),
+  t3_group_resource: tool(["Update", "Updating", "Updated", "group resources"], "group-resource"),
   t3_attachment_prepare_upload: tool(
     ["Prepare", "Preparing", "Prepared", "an attachment upload"],
     "attachment-prepare",

@@ -1,0 +1,442 @@
+import {
+  CommandId,
+  OrchestratorMcpFailure,
+  ThreadGroupId,
+  type OrchestrationThreadGroupShell,
+  type OrchestrationV2ThreadShell,
+  type ThreadGroupManualResource,
+  type ThreadGroupUpdatePayload,
+  type ThreadId,
+} from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+
+import type { OrchestratorV2Error } from "../../../orchestration-v2/Orchestrator.ts";
+import * as ThreadGroupLaunch from "../../../orchestration-v2/ThreadGroupLaunchService.ts";
+import * as ThreadGroup from "../../../orchestration-v2/ThreadGroupService.ts";
+import * as ThreadGroupStore from "../../../orchestration-v2/ThreadGroupStore.ts";
+import * as Project from "../../../project/ProjectService.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import { stableCommandId } from "../../OrchestratorMcpService.ts";
+import {
+  type Caller,
+  dispatchFailure,
+  newCommandId,
+  readCaller,
+  unavailable,
+} from "../../threadAccess.ts";
+import { GroupToolkit } from "./tools.ts";
+
+const invalid = (message: string) =>
+  new OrchestratorMcpFailure({ code: "invalid_request", message });
+
+const isOrchestratorError = (cause: unknown): cause is OrchestratorV2Error =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "_tag" in cause &&
+  (cause._tag === "OrchestratorDispatchError" || cause._tag === "OrchestratorCommandRejectedError");
+
+/** Errors the agent can act on keep their message; storage and launch internals do not leak. */
+function groupFailure(error: ThreadGroupLaunch.ThreadGroupLaunchServiceError) {
+  switch (error._tag) {
+    case "ThreadGroupThreadNotFoundError":
+      return new OrchestratorMcpFailure({ code: "thread_not_found", message: error.message });
+    case "ThreadGroupWorkspaceMismatchError":
+      return invalid(
+        `${error.message} Pass adoptGroupWorkspace: true to switch it to the group's worktree and branch.`,
+      );
+    case "ThreadGroupOperationError":
+      return isOrchestratorError(error.cause) ? dispatchFailure(error.cause) : unavailable();
+    case "ThreadLaunchError":
+      return new OrchestratorMcpFailure({
+        code: "orchestration_error",
+        message: typeof error.cause === "string" ? error.cause : error.message,
+      });
+    case "ThreadGroupLaunchOperationError":
+      return unavailable();
+    default:
+      return invalid(error.message);
+  }
+}
+
+/** Fresh per call, or derived from `clientRequestId` so a retry replays. */
+const commandIdFor = (operation: string, clientRequestId: string | undefined) =>
+  clientRequestId === undefined
+    ? newCommandId()
+    : McpInvocationContext.McpInvocationContext.pipe(
+        Effect.map((scope) =>
+          stableCommandId({ scope, requestKey: clientRequestId, operation: `group-${operation}` }),
+        ),
+      );
+
+/** The group passed, else the one the calling chat is in. */
+const resolveGroupId = (context: Caller, groupId: ThreadGroupId | undefined) => {
+  if (groupId !== undefined) return Effect.succeed(groupId);
+  if (context.caller === undefined)
+    return Effect.fail(
+      new OrchestratorMcpFailure({
+        code: "target_required",
+        message: "Pass groupId: this MCP client is not running inside a T3 thread.",
+      }),
+    );
+  return context.caller.groupId == null
+    ? Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "target_required",
+          message:
+            "Your chat is not in a group. Pass groupId, or group your chat with t3_group_create.",
+        }),
+      )
+    : Effect.succeed(context.caller.groupId);
+};
+
+const readGroup = Effect.fn("mcp.group.readGroup")(function* (groupId: ThreadGroupId) {
+  const store = yield* ThreadGroupStore.ThreadGroupStoreV2;
+  const shell = yield* store.getShell(groupId).pipe(Effect.mapError(unavailable));
+  if (Option.isNone(shell)) return yield* invalid(`Thread group ${groupId} was not found.`);
+  return shell.value;
+});
+
+const isSubagent = (thread: OrchestrationV2ThreadShell) =>
+  thread.lineage.relationshipToParent === "subagent";
+
+/** The group's chats, archived ones included, oldest first. */
+const readMembers = Effect.fn("mcp.group.readMembers")(function* (
+  context: Caller,
+  group: OrchestrationThreadGroupShell,
+) {
+  const active = yield* context.threads
+    .listProjectThreads({ projectId: group.projectId, includeSubagents: false })
+    .pipe(Effect.mapError(unavailable));
+  const archive = yield* context.threads
+    .getShellSnapshot({ location: "archive" })
+    .pipe(Effect.mapError(unavailable));
+  const byId = new Map<ThreadId, OrchestrationV2ThreadShell>();
+  for (const thread of [...active, ...archive.archivedThreads]) {
+    if (
+      thread.groupId === group.id &&
+      thread.projectId === group.projectId &&
+      thread.deletedAt === null &&
+      !isSubagent(thread) &&
+      !byId.has(thread.id)
+    ) {
+      byId.set(thread.id, thread);
+    }
+  }
+  return [...byId.values()].toSorted(
+    (left, right) =>
+      DateTime.toEpochMillis(left.createdAt) - DateTime.toEpochMillis(right.createdAt),
+  );
+});
+
+/** Settles or unsettles every live chat of the group that is not already so. */
+const setMembersSettled = Effect.fn("mcp.group.setMembersSettled")(function* (
+  context: Caller,
+  group: OrchestrationThreadGroupShell,
+  commandId: CommandId,
+  settled: boolean,
+) {
+  const active = yield* context.threads
+    .listProjectThreads({ projectId: group.projectId, includeSubagents: false })
+    .pipe(Effect.mapError(unavailable));
+  const pending = active.filter(
+    (thread) =>
+      thread.groupId === group.id &&
+      thread.deletedAt === null &&
+      thread.archivedAt === null &&
+      !isSubagent(thread) &&
+      (thread.settledOverride === "settled") !== settled,
+  );
+  const unchanged: Array<{ threadId: ThreadId; reason: string }> = [];
+  yield* Effect.forEach(
+    pending,
+    (thread) =>
+      (settled
+        ? context.threads.settleThread({
+            threadId: thread.id,
+            commandId: CommandId.make(`${commandId}:settle:${thread.id}`),
+            byOwnAgent: context.caller?.id === thread.id,
+          })
+        : context.threads.dispatch({
+            type: "thread.unsettle",
+            commandId: CommandId.make(`${commandId}:unsettle:${thread.id}`),
+            threadId: thread.id,
+            reason: "user",
+          })
+      ).pipe(
+        Effect.asVoid,
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            unchanged.push({ threadId: thread.id, reason: dispatchFailure(error).message });
+          }),
+        ),
+      ),
+    { concurrency: 1, discard: true },
+  );
+  return unchanged;
+});
+
+const readTitle = (context: Caller, threadId: ThreadId) =>
+  context.threads.getThreadShell(threadId).pipe(
+    Effect.map((shell) => shell?.title ?? ""),
+    Effect.orElseSucceed(() => ""),
+  );
+
+const settleNote = (outcome: ThreadGroupLaunch.ThreadGroupHandoffResult["sourceSettle"]) => {
+  switch (outcome) {
+    case "settled":
+      return "This chat is now settled.";
+    case "settles-when-turn-ends":
+      return "This chat settles when your turn ends.";
+    case "skipped":
+      return "Auto-settle is off for this chat, so it stays active.";
+    case "failed":
+      return "Settling this chat failed, so it stays active.";
+  }
+};
+
+export const layer = McpToolAccess.toLayer(GroupToolkit, {
+  t3_group_read: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const context = yield* readCaller();
+      const group = yield* readGroup(yield* resolveGroupId(context, input.groupId));
+      const members = yield* readMembers(context, group);
+      return {
+        group,
+        chats: members.map((thread) => ({
+          threadId: thread.id,
+          title: thread.title,
+          status: thread.status,
+          isCaller: context.caller?.id === thread.id,
+          handedOffFrom: thread.handedOffFrom ?? null,
+          handedOffTo: thread.handedOffTo ?? null,
+          archived: thread.archivedAt !== null,
+        })),
+        running: { resources: group.manualResources },
+      };
+    }),
+  ),
+  t3_group_create: McpToolAccess.writesThreads(
+    (input) => input.threadIds ?? [],
+    (input) =>
+      Effect.gen(function* () {
+        const context = yield* readCaller();
+        const threadIds =
+          input.threadIds ?? (context.caller === undefined ? undefined : [context.caller.id]);
+        const firstId = threadIds?.[0];
+        if (threadIds === undefined || firstId === undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "target_required",
+            message: "Pass threadIds: this MCP client is not running inside a T3 thread.",
+          });
+        const first = yield* context.threads
+          .getThreadShell(firstId)
+          .pipe(Effect.mapError(unavailable));
+        if (first === null || first.deletedAt !== null)
+          return yield* new OrchestratorMcpFailure({
+            code: "thread_not_found",
+            message: `Thread ${firstId} was not found.`,
+          });
+        const commandId = yield* commandIdFor("create", input.clientRequestId);
+        const groupId =
+          input.clientRequestId === undefined
+            ? ThreadGroupId.make(
+                `group:${yield* Crypto.Crypto.pipe(
+                  Effect.flatMap((crypto) => crypto.randomUUIDv4),
+                  Effect.orDie,
+                )}`,
+              )
+            : ThreadGroupId.make(`group:${commandId}`);
+        const service = yield* ThreadGroup.ThreadGroupService;
+        const group = yield* service
+          .create({
+            commandId,
+            groupId,
+            projectId: first.projectId,
+            threadIds,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.goal === undefined ? {} : { goal: input.goal }),
+          })
+          .pipe(Effect.mapError(groupFailure));
+        return { group };
+      }),
+  ),
+  t3_group_update: McpToolAccess.writes((input) =>
+    Effect.gen(function* () {
+      const context = yield* readCaller();
+      const groupId = yield* resolveGroupId(context, input.groupId);
+      const now = DateTime.formatIso(yield* DateTime.now);
+      const patch: ThreadGroupUpdatePayload = {
+        ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.goal === undefined ? {} : { goal: input.goal }),
+        ...(input.pinned === undefined ? {} : { pinnedAt: input.pinned ? now : null }),
+        ...(input.settled === undefined ? {} : { settledAt: input.settled ? now : null }),
+      };
+      if (Object.keys(patch).length === 0)
+        return yield* invalid("Pass at least one of title, goal, pinned, or settled.");
+      const commandId = yield* commandIdFor("update", input.clientRequestId);
+      const service = yield* ThreadGroup.ThreadGroupService;
+      const group = yield* service
+        .update({ commandId, groupId, patch })
+        .pipe(Effect.mapError(groupFailure));
+      const unchanged =
+        input.settled === undefined
+          ? []
+          : yield* setMembersSettled(context, group, commandId, input.settled);
+      return { group, ...(unchanged.length === 0 ? {} : { unchangedChats: unchanged }) };
+    }),
+  ),
+  t3_group_new_thread: McpToolAccess.startsThreads(
+    (input) => input,
+    (input, { runtimeMode, interactionMode }) =>
+      Effect.gen(function* () {
+        const context = yield* readCaller();
+        const group = yield* readGroup(yield* resolveGroupId(context, input.groupId));
+        const modelSelection =
+          input.modelSelection ??
+          context.caller?.modelSelection ??
+          (yield* Project.ProjectService.pipe(
+            Effect.flatMap((projects) => projects.getById(group.projectId)),
+            Effect.mapError(unavailable),
+            Effect.map(Option.getOrUndefined),
+          ))?.defaultModelSelection ??
+          undefined;
+        if (modelSelection === undefined)
+          return yield* invalid(
+            "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
+          );
+        const launches = yield* ThreadGroupLaunch.ThreadGroupLaunchService;
+        const result = yield* launches
+          .newThread({
+            commandId: yield* commandIdFor("new-thread", input.clientRequestId),
+            groupId: group.id,
+            prompt: input.prompt,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            modelSelection,
+            runtimeMode,
+            interactionMode,
+            ...(context.caller === undefined ? {} : { senderThreadId: context.caller.id }),
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(Effect.mapError(groupFailure));
+        return {
+          group: result.group,
+          threadId: result.threadId,
+          title: yield* readTitle(context, result.threadId),
+        };
+      }),
+  ),
+  t3_group_handoff: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const context = yield* readCaller();
+      // actsAsCaller has checked for a live calling thread.
+      if (context.caller === undefined) return yield* unavailable();
+      const launches = yield* ThreadGroupLaunch.ThreadGroupLaunchService;
+      const result = yield* launches
+        .handoff({
+          commandId: yield* commandIdFor("handoff", input.clientRequestId),
+          sourceThreadId: context.caller.id,
+          summary: input.summary,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+          createdBy: "agent",
+          creationSource: "mcp",
+        })
+        .pipe(Effect.mapError(groupFailure));
+      const title = yield* readTitle(context, result.threadId);
+      return {
+        group: result.group,
+        threadId: result.threadId,
+        title,
+        createdGroup: result.createdGroup,
+        sourceSettle: result.sourceSettle,
+        note: `This chat is handed off to "${title}" in ${result.group.title}. Stop working here; the new chat continues from your summary. ${settleNote(result.sourceSettle)}`,
+      };
+    }),
+  ),
+  t3_group_move_thread: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    (input) =>
+      Effect.gen(function* () {
+        const context = yield* readCaller();
+        const threadId = input.threadId ?? context.caller?.id;
+        if (threadId === undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "target_required",
+            message: "Pass threadId: this MCP client is not running inside a T3 thread.",
+          });
+        const service = yield* ThreadGroup.ThreadGroupService;
+        const group = yield* service
+          .moveThread({
+            commandId: yield* commandIdFor("move-thread", input.clientRequestId),
+            threadId,
+            groupId: input.groupId,
+            ...(input.adoptGroupWorkspace === undefined
+              ? {}
+              : { adoptGroupWorkspace: input.adoptGroupWorkspace }),
+          })
+          .pipe(Effect.mapError(groupFailure));
+        return { group, threadId };
+      }),
+  ),
+  t3_group_resource: McpToolAccess.writes((input) =>
+    Effect.gen(function* () {
+      const context = yield* readCaller();
+      const groupId = yield* resolveGroupId(context, input.groupId);
+      const commandId = yield* commandIdFor("resource", input.clientRequestId);
+      let change: (
+        current: ReadonlyArray<ThreadGroupManualResource>,
+      ) => Effect.Effect<ReadonlyArray<ThreadGroupManualResource> | null, OrchestratorMcpFailure>;
+      if (input.action === "add") {
+        if (input.name === undefined) return yield* invalid('action "add" needs a name.');
+        const resource: ThreadGroupManualResource = {
+          id:
+            input.id ??
+            `res:${yield* Crypto.Crypto.pipe(
+              Effect.flatMap((crypto) => crypto.randomUUIDv4),
+              Effect.orDie,
+            )}`,
+          name: input.name,
+          url: input.url ?? null,
+          kind: input.kind ?? "other",
+        };
+        change = (current) => {
+          const existing = current.find((entry) => entry.id === resource.id);
+          if (existing === undefined) return Effect.succeed([...current, resource]);
+          // A retry of the same add changes nothing.
+          return existing.name === resource.name &&
+            existing.url === resource.url &&
+            existing.kind === resource.kind
+            ? Effect.succeed(null)
+            : Effect.fail(
+                invalid(
+                  `The group already has a resource with id ${resource.id}. Remove it first or pick another id.`,
+                ),
+              );
+        };
+      } else {
+        const id = input.id;
+        if (id === undefined) return yield* invalid('action "remove" needs the resource id.');
+        change = (current) =>
+          current.some((entry) => entry.id === id)
+            ? Effect.succeed(current.filter((entry) => entry.id !== id))
+            : Effect.fail(
+                invalid(`The group has no resource with id ${id}. t3_group_read lists them.`),
+              );
+      }
+      const service = yield* ThreadGroup.ThreadGroupService;
+      const group = yield* service
+        .updateManualResources(groupId, commandId, change)
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "OrchestratorMcpFailure" ? error : groupFailure(error),
+          ),
+        );
+      return { group, resources: group.manualResources };
+    }),
+  ),
+});
