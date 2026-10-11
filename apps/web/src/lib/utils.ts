@@ -1,4 +1,4 @@
-import { MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { MessageId, ProjectId, ThreadGroupId, ThreadId } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { type CxOptions, cx } from "class-variance-authority";
 import * as Hex from "effect/encoding/Hex";
@@ -44,6 +44,8 @@ export function randomUUID(): string {
 export const newProjectId = (): ProjectId => ProjectId.make(randomUUID());
 
 export const newThreadId = (): ThreadId => ThreadId.make(randomUUID());
+
+export const newThreadGroupId = (): ThreadGroupId => ThreadGroupId.make(randomUUID());
 
 export const newDraftId = (): DraftId => DraftId.make(randomUUID());
 

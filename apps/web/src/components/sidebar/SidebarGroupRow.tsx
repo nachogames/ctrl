@@ -136,6 +136,8 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
   members: ReadonlyArray<EnvironmentThreadShell>;
   section: SidebarGroupSection;
   expanded: boolean;
+  /** A dragged chat would join this group. */
+  isDropTarget?: boolean;
   isRenaming: boolean;
   onToggle: (groupKey: string, expanded: boolean) => void;
   onContextMenu: (groupKey: string, position: { x: number; y: number }) => void;
@@ -197,6 +199,8 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
         className={cn(
           "group/sidebar-group flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-1.5 text-left text-sm outline-none select-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           parked ? "text-secondary-label hover:text-sidebar-foreground" : "text-sidebar-foreground",
+          // Same highlight as a row taking a file drop.
+          props.isDropTarget && "bg-sidebar-row-hover ring-1 ring-inset ring-primary/70",
         )}
         onClick={toggle}
         onKeyDown={handleKeyDown}

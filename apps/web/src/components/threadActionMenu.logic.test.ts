@@ -1,3 +1,4 @@
+import type { ThreadGroupId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -52,6 +53,7 @@ describe("buildThreadActionMenuItems", () => {
       });
       const expected = reversed
         ? [
+            "handoff",
             "unpin",
             "unsettle",
             "unsnooze",
@@ -62,6 +64,7 @@ describe("buildThreadActionMenuItems", () => {
             "delete",
           ]
         : [
+            "handoff",
             "pin",
             "settle",
             "snooze",
@@ -103,7 +106,15 @@ describe("buildThreadActionMenuItems", () => {
           titleRegeneration: false,
         },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+    ).toEqual([
+      "handoff",
+      "rename",
+      "mark-unread",
+      "copy",
+      "project-settings",
+      "archive",
+      "delete",
+    ]);
   });
 
   it("groups project settings with utility actions before archive", () => {
@@ -242,6 +253,36 @@ describe("buildThreadActionMenuItems", () => {
     ).toEqual(["unpin-group", "unsettle", "unsnooze-group", "open-group-panel"]);
     expect(allIds({ ...baseState, group: { isPinned: false, isSnoozed: false } })).toContain(
       "snooze-group:hour",
+    );
+  });
+
+  it("hands off to a new chat, but not while the chat is running a turn", () => {
+    const idle = buildThreadActionMenuItems(baseState).find((item) => item.id === "handoff");
+    expect(idle).toMatchObject({ label: "Hand off to new chat" });
+    expect(idle?.disabled).toBe(false);
+    const busy = buildThreadActionMenuItems({ ...baseState, isRunning: true }).find(
+      (item) => item.id === "handoff",
+    );
+    expect(busy?.disabled).toBe(true);
+    expect(busy?.label).toContain("wait for the turn to finish");
+  });
+
+  it("offers moving between groups only where the surface supplies the project's groups", () => {
+    expect(ids(baseState)).not.toContain("move-to-group");
+    const groupId = "group-auth" as ThreadGroupId;
+    const grouped = ids({
+      ...baseState,
+      group: { isPinned: false, isSnoozed: false },
+      moveToGroup: {
+        groups: [{ id: groupId, title: "Auth", activityMs: 1 }],
+        currentGroupId: groupId,
+      },
+    });
+    expect(grouped.slice(grouped.indexOf("open-group-panel"))).toEqual(
+      expect.arrayContaining(["open-group-panel", "move-to-group", "remove-from-group"]),
+    );
+    expect(ids({ ...baseState, moveToGroup: { groups: [], currentGroupId: null } })).not.toContain(
+      "remove-from-group",
     );
   });
 

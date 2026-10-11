@@ -9,7 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { LayersIcon, PencilIcon, PlusIcon } from "lucide-react";
+import { LayersIcon, PencilIcon, PlusIcon, SendIcon } from "lucide-react";
 import {
   useEffect,
   useMemo,
@@ -19,7 +19,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { useThreadGroupActions } from "~/hooks/useThreadGroupActions";
+import { canHandOffThread, useThreadGroupActions } from "~/hooks/useThreadGroupActions";
 import { cn } from "~/lib/utils";
 import {
   type GroupPanelSection,
@@ -32,8 +32,10 @@ import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
 
 import { resolveSidebarThreadStatus, resolveThreadGroupStatus } from "../Sidebar.logic";
+import { THREAD_HANDOFF_BUSY_HINT } from "../threadActionMenu.logic";
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   groupChatSubtitle,
   groupStatusPill,
@@ -109,7 +111,8 @@ function GroupPanelContent(props: {
   }, [props.surface]);
 
   const navigate = useNavigate();
-  const { newChatInGroup } = useThreadGroupActions();
+  const { newChatInGroup, handOffThread } = useThreadGroupActions();
+  const currentThread = threadsById.get(props.threadRef.threadId);
   const openChat = (threadId: ThreadId) => {
     const ref = scopeThreadRef(group.environmentId, threadId);
     // Moving between a group's chats keeps the group in view.
@@ -138,11 +141,28 @@ function GroupPanelContent(props: {
             />
           ))}
         </ul>
-        <div className="mt-1">
+        <div className="mt-1 flex flex-wrap items-center gap-1">
           <Button size="xs" variant="ghost-muted" onClick={() => void newChatInGroup(group)}>
             <PlusIcon aria-hidden />
             New chat in group
           </Button>
+          {currentThread !== undefined ? (
+            <Tooltip disabled={canHandOffThread(currentThread)}>
+              {/* A disabled button takes no pointer events, so the wrapper carries the tooltip. */}
+              <TooltipTrigger render={<span className="inline-flex" />}>
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  disabled={!canHandOffThread(currentThread)}
+                  onClick={() => void handOffThread(currentThread)}
+                >
+                  <SendIcon aria-hidden />
+                  Hand off to new chat
+                </Button>
+              </TooltipTrigger>
+              <TooltipPopup>{THREAD_HANDOFF_BUSY_HINT}</TooltipPopup>
+            </Tooltip>
+          ) : null}
         </div>
       </GroupSection>
       <GroupSection section="running" title="Running">

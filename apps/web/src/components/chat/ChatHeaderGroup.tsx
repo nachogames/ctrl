@@ -1,10 +1,16 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadGroup } from "@t3tools/client-runtime/state/models";
 import type { ThreadId, ThreadPullRequestLink } from "@t3tools/contracts";
-import { ChevronDownIcon, GitBranchIcon, LayersIcon, MessageSquarePlusIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  GitBranchIcon,
+  LayersIcon,
+  MessageSquarePlusIcon,
+  SendIcon,
+} from "lucide-react";
 import { useMemo } from "react";
 
-import { useThreadGroupActions } from "~/hooks/useThreadGroupActions";
+import { canHandOffThread, useThreadGroupActions } from "~/hooks/useThreadGroupActions";
 import { cn } from "~/lib/utils";
 import { type GroupPanelSection, useRightPanelStore } from "~/rightPanelStore";
 import { useThreadShellsForProjectRefs } from "~/state/entities";
@@ -12,6 +18,7 @@ import { useThreadShellsForProjectRefs } from "~/state/entities";
 import { useGroupPullRequestStatus } from "../group/useGroupPullRequestStatus";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { PullRequestCheckStatusIcon } from "../pullRequest/pullRequestPresentation";
+import { THREAD_HANDOFF_BUSY_HINT } from "../threadActionMenu.logic";
 import { Badge } from "../ui/badge";
 import {
   Menu,
@@ -23,6 +30,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
@@ -113,7 +121,8 @@ function ChatHeaderGroupMenuItems(props: {
 }) {
   const { group, activeThreadId, onOpenThread } = props;
   const members = useGroupMembers(group, activeThreadId);
-  const { newChatInGroup } = useThreadGroupActions();
+  const { newChatInGroup, handOffThread } = useThreadGroupActions();
+  const activeThread = members.find((member) => member.id === activeThreadId);
   return (
     <>
       <MenuRadioGroup
@@ -137,6 +146,25 @@ function ChatHeaderGroupMenuItems(props: {
         <MessageSquarePlusIcon aria-hidden />
         New chat in group
       </MenuItem>
+      {activeThread !== undefined ? (
+        canHandOffThread(activeThread) ? (
+          <MenuItem onClick={() => void handOffThread(activeThread)}>
+            <SendIcon aria-hidden />
+            Hand off to new chat
+          </MenuItem>
+        ) : (
+          // A disabled item takes no pointer events, so the wrapper carries the tooltip.
+          <Tooltip>
+            <TooltipTrigger render={<div />}>
+              <MenuItem disabled>
+                <SendIcon aria-hidden />
+                Hand off to new chat
+              </MenuItem>
+            </TooltipTrigger>
+            <TooltipPopup>{THREAD_HANDOFF_BUSY_HINT}</TooltipPopup>
+          </Tooltip>
+        )
+      ) : null}
       <MenuItem onClick={() => openGroupSurface(group, activeThreadId, null)}>
         <LayersIcon aria-hidden />
         Open group panel

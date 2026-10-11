@@ -64,6 +64,7 @@ import {
   MoonIcon,
   PaletteIcon,
   RotateCcwIcon,
+  SendIcon,
   SettingsIcon,
   SquarePenIcon,
   SunIcon,
@@ -88,7 +89,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { useThreadGroupActions } from "../hooks/useThreadGroupActions";
+import { canHandOffThread, useThreadGroupActions } from "../hooks/useThreadGroupActions";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
@@ -184,6 +185,7 @@ import {
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
+import { THREAD_HANDOFF_BUSY_HINT } from "./threadActionMenu.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import {
@@ -774,7 +776,7 @@ function OpenCommandPaletteDialog(props: {
     [activeThreadEnvironmentId, activeThreadGroupId],
   );
   const activeGroup = useThreadGroup(activeGroupRef);
-  const { newChatInGroup } = useThreadGroupActions();
+  const { newChatInGroup, handOffThread } = useThreadGroupActions();
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -1953,6 +1955,20 @@ function OpenCommandPaletteDialog(props: {
         icon: <LayersIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.newInGroup",
         run: () => newChatInGroup(group),
+      });
+    }
+
+    if (activeThread) {
+      const thread = activeThread;
+      const canHandOff = canHandOffThread(thread);
+      actionItems.push({
+        kind: "action",
+        value: "action:hand-off-thread",
+        searchTerms: ["hand off", "handoff", "continue", "new chat", "group", "summary"],
+        title: "Hand off to new chat",
+        ...(canHandOff ? {} : { description: THREAD_HANDOFF_BUSY_HINT, disabled: true }),
+        icon: <SendIcon className={ITEM_ICON_CLASS} />,
+        run: () => handOffThread(thread),
       });
     }
 

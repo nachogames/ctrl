@@ -185,6 +185,7 @@ import {
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
+import { parseMoveToGroupTarget } from "./moveToGroupMenu.logic";
 import {
   buildThreadGroupMenuItems,
   isThreadGroupSnoozed,
@@ -193,7 +194,7 @@ import {
 import { SidebarGroupNewChatRow, SidebarGroupRow } from "./sidebar/SidebarGroupRow";
 import { SidebarProjectHeading } from "./sidebar/SidebarProjectHeading";
 import { indexThreadGroups, useThreadGroups } from "../state/threadGroups";
-import { useThreadGroupActions } from "../hooks/useThreadGroupActions";
+import { readMoveToGroupState, useThreadGroupActions } from "../hooks/useThreadGroupActions";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
@@ -223,6 +224,8 @@ import {
   resolveAdjacentThreadId,
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
+  resolveSidebarGroupDropTarget,
+  type SidebarGroupDropTarget,
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
   resolveSidebarRowAccessibility,
@@ -1152,6 +1155,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // the pinned section. Any other position shows the verb badge instead, and
   // the badge carries its own icon.
   dragOverPinned: boolean;
+  /** The dragged chat would join this row's group (or form one with it). */
+  isGroupDropTarget?: boolean;
   // The action this row will take when the sweep is released.
   sweepAction: SidebarSweepAction | null;
   // Compact wake countdown ("2h") for rows in the snoozed shelf.
@@ -1622,8 +1627,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     shouldRecede &&
       status === "working" &&
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
-    isFileDragOver && "ring-1 ring-inset ring-primary/70",
-    isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
+    (isFileDragOver || props.isGroupDropTarget) && "ring-1 ring-inset ring-primary/70",
+    (isFileDragOver || props.isGroupDropTarget) &&
+      !props.isActive &&
+      !isSelected &&
+      "bg-sidebar-row-hover",
     // The lifted row is an opaque card so the rows beneath it never show
     // through. The row tint is translucent in dark themes and the pointer
     // keeps the hover color applied, so both the tint and the solid sidebar
@@ -3731,10 +3739,13 @@ export default function Sidebar() {
     readonly occurredAt: string;
     readonly activationY: number | null;
     readonly targetSection: SidebarSection | null;
+    /** Sortable id of the hovered row while the drop would join a group. */
+    readonly groupTargetId: string | null;
     readonly contextDrag: boolean;
   } | null>(null);
   const isContextDrag = dragState?.contextDrag === true;
   const dragTargetSection = isContextDrag ? null : (dragState?.targetSection ?? null);
+  const dragGroupTargetId = isContextDrag ? null : (dragState?.groupTargetId ?? null);
   const dragSensorRef = useRef<SidebarPointerSensor | null>(null);
   const contextDragKeyRef = useRef<string | null>(null);
   const finishThreadDrag = useCallback((started: boolean) => {
@@ -4020,7 +4031,13 @@ export default function Sidebar() {
     (event: DragStartEvent) => {
       const activeKey = String(event.active.id);
       contextDragKeyRef.current = activeKey;
-      const activeSection = sectionByThreadKey.get(activeKey);
+      // A grouped chat sits in its group's section.
+      const activeGroupKey = groupKeyByThreadKeyRef.current.get(activeKey);
+      const activeSection =
+        sectionByThreadKey.get(activeKey) ??
+        (activeGroupKey === undefined
+          ? undefined
+          : groupEntryByKeyRef.current.get(activeGroupKey)?.section);
       if (activeSection === undefined) return;
       // Stop normal section motion before dnd-kit measures the picked-up row.
       listMotionRef.current?.suspend();
@@ -4038,6 +4055,7 @@ export default function Sidebar() {
         activeKey,
         activeSection,
         targetSection: activeSection,
+        groupTargetId: null,
         contextDrag: false,
         occurredAt: new Date().toISOString(),
         activationY:
@@ -4109,6 +4127,30 @@ export default function Sidebar() {
     visibleWorkingThreads,
     workingThreads.length,
   ]);
+  const sidebarListItemById = useMemo(
+    () => new Map(sidebarListItems.map((item) => [sidebarListItemId(item), item] as const)),
+    [sidebarListItems],
+  );
+  // A drop onto a group row or an Active chat row that joins (or forms) a group.
+  const resolveGroupDrop = useCallback(
+    (activeKey: string, overId: string): SidebarGroupDropTarget | null => {
+      const activeItem = sidebarListItemById.get(activeKey);
+      const thread = threadByKey.get(activeKey);
+      if (activeItem?.kind !== "thread" || thread === undefined) return null;
+      return resolveSidebarGroupDropTarget({
+        activeThread: {
+          ...thread,
+          key: activeKey,
+          section: activeItem.section,
+          groupKey: activeItem.groupKey ?? null,
+        },
+        overItem: sidebarListItemById.get(overId),
+        groups: threadGroupByKey,
+        threads: threadByKey,
+      });
+    },
+    [sidebarListItemById, threadByKey, threadGroupByKey],
+  );
   useEffect(() => {
     if (
       dragState !== null &&
@@ -4150,16 +4192,26 @@ export default function Sidebar() {
   ]);
   const handleThreadDragOver = useCallback(
     (event: DragOverEvent) => {
-      const target = event.over
-        ? resolveSidebarDropTarget(sidebarListItems, String(event.active.id), String(event.over.id))
-        : null;
+      const activeKey = String(event.active.id);
+      const overId = event.over ? String(event.over.id) : null;
+      const groupTarget = overId === null ? null : resolveGroupDrop(activeKey, overId);
+      // A group drop changes no section, so no section reads as the target;
+      // nor does any hover of a grouped chat, which only moves between groups.
+      const target =
+        overId === null || groupTarget !== null || groupKeyByThreadKey.has(activeKey)
+          ? null
+          : resolveSidebarDropTarget(sidebarListItems, activeKey, overId);
       setDragState((current) =>
-        current === null || current.activeKey !== String(event.active.id)
+        current === null || current.activeKey !== activeKey
           ? current
-          : { ...current, targetSection: target?.section ?? null },
+          : {
+              ...current,
+              targetSection: target?.section ?? null,
+              groupTargetId: groupTarget === null ? null : overId,
+            },
       );
     },
-    [sidebarListItems],
+    [groupKeyByThreadKey, resolveGroupDrop, sidebarListItems],
   );
   const sortableIds = useMemo(() => sidebarListItems.map(sidebarListItemId), [sidebarListItems]);
   const draggedSettledOrder = useMemo(() => {
@@ -4202,9 +4254,14 @@ export default function Sidebar() {
         settledVisibleCount,
         routeThreadKey,
         snoozedThreadCount: snoozedThreads.length + snoozedGroups.length,
+        // Group drops, and every hover of a grouped chat, leave the list in place.
+        holdsLayout: (activeId, overId) =>
+          groupKeyByThreadKey.has(activeId) || resolveGroupDrop(activeId, overId) !== null,
       }),
     [
       draggedActiveOrder,
+      groupKeyByThreadKey,
+      resolveGroupDrop,
       draggedSettledOrder,
       isContextDrag,
       routeThreadKey,
@@ -4244,6 +4301,9 @@ export default function Sidebar() {
     if (source === undefined) return createSidebarCollisionDetection(() => false);
     return createSidebarCollisionDetection(
       (id) => {
+        if (resolveGroupDrop(draggedThreadKey, id) !== null) return true;
+        // A grouped chat's own pin and settle state no longer place it.
+        if (groupKeyByThreadKey.has(draggedThreadKey)) return false;
         const target = resolveSidebarDropTarget(sidebarListItems, draggedThreadKey, id);
         if (target === null) return false;
         return (
@@ -4281,13 +4341,33 @@ export default function Sidebar() {
     draggedFromSection,
     dragActivationY,
     draggableThreadKeys,
+    groupKeyByThreadKey,
     pinnedKeys,
+    resolveGroupDrop,
     sidebarListItems,
     threadByKey,
   ]);
   const handleThreadDragEnd = useCallback(
     (event: DragEndEvent) => {
       const activeKey = String(event.active.id);
+      const groupTarget =
+        event.over === null ? null : resolveGroupDrop(activeKey, String(event.over.id));
+      if (groupTarget !== null) {
+        const moved = threadByKey.get(activeKey);
+        if (moved === undefined) return;
+        if (groupTarget.kind === "join") {
+          const group = groupEntryByKey.get(groupTarget.groupKey)?.group;
+          if (group === undefined || !checkThreadOperations([moved])) return;
+          void groupActions.moveThreadIntoGroup(moved, group);
+          return;
+        }
+        const target = threadByKey.get(groupTarget.threadKey);
+        if (target === undefined || !checkThreadOperations([moved, target])) return;
+        void groupActions.groupThreadWith(target, moved);
+        return;
+      }
+      // Grouped chats move only between groups.
+      if (groupKeyByThreadKey.has(activeKey)) return;
       const activeSection = sectionByThreadKey.get(activeKey);
       const target =
         event.over === null
@@ -4445,9 +4525,13 @@ export default function Sidebar() {
       activeKeys,
       activeReorderableThreadKeys,
       draggableThreadKeys,
+      groupActions,
+      groupEntryByKey,
+      groupKeyByThreadKey,
       pinThread,
       pinnedKeys,
       planForwardNavigation,
+      resolveGroupDrop,
       reorderPinnedThread,
       reorderActiveThread,
       sectionByThreadKey,
@@ -4941,6 +5025,7 @@ export default function Sidebar() {
                     isSnoozed: groupEntry.section === "snoozed",
                   }
                 : null,
+              moveToGroup: readMoveToGroupState(thread),
             }),
             position,
           ),
@@ -4961,6 +5046,11 @@ export default function Sidebar() {
               ? await requestCustomSnooze()
               : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
           if (preset) attemptSnooze(threadRef, preset);
+          return;
+        }
+        const moveTarget = parseMoveToGroupTarget(clicked.value);
+        if (moveTarget !== null) {
+          await groupActions.moveThreadToGroupId(thread, moveTarget);
           return;
         }
         switch (clicked.value) {
@@ -5027,6 +5117,15 @@ export default function Sidebar() {
             return;
           case "open-group-panel":
             if (groupEntry) groupActions.openGroupPanel(groupEntry.group, thread.id);
+            return;
+          case "handoff":
+            await groupActions.handOffThread(thread);
+            return;
+          case "move-to-new-group":
+            await groupActions.moveThreadToNewGroup(thread);
+            return;
+          case "remove-from-group":
+            await groupActions.removeThreadFromGroup(thread);
             return;
           case "auto-settle:enabled":
           case "auto-settle:disabled": {
@@ -5753,6 +5852,7 @@ export default function Sidebar() {
                             dragOverPinned={
                               dragState?.activeKey === threadKey && dragTargetSection === "pinned"
                             }
+                            isGroupDropTarget={dragGroupTargetId === threadKey}
                             sweepAction={
                               actionSweep?.keys.has(threadKey) ? actionSweep.action : null
                             }
@@ -5838,9 +5938,9 @@ export default function Sidebar() {
                             disabled={
                               renamingThreadKey === threadKey ||
                               section === "working" ||
-                              // Grouped chats are not drag sources until drag-to-group.
-                              groupKey !== null ||
-                              !draggableThreadKeys.has(threadKey) ||
+                              // Grouped chats drag only into other groups, which
+                              // needs no ordering capability.
+                              (groupKey === null && !draggableThreadKeys.has(threadKey)) ||
                               optimisticDrop !== null
                             }
                           >
@@ -5907,6 +6007,7 @@ export default function Sidebar() {
                               members={entry.members}
                               section={item.section}
                               expanded={isGroupExpanded(item.key)}
+                              isDropTarget={dragGroupTargetId === sidebarListItemId(item)}
                               isRenaming={renamingGroupKey === item.key}
                               onToggle={toggleGroupExpanded}
                               onContextMenu={handleGroupContextMenu}

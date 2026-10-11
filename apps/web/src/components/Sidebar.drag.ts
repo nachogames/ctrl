@@ -117,6 +117,9 @@ export function createSidebarSortingStrategy(input: {
   /** Space each pinned boundary opens for its label while dragging. The
    * markers stay zero height at rest, so nothing is reserved until pickup. */
   boundaryLabelHeight?: number;
+  /** True while the hovered row is a drop target in itself (a group drop):
+   * nothing moves, so the target stays under the pointer to be highlighted. */
+  holdsLayout?: (activeId: string, overId: string) => boolean;
 }): SortingStrategy {
   if (input.enabled === false) return () => stationary;
   const { items } = input;
@@ -128,6 +131,8 @@ export function createSidebarSortingStrategy(input: {
     const active = items[activeIndex];
     const over = items[overIndex] ?? active;
     if (active?.kind !== "thread" || !over || !rects[0]) return [];
+    if (input.holdsLayout?.(active.key, sidebarListItemId(over)))
+      return items.map(() => stationary);
     const target = resolveSidebarDropTarget(items, active.key, sidebarListItemId(over));
     if (!target) return [];
     // Every non-marker row by section, in list order. Project headings belong

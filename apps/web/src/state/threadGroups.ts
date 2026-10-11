@@ -19,7 +19,7 @@ export const environmentThreadGroups = createEnvironmentThreadGroupAtoms({
   snapshotAtom: threadEnvironment.snapshotAtom,
 });
 
-/** create / update / delete / moveThread. Run them with `useOrchestrationCommand`. */
+/** create / update / delete / moveThread / recreateWorktree. Run them with `useOrchestrationCommand`. */
 export const threadGroupCommands = createThreadGroupEnvironmentAtoms(connectionAtomRuntime);
 
 const EMPTY_THREAD_GROUP_ATOM = Atom.make<EnvironmentThreadGroup | null>(null).pipe(
@@ -34,6 +34,11 @@ export function useThreadGroup(ref: ScopedThreadGroupRef | null): EnvironmentThr
   return useAtomValue(
     ref === null ? EMPTY_THREAD_GROUP_ATOM : environmentThreadGroups.threadGroupAtom(ref),
   );
+}
+
+/** Every known group, for menus that snapshot state when they open. */
+export function readThreadGroups(): ReadonlyArray<EnvironmentThreadGroup> {
+  return appAtomRegistry.get(environmentThreadGroups.threadGroupsAtom);
 }
 
 /** Imperative read for menus that snapshot state when they open. */

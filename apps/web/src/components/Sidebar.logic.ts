@@ -256,6 +256,59 @@ export function resolveSidebarDropTarget(
   return { section, pinnedOrder, activeOrder };
 }
 
+/** Dropping a chat into a group: join a group, or group a lone Active chat first and then join. */
+export type SidebarGroupDropTarget =
+  | { readonly kind: "join"; readonly groupKey: string }
+  | { readonly kind: "create-with"; readonly threadKey: string };
+
+interface SidebarGroupDropThread {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: string;
+  readonly lineage: { readonly relationshipToParent: "fork" | "subagent" | null };
+}
+
+/**
+ * What dropping `activeThread` on `overItem` does to its group, or null when
+ * the drop is not a group drop. A group row in any section takes the chat. An
+ * Active-tree chat row takes it into its group, or groups with it when lone.
+ * Pinned, Settled and shelf chat rows keep their pin and settle drops, and so
+ * does an ungrouped chat dragged in from a shelf (its drop into Active means
+ * unpin, un-settle or wake). Targets in another project, the chat's own group
+ * and subagents never are group drops.
+ */
+export function resolveSidebarGroupDropTarget(input: {
+  readonly activeThread: SidebarGroupDropThread & {
+    readonly key: string;
+    readonly section: SidebarSection;
+    readonly groupKey: string | null;
+  };
+  readonly overItem: SidebarListItem | undefined;
+  readonly groups: ReadonlyMap<string, Pick<EnvironmentThreadGroup, "environmentId" | "projectId">>;
+  readonly threads: ReadonlyMap<string, SidebarGroupDropThread>;
+}): SidebarGroupDropTarget | null {
+  const { activeThread: active, overItem } = input;
+  const isSubagent = (thread: SidebarGroupDropThread) =>
+    thread.lineage.relationshipToParent === "subagent";
+  if (isSubagent(active) || overItem === undefined) return null;
+  const sameProject = (target: Pick<SidebarGroupDropThread, "environmentId" | "projectId">) =>
+    target.environmentId === active.environmentId && target.projectId === active.projectId;
+  if (overItem.kind === "group") {
+    const group = input.groups.get(overItem.key);
+    if (group === undefined || !sameProject(group) || overItem.key === active.groupKey) {
+      return null;
+    }
+    return { kind: "join", groupKey: overItem.key };
+  }
+  if (overItem.kind !== "thread" || overItem.key === active.key) return null;
+  if (overItem.section !== "active") return null;
+  if (active.groupKey === null && active.section !== "active") return null;
+  const target = input.threads.get(overItem.key);
+  if (target === undefined || isSubagent(target) || !sameProject(target)) return null;
+  const targetGroupKey = overItem.groupKey ?? null;
+  if (targetGroupKey === null) return { kind: "create-with", threadKey: overItem.key };
+  return targetGroupKey === active.groupKey ? null : { kind: "join", groupKey: targetGroupKey };
+}
+
 export type SidebarThreadDropPlan =
   | { readonly kind: "none" }
   /** Within the pinned block: the existing key writes. */

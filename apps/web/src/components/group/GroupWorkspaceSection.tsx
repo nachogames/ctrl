@@ -7,9 +7,10 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { FolderIcon, GitBranchIcon, TriangleAlertIcon } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { useOpenInPreferredEditor } from "~/editorPreferences";
+import { useThreadGroupActions } from "~/hooks/useThreadGroupActions";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useProject } from "~/state/entities";
@@ -19,6 +20,7 @@ import { useEnvironmentScope } from "~/state/session";
 import { vcsEnvironment } from "~/state/vcs";
 
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import { Button } from "../ui/button";
 import { PullRequestCheckStatusIcon } from "../pullRequest/pullRequestPresentation";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { groupWorkspaceLabel } from "./GroupPanel.logic";
@@ -61,6 +63,16 @@ export function GroupWorkspaceSection(props: {
     aheadOfDefaultCount: status.data?.aheadOfDefaultCount ?? null,
   });
 
+  const { recreateWorktree } = useThreadGroupActions();
+  const [recreating, setRecreating] = useState(false);
+  const recreate = async () => {
+    setRecreating(true);
+    await recreateWorktree(group);
+    setRecreating(false);
+    // The worktree is back on disk: read its status again.
+    status.refresh();
+  };
+
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const canOpenEditor = useEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope);
   const openInEditor = useOpenInPreferredEditor(group.environmentId, availableEditors);
@@ -102,6 +114,15 @@ export function GroupWorkspaceSection(props: {
         <div className={cn(ROW_CLASS, "text-warning-foreground")}>
           <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
           <span className="min-w-0 truncate">Workspace missing</span>
+          <Button
+            size="xs"
+            variant="outline"
+            className="ms-auto shrink-0"
+            disabled={!canOpenEditor || recreating}
+            onClick={() => void recreate()}
+          >
+            {recreating ? "Recreating…" : "Recreate worktree"}
+          </Button>
         </div>
       ) : null}
       {group.pullRequest !== null ? (

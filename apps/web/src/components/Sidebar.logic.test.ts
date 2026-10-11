@@ -55,6 +55,7 @@ import {
   sortLogicalProjectsForSidebar,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  resolveSidebarGroupDropTarget,
   planSidebarThreadDrop,
   sortPinnedThreadsForSidebar,
   sortProjectsForSidebar,
@@ -2703,5 +2704,125 @@ describe("resolveForcedOpenGroupKey", () => {
       resolveForcedOpenGroupKey({ routeThreadKey: "env:loose", groupKeyByThreadKey }),
     ).toBeNull();
     expect(resolveForcedOpenGroupKey({ routeThreadKey: null, groupKeyByThreadKey })).toBeNull();
+  });
+});
+
+describe("resolveSidebarGroupDropTarget", () => {
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const inProject = {
+    environmentId: localEnvironmentId,
+    projectId: "project-a",
+    lineage: { relationshipToParent: null },
+  };
+  const groups = new Map([
+    ["group:auth", { environmentId: localEnvironmentId, projectId: ProjectId.make("project-a") }],
+    ["group:docs", { environmentId: localEnvironmentId, projectId: ProjectId.make("project-a") }],
+    ["group:other", { environmentId: localEnvironmentId, projectId: ProjectId.make("project-b") }],
+  ]);
+  const threads = new Map([
+    ["env:lone", inProject],
+    ["env:member", inProject],
+    ["env:pinned", inProject],
+    ["env:elsewhere", { ...inProject, projectId: "project-b" }],
+    ["env:remote", { ...inProject, environmentId: remoteEnvironmentId }],
+  ]);
+  const active = (
+    overrides: Partial<Parameters<typeof resolveSidebarGroupDropTarget>[0]["activeThread"]> = {},
+  ) => ({
+    ...inProject,
+    key: "env:dragged",
+    section: "active" as const,
+    groupKey: null,
+    ...overrides,
+  });
+  const resolve = (overItem: SidebarListItem | undefined, activeThread = active()) =>
+    resolveSidebarGroupDropTarget({ activeThread, overItem, groups, threads });
+
+  it("joins a group row in any section", () => {
+    for (const section of ["pinned", "active", "snoozed", "settled"] as const) {
+      expect(resolve({ kind: "group", key: "group:auth", section })).toEqual({
+        kind: "join",
+        groupKey: "group:auth",
+      });
+    }
+    expect(
+      resolve(
+        { kind: "group", key: "group:auth", section: "pinned" },
+        active({ section: "pinned" }),
+      ),
+    ).toEqual({ kind: "join", groupKey: "group:auth" });
+  });
+
+  it("joins the group of an Active-tree member row", () => {
+    expect(
+      resolve({ kind: "thread", key: "env:member", section: "active", groupKey: "group:docs" }),
+    ).toEqual({ kind: "join", groupKey: "group:docs" });
+  });
+
+  it("groups with a lone Active chat", () => {
+    expect(resolve({ kind: "thread", key: "env:lone", section: "active", groupKey: null })).toEqual(
+      {
+        kind: "create-with",
+        threadKey: "env:lone",
+      },
+    );
+  });
+
+  it("moves a grouped chat to another group", () => {
+    const grouped = active({ groupKey: "group:auth", section: "pinned" });
+    expect(resolve({ kind: "group", key: "group:docs", section: "active" }, grouped)).toEqual({
+      kind: "join",
+      groupKey: "group:docs",
+    });
+    expect(
+      resolve({ kind: "thread", key: "env:lone", section: "active", groupKey: null }, grouped),
+    ).toEqual({ kind: "create-with", threadKey: "env:lone" });
+  });
+
+  it("is not a group drop onto the chat's own group or its own row", () => {
+    const grouped = active({ groupKey: "group:auth" });
+    expect(resolve({ kind: "group", key: "group:auth", section: "active" }, grouped)).toBeNull();
+    expect(
+      resolve(
+        { kind: "thread", key: "env:member", section: "active", groupKey: "group:auth" },
+        grouped,
+      ),
+    ).toBeNull();
+    expect(resolve({ kind: "thread", key: "env:dragged", section: "active" })).toBeNull();
+  });
+
+  it("is not a group drop across projects or environments", () => {
+    expect(resolve({ kind: "group", key: "group:other", section: "active" })).toBeNull();
+    expect(resolve({ kind: "thread", key: "env:elsewhere", section: "active" })).toBeNull();
+    expect(resolve({ kind: "thread", key: "env:remote", section: "active" })).toBeNull();
+  });
+
+  it("never groups a subagent", () => {
+    expect(
+      resolve(
+        { kind: "group", key: "group:auth", section: "active" },
+        active({ lineage: { relationshipToParent: "subagent" } }),
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps pin and settle drops on Pinned and Settled chat rows", () => {
+    expect(resolve({ kind: "thread", key: "env:pinned", section: "pinned" })).toBeNull();
+    expect(resolve({ kind: "thread", key: "env:pinned", section: "settled" })).toBeNull();
+  });
+
+  it("keeps an ungrouped shelf chat's drop into Active as unpin, un-settle or wake", () => {
+    for (const section of ["pinned", "settled", "snoozed"] as const) {
+      expect(
+        resolve({ kind: "thread", key: "env:lone", section: "active" }, active({ section })),
+      ).toBeNull();
+    }
+  });
+
+  it("ignores markers, headings and unknown groups", () => {
+    expect(resolve({ kind: "marker", marker: "pinned-divider" })).toBeNull();
+    expect(resolve({ kind: "project-heading", key: "project-a" })).toBeNull();
+    expect(resolve({ kind: "group", key: "group:gone", section: "active" })).toBeNull();
+    expect(resolve(undefined)).toBeNull();
   });
 });

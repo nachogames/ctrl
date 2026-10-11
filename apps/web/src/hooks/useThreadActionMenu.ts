@@ -21,6 +21,7 @@ import {
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
+import { parseMoveToGroupTarget } from "../components/moveToGroupMenu.logic";
 import { isThreadGroupSnoozed } from "../components/threadGroupMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { readThreadGroup } from "../state/threadGroups";
@@ -49,7 +50,7 @@ import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
-import { useThreadGroupActions } from "./useThreadGroupActions";
+import { readMoveToGroupState, useThreadGroupActions } from "./useThreadGroupActions";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -177,6 +178,7 @@ export function useThreadActionMenu(input: {
                   isPinned: group.pinnedAt !== null,
                   isSnoozed: isThreadGroupSnoozed(group, now.getTime()),
                 },
+          moveToGroup: readMoveToGroupState(thread),
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -210,6 +212,11 @@ export function useThreadActionMenu(input: {
               ? await requestCustomSnooze()
               : snoozePresets.find((candidate) => `snooze-group:${candidate.id}` === action);
           if (preset) await groupActions.snoozeGroup(group, preset.snoozedUntil);
+          return;
+        }
+        const moveTarget = parseMoveToGroupTarget(action);
+        if (moveTarget !== null) {
+          await groupActions.moveThreadToGroupId(thread, moveTarget);
           return;
         }
         const reportFailure = async (
@@ -281,6 +288,15 @@ export function useThreadActionMenu(input: {
             return;
           case "open-group-panel":
             if (group) groupActions.openGroupPanel(group, thread.id);
+            return;
+          case "handoff":
+            await groupActions.handOffThread(thread);
+            return;
+          case "move-to-new-group":
+            await groupActions.moveThreadToNewGroup(thread);
+            return;
+          case "remove-from-group":
+            await groupActions.removeThreadFromGroup(thread);
             return;
           case "auto-settle:enabled":
           case "auto-settle:disabled":

@@ -643,6 +643,43 @@ describe("sidebar drag projection", () => {
     expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(82 - 29 - 37);
   });
 
+  it("holds every row in place while the hovered row is a group drop", () => {
+    const items: SidebarListItem[] = [
+      pinnedHeader,
+      { kind: "group", key: "g", section: "pinned" },
+      thread("p", "pinned"),
+      divider,
+      { kind: "project-heading", key: "one" },
+      thread("a1", "active"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const input = { items, settledOrder: [], settledExpanded: true };
+    const overGroup = sidebarListItemId(items[1]!);
+    // Without the hold, Pinned opens a gap for the lifted row.
+    expect([...preview(input, "a1", overGroup, 1, 36).values()].some((t) => t?.y !== 0)).toBe(true);
+    const held = preview(
+      { ...input, holdsLayout: (active, over) => active === "a1" && over === overGroup },
+      "a1",
+      overGroup,
+      1,
+      36,
+    );
+    for (const transform of held.values()) expect(transform).toEqual(stationary);
+    // Moving on to a lifecycle target resumes the preview.
+    expect(
+      [
+        ...preview(
+          { ...input, holdsLayout: (_active, over) => over === overGroup },
+          "a1",
+          "p",
+          1,
+          36,
+        ).values(),
+      ].some((t) => t?.y !== 0),
+    ).toBe(true);
+  });
+
   it("previews a time-ordered drop into a new project heading", () => {
     const items: SidebarListItem[] = [
       pinnedHeader,

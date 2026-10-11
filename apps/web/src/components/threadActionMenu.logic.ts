@@ -1,7 +1,19 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
+import {
+  buildMoveToGroupMenuItems,
+  type MoveToGroupCandidate,
+  type MoveToGroupMenuId,
+} from "./moveToGroupMenu.logic";
 import { groupSnoozeChildren } from "./threadGroupMenu.logic";
+
+/** Sent to the open chat by "Hand off to new chat"; its agent writes the summary. */
+export const THREAD_HANDOFF_PROMPT =
+  "Hand this chat off to a new chat in its group. Call the t3_group_handoff tool with a summary covering: the current state, the next steps, and anything the next chat must not touch. Then stop.";
+
+/** Context menus cannot show tooltips, so a disabled handoff says why in its label. */
+export const THREAD_HANDOFF_BUSY_HINT = "Wait for the turn to finish";
 
 /**
  * Ids for the per-thread action menu. Snooze presets are dispatched as
@@ -10,6 +22,8 @@ import { groupSnoozeChildren } from "./threadGroupMenu.logic";
  */
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
+  | "handoff"
+  | MoveToGroupMenuId
   | "filter-by-project"
   | "project-settings"
   | "pin"
@@ -115,6 +129,14 @@ export interface ThreadActionMenuState {
     readonly isPinned: boolean;
     readonly isSnoozed: boolean;
   } | null;
+  /**
+   * Groups of the chat's project for "Move to group…", and the chat's current
+   * one. Null hides the move items (subagents, surfaces without groups).
+   */
+  readonly moveToGroup?: {
+    readonly groups: ReadonlyArray<MoveToGroupCandidate>;
+    readonly currentGroupId: MoveToGroupCandidate["id"] | null;
+  } | null;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -150,6 +172,15 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    // Disabled mid-turn: the prompt would queue behind work the summary must cover.
+    {
+      id: "handoff",
+      label: state.isRunning
+        ? `Hand off to new chat (${THREAD_HANDOFF_BUSY_HINT.toLowerCase()})`
+        : "Hand off to new chat",
+      icon: "message-square-plus",
+      disabled: state.isRunning,
+    },
     ...(group
       ? [
           group.isPinned
@@ -205,6 +236,7 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     ...(group ? [{ id: "open-group-panel" as const, label: "Open group panel" }] : []),
+    ...(state.moveToGroup ? buildMoveToGroupMenuItems(state.moveToGroup) : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration
       ? [
