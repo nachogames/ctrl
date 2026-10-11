@@ -140,7 +140,7 @@ import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadAc
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { scopeThreadActionContext, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -5008,33 +5008,24 @@ export default function Sidebar() {
       // the palette picker.
       if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
         if (isMobile) setOpenMobile(false);
-        // Under a machine filter, context from another machine (a thread
-        // opened from a notification, say) must not pull the new thread there.
-        const onScopedMachine = (environmentId: EnvironmentId) =>
-          environmentScopeId === null || environmentId === environmentScopeId;
-        const { activeDraftThread, activeThread } = newThreadContext;
-        const scopedDefaultProjectRef = projectGroups[0]?.memberProjectRefs.find((projectRef) =>
-          onScopedMachine(projectRef.environmentId),
+        void startNewThreadFromContext(
+          scopeThreadActionContext(
+            {
+              activeDraftThread: newThreadContext.activeDraftThread,
+              activeThread: newThreadContext.activeThread ?? undefined,
+              defaultProjectRef: newThreadContext.defaultProjectRef,
+              handleNewThread: newThreadContext.handleNewThread,
+            },
+            environmentScopeId,
+            projectGroupsRef.current[0]?.memberProjectRefs[0] ?? null,
+          ),
         );
-        void startNewThreadFromContext({
-          activeDraftThread:
-            activeDraftThread && onScopedMachine(activeDraftThread.environmentId)
-              ? activeDraftThread
-              : null,
-          activeThread:
-            activeThread && onScopedMachine(activeThread.environmentId) ? activeThread : undefined,
-          defaultProjectRef:
-            environmentScopeId === null
-              ? newThreadContext.defaultProjectRef
-              : (scopedDefaultProjectRef ?? null),
-          handleNewThread: newThreadContext.handleNewThread,
-        });
         return;
       }
       if (isMobile) setOpenMobile(false);
       openCommandPalette({ open: "new-thread-in" });
     },
-    [environmentScopeId, isMobile, newThreadContext, projectGroups, setOpenMobile],
+    [environmentScopeId, isMobile, newThreadContext, projectGroups.length, setOpenMobile],
   );
 
   // The button mirrors chat.new: in multi-project setups both route through
