@@ -72,6 +72,7 @@ import {
   EyeIcon,
   FolderIcon,
   GitBranchIcon,
+  LayersIcon,
   ListFilterIcon,
   MessageCircleQuestionIcon,
   PinIcon,
@@ -275,7 +276,16 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuShortcut,
+  MenuTrigger,
+} from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import {
@@ -964,6 +974,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
+  environmentScopeId: EnvironmentId | null;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
   onDraftContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
@@ -1009,6 +1020,9 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       ) {
         continue;
       }
+      if (props.environmentScopeId !== null && session.environmentId !== props.environmentScopeId) {
+        continue;
+      }
       if (draftKey === props.routeDraftId) {
         // Open draft: render the frozen entry snapshot, or nothing for a
         // draft that has never been left. Gated on the LIVE session above so
@@ -1030,6 +1044,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     draftThreadsByThreadKey,
     draftsByThreadKey,
     frozenActive,
+    props.environmentScopeId,
     props.routeDraftId,
     props.scopedProjectKeys,
   ]);
@@ -2383,9 +2398,33 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 });
 
 export default function Sidebar() {
-  const projects = useProjects();
+  const allProjects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threads = useThreadShells();
+  const allThreads = useThreadShells();
+  const environments = useEnvironmentIdentities();
+  const storedEnvironmentScopeId = useUiStateStore((store) => store.sidebarEnvironmentScopeId);
+  const setEnvironmentScopeId = useUiStateStore((store) => store.setSidebarEnvironmentScopeId);
+  // The machine filter applies only while that machine is still saved and
+  // there is more than one; otherwise the sidebar shows everything.
+  const environmentScopeId =
+    environments.length > 1 &&
+    environments.some((environment) => environment.environmentId === storedEnvironmentScopeId)
+      ? (storedEnvironmentScopeId as EnvironmentId)
+      : null;
+  const projects = useMemo(
+    () =>
+      environmentScopeId === null
+        ? allProjects
+        : allProjects.filter((project) => project.environmentId === environmentScopeId),
+    [allProjects, environmentScopeId],
+  );
+  const threads = useMemo(
+    () =>
+      environmentScopeId === null
+        ? allThreads
+        : allThreads.filter((thread) => thread.environmentId === environmentScopeId),
+    [allThreads, environmentScopeId],
+  );
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2473,7 +2512,6 @@ export default function Sidebar() {
     () => openCommandPalette({ open: "add-project" }),
     [],
   );
-  const environments = useEnvironmentIdentities();
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
@@ -2704,6 +2742,9 @@ export default function Sidebar() {
       ) {
         continue;
       }
+      if (environmentScopeId !== null && session.environmentId !== environmentScopeId) {
+        continue;
+      }
       count += 1;
     }
     return count;
@@ -2712,7 +2753,7 @@ export default function Sidebar() {
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, environmentScopeId, projectScopeKey]);
 
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot) => {
@@ -2782,7 +2823,9 @@ export default function Sidebar() {
     // Subagent child threads live in the parent's Agents surface, not the
     // sidebar roster (v2 models them as real threads with lineage).
     const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
-    inboxReturns.observe(workingShelfEnabled ? threads : null);
+    // Returns are tracked across every machine so a filter flip does not
+    // read hidden threads as gone.
+    inboxReturns.observe(workingShelfEnabled ? allThreads : null);
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
     const working: EnvironmentThreadShell[] = [];
@@ -2882,6 +2925,7 @@ export default function Sidebar() {
       snoozeNow: preciseNow,
     };
   }, [
+    allThreads,
     nowMinute,
     optimisticDrop,
     scopedProjectKeys,
@@ -2960,7 +3004,7 @@ export default function Sidebar() {
   // filter context changes so a scope/search flip never inherits a deep
   // page state.
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
-  const settledResetKey = projectScopeKey ?? "all";
+  const settledResetKey = `${environmentScopeId ?? "all"}|${projectScopeKey ?? "all"}`;
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -4988,6 +5032,47 @@ export default function Sidebar() {
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
+              machineScope={
+                environments.length > 1 ? (
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <SidebarHeaderIconButton
+                          label={
+                            environmentScopeId === null
+                              ? "Show threads from: All machines"
+                              : `Show threads from: ${environmentLabelById.get(environmentScopeId) ?? "Machine"}`
+                          }
+                        />
+                      }
+                    >
+                      {environmentScopeId === null ? (
+                        <LayersIcon />
+                      ) : (
+                        <EnvironmentMachineIcon
+                          kind={environmentMachineById.get(environmentScopeId) ?? "server"}
+                        />
+                      )}
+                    </MenuTrigger>
+                    <MenuPopup align="end" side="bottom">
+                      <MenuRadioGroup
+                        value={environmentScopeId ?? ""}
+                        onValueChange={(value) => setEnvironmentScopeId(value || null)}
+                      >
+                        <MenuRadioItem value="">All machines</MenuRadioItem>
+                        {environments.map((environment) => (
+                          <MenuRadioItem
+                            key={environment.environmentId}
+                            value={environment.environmentId}
+                          >
+                            {environment.label}
+                          </MenuRadioItem>
+                        ))}
+                      </MenuRadioGroup>
+                    </MenuPopup>
+                  </Menu>
+                ) : null
+              }
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -5398,6 +5483,7 @@ export default function Sidebar() {
                           projectByKey={projectByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
                           scopedProjectKeys={scopedProjectKeys}
+                          environmentScopeId={environmentScopeId}
                           routeDraftId={routeDraftIdForRows}
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}

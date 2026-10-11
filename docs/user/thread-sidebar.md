@@ -180,6 +180,11 @@ The linked pull request participates in automatic settlement.
 
 ## Find and reference work
 
+With more than one machine connected, the machine button at the top of the sidebar
+limits the list to one machine's projects and threads, for example to keep work and
+personal machines apart. Each device remembers its own choice. The command palette
+still searches every machine.
+
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
 across connected environments. Message search starts after two characters and
 includes your messages and final agent responses.
