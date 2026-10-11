@@ -88,12 +88,13 @@ interface Recorded {
 const makeHarness = (options: {
   readonly callerGroupId: ThreadGroupId | null;
   readonly createError?: ThreadGroup.ThreadGroupServiceError;
+  readonly buildFields?: Partial<OrchestrationV2ThreadShell>;
 }) =>
   Effect.gen(function* () {
     const caller = thread(callerId, { groupId: options.callerGroupId });
     const shells = new Map([
       [callerId, caller],
-      [buildId, thread(buildId, { status: "idle" })],
+      [buildId, thread(buildId, { status: "idle", ...options.buildFields })],
     ]);
     let resources: ReadonlyArray<ThreadGroupManualResource> = [];
     const recorded: Recorded = {
@@ -299,8 +300,10 @@ it.effect("adds and removes a registered resource", () =>
 
     const removed = yield* handle("t3_group_resource", { action: "remove", id });
     expect(removed).toMatchObject({ resources: [] });
+    // A retried remove finds nothing to remove and still succeeds.
     expect(yield* handle("t3_group_resource", { action: "remove", id })).toMatchObject({
-      code: "invalid_request",
+      resources: [],
+      removed: false,
     });
   }),
 );
@@ -329,5 +332,29 @@ it.effect("settling a group settles its unsettled chats, the caller's after its 
     ]);
     expect(result).toMatchObject({ group: { title: "Auth refactor" } });
     expect(yield* handle("t3_group_update", {})).toMatchObject({ code: "invalid_request" });
+  }),
+);
+
+it.effect("settling a group leaves a chat above the caller's modes as it is", () =>
+  Effect.gen(function* () {
+    const { handle, recorded } = yield* makeHarness({
+      callerGroupId: groupId,
+      buildFields: { runtimeMode: "full-access" },
+    });
+    const result = yield* handle("t3_group_update", { settled: true });
+    expect(recorded.settled.map((input) => input.threadId)).toEqual([callerId]);
+    expect(result).toMatchObject({ unchangedChats: [{ threadId: buildId }] });
+  }),
+);
+
+it.effect("refuses to move another chat that runs above the caller's modes", () =>
+  Effect.gen(function* () {
+    const { handle, recorded } = yield* makeHarness({
+      callerGroupId: groupId,
+      buildFields: { runtimeMode: "full-access" },
+    });
+    const result = yield* handle("t3_group_move_thread", { threadId: buildId, groupId: null });
+    expect(result).toMatchObject({ code: "runtime_mode_escalation_denied" });
+    expect(recorded.moved).toEqual([]);
   }),
 );

@@ -22,6 +22,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { stableCommandId } from "../../OrchestratorMcpService.ts";
 import {
+  assertTargetWithinLimits,
   type Caller,
   dispatchFailure,
   newCommandId,
@@ -132,7 +133,12 @@ const readMembers = Effect.fn("mcp.group.readMembers")(function* (
   );
 });
 
-/** Settles or unsettles every live chat of the group that is not already so. */
+/**
+ * Settles or unsettles every live chat of the group that is not already so.
+ * A chat running in broader modes than the caller is left as it is, the same
+ * rule t3_thread_organize applies to one chat; the orchestrator re-checks it
+ * under the chat's lock through the DispatchModeLimit `writesThreads` provides.
+ */
 const setMembersSettled = Effect.fn("mcp.group.setMembersSettled")(function* (
   context: Caller,
   group: OrchestrationThreadGroupShell,
@@ -154,23 +160,31 @@ const setMembersSettled = Effect.fn("mcp.group.setMembersSettled")(function* (
   yield* Effect.forEach(
     pending,
     (thread) =>
-      (settled
-        ? context.threads.settleThread({
-            threadId: thread.id,
-            commandId: CommandId.make(`${commandId}:settle:${thread.id}`),
-            byOwnAgent: context.caller?.id === thread.id,
-          })
-        : context.threads.dispatch({
-            type: "thread.unsettle",
-            commandId: CommandId.make(`${commandId}:unsettle:${thread.id}`),
-            threadId: thread.id,
-            reason: "user",
-          })
-      ).pipe(
+      assertTargetWithinLimits(context.limits, thread).pipe(
+        Effect.andThen(() =>
+          settled
+            ? context.threads.settleThread({
+                threadId: thread.id,
+                commandId: CommandId.make(`${commandId}:settle:${thread.id}`),
+                byOwnAgent: context.caller?.id === thread.id,
+              })
+            : context.threads.dispatch({
+                type: "thread.unsettle",
+                commandId: CommandId.make(`${commandId}:unsettle:${thread.id}`),
+                threadId: thread.id,
+                reason: "user",
+              }),
+        ),
         Effect.asVoid,
         Effect.catch((error) =>
           Effect.sync(() => {
-            unchanged.push({ threadId: thread.id, reason: dispatchFailure(error).message });
+            unchanged.push({
+              threadId: thread.id,
+              reason:
+                error._tag === "OrchestratorMcpFailure"
+                  ? error.message
+                  : dispatchFailure(error).message,
+            });
           }),
         ),
       ),
@@ -264,30 +278,33 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
         return { group };
       }),
   ),
-  t3_group_update: McpToolAccess.writes((input) =>
-    Effect.gen(function* () {
-      const context = yield* readCaller();
-      const groupId = yield* resolveGroupId(context, input.groupId);
-      const now = DateTime.formatIso(yield* DateTime.now);
-      const patch: ThreadGroupUpdatePayload = {
-        ...(input.title === undefined ? {} : { title: input.title }),
-        ...(input.goal === undefined ? {} : { goal: input.goal }),
-        ...(input.pinned === undefined ? {} : { pinnedAt: input.pinned ? now : null }),
-        ...(input.settled === undefined ? {} : { settledAt: input.settled ? now : null }),
-      };
-      if (Object.keys(patch).length === 0)
-        return yield* invalid("Pass at least one of title, goal, pinned, or settled.");
-      const commandId = yield* commandIdFor("update", input.clientRequestId);
-      const service = yield* ThreadGroup.ThreadGroupService;
-      const group = yield* service
-        .update({ commandId, groupId, patch })
-        .pipe(Effect.mapError(groupFailure));
-      const unchanged =
-        input.settled === undefined
-          ? []
-          : yield* setMembersSettled(context, group, commandId, input.settled);
-      return { group, ...(unchanged.length === 0 ? {} : { unchangedChats: unchanged }) };
-    }),
+  // No thread is named up front; members are checked as they are settled.
+  t3_group_update: McpToolAccess.writesThreads(
+    () => [],
+    (input) =>
+      Effect.gen(function* () {
+        const context = yield* readCaller();
+        const groupId = yield* resolveGroupId(context, input.groupId);
+        const now = DateTime.formatIso(yield* DateTime.now);
+        const patch: ThreadGroupUpdatePayload = {
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.goal === undefined ? {} : { goal: input.goal }),
+          ...(input.pinned === undefined ? {} : { pinnedAt: input.pinned ? now : null }),
+          ...(input.settled === undefined ? {} : { settledAt: input.settled ? now : null }),
+        };
+        if (Object.keys(patch).length === 0)
+          return yield* invalid("Pass at least one of title, goal, pinned, or settled.");
+        const commandId = yield* commandIdFor("update", input.clientRequestId);
+        const service = yield* ThreadGroup.ThreadGroupService;
+        const group = yield* service
+          .update({ commandId, groupId, patch })
+          .pipe(Effect.mapError(groupFailure));
+        const unchanged =
+          input.settled === undefined
+            ? []
+            : yield* setMembersSettled(context, group, commandId, input.settled);
+        return { group, ...(unchanged.length === 0 ? {} : { unchangedChats: unchanged }) };
+      }),
   ),
   t3_group_new_thread: McpToolAccess.startsThreads(
     (input) => input,
@@ -388,6 +405,7 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
       const context = yield* readCaller();
       const groupId = yield* resolveGroupId(context, input.groupId);
       const commandId = yield* commandIdFor("resource", input.clientRequestId);
+      let removed: boolean | undefined;
       let change: (
         current: ReadonlyArray<ThreadGroupManualResource>,
       ) => Effect.Effect<ReadonlyArray<ThreadGroupManualResource> | null, OrchestratorMcpFailure>;
@@ -421,12 +439,11 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
       } else {
         const id = input.id;
         if (id === undefined) return yield* invalid('action "remove" needs the resource id.');
-        change = (current) =>
-          current.some((entry) => entry.id === id)
-            ? Effect.succeed(current.filter((entry) => entry.id !== id))
-            : Effect.fail(
-                invalid(`The group has no resource with id ${id}. t3_group_read lists them.`),
-              );
+        // A missing id is already removed, so a retried remove succeeds.
+        change = (current) => {
+          removed = current.some((entry) => entry.id === id);
+          return Effect.succeed(removed ? current.filter((entry) => entry.id !== id) : null);
+        };
       }
       const service = yield* ThreadGroup.ThreadGroupService;
       const group = yield* service
@@ -436,7 +453,11 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
             error._tag === "OrchestratorMcpFailure" ? error : groupFailure(error),
           ),
         );
-      return { group, resources: group.manualResources };
+      return {
+        group,
+        resources: group.manualResources,
+        ...(removed === undefined ? {} : { removed }),
+      };
     }),
   ),
 });

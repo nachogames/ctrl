@@ -96,7 +96,7 @@ const GroupCreateTool = Tool.make("t3_group_create", {
 const GroupUpdateTool = Tool.make("t3_group_update", {
   ...groupTool,
   description:
-    "Rename a chat group, set or clear its goal (goal: null clears it), pin or unpin it, or settle or unsettle it. Omit groupId for the group your chat is in. Omitted fields stay as they are. settled: true settles the group and every chat in it that is not settled yet (your own chat settles when your turn ends; a chat that is running or waiting on a question stays active and is listed in unchangedChats). settled: false unsettles the group and its settled chats.",
+    "Rename a chat group, set or clear its goal (goal: null clears it), pin or unpin it, or settle or unsettle it. Omit groupId for the group your chat is in. Omitted fields stay as they are. settled: true settles the group and every chat in it that is not settled yet (your own chat settles when your turn ends; a chat that is running, waiting on a question, or running in broader modes than yours stays as it is and is listed in unchangedChats). settled: false unsettles the group and its settled chats.",
   parameters: Schema.Struct({
     groupId: groupIdParameter,
     title: Schema.optional(TrimmedNonEmptyString),
@@ -200,7 +200,7 @@ const GroupMoveThreadTool = Tool.make("t3_group_move_thread", {
 const GroupResourceTool = Tool.make("t3_group_resource", {
   ...groupTool,
   description:
-    'Register a running resource on a group, such as a dev server or a container you started, so the user and the group\'s other chats can find it; or remove one. Omit groupId for the group your chat is in. action "add" needs name, and kind defaults to "other"; pass url when it has one. id is generated for add unless you pass one; action "remove" needs the id. Registered resources are shown as registered, never health-checked, so remove one when you stop it.',
+    'Register a running resource on a group, such as a dev server or a container you started, so the user and the group\'s other chats can find it; or remove one. Omit groupId for the group your chat is in. action "add" needs name, and kind defaults to "other"; pass url when it has one. id is generated for add unless you pass one; action "remove" needs the id and succeeds with removed: false when the id is not there. Registered resources are shown as registered, never health-checked, so remove one when you stop it.',
   parameters: Schema.Struct({
     groupId: groupIdParameter,
     action: Schema.Literals(["add", "remove"]),
@@ -213,6 +213,9 @@ const GroupResourceTool = Tool.make("t3_group_resource", {
   success: Schema.Struct({
     group: OrchestrationThreadGroupShell,
     resources: Schema.Array(ThreadGroupManualResource),
+    removed: Schema.optional(Schema.Boolean).annotate({
+      description: "For remove: false when the group had no resource with that id.",
+    }),
   }),
 })
   .annotate(Tool.Title, "Register a group resource")
