@@ -3844,7 +3844,11 @@ export default function Sidebar() {
   const sidebarListOrderKey = useMemo(
     () =>
       sidebarListItems
-        .map((item) => (item.kind === "thread" ? `${item.key}:${item.section}` : item.marker))
+        .map((item) =>
+          item.kind === "marker"
+            ? item.marker
+            : `${sidebarListItemId(item)}:${"section" in item ? item.section : ""}`,
+        )
         .join("\0"),
     [sidebarListItems],
   );
@@ -5408,6 +5412,7 @@ export default function Sidebar() {
                           items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
                           continue;
                         }
+                        if (item.kind !== "marker") continue;
                         switch (item.marker) {
                           case "pinned-header":
                             items.push(

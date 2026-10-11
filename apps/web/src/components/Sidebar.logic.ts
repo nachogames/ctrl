@@ -1,4 +1,8 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  type EnvironmentThreadGroup,
+} from "@t3tools/client-runtime/state/models";
+import { threadGroupKey } from "@t3tools/client-runtime/state/entities";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -8,7 +12,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId, ThreadGroupId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
@@ -166,12 +170,31 @@ export function sidebarMarkerId(marker: SidebarListMarker): string {
   return `${SIDEBAR_MARKER_PREFIX}${marker}`;
 }
 
+/** Structural rows sit beside thread rows in the one flat list. Grouped
+    thread rows carry their group's key; they follow their group row and
+    never take part in the manual Active order. */
 export type SidebarListItem =
-  | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
+  | {
+      readonly kind: "thread";
+      readonly key: string;
+      readonly section: SidebarSection;
+      readonly groupKey?: string | null;
+    }
+  | { readonly kind: "group"; readonly key: string; readonly section: SidebarGroupSection }
+  | { readonly kind: "project-heading"; readonly key: string }
   | { readonly kind: "marker"; readonly marker: SidebarListMarker };
 
 export function sidebarListItemId(item: SidebarListItem): string {
-  return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
+  switch (item.kind) {
+    case "thread":
+      return item.key;
+    case "group":
+      return `sidebar-group-${item.key}`;
+    case "project-heading":
+      return `sidebar-project-${item.key}`;
+    case "marker":
+      return sidebarMarkerId(item.marker);
+  }
 }
 
 /** The section a slot belongs to, read off the markers around it: from
@@ -223,7 +246,11 @@ export function resolveSidebarDropTarget(
         item.marker === "settled-header"
       )
         break;
-    } else if (currentSection === "pinned") pinnedOrder.push(item.key);
+      continue;
+    }
+    // Groups, headings and grouped rows have no manual order of their own.
+    if (item.kind !== "thread" || (item.groupKey ?? null) !== null) continue;
+    if (currentSection === "pinned") pinnedOrder.push(item.key);
     else activeOrder.push(item.key);
   }
   return { section, pinnedOrder, activeOrder };
@@ -1000,6 +1027,211 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   return "ready";
+}
+
+// ---------------------------------------------------------------------------
+// Chat groups. A chat in a known group renders under its group, wherever the
+// group is placed; its own pin/snooze/settle no longer place it.
+
+function timestampMsOrNull(value: string | null | undefined): number | null {
+  if (value == null) return null;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** Recent-activity time for sidebar sorting; never reads updatedAt. */
+export function sidebarActivityMs(thread: {
+  readonly createdAt: string;
+  readonly latestUserMessageAt: string | null;
+  readonly unsettledAt?: string | null;
+}): number {
+  // updatedAt moves on renames and group moves, which must not reorder rows.
+  const base =
+    timestampMsOrNull(thread.latestUserMessageAt) ??
+    timestampMsOrNull(thread.createdAt) ??
+    Number.NEGATIVE_INFINITY;
+  const unsettled = timestampMsOrNull(thread.unsettledAt);
+  return unsettled === null ? base : Math.max(base, unsettled);
+}
+
+const SIDEBAR_THREAD_STATUS_URGENCY: readonly SidebarThreadStatus[] = [
+  "approval",
+  "input",
+  "failed",
+  "working",
+  "waiting",
+  "limited",
+  "ready",
+];
+
+/** Most urgent member status; null when there are no members. */
+export function resolveThreadGroupStatus(
+  members: ReadonlyArray<SidebarThreadStatusInput>,
+): SidebarThreadStatus | null {
+  let best: number | null = null;
+  for (const member of members) {
+    const rank = SIDEBAR_THREAD_STATUS_URGENCY.indexOf(resolveSidebarThreadStatus(member));
+    if (best === null || rank < best) best = rank;
+  }
+  return best === null ? null : SIDEBAR_THREAD_STATUS_URGENCY[best]!;
+}
+
+export type SidebarGroupSection = "pinned" | "active" | "snoozed" | "settled";
+
+/** Snoozed › settled › pinned › active. A group is settled when stamped, or
+ * when it has members and every one of them is settled. */
+export function resolveSidebarGroupSection(input: {
+  readonly group: Pick<EnvironmentThreadGroup, "pinnedAt" | "snoozedUntil" | "settledAt">;
+  readonly members: ReadonlyArray<{ readonly settledOverride: "settled" | "active" | null }>;
+  readonly now: string;
+}): SidebarGroupSection {
+  const snoozedUntil = timestampMsOrNull(input.group.snoozedUntil);
+  const now = timestampMsOrNull(input.now);
+  if (snoozedUntil !== null && now !== null && snoozedUntil > now) return "snoozed";
+  if (
+    input.group.settledAt !== null ||
+    (input.members.length > 0 &&
+      input.members.every((member) => member.settledOverride === "settled"))
+  ) {
+    return "settled";
+  }
+  if (input.group.pinnedAt !== null) return "pinned";
+  return "active";
+}
+
+/** Resolve each visible thread to its group, or to null when ungrouped/unknown. */
+export function partitionThreadsByGroup<
+  T extends {
+    readonly environmentId: EnvironmentId;
+    readonly id: ThreadId;
+    readonly projectId: string;
+    readonly groupId: ThreadGroupId | null;
+  },
+>(input: {
+  readonly threads: ReadonlyArray<T>;
+  readonly groups: ReadonlyMap<string, EnvironmentThreadGroup>;
+}): {
+  readonly ungrouped: ReadonlyArray<T>;
+  readonly byGroup: ReadonlyMap<string, ReadonlyArray<T>>;
+} {
+  const ungrouped: T[] = [];
+  const members = new Map<string, T[]>();
+  for (const thread of input.threads) {
+    if (thread.groupId === null) {
+      ungrouped.push(thread);
+      continue;
+    }
+    const key = threadGroupKey({ environmentId: thread.environmentId, groupId: thread.groupId });
+    const group = input.groups.get(key);
+    // An unknown group, or one from another project, never hides the chat.
+    if (group === undefined || group.projectId !== thread.projectId) {
+      ungrouped.push(thread);
+      continue;
+    }
+    const list = members.get(key) ?? [];
+    list.push(thread);
+    members.set(key, list);
+  }
+  const byGroup = new Map<string, ReadonlyArray<T>>();
+  for (const [key, list] of members) {
+    const ranks = new Map(input.groups.get(key)!.threadIds.map((id, index) => [id, index]));
+    byGroup.set(
+      key,
+      list
+        .map((thread, index) => ({ thread, index }))
+        .toSorted(
+          (left, right) =>
+            (ranks.get(left.thread.id) ?? Number.POSITIVE_INFINITY) -
+              (ranks.get(right.thread.id) ?? Number.POSITIVE_INFINITY) || left.index - right.index,
+        )
+        .map((entry) => entry.thread),
+    );
+  }
+  return { ungrouped, byGroup };
+}
+
+export type SidebarTreeEntry<T> =
+  | { readonly kind: "project-heading"; readonly projectKey: string }
+  | {
+      readonly kind: "group";
+      readonly groupKey: string;
+      readonly group: EnvironmentThreadGroup;
+      readonly members: ReadonlyArray<T>;
+    }
+  | { readonly kind: "thread"; readonly thread: T; readonly groupKey: string | null };
+
+type SidebarActivityInput = Parameters<typeof sidebarActivityMs>[0];
+
+/** Active tree: projects by newest item, then their groups and ungrouped chats by activity.
+ *  Group members follow their group row only when the group is expanded. */
+export function buildSidebarActiveTree<T extends SidebarActivityInput>(input: {
+  readonly ungrouped: ReadonlyArray<T>;
+  readonly groups: ReadonlyArray<{
+    readonly key: string;
+    readonly group: EnvironmentThreadGroup;
+    readonly members: ReadonlyArray<T>;
+  }>;
+  readonly projectKeyOf: (item: T | EnvironmentThreadGroup) => string;
+  readonly isExpanded: (groupKey: string) => boolean;
+}): ReadonlyArray<SidebarTreeEntry<T>> {
+  type Node =
+    | { readonly kind: "thread"; readonly thread: T; readonly activity: number }
+    | {
+        readonly kind: "group";
+        readonly key: string;
+        readonly group: EnvironmentThreadGroup;
+        readonly members: ReadonlyArray<T>;
+        readonly activity: number;
+      };
+  const projects = new Map<string, { nodes: Node[]; activity: number }>();
+  const add = (projectKey: string, node: Node) => {
+    const project = projects.get(projectKey) ?? { nodes: [], activity: Number.NEGATIVE_INFINITY };
+    project.nodes.push(node);
+    project.activity = Math.max(project.activity, node.activity);
+    projects.set(projectKey, project);
+  };
+  for (const thread of input.ungrouped) {
+    add(input.projectKeyOf(thread), {
+      kind: "thread",
+      thread,
+      activity: sidebarActivityMs(thread),
+    });
+  }
+  for (const { key, group, members } of input.groups) {
+    // A group with no visible member renders nothing.
+    if (members.length === 0) continue;
+    const activity = Math.max(...members.map(sidebarActivityMs));
+    add(input.projectKeyOf(group), { kind: "group", key, group, members, activity });
+  }
+  const entries: SidebarTreeEntry<T>[] = [];
+  const byActivity = <N extends { readonly activity: number }>(left: N, right: N) =>
+    right.activity - left.activity;
+  for (const [projectKey, project] of [...projects].toSorted(([, left], [, right]) =>
+    byActivity(left, right),
+  )) {
+    entries.push({ kind: "project-heading", projectKey });
+    for (const node of project.nodes.toSorted(byActivity)) {
+      if (node.kind === "thread") {
+        entries.push({ kind: "thread", thread: node.thread, groupKey: null });
+        continue;
+      }
+      entries.push({ kind: "group", groupKey: node.key, group: node.group, members: node.members });
+      if (!input.isExpanded(node.key)) continue;
+      for (const member of node.members) {
+        entries.push({ kind: "thread", thread: member, groupKey: node.key });
+      }
+    }
+  }
+  return entries;
+}
+
+/** The group that must be open because it holds the routed chat. */
+export function resolveForcedOpenGroupKey(input: {
+  readonly routeThreadKey: string | null;
+  readonly groupKeyByThreadKey: ReadonlyMap<string, string>;
+}): string | null {
+  if (input.routeThreadKey === null) return null;
+  return input.groupKeyByThreadKey.get(input.routeThreadKey) ?? null;
 }
 
 export type SidebarV2TopStatusKind =

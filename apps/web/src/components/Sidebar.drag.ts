@@ -144,6 +144,8 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
+      // Group and project-heading rows are not projected by this preview yet.
+      if (item.kind !== "thread") continue;
       if (item.section === "pinned" || item.section === "active" || item.section === "working")
         cardHeight ??= rects[index]?.height;
       else slimHeight ??= rects[index]?.height;
