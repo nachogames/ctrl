@@ -762,7 +762,16 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
-      if (input.groupId !== undefined) {
+      if (input.reuseExistingThread === true && input.threadId === undefined) {
+        return yield* mapError(
+          input,
+          "update-thread",
+        )("Reusing an existing thread requires a thread id.");
+      }
+
+      const launchReceipt = yield* readReceipt(input, input.commandId);
+      // A retried launch replays its receipt even if the group has gone since.
+      if (input.groupId !== undefined && Option.isNone(launchReceipt)) {
         const group = yield* threadGroups
           .get(input.groupId)
           .pipe(Effect.mapError(mapError(input, "resolve-group")));
@@ -776,14 +785,6 @@ const make = Effect.gen(function* () {
           )("Thread group belongs to another project.");
         }
       }
-      if (input.reuseExistingThread === true && input.threadId === undefined) {
-        return yield* mapError(
-          input,
-          "update-thread",
-        )("Reusing an existing thread requires a thread id.");
-      }
-
-      const launchReceipt = yield* readReceipt(input, input.commandId);
       return yield* Effect.gen(function* () {
         // A retried launch has no client-supplied id to replay against, so
         // recover the thread id its accepted create was recorded under before

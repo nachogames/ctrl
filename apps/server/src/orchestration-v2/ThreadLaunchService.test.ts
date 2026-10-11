@@ -44,7 +44,11 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadGroupStore from "./ThreadGroupStore.ts";
-import { sequenced, threadGroupCreatedEvent } from "./testkit/threadGroupFixtures.ts";
+import {
+  sequenced,
+  threadGroupCreatedEvent,
+  threadGroupDeletedEvent,
+} from "./testkit/threadGroupFixtures.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -2307,6 +2311,49 @@ it.effect("launches into a group of its project and rejects a foreign one", () =
     assert.equal(failed.operation, "resolve-group");
     assert.equal(failed.cause, "Thread group belongs to another project.");
     assert.isNull(yield* threads.getThreadShell(ThreadId.make("thread:launch:foreign")));
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("replays a retried group launch after the group is gone", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    const groupId = ThreadGroupId.make("group:launch:retry");
+    yield* groups.apply(sequenced(threadGroupCreatedEvent({ groupId, projectId }), 1));
+    const input = {
+      ...launchInput({
+        command: "command:launch:group-retry",
+        thread: "thread:launch:group-retry",
+      }),
+      groupId,
+    };
+
+    const first = yield* launches.launch(input);
+    yield* threads.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("command:launch:group-retry:leave"),
+      threadId: first.threadId,
+      groupId: null,
+    });
+    yield* groups.apply(sequenced(threadGroupDeletedEvent(groupId), 2));
+
+    const retry = yield* launches.launch(input);
+    assert.isTrue(retry.resumed);
+    assert.equal(retry.threadId, first.threadId);
+
+    const fresh = yield* launches
+      .launch({
+        ...launchInput({
+          command: "command:launch:group-fresh",
+          thread: "thread:launch:group-fresh",
+        }),
+        groupId,
+      })
+      .pipe(Effect.flip);
+    assert.equal(fresh.operation, "resolve-group");
+    assert.equal(fresh.cause, "Thread group not found.");
   }).pipe(Effect.provide(harness.layer));
 });
 

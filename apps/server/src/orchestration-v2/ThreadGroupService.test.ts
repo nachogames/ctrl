@@ -11,9 +11,12 @@ import {
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -263,6 +266,114 @@ it.effect("deletes the old group when its last thread moves out", () => {
     assert.isNotNull(
       Option.getOrThrow(yield* groups.get(groupId, { includeDeleted: true })).deletedAt,
     );
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("a group launch fails without launching when the group is missing or deleted", () => {
+  const threads = new Map([[a, shell(a)]]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const launched = yield* Ref.make(0);
+    const launch = Ref.update(launched, (count) => count + 1);
+
+    const missing = yield* service.withGroupLaunch(groupId, launch).pipe(Effect.flip);
+    assert.equal(missing._tag, "ThreadGroupNotFoundError");
+
+    yield* service.create({
+      commandId: CommandId.make("command:gone"),
+      groupId,
+      projectId,
+      threadIds: [a],
+    });
+    yield* service.delete({ commandId: CommandId.make("command:gone:delete"), groupId });
+    const deleted = yield* service.withGroupLaunch(groupId, launch).pipe(Effect.flip);
+    assert.equal(deleted._tag, "ThreadGroupNotFoundError");
+    assert.equal(yield* Ref.get(launched), 0);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("a group launch holds the group's lock until the launch finishes", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [b, shell(b)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    yield* service.create({
+      commandId: CommandId.make("command:lock"),
+      groupId,
+      projectId,
+      threadIds: [a],
+    });
+    const log = yield* Ref.make<ReadonlyArray<string>>([]);
+    const append = (entry: string) => Ref.update(log, (entries) => [...entries, entry]);
+    const started = yield* Deferred.make<void>();
+    const gate = yield* Deferred.make<void>();
+
+    const launchFiber = yield* service
+      .withGroupLaunch(
+        groupId,
+        Effect.gen(function* () {
+          yield* append("launch:start");
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(gate);
+          threads.set(b, { ...threads.get(b)!, groupId });
+          yield* append("launch:end");
+        }),
+      )
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    const deleteFiber = yield* service
+      .delete({ commandId: CommandId.make("command:lock:delete"), groupId })
+      .pipe(Effect.andThen(append("delete")), Effect.forkChild);
+    // Let the delete run as far as it can before the launch is released.
+    for (let step = 0; step < 20; step++) yield* Effect.yieldNow;
+    yield* append("release");
+    yield* Deferred.succeed(gate, undefined);
+    yield* Fiber.join(launchFiber);
+    yield* Fiber.join(deleteFiber);
+
+    assert.deepEqual(yield* Ref.get(log), ["launch:start", "release", "launch:end", "delete"]);
+    // The delete saw the launched thread and detached it with the rest.
+    assert.isNull(threads.get(b)?.groupId);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("a group launch that reuses a thread prunes the group it left", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [b, shell(b)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    yield* service.create({
+      commandId: CommandId.make("command:target"),
+      groupId,
+      projectId,
+      threadIds: [a],
+    });
+    yield* service.create({
+      commandId: CommandId.make("command:previous"),
+      groupId: otherGroupId,
+      projectId,
+      threadIds: [b],
+    });
+
+    yield* service.withGroupLaunch(
+      groupId,
+      Effect.sync(() => threads.set(b, { ...threads.get(b)!, groupId })),
+      { reusedThreadId: b },
+    );
+
+    assert.isTrue(Option.isSome(yield* groups.getShell(groupId)));
+    assert.isTrue(Option.isNone(yield* groups.getShell(otherGroupId)));
   }).pipe(Effect.provide(makeLayer(threads, dispatched)));
 });
 

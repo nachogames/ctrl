@@ -1972,8 +1972,15 @@ const layerWsRpc = (
                 ),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) =>
-          Effect.annotateCurrentSpan({
+        [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) => {
+          const groupLaunchError = (cause: ThreadGroupService.ThreadGroupServiceError) =>
+            new OrchestrationV2ThreadLaunchError({
+              commandId: input.commandId,
+              projectId: input.projectId,
+              message: cause.message,
+              cause,
+            });
+          return Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": input.commandId,
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
@@ -2012,7 +2019,19 @@ const layerWsRpc = (
                         }),
                     createdBy: "user",
                     creationSource: input.creationSource ?? "web",
-                  }).pipe(Effect.provide(intakeContext)),
+                  }).pipe(Effect.provide(intakeContext), (launch) =>
+                    // Joining a group commits under the group's lock, so an
+                    // ungroup or prune cannot delete it mid-launch.
+                    input.groupId === undefined
+                      ? launch
+                      : threadGroupService.withGroupLaunch(
+                          input.groupId,
+                          launch,
+                          input.reuseExistingThread === true && input.threadId !== undefined
+                            ? { reusedThreadId: input.threadId }
+                            : undefined,
+                        ),
+                  ),
                 )
                 .pipe(
                   Effect.tap(() =>
@@ -2053,10 +2072,16 @@ const layerWsRpc = (
                         message: "Failed to launch thread",
                         cause,
                       }),
+                    ThreadGroupNotFoundError: groupLaunchError,
+                    ThreadGroupThreadNotFoundError: groupLaunchError,
+                    ThreadGroupProjectMismatchError: groupLaunchError,
+                    ThreadGroupSubagentError: groupLaunchError,
+                    ThreadGroupOperationError: groupLaunchError,
                   }),
                 ),
             ),
-          ),
+          );
+        },
         [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: (_input) =>
           Stream.unwrap(subscribeOrchestrationV2ArchivedShell()),
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>

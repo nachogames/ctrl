@@ -143,6 +143,17 @@ export class ThreadGroupService extends Context.Service<
     readonly pruneIfEmpty: (groupId: ThreadGroupId) => Effect.Effect<void, ThreadGroupServiceError>;
     /** Prune every live group; a restart uses it to catch deletes it missed. */
     readonly pruneEmptyGroups: Effect.Effect<void, ThreadGroupServiceError>;
+    /**
+     * Run a launch that puts a thread into the group while holding the group's
+     * lock, so an ungroup or prune cannot delete the group under it. A reused
+     * thread's previous group is pruned afterwards when the launch emptied it.
+     * `launch` must not call a locked method of this service for the same group.
+     */
+    readonly withGroupLaunch: <A, E, R>(
+      groupId: ThreadGroupId,
+      launch: Effect.Effect<A, E, R>,
+      options?: { readonly reusedThreadId?: ThreadId },
+    ) => Effect.Effect<A, E | ThreadGroupServiceError, R>;
   }
 >()("t3/orchestration-v2/ThreadGroupService") {}
 
@@ -508,6 +519,35 @@ export const make = Effect.gen(function* () {
     },
   ).pipe(Effect.withSpan("ThreadGroupService.pruneEmptyGroups"));
 
+  const withGroupLaunch: ThreadGroupService["Service"]["withGroupLaunch"] = (
+    groupId,
+    launch,
+    options,
+  ) =>
+    Effect.gen(function* () {
+      const reusedThreadId = options?.reusedThreadId;
+      // A missing reused thread is the launch's error to report, not the group's.
+      const previous =
+        reusedThreadId === undefined
+          ? null
+          : yield* readThread(reusedThreadId).pipe(
+              Effect.map((thread) => thread.groupId ?? null),
+              Effect.catchTags({ ThreadGroupThreadNotFoundError: () => Effect.succeed(null) }),
+            );
+      const result = yield* groupLocks.withLock(
+        groupId,
+        Effect.gen(function* () {
+          const group = yield* readGroup(groupId);
+          if (Option.isNone(group) || group.value.deletedAt !== null) {
+            return yield* new ThreadGroupNotFoundError({ groupId });
+          }
+          return yield* launch;
+        }),
+      );
+      if (previous !== null && previous !== groupId) yield* pruneIfEmpty(previous);
+      return result;
+    }).pipe(Effect.withSpan("ThreadGroupService.withGroupLaunch"));
+
   return ThreadGroupService.of({
     create,
     update,
@@ -515,6 +555,7 @@ export const make = Effect.gen(function* () {
     moveThread,
     pruneIfEmpty,
     pruneEmptyGroups,
+    withGroupLaunch,
   });
 });
 
