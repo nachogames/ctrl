@@ -1406,12 +1406,31 @@ export function renderMacPasskeyEntitlements(
     <array>
 ${associatedDomains}
     </array>${keychainAccessGroups}${browserPasskeys}
-    <key>com.apple.security.cs.allow-jit</key>
+${MAC_HARDENED_RUNTIME_ENTITLEMENTS}
+  </dict>
+</plist>
+`;
+}
+
+/** Hardened-runtime exceptions Electron and the bundled native helpers need. */
+const MAC_HARDENED_RUNTIME_ENTITLEMENTS = `    <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
-    <true/>
+    <true/>`;
+
+/**
+ * Entitlements for a signed build without a passkey provisioning profile. The
+ * in-app browser then has no passkeys, but signing, notarization, and
+ * auto-updates work with only a Developer ID certificate.
+ */
+export function renderMacRuntimeEntitlements(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+${MAC_HARDENED_RUNTIME_ENTITLEMENTS}
   </dict>
 </plist>
 `;
@@ -2798,10 +2817,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   signed: boolean,
   mockUpdates: boolean,
   mockUpdateServerPort: number | undefined,
-  macPasskeySigning:
+  macSigning:
     | {
         readonly entitlementsPath: string;
-        readonly provisioningProfilePath: string;
+        readonly provisioningProfilePath?: string;
       }
     | undefined,
   // Windows only, and false when no Linux CLI archive was handed to the build:
@@ -2892,10 +2911,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
-      ...(macPasskeySigning
+      ...(macSigning
         ? {
-            entitlements: macPasskeySigning.entitlementsPath,
-            provisioningProfile: macPasskeySigning.provisioningProfilePath,
+            entitlements: macSigning.entitlementsPath,
+            ...(macSigning.provisioningProfilePath
+              ? { provisioningProfile: macSigning.provisioningProfilePath }
+              : {}),
           }
         : {}),
     };
@@ -3848,13 +3869,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
-  const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
-      ? yield* Effect.try({
-          try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
-          catch: MacPasskeySigningConfigurationResolutionError.fromCause,
-        })
-      : undefined;
+  const macSigningEnv =
+    options.platform === "mac" && options.signed ? loadRepoEnv({ repoRoot }) : undefined;
+  // Passkeys are opt-in through an Associated Domains provisioning profile.
+  // Without one, a signed build gets only the hardened-runtime entitlements.
+  const configuredMacPasskeySigning = macSigningEnv?.T3CODE_MACOS_PROVISIONING_PROFILE?.trim()
+    ? yield* Effect.try({
+        try: () => resolveMacPasskeySigningConfiguration(macSigningEnv),
+        catch: MacPasskeySigningConfigurationResolutionError.fromCause,
+      })
+    : undefined;
   const macPasskeySigning = configuredMacPasskeySigning
     ? {
         ...configuredMacPasskeySigning,
@@ -3864,7 +3888,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         ),
       }
     : undefined;
-  const macEntitlementsPath = macPasskeySigning
+  const macEntitlementsPath = macSigningEnv
     ? path.join(stageAppDir, "entitlements.mac.plist")
     : undefined;
   let macWebAuthn: MacWebAuthnEntitlements | undefined;
@@ -3885,6 +3909,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       macEntitlementsPath,
       renderMacPasskeyEntitlements(macPasskeySigning, macWebAuthn),
     );
+  } else if (macEntitlementsPath) {
+    yield* Effect.log(
+      "[desktop-artifact] In-app browser passkeys: disabled (no T3CODE_MACOS_PROVISIONING_PROFILE).",
+    );
+    yield* fs.writeFileString(macEntitlementsPath, renderMacRuntimeEntitlements());
   }
 
   // Windows splits dependencies per process: app.asar carries only the
@@ -3932,10 +3961,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       options.signed,
       options.mockUpdates,
       options.mockUpdateServerPort,
-      macPasskeySigning && macEntitlementsPath
+      macEntitlementsPath
         ? {
             entitlementsPath: macEntitlementsPath,
-            provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
+            ...(macPasskeySigning
+              ? { provisioningProfilePath: macPasskeySigning.provisioningProfilePath }
+              : {}),
           }
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
