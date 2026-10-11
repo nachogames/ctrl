@@ -260,6 +260,7 @@ import {
 import {
   collectComposerContextReferences,
   formatComposerContextReference,
+  formatHandoffDisplayLabel,
 } from "@t3tools/shared/composerContextReferences";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
@@ -2143,6 +2144,49 @@ function ContextCompactionTimelineRow({
   );
 }
 
+/**
+ * Centred divider above a user message that continues another chat. The handoff summary is
+ * hidden context for the agent and is not shown here. The title links to the source chat when
+ * it lives in this environment, and prefers the live title over the handoff-time snapshot.
+ */
+function HandoffDivider({
+  record,
+}: {
+  record: Extract<KnownComposerContextRecord, { kind: "handoff" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const sameEnvironment = record.environmentId === ctx.activeThreadEnvironmentId;
+  const shell = useThreadShell(
+    sameEnvironment ? scopeThreadRef(record.environmentId, record.threadId) : null,
+  );
+  const title = shell?.title?.trim() || record.title;
+  return (
+    <div
+      role="separator"
+      aria-label={formatHandoffDisplayLabel({ title })}
+      data-thread-find-ignore
+      className="flex w-full items-center gap-3 py-1 text-muted-foreground text-xs"
+    >
+      <span className="h-px flex-1 bg-border/70" />
+      <span className="flex min-w-0 shrink items-center gap-1">
+        <span className="shrink-0">Continued from</span>
+        {sameEnvironment ? (
+          <InlineButton
+            onClick={() => ctx.onOpenThread(record.threadId)}
+            tone="muted"
+            aria-label={`Open ${title}`}
+          >
+            <span className="truncate">{title}</span>
+          </InlineButton>
+        ) : (
+          <span className="truncate">{title}</span>
+        )}
+      </span>
+      <span className="h-px flex-1 bg-border/70" />
+    </div>
+  );
+}
+
 function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
   const ctx = use(TimelineRowCtx);
   const asset = useMemo(
@@ -2236,6 +2280,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     () => userImages.filter((image) => image.name.startsWith("preview-annotation-")),
     [userImages],
   );
+  const handoffRecords = resolvedContext.records.flatMap((candidate) => {
+    const record = asKnownContextRecord(candidate);
+    return record?.kind === "handoff" ? [record] : [];
+  });
   const revertTurnCount = row.revertTurnCount;
   // A file with a chip in the prose needs no standalone row. Media is the exception: the
   // thumbnail is the only way to actually see it, so it shows whether or not it has a chip.
@@ -2358,6 +2406,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div className="group flex flex-col items-end gap-1">
+      {handoffRecords.map((record) => (
+        <HandoffDivider key={record.contextId} record={record} />
+      ))}
       {userMessage.attribution === "automation" ? (
         <p
           className="me-1 text-2xs text-muted-foreground/70"
@@ -4515,6 +4566,13 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         ) : (
           <UnavailableUserMessageContextChip {...context} />
         ),
+    },
+    {
+      // Handoff records render as a divider above the message (HandoffDivider), never inline.
+      // A stray inline reference to one renders nothing so the label is not shown twice.
+      kind: "handoff",
+      canRender: (record) => record.kind === "handoff",
+      render: () => null,
     },
     {
       kind: "image",

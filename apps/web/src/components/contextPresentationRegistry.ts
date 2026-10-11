@@ -48,6 +48,12 @@ const DEFINITIONS = [
     kind: "thread",
     capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
   },
+  // Server-minted on handoff and never inserted from the composer. Sent messages show it as a
+  // "Continued from" divider above the message, not as an inline chip.
+  {
+    kind: "handoff",
+    capabilities: { details: "none", expanded: "none", defaultDraftView: "compact" },
+  },
 ] as const satisfies ReadonlyArray<ContextPresentationDefinition>;
 
 function buildDefinitionRegistry(

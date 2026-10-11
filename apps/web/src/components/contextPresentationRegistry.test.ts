@@ -17,6 +17,11 @@ describe("contextPresentationRegistry", () => {
     });
   });
 
+  // A new known record kind without a definition throws at module load and blanks the app.
+  it.each(COMPOSER_CONTEXT_KINDS)("has a presentation definition for %s", (kind) => {
+    expect(contextPresentationDefinition(kind).kind).toBe(kind);
+  });
+
   it("rejects duplicate handlers for one surface", () => {
     expect(() =>
       createContextPresentationRegistry<string, undefined, string>({
