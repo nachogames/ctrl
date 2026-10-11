@@ -9,7 +9,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -184,7 +183,8 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
     <li
       ref={setNodeRef}
       data-thread-selection-safe
-      data-sidebar-group-block={groupKey}
+      // An expanded group opens a block that its "New chat" row closes.
+      data-sidebar-group-block={expanded ? "" : undefined}
       data-testid="sidebar-group-row"
       className="list-none"
       style={style}
@@ -247,46 +247,20 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
 });
 
 /**
- * Which group block (group row, members, "New chat" row) the pointer is over.
- * Only the "New chat" rows whose visibility flips re-render.
- */
-export function createSidebarGroupHover() {
-  let hovered: string | null = null;
-  const listeners = new Set<() => void>();
-  return {
-    set(groupKey: string | null) {
-      if (groupKey === hovered) return;
-      hovered = groupKey;
-      for (const listener of listeners) listener();
-    },
-    get: () => hovered,
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-  };
-}
-export type SidebarGroupHover = ReturnType<typeof createSidebarGroupHover>;
-
-/**
- * "+ New chat in group", the last child of an expanded group. It stays
- * mounted (so list motion never sees it come and go) and shows while the
- * pointer is over its group's block.
+ * "+ New chat in group", the last child of an expanded group. Its space is
+ * always reserved so the list never shifts; it fades in while a row of its
+ * group is hovered (the `group-block-hover` variant) or it has focus.
  */
 export const SidebarGroupNewChatRow = memo(function SidebarGroupNewChatRow(props: {
   groupKey: string;
-  hover: SidebarGroupHover;
   onNewChat: (groupKey: string) => void;
 }) {
-  const { groupKey, hover, onNewChat } = props;
-  const visible = useSyncExternalStore(hover.subscribe, () => hover.get() === groupKey);
+  const { groupKey, onNewChat } = props;
   return (
     <li
       data-thread-selection-safe
-      data-sidebar-group-block={groupKey}
-      className={cn("list-none", !visible && "hidden")}
+      data-sidebar-group-new-chat
+      className="list-none opacity-0 transition-opacity delay-100 duration-100 group-block-hover:opacity-100 group-block-hover:delay-0 motion-reduce:transition-none"
     >
       <button
         type="button"

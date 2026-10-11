@@ -9,7 +9,11 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ThreadGroupUpdatePayload, ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type ThreadGroupUpdatePayload,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
@@ -18,6 +22,7 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { readLocalApi } from "../localApi";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readEnvironmentSupportsSettlement, readThreadShell } from "../state/entities";
+import { readEnvironmentScope } from "../state/session";
 import { threadGroupCommands } from "../state/threadGroups";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -139,10 +144,19 @@ export function useThreadGroupActions() {
 
   /**
    * Opens a draft on the group's branch and worktree that joins the group on
-   * its first send.
+   * its first send. Every entry point goes through here, so the operate check
+   * lives here too.
    */
   const newChatInGroup = useCallback(
     async (group: EnvironmentThreadGroup) => {
+      if (!readEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope)) {
+        toastManager.add({
+          type: "error",
+          title: "Chat unavailable",
+          description: "This connection cannot start chats in this group.",
+        });
+        return;
+      }
       const result = await settlePromise(() =>
         handleNewThread(scopeProjectRef(group.environmentId, group.projectId), {
           branch: group.branch,

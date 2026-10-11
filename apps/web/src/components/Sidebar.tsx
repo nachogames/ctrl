@@ -190,11 +190,7 @@ import {
   isThreadGroupSnoozed,
   type ThreadGroupMenuId,
 } from "./threadGroupMenu.logic";
-import {
-  createSidebarGroupHover,
-  SidebarGroupNewChatRow,
-  SidebarGroupRow,
-} from "./sidebar/SidebarGroupRow";
+import { SidebarGroupNewChatRow, SidebarGroupRow } from "./sidebar/SidebarGroupRow";
 import { SidebarProjectHeading } from "./sidebar/SidebarProjectHeading";
 import { indexThreadGroups, useThreadGroups } from "../state/threadGroups";
 import { useThreadGroupActions } from "../hooks/useThreadGroupActions";
@@ -1954,6 +1950,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item={threadKey}
+        data-sidebar-group-block={props.tree === "member" ? "" : undefined}
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
@@ -3313,7 +3310,6 @@ export default function Sidebar() {
   groupEntryByKeyRef.current = groupEntryByKey;
   const groupKeyByThreadKeyRef = useRef(groupKeyByThreadKey);
   groupKeyByThreadKeyRef.current = groupKeyByThreadKey;
-  const [groupHover] = useState(createSidebarGroupHover);
 
   // Only rendered thread rows, in render order: jump hints, traversal and
   // shift-select all walk this list.
@@ -5197,8 +5193,7 @@ export default function Sidebar() {
   const handleNewChatInGroup = useCallback(
     (groupKey: string) => {
       const entry = groupEntryByKeyRef.current.get(groupKey);
-      if (!entry || !checkThreadOperations([entry.group])) return;
-      void groupActions.newChatInGroup(entry.group);
+      if (entry) void groupActions.newChatInGroup(entry.group);
     },
     [groupActions],
   );
@@ -5695,30 +5690,6 @@ export default function Sidebar() {
                       // controls that opt back in, like the Woke pill.
                       actionSweep !== null && "**:pointer-events-none",
                     )}
-                    // Tracks the hovered group block for its "New chat in group" row.
-                    // Members are siblings in this flat list, so CSS hover cannot.
-                    onPointerOver={(event) => {
-                      const target = event.target instanceof Element ? event.target : null;
-                      const blockKey =
-                        target
-                          ?.closest("[data-sidebar-group-block]")
-                          ?.getAttribute("data-sidebar-group-block") ?? null;
-                      const threadKey =
-                        blockKey === null
-                          ? (target
-                              ?.closest("[data-thread-item]")
-                              ?.getAttribute("data-thread-item") ?? null)
-                          : null;
-                      groupHover.set(
-                        dragState !== null
-                          ? null
-                          : (blockKey ??
-                              (threadKey === null
-                                ? null
-                                : (groupKeyByThreadKeyRef.current.get(threadKey) ?? null))),
-                      );
-                    }}
-                    onPointerLeave={() => groupHover.set(null)}
                   >
                     {(() => {
                       const renderThreadRowInner = (
@@ -5908,7 +5879,6 @@ export default function Sidebar() {
                           <SidebarGroupNewChatRow
                             key={`group-new-chat:${blockKey}`}
                             groupKey={blockKey}
-                            hover={groupHover}
                             onNewChat={handleNewChatInGroup}
                           />,
                         );

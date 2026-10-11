@@ -425,7 +425,11 @@ describe("V2 environment commands", () => {
         worktreePath: "/workspace/project-worktrees/feature",
         createdAt: "2026-06-20T00:00:00.000Z",
       };
-      const send = (id: string, groupId?: ThreadGroupId) =>
+      const send = (
+        id: string,
+        groupId?: ThreadGroupId,
+        workspace: { branch: string | null; worktreePath: string | null } = bootstrapThread,
+      ) =>
         startThreadTurn({
           commandId: CommandId.make(`launch-${id}`),
           threadId: v2ThreadId,
@@ -440,6 +444,7 @@ describe("V2 environment commands", () => {
           bootstrap: {
             createThread: {
               ...bootstrapThread,
+              ...workspace,
               ...(groupId === undefined ? {} : { groupId }),
             },
           },
@@ -447,6 +452,11 @@ describe("V2 environment commands", () => {
 
       yield* send("grouped", ThreadGroupId.make("group-1"));
       yield* send("ungrouped");
+      // A group without a worktree launches at the project root on its branch.
+      yield* send("grouped-root", ThreadGroupId.make("group-1"), {
+        branch: "feature",
+        worktreePath: null,
+      });
 
       expect(launches[0]).toMatchObject({
         groupId: "group-1",
@@ -457,6 +467,10 @@ describe("V2 environment commands", () => {
         },
       });
       expect(launches[1]).not.toHaveProperty("groupId");
+      expect(launches[2]).toMatchObject({
+        groupId: "group-1",
+        workspaceStrategy: { type: "root", branch: "feature" },
+      });
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
