@@ -30,6 +30,7 @@ const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "pull-requests",
+  "group",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -85,7 +86,14 @@ export type RightPanelSurface =
       url?: string;
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
-  | { id: "pull-requests"; kind: "pull-requests" };
+  | { id: "pull-requests"; kind: "pull-requests" }
+  /**
+   * The routed chat's group. `section` asks the panel to scroll that section into view
+   * when the surface is opened for it; each `openGroup` writes a fresh descriptor.
+   */
+  | { id: "group"; kind: "group"; section: GroupPanelSection | null };
+
+export type GroupPanelSection = "header" | "workspace" | "chats" | "handoff";
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -93,7 +101,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 adds the device surface.
 // v14 removes the agents surface; lineage lives in the thread title bar.
-const RIGHT_PANEL_STORAGE_VERSION = 14;
+// v15 adds the group surface.
+const RIGHT_PANEL_STORAGE_VERSION = 15;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -164,6 +173,8 @@ interface RightPanelStoreState {
       url?: string;
     },
   ) => void;
+  /** Opens (or re-targets) the Group surface, optionally scrolled to one section. */
+  openGroup: (ref: ScopedThreadRef, options?: { section?: GroupPanelSection | null }) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -225,6 +236,8 @@ const singletonSurface = (
       return { id: "pull-requests", kind };
     case "device":
       return { id: "device", kind };
+    case "group":
+      return { id: "group", kind, section: null };
   }
 };
 
@@ -468,9 +481,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 threadState && typeof threadState === "object" ? threadState : null;
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
-                    // Removed surfaces: plans render inline, agents in thread lineage.
+                    // Unknown kinds are dropped, including removed ones (plans render
+                    // inline, agents in thread lineage). A restored group surface starts
+                    // at the top: its section request was for the open that made it.
                     const kind = (surface as { kind?: string }).kind;
-                    if (kind === "plan" || kind === "agents") return [];
+                    if (!RIGHT_PANEL_KINDS.some((known) => known === kind)) return [];
+                    if (surface.kind === "group") {
+                      return [{ id: "group", kind: "group", section: null }];
+                    }
                     if (surface.kind === "file") {
                       const revealLine =
                         typeof surface.revealLine === "number" &&
@@ -704,6 +722,21 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   ),
                 }
               : next;
+          }),
+        ),
+      openGroup: (ref, options) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface: RightPanelSurface = {
+              id: "group",
+              kind: "group",
+              section: options?.section ?? null,
+            };
+            const next = upsertSurface(current, surface);
+            return {
+              ...next,
+              surfaces: next.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
+            };
           }),
         ),
       openFile: (ref, requestedPath, line) =>

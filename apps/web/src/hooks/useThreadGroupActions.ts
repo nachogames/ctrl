@@ -16,6 +16,7 @@ import { useCallback, useMemo } from "react";
 import { sidebarActivityMs } from "../components/Sidebar.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { readLocalApi } from "../localApi";
+import { useRightPanelStore } from "../rightPanelStore";
 import { readEnvironmentSupportsSettlement, readThreadShell } from "../state/entities";
 import { threadGroupCommands } from "../state/threadGroups";
 import { threadEnvironment } from "../state/threads";
@@ -173,9 +174,9 @@ export function useThreadGroupActions() {
         }
       },
       /**
-       * Opens one of the group's chats: `threadId` when given, else the most
-       * recently active member. The Group surface itself lands with the
-       * right-panel Group task, which opens it here.
+       * Opens the Group surface beside one of the group's chats: `threadId`
+       * when given (callers pass the open chat when it is a member), else the
+       * most recently active member, navigating there first.
        */
       openGroupPanel: (group: EnvironmentThreadGroup, threadId?: ThreadId) => {
         const target =
@@ -184,9 +185,11 @@ export function useThreadGroupActions() {
             (left, right) => sidebarActivityMs(right) - sidebarActivityMs(left),
           )[0]?.id;
         if (target === undefined) return;
+        const ref = scopeThreadRef(group.environmentId, target);
+        useRightPanelStore.getState().openGroup(ref);
         void router.navigate({
           to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(scopeThreadRef(group.environmentId, target)),
+          params: buildThreadRouteParams(ref),
         });
       },
     }),

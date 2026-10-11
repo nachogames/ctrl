@@ -56,6 +56,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  LayersIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -116,6 +117,7 @@ import { useNewProject } from "../hooks/useNewProject";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
+import { useThreadGroup } from "../state/threadGroups";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
@@ -761,6 +763,16 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
+  const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
+  const activeThreadGroupId = activeThread?.groupId ?? null;
+  const activeGroupRef = useMemo(
+    () =>
+      activeThreadEnvironmentId === null || activeThreadGroupId === null
+        ? null
+        : { environmentId: activeThreadEnvironmentId, groupId: activeThreadGroupId },
+    [activeThreadEnvironmentId, activeThreadGroupId],
+  );
+  const activeGroup = useThreadGroup(activeGroupRef);
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -2004,6 +2016,21 @@ function OpenCommandPaletteDialog(props: {
         },
       });
     }
+  }
+
+  if (activeThread !== null && activeGroup !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:open-group-panel",
+      searchTerms: ["group", "panel", "workspace", "handoff", "chats"],
+      title: "Open group panel",
+      description: activeGroup.title,
+      icon: <LayersIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore.getState().openGroup(threadRef);
+      },
+    });
   }
 
   if (activeThread !== null) {

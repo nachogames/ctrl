@@ -287,6 +287,8 @@ import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavaila
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
+import { GroupPanel } from "./group/GroupPanel";
+import { useThreadGroup } from "../state/threadGroups";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
@@ -5452,6 +5454,21 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !pullRequestsSurfaceAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
   }, [activeThreadRef, pullRequestsSurfaceAvailable]);
+  const activeShellEnvironmentId = activeThreadShell?.environmentId ?? null;
+  const activeShellGroupId = activeThreadShell?.groupId ?? null;
+  const activeGroupRef = useMemo(
+    () =>
+      activeShellEnvironmentId === null || activeShellGroupId === null
+        ? null
+        : { environmentId: activeShellEnvironmentId, groupId: activeShellGroupId },
+    [activeShellEnvironmentId, activeShellGroupId],
+  );
+  const activeGroup = useThreadGroup(activeGroupRef);
+  const groupSurfaceAvailable = activeGroup !== null;
+  const addGroupSurface = useCallback(() => {
+    if (!activeThreadRef || !groupSurfaceAvailable) return;
+    useRightPanelStore.getState().openGroup(activeThreadRef);
+  }, [activeThreadRef, groupSurfaceAvailable]);
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );
@@ -11099,6 +11116,8 @@ export default function ChatView(props: ChatViewProps) {
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+    ) : renderedRightPanelSurface?.kind === "group" ? (
+      <GroupPanel threadRef={activeThreadRef} surface={renderedRightPanelSurface} />
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
@@ -12002,6 +12021,9 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
           onAddDevice={addDeviceSurface}
+          onAddGroup={addGroupSurface}
+          groupAvailable={groupSurfaceAvailable}
+          groupTitle={activeGroup?.title ?? null}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}
@@ -12061,6 +12083,9 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
             onAddDevice={addDeviceSurface}
+            onAddGroup={addGroupSurface}
+            groupAvailable={groupSurfaceAvailable}
+            groupTitle={activeGroup?.title ?? null}
             browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             diffAvailable={isServerThread && isGitRepo}
