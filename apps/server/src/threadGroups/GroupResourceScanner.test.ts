@@ -352,14 +352,19 @@ const makeTestFeed = Effect.gen(function* () {
   const state = {
     resources: [resource("server:3000")] as ReadonlyArray<ThreadGroupRunningResource> | null,
     scans: 0,
+    dieOnce: false,
     watching: 0,
     wake: Effect.void as Effect.Effect<void>,
   };
   const feed = yield* GroupResourceScanner.makeResourceFeed({
     scan: () =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         state.scans += 1;
-        return state.resources;
+        if (state.dieOnce) {
+          state.dieOnce = false;
+          return Effect.die(new Error("scanner bug"));
+        }
+        return Effect.succeed(state.resources);
       }),
     watch: (wake) =>
       Effect.acquireRelease(
@@ -460,6 +465,38 @@ describe("GroupResourceScanner.makeResourceFeed", () => {
       yield* tick;
       expect(state.scans).toBe(3);
       expect(seen).toEqual([[], ["server:3000"]]);
+    }),
+  );
+
+  it.effect("keeps scanning after a scan dies", () =>
+    Effect.gen(function* () {
+      const { state, watch } = yield* makeTestFeed;
+      const { seen } = yield* watch;
+      yield* TestClock.adjust(Duration.zero);
+
+      state.dieOnce = true;
+      state.resources = [resource("server:3000"), resource("container:db")];
+      yield* tick;
+      expect(state.scans).toBe(2);
+      expect(seen).toEqual([["server:3000"]]);
+
+      yield* tick;
+      expect(state.scans).toBe(3);
+      expect(seen).toEqual([["server:3000"], ["server:3000", "container:db"]]);
+    }),
+  );
+
+  it.effect("does not emit when a scan only reorders the list", () =>
+    Effect.gen(function* () {
+      const { state, watch } = yield* makeTestFeed;
+      state.resources = [resource("server:3000"), resource("container:db")];
+      const { seen } = yield* watch;
+      yield* TestClock.adjust(Duration.zero);
+
+      state.resources = [resource("container:db"), resource("server:3000")];
+      yield* tick;
+      expect(state.scans).toBe(2);
+      expect(seen).toEqual([["server:3000", "container:db"]]);
     }),
   );
 });

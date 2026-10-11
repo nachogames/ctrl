@@ -20,6 +20,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -173,29 +174,32 @@ export const mergeGroupResources = (input: {
 /** How often a watched group rescans. Docker has no events, so this is its poll. */
 export const RESOURCE_RESCAN_INTERVAL = Duration.seconds(5);
 
+const resourceKey = (resource: ThreadGroupRunningResource) =>
+  JSON.stringify([
+    resource.id,
+    resource.kind,
+    resource.name,
+    resource.detail,
+    resource.url,
+    resource.source,
+  ]);
+
+/** Same resources, in any order: a reordered scan is not a change. */
 const resourcesEqual = (
   left: ReadonlyArray<ThreadGroupRunningResource>,
   right: ReadonlyArray<ThreadGroupRunningResource>,
-) =>
-  left.length === right.length &&
-  left.every((resource, index) => {
-    const other = right[index];
-    return (
-      other !== undefined &&
-      resource.id === other.id &&
-      resource.kind === other.kind &&
-      resource.name === other.name &&
-      resource.detail === other.detail &&
-      resource.url === other.url &&
-      resource.source === other.source
-    );
-  });
+) => {
+  if (left.length !== right.length) return false;
+  const leftKeys = left.map(resourceKey).toSorted();
+  const rightKeys = right.map(resourceKey).toSorted();
+  return leftKeys.every((key, index) => key === rightKeys[index]);
+};
 
 /**
  * One scan loop per watched group, shared by all of its watchers and stopped
  * when the last one leaves. The loop scans, then waits for `interval` or a
  * wake from `watch`, whichever comes first. A watcher sees the current list,
- * then each changed list. A scan that returns null keeps the previous list,
+ * then each changed list. A scan that returns null or dies keeps the previous list,
  * or yields an empty one when there is none yet.
  */
 export const makeResourceFeed = Effect.fn("GroupResourceScanner.makeResourceFeed")(
@@ -214,7 +218,15 @@ export const makeResourceFeed = Effect.fn("GroupResourceScanner.makeResourceFeed
             yield* SubscriptionRef.make<ReadonlyArray<ThreadGroupRunningResource> | null>(null);
           const wake = yield* Queue.sliding<void>(1);
           const rescan = Effect.gen(function* () {
-            const next = yield* options.scan(groupId);
+            // A defect must not end the loop every watcher of this group shares.
+            const next = yield* options.scan(groupId).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("group resource scan died; keeping the last list", {
+                  groupId,
+                  cause: Cause.pretty(cause),
+                }).pipe(Effect.as(null)),
+              ),
+            );
             const current = yield* SubscriptionRef.get(latest);
             if (current !== null && (next === null || resourcesEqual(current, next))) return;
             yield* SubscriptionRef.set(latest, next ?? []);

@@ -222,13 +222,18 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
       const scanner = yield* GroupResourceScanner.GroupResourceScanner;
       // Best effort: when the scan fails, the registered resources still show.
       const resources = yield* scanner.scan(group.id).pipe(
-        Effect.catch(() =>
-          Effect.succeed(
-            GroupResourceScanner.mergeGroupResources({
-              servers: [],
-              containers: [],
-              manual: group.manualResources,
-            }),
+        Effect.catch((error) =>
+          Effect.logWarning("group resource scan failed; returning registered resources", {
+            groupId: group.id,
+            cause: error,
+          }).pipe(
+            Effect.as(
+              GroupResourceScanner.mergeGroupResources({
+                servers: [],
+                containers: [],
+                manual: group.manualResources,
+              }),
+            ),
           ),
         ),
       );
