@@ -892,6 +892,21 @@ export const mutateThreadGroup = Effect.fn("mutateThreadGroup")(function* (
             : { adoptGroupWorkspace: mutation.adoptGroupWorkspace }),
         }),
       };
+    case "thread-group.remove-resource": {
+      const { resourceId } = mutation;
+      return {
+        group: yield* service.updateManualResources(
+          mutation.groupId,
+          mutation.commandId,
+          (current) =>
+            Effect.succeed(
+              current.some((resource) => resource.id === resourceId)
+                ? current.filter((resource) => resource.id !== resourceId)
+                : null,
+            ),
+        ),
+      };
+    }
     case "thread-group.recreate-worktree":
       return { group: yield* service.recreateWorktree(mutation.groupId) };
   }
@@ -907,6 +922,8 @@ const mutationVerb = (type: ThreadGroupMutation["type"]): string => {
       return "ungroup the thread group";
     case "thread-group.move-thread":
       return "move the thread";
+    case "thread-group.remove-resource":
+      return "remove the resource";
     case "thread-group.recreate-worktree":
       return "recreate the group's worktree";
   }

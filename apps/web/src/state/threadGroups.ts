@@ -19,7 +19,7 @@ export const environmentThreadGroups = createEnvironmentThreadGroupAtoms({
   snapshotAtom: threadEnvironment.snapshotAtom,
 });
 
-/** create / update / delete / moveThread / recreateWorktree. Run them with `useOrchestrationCommand`. */
+/** create / update / delete / moveThread / removeResource / recreateWorktree. Run them with `useOrchestrationCommand`. */
 export const threadGroupCommands = createThreadGroupEnvironmentAtoms(connectionAtomRuntime);
 
 const EMPTY_THREAD_GROUP_ATOM = Atom.make<EnvironmentThreadGroup | null>(null).pipe(

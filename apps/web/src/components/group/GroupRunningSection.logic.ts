@@ -1,4 +1,4 @@
-import type { ThreadGroupManualResource, ThreadGroupRunningResource } from "@t3tools/contracts";
+import type { ThreadGroupRunningResource } from "@t3tools/contracts";
 
 export const RUNNING_FOOTNOTE = "Started by chats in this group. Keeps running across handoffs.";
 
@@ -39,12 +39,4 @@ export function runningRowView(resource: ThreadGroupRunningResource): RunningRow
         ? resource.id.slice(MANUAL_ID_PREFIX.length)
         : null,
   };
-}
-
-/** The `manualResources` patch that drops one registered resource. */
-export function withoutManualResource(
-  manualResources: ReadonlyArray<ThreadGroupManualResource>,
-  manualId: string,
-): ReadonlyArray<ThreadGroupManualResource> {
-  return manualResources.filter((resource) => resource.id !== manualId);
 }

@@ -15,12 +15,7 @@ import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import {
-  RUNNING_FOOTNOTE,
-  runningRowView,
-  withoutManualResource,
-  type RunningRowView,
-} from "./GroupRunningSection.logic";
+import { RUNNING_FOOTNOTE, runningRowView, type RunningRowView } from "./GroupRunningSection.logic";
 
 /**
  * The group's running servers and containers. Mounting subscribes, which makes
@@ -40,7 +35,7 @@ export function GroupRunningSection(props: {
   );
   const rows = useMemo(() => (query.data?.resources ?? []).map(runningRowView), [query.data]);
   const openLink = useOpenLink(props.threadRef);
-  const updateGroup = useOrchestrationCommand(threadGroupCommands.update, {
+  const removeResource = useOrchestrationCommand(threadGroupCommands.removeResource, {
     reportFailure: false,
   });
 
@@ -57,12 +52,10 @@ export function GroupRunningSection(props: {
   };
 
   const remove = async (manualId: string) => {
-    const result = await updateGroup({
+    // Only the id goes to the server, which removes it under the group's lock.
+    const result = await removeResource({
       environmentId: group.environmentId,
-      input: {
-        groupId: group.id,
-        patch: { manualResources: withoutManualResource(group.manualResources, manualId) },
-      },
+      input: { groupId: group.id, resourceId: manualId },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);

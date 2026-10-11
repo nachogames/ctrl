@@ -53,6 +53,7 @@ import {
   moveThreadToGroup,
   promoteQueuedRun,
   recreateThreadGroupWorktree,
+  removeThreadGroupResource,
   reorderActiveThread,
   reorderQueuedRun,
   revertThreadCheckpoint,
@@ -188,6 +189,7 @@ describe("V2 environment commands", () => {
         adoptGroupWorkspace: true,
       }).pipe(provide);
       yield* recreateThreadGroupWorktree({ groupId }).pipe(provide);
+      yield* removeThreadGroupResource({ groupId, resourceId: "staging" }).pipe(provide);
       yield* deleteThreadGroup({ groupId }).pipe(provide);
 
       expect(threadGroups).toEqual([
@@ -208,6 +210,12 @@ describe("V2 environment commands", () => {
           adoptGroupWorkspace: true,
         },
         { type: "thread-group.recreate-worktree", commandId, groupId: "group-1" },
+        {
+          type: "thread-group.remove-resource",
+          commandId,
+          groupId: "group-1",
+          resourceId: "staging",
+        },
         { type: "thread-group.delete", commandId, groupId: "group-1" },
       ]);
     }).pipe(Effect.provide(layerTestCrypto)),

@@ -1147,3 +1147,45 @@ it.effect("two concurrent resource changes both land", () => {
     ]);
   }).pipe(Effect.provide(makeLayer(threads, dispatched)));
 });
+
+it.effect("a client resource remove drops only its id, and a missing id is a no-op", () => {
+  const threads = new Map([[a, shell(a)]]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    yield* service.create({
+      commandId: CommandId.make("command:rm"),
+      groupId,
+      projectId,
+      threadIds: [a],
+    });
+    yield* service.updateManualResources(groupId, CommandId.make("command:rm:seed"), () =>
+      Effect.succeed(
+        ["web", "api", "db"].map((id) => ({ id, name: id, url: null, kind: "server" as const })),
+      ),
+    );
+    const remove = (commandId: string, resourceId: string) =>
+      ThreadGroupService.mutateThreadGroup(service, {
+        type: "thread-group.remove-resource",
+        commandId: CommandId.make(commandId),
+        groupId,
+        resourceId,
+      });
+    // Two removes sent from the same stale view both land.
+    yield* Effect.all([remove("command:rm:web", "web"), remove("command:rm:api", "api")], {
+      concurrency: "unbounded",
+    });
+    const missing = yield* remove("command:rm:gone", "gone");
+    assert.deepEqual(
+      missing.group?.manualResources.map((resource) => resource.id),
+      ["db"],
+    );
+    // A retried remove replays.
+    const retried = yield* remove("command:rm:web", "web");
+    assert.deepEqual(
+      retried.group?.manualResources.map((resource) => resource.id),
+      ["db"],
+    );
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});

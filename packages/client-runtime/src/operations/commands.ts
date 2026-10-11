@@ -101,6 +101,11 @@ export interface RecreateThreadGroupWorktreeInput extends CommandMetadata {
   readonly groupId: ThreadGroupId;
 }
 
+export interface RemoveThreadGroupResourceInput extends CommandMetadata {
+  readonly groupId: ThreadGroupId;
+  readonly resourceId: string;
+}
+
 export interface CreateThreadInput extends CommandMetadata {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
@@ -479,6 +484,18 @@ export const moveThreadToGroup = Effect.fn("EnvironmentCommands.moveThreadToGrou
       : { adoptGroupWorkspace: input.adoptGroupWorkspace }),
   });
 });
+
+/** Removes one registered resource by id, so it cannot undo a concurrent add or remove. */
+export const removeThreadGroupResource = Effect.fn("EnvironmentCommands.removeThreadGroupResource")(
+  function* (input: RemoveThreadGroupResourceInput) {
+    return yield* mutateThreadGroup({
+      type: "thread-group.remove-resource",
+      commandId: yield* allocateCommandId(input),
+      groupId: input.groupId,
+      resourceId: input.resourceId,
+    });
+  },
+);
 
 export const recreateThreadGroupWorktree = Effect.fn(
   "EnvironmentCommands.recreateThreadGroupWorktree",

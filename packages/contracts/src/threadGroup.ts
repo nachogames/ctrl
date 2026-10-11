@@ -119,6 +119,13 @@ export const ThreadGroupMutation = Schema.Union([
     adoptGroupWorkspace: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
+    /** Remove one registered resource by id; a missing id is already removed. */
+    type: Schema.Literal("thread-group.remove-resource"),
+    commandId: CommandId,
+    groupId: ThreadGroupId,
+    resourceId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
     /** Recreate the group's worktree on its branch when the directory is gone. */
     type: Schema.Literal("thread-group.recreate-worktree"),
     commandId: CommandId,

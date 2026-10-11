@@ -8,11 +8,13 @@ import {
   type DeleteThreadGroupInput,
   type MoveThreadToGroupInput,
   type RecreateThreadGroupWorktreeInput,
+  type RemoveThreadGroupResourceInput,
   type UpdateThreadGroupInput,
   createThreadGroup,
   deleteThreadGroup,
   moveThreadToGroup,
   recreateThreadGroupWorktree,
+  removeThreadGroupResource,
   updateThreadGroup,
 } from "../operations/commands.ts";
 import {
@@ -26,6 +28,7 @@ export type {
   DeleteThreadGroupInput,
   MoveThreadToGroupInput,
   RecreateThreadGroupWorktreeInput,
+  RemoveThreadGroupResourceInput,
   UpdateThreadGroupInput,
 } from "../operations/commands.ts";
 
@@ -70,6 +73,12 @@ export function createThreadGroupEnvironmentAtoms<R, E>(
     recreateWorktree: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread-group:recreate-worktree",
       execute: (input: RecreateThreadGroupWorktreeInput) => recreateThreadGroupWorktree(input),
+      scheduler,
+      concurrency: groupConcurrency,
+    }),
+    removeResource: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread-group:remove-resource",
+      execute: (input: RemoveThreadGroupResourceInput) => removeThreadGroupResource(input),
       scheduler,
       concurrency: groupConcurrency,
     }),

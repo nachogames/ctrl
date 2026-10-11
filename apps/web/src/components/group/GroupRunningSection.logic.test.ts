@@ -1,7 +1,7 @@
-import type { ThreadGroupManualResource, ThreadGroupRunningResource } from "@t3tools/contracts";
+import type { ThreadGroupRunningResource } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { runningRowView, withoutManualResource } from "./GroupRunningSection.logic";
+import { runningRowView } from "./GroupRunningSection.logic";
 
 type Resource = ThreadGroupRunningResource;
 const base = { url: null, source: "cwd" } as const;
@@ -33,15 +33,5 @@ describe("runningRowView", () => {
       resource({ id: "manual:db1", kind: "manual", source: "registered", url: "postgres://x" }),
     );
     expect(view).toMatchObject({ tone: "registered", manualId: "db1", openUrl: null });
-  });
-});
-
-describe("withoutManualResource", () => {
-  it("drops only the matching resource", () => {
-    const list = [
-      { id: "a", name: "A", url: null, kind: "other" },
-      { id: "b", name: "B", url: null, kind: "other" },
-    ] as ReadonlyArray<ThreadGroupManualResource>;
-    expect(withoutManualResource(list, "a").map((r) => r.id)).toEqual(["b"]);
   });
 });
