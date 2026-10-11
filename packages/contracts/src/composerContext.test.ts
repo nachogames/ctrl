@@ -120,6 +120,15 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
     threadId: "thread-1",
     title: "Fix login flow",
   },
+  handoff: {
+    ...base,
+    kind: "handoff",
+    label: "Continued from Fix login flow",
+    environmentId: "environment-1",
+    threadId: "thread-1",
+    title: "Fix login flow",
+    summary: "Login works; remaining: logout redirect.",
+  },
 };
 
 describe("ComposerContextRecord", () => {
@@ -163,6 +172,15 @@ describe("ComposerContextRecord", () => {
         ],
       }).records,
     ).toEqual([{ ...knownRecords.skill, contextId: "ctx_skill" }]);
+  });
+
+  it("bounds a handoff summary and never lets an unknown record claim the kind", () => {
+    const handoff = knownRecords.handoff;
+    expect(Option.isSome(decodeRecord({ ...handoff, summary: "x".repeat(16_000) }))).toBe(true);
+    expect(Option.isNone(decodeRecord({ ...handoff, summary: "x".repeat(16_001) }))).toBe(true);
+    expect(Option.isNone(decodeRecord({ ...base, kind: "handoff", label: "x", payload: {} }))).toBe(
+      true,
+    );
   });
 
   it("rejects bad ids and versions", () => {
