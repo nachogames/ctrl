@@ -43,12 +43,10 @@ import * as TestClock from "effect/testing/TestClock";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as RuntimeLayer from "./runtimeLayer.ts";
+import * as ThreadGroupService from "./ThreadGroupService.ts";
 import * as ThreadGroupStore from "./ThreadGroupStore.ts";
-import {
-  sequenced,
-  threadGroupCreatedEvent,
-  threadGroupDeletedEvent,
-} from "./testkit/threadGroupFixtures.ts";
+import { sequenced, threadGroupCreatedEvent } from "./testkit/threadGroupFixtures.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -238,9 +236,20 @@ function makeHarness(options: HarnessOptions = {}) {
       Layer.mergeAll(layerThreadManagement, layerProjectedProjects, layerExternalServices),
     ),
   );
+  const layerGroupService = ThreadGroupService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerThreadGroups,
+        RuntimeLayer.layerEventSink.pipe(Layer.provide(layerDatabase)),
+        IdAllocator.layer,
+        layerThreadManagement,
+      ),
+    ),
+  );
   return {
     layer: Layer.mergeAll(
       layerLaunch,
+      layerGroupService,
       layerThreadManagement,
       layerTitleRegeneration,
       layerOutbox,
@@ -2318,42 +2327,31 @@ it.effect("replays a retried group launch after the group is gone", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
-    const threads = yield* ThreadManagement.ThreadManagementService;
+    const groupService = yield* ThreadGroupService.ThreadGroupService;
     const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
     const groupId = ThreadGroupId.make("group:launch:retry");
     yield* groups.apply(sequenced(threadGroupCreatedEvent({ groupId, projectId }), 1));
-    const input = {
-      ...launchInput({
-        command: "command:launch:group-retry",
-        thread: "thread:launch:group-retry",
-      }),
-      groupId,
-    };
+    // The WebSocket launch path runs a grouped launch this way.
+    const launchInGroup = (command: string, thread: string) =>
+      groupService.withGroupLaunch(
+        groupId,
+        launches.launch({ ...launchInput({ command, thread }), groupId }),
+      );
 
-    const first = yield* launches.launch(input);
-    yield* threads.dispatch({
-      type: "thread.metadata.update",
-      commandId: CommandId.make("command:launch:group-retry:leave"),
-      threadId: first.threadId,
-      groupId: null,
-    });
-    yield* groups.apply(sequenced(threadGroupDeletedEvent(groupId), 2));
+    const first = yield* launchInGroup("command:launch:group-retry", "thread:launch:group-retry");
+    yield* groupService.delete({ commandId: CommandId.make("command:launch:ungroup"), groupId });
+    assert.isTrue(Option.isNone(yield* groups.get(groupId)));
 
-    const retry = yield* launches.launch(input);
+    const retry = yield* launchInGroup("command:launch:group-retry", "thread:launch:group-retry");
     assert.isTrue(retry.resumed);
     assert.equal(retry.threadId, first.threadId);
 
-    const fresh = yield* launches
-      .launch({
-        ...launchInput({
-          command: "command:launch:group-fresh",
-          thread: "thread:launch:group-fresh",
-        }),
-        groupId,
-      })
-      .pipe(Effect.flip);
-    assert.equal(fresh.operation, "resolve-group");
-    assert.equal(fresh.cause, "Thread group not found.");
+    const fresh = yield* launchInGroup(
+      "command:launch:group-fresh",
+      "thread:launch:group-fresh",
+    ).pipe(Effect.flip);
+    assert.equal(fresh._tag, "ThreadLaunchError");
+    assert.equal(fresh._tag === "ThreadLaunchError" ? fresh.operation : undefined, "resolve-group");
   }).pipe(Effect.provide(harness.layer));
 });
 

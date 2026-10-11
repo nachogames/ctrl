@@ -269,31 +269,6 @@ it.effect("deletes the old group when its last thread moves out", () => {
   }).pipe(Effect.provide(makeLayer(threads, dispatched)));
 });
 
-it.effect("a group launch fails without launching when the group is missing or deleted", () => {
-  const threads = new Map([[a, shell(a)]]);
-  const dispatched: Array<OrchestrationV2ServerCommand> = [];
-  return Effect.gen(function* () {
-    yield* seedProjects;
-    const service = yield* ThreadGroupService.ThreadGroupService;
-    const launched = yield* Ref.make(0);
-    const launch = Ref.update(launched, (count) => count + 1);
-
-    const missing = yield* service.withGroupLaunch(groupId, launch).pipe(Effect.flip);
-    assert.equal(missing._tag, "ThreadGroupNotFoundError");
-
-    yield* service.create({
-      commandId: CommandId.make("command:gone"),
-      groupId,
-      projectId,
-      threadIds: [a],
-    });
-    yield* service.delete({ commandId: CommandId.make("command:gone:delete"), groupId });
-    const deleted = yield* service.withGroupLaunch(groupId, launch).pipe(Effect.flip);
-    assert.equal(deleted._tag, "ThreadGroupNotFoundError");
-    assert.equal(yield* Ref.get(launched), 0);
-  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
-});
-
 it.effect("a group launch holds the group's lock until the launch finishes", () => {
   const threads = new Map([
     [a, shell(a)],

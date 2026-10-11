@@ -147,6 +147,7 @@ export class ThreadGroupService extends Context.Service<
      * Run a launch that puts a thread into the group while holding the group's
      * lock, so an ungroup or prune cannot delete the group under it. A reused
      * thread's previous group is pruned afterwards when the launch emptied it.
+     * It does not check the group: `launch` does, so a retry can replay.
      * `launch` must not call a locked method of this service for the same group.
      */
     readonly withGroupLaunch: <A, E, R>(
@@ -334,7 +335,7 @@ export const make = Effect.gen(function* () {
       // A group is deleted at most once, so one id per group replays on retry.
       commandId: CommandId.make(`server:thread-group-prune:${groupId}`),
       groupId,
-    }).pipe(Effect.catchTag("ThreadGroupNotFoundError", () => Effect.void));
+    }).pipe(Effect.catchTags({ ThreadGroupNotFoundError: () => Effect.void }));
   });
 
   const pruneIfEmpty: ThreadGroupService["Service"]["pruneIfEmpty"] = (groupId) =>
@@ -534,16 +535,9 @@ export const make = Effect.gen(function* () {
               Effect.map((thread) => thread.groupId ?? null),
               Effect.catchTags({ ThreadGroupThreadNotFoundError: () => Effect.succeed(null) }),
             );
-      const result = yield* groupLocks.withLock(
-        groupId,
-        Effect.gen(function* () {
-          const group = yield* readGroup(groupId);
-          if (Option.isNone(group) || group.value.deletedAt !== null) {
-            return yield* new ThreadGroupNotFoundError({ groupId });
-          }
-          return yield* launch;
-        }),
-      );
+      // The launch checks the group itself, after its receipt, so a retried
+      // launch replays even when the group has gone since.
+      const result = yield* groupLocks.withLock(groupId, launch);
       if (previous !== null && previous !== groupId) yield* pruneIfEmpty(previous);
       return result;
     }).pipe(Effect.withSpan("ThreadGroupService.withGroupLaunch"));
