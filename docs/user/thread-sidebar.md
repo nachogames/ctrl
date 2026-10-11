@@ -128,15 +128,49 @@ you, so you cannot drag or move threads within it. Your saved order returns when
 
 ### Chat groups
 
-On web and desktop, chats in a group sit under the group's row: in the active list beneath
-their project, or in **Pinned**, **Snoozed**, or **Settled** wherever the group is. Click the
-row to show or hide its chats; the group with the open chat stays open. A collapsed group shows
-its pull request number and its most urgent status, and hovering it shows how many chats it holds.
+A chat group holds the chats that work toward one goal, such as a planning chat and the chats
+that build and review its work. Chats in a group share a project and a workspace: the group's
+branch, worktree, and pull request. Groups are available on web and desktop.
+
+Groups only form when you ask for one:
+
+- **Hand off to new chat**, from a chat's menu or the command palette, asks the agent to write a
+  summary and continues the work in a fresh chat. Both chats join the chat's group, or a new one
+  made from its workspace.
+- Drag a chat onto a group row to move it into that group, or onto another active chat to group
+  the two. Both chats must be in the same project.
+- Choose **Move to group…** in a chat's menu to move it into one of its project's groups or into a
+  new group of its own.
+- Agents can do the same with the `t3_group_*` tools, for example to group a planning chat with
+  the chat it launched, or to hand off when a chat grows long.
+
+When a chat moves into a group that works in another workspace, T3 Code asks first, then switches
+the chat to the group's branch and worktree. A busy chat cannot switch.
+
+Chats in a group sit under the group's row: in the active list beneath their project, or in
+**Pinned**, **Snoozed**, or **Settled** wherever the group is. Click the row to show or hide its
+chats; the group with the open chat stays open. A collapsed group shows its pull request number
+and its most urgent status, and hovering it shows how many chats it holds. A chat that was handed
+off is dimmed.
+
+**New chat in group**, at the end of an expanded group, starts a chat on the group's branch and
+worktree. It joins the group when you send its first message. The same action is in the group's
+menu, in the chat header's group menu, and in the Group panel. You can bind the
+`chat.newInGroup` command to a shortcut in [keybindings](./keybindings.md); it has none by
+default.
+
+The **Group** panel (`G` in the right panel) shows the open chat's group: its title and goal,
+which you can edit, its workspace and pull request, its chats, what is running for it, and the
+last handoff summary. **Running** lists local servers started from the group's chats or from its
+worktree, the worktree's Docker Compose containers, and anything an agent registered for the
+group. These outlast handoffs, so the next chat can find the server the last one started.
 
 Right-click a group to rename, pin, snooze, settle, or ungroup it. Settling a group settles its
 chats, and un-settling it brings them back. A group also settles on its own once every chat in it
 is settled. In a grouped chat's menu, **Pin group** and **Snooze group** act on the whole group,
-while **Settle thread** still acts on that chat. **Ungroup** keeps every chat.
+while **Settle thread** still acts on that chat. **Remove from group** takes one chat out and
+leaves it on its current branch and worktree. **Ungroup** removes the group and keeps every chat
+where it is.
 
 ## Settle finished work
 
