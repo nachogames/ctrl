@@ -26,7 +26,7 @@ import {
   type RightPanelSurface,
   useRightPanelStore,
 } from "~/rightPanelStore";
-import { useThreadShell, useThreadShells } from "~/state/entities";
+import { useThreadShell, useThreadShellsForProjectRefs } from "~/state/entities";
 import { threadGroupCommands, useThreadGroup } from "~/state/threadGroups";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
@@ -57,6 +57,8 @@ export function GroupPanel(props: { threadRef: ScopedThreadRef; surface: GroupSu
     [environmentId, groupId],
   );
   const group = useThreadGroup(groupRef);
+  // Shells load before groups are known; stay blank rather than flash the hint.
+  if (thread === null) return null;
   if (group === null) {
     return (
       <div className="flex flex-1 items-center justify-center p-6 text-center text-muted-foreground text-sm">
@@ -73,7 +75,13 @@ function GroupPanelContent(props: {
   surface: GroupSurface;
 }) {
   const { group } = props;
-  const shells = useThreadShells();
+  // Members and handoff sources share the group's project, so only that project's
+  // chats can change what this panel shows.
+  const projectRefs = useMemo(
+    () => [{ environmentId: group.environmentId, projectId: group.projectId }],
+    [group.environmentId, group.projectId],
+  );
+  const shells = useThreadShellsForProjectRefs(projectRefs);
   const threadsById = useMemo(() => {
     const byId = new Map<ThreadId, EnvironmentThreadShell>();
     for (const shell of shells) {

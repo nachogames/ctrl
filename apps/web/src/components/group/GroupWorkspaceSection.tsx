@@ -54,9 +54,10 @@ export function GroupWorkspaceSection(props: {
           input: { cwd, includeRemote: false },
         }),
   );
-  // A deleted worktree fails the status read (or no longer reads as a checkout).
+  // Only a group worktree can go missing: a deleted one fails the status read or no longer
+  // reads as a checkout. The project root of a non-git project is simply not a repository.
   const missing =
-    cwd !== null &&
+    group.worktreePath !== null &&
     ((status.data === null && status.error !== null) || status.data?.isRepo === false);
   const branchLabel = groupWorkspaceLabel({
     branch: group.branch ?? status.data?.refName ?? null,
