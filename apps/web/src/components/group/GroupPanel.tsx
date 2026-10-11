@@ -40,6 +40,7 @@ import {
   splitInlineCode,
   type GroupStatusPill,
 } from "./GroupPanel.logic";
+import { GroupRunningSection } from "./GroupRunningSection";
 import { GroupWorkspaceSection } from "./GroupWorkspaceSection";
 
 type GroupSurface = Extract<RightPanelSurface, { kind: "group" }>;
@@ -136,6 +137,9 @@ function GroupPanelContent(props: {
             />
           ))}
         </ul>
+      </GroupSection>
+      <GroupSection section="running" title="Running">
+        <GroupRunningSection group={group} threadRef={props.threadRef} />
       </GroupSection>
       {handoff !== null ? (
         <GroupSection section="handoff" title="Last handoff">

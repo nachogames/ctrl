@@ -93,7 +93,7 @@ export type RightPanelSurface =
    */
   | { id: "group"; kind: "group"; section: GroupPanelSection | null };
 
-export type GroupPanelSection = "header" | "workspace" | "chats" | "handoff";
+export type GroupPanelSection = "header" | "workspace" | "chats" | "running" | "handoff";
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
