@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { threadGroupKey } from "@t3tools/client-runtime/state/entities";
 import type {
   EnvironmentThreadGroup,
   EnvironmentThreadShell,
@@ -17,9 +18,12 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { readLocalApi } from "../localApi";
 import { readEnvironmentSupportsSettlement, readThreadShell } from "../state/entities";
 import { threadGroupCommands } from "../state/threadGroups";
+import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { buildThreadRouteParams } from "../threadRoutes";
-import { useThreadActions } from "./useThreadActions";
+import { showThreadUndoNotice } from "./showThreadUndoNotice";
+import { applyThreadGroupSettlement } from "./threadGroupSettlement";
+import * as ThreadUndo from "./threadUndo";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -52,7 +56,13 @@ export function useThreadGroupActions() {
   const deleteGroup = useOrchestrationCommand(threadGroupCommands.delete, {
     reportFailure: false,
   });
-  const { settleThread, unsettleThread } = useThreadActions();
+  // Raw commands: a group settle shows one group-level Undo, not one per chat.
+  const settleThreadCommand = useOrchestrationCommand(threadEnvironment.settle, {
+    reportFailure: false,
+  });
+  const unsettleThreadCommand = useOrchestrationCommand(threadEnvironment.unsettle, {
+    reportFailure: false,
+  });
 
   const patchGroup = useCallback(
     async (group: EnvironmentThreadGroup, patch: ThreadGroupUpdatePayload, failure: string) => {
@@ -68,33 +78,60 @@ export function useThreadGroupActions() {
     [updateGroup],
   );
 
-  /** Settle or unsettle every member whose state differs, once the group change landed. */
-  const setMembersSettled = useCallback(
+  /** Settle or un-settle the group and its members, with one Undo that reverses both. */
+  const setGroupSettled = useCallback(
     async (group: EnvironmentThreadGroup, settled: boolean) => {
-      if (!readEnvironmentSupportsSettlement(group.environmentId)) return;
-      const pending = readGroupMembers(group).filter(
-        (thread) => (thread.settledOverride === "settled") !== settled,
+      const claim = ThreadUndo.begin(
+        "group-settle",
+        threadGroupKey({ environmentId: group.environmentId, groupId: group.id }),
       );
-      const results = await Promise.all(
-        pending.map((thread) =>
-          (settled ? settleThread : unsettleThread)(
-            scopeThreadRef(thread.environmentId, thread.id),
-          ),
-        ),
-      );
-      const failure = results.find(
-        (result) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
-      );
-      if (failure !== undefined && failure._tag === "Failure") {
+      const outcome = await applyThreadGroupSettlement({
+        settled,
+        now: new Date().toISOString(),
+        previousSettledAt: group.settledAt,
+        members: readGroupMembers(group),
+        settleMembers: readEnvironmentSupportsSettlement(group.environmentId),
+        patchSettledAt: (settledAt) =>
+          updateGroup({
+            environmentId: group.environmentId,
+            input: { groupId: group.id, patch: { settledAt } },
+          }),
+        setMemberSettled: (threadId, memberSettled) =>
+          memberSettled
+            ? settleThreadCommand({ environmentId: group.environmentId, input: { threadId } })
+            : unsettleThreadCommand({
+                environmentId: group.environmentId,
+                input: { threadId, reason: "user" },
+              }),
+      });
+      if (outcome.kind === "group-failed") {
+        claim.finish();
+        if (!isAtomCommandInterrupted(outcome.result)) {
+          failureToast(
+            settled ? "Failed to settle group" : "Failed to un-settle group",
+            squashAtomCommandFailure(outcome.result),
+          );
+        }
+        return;
+      }
+      const { memberFailure } = outcome;
+      if (memberFailure !== null) {
         failureToast(
           settled
             ? "Some chats in the group did not settle"
             : "Some chats in the group did not un-settle",
-          squashAtomCommandFailure(failure),
+          squashAtomCommandFailure(memberFailure),
         );
       }
+      showThreadUndoNotice({
+        action: settled ? "Settled" : "Un-settled",
+        subject: "group",
+        claim,
+        undo: outcome.undo,
+        failureTitle: settled ? "Failed to undo settle" : "Failed to undo un-settle",
+      });
     },
-    [settleThread, unsettleThread],
+    [settleThreadCommand, unsettleThreadCommand, updateGroup],
   );
 
   return useMemo(
@@ -107,18 +144,8 @@ export function useThreadGroupActions() {
         patchGroup(group, { snoozedUntil }, "Failed to snooze group"),
       unsnoozeGroup: (group: EnvironmentThreadGroup) =>
         patchGroup(group, { snoozedUntil: null }, "Failed to wake group"),
-      settleGroup: async (group: EnvironmentThreadGroup) => {
-        if (
-          await patchGroup(group, { settledAt: new Date().toISOString() }, "Failed to settle group")
-        ) {
-          await setMembersSettled(group, true);
-        }
-      },
-      unsettleGroup: async (group: EnvironmentThreadGroup) => {
-        if (await patchGroup(group, { settledAt: null }, "Failed to un-settle group")) {
-          await setMembersSettled(group, false);
-        }
-      },
+      settleGroup: (group: EnvironmentThreadGroup) => setGroupSettled(group, true),
+      unsettleGroup: (group: EnvironmentThreadGroup) => setGroupSettled(group, false),
       renameGroup: async (group: EnvironmentThreadGroup, title: string) => {
         const trimmed = title.trim();
         if (trimmed.length === 0) {
@@ -163,6 +190,6 @@ export function useThreadGroupActions() {
         });
       },
     }),
-    [deleteGroup, patchGroup, router, setMembersSettled],
+    [deleteGroup, patchGroup, router, setGroupSettled],
   );
 }

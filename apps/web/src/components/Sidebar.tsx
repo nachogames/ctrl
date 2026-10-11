@@ -202,6 +202,7 @@ import {
   filterSidebarV2VisibleThreads,
   partitionThreadsByGroup,
   resolveForcedOpenGroupKey,
+  resolveSidebarGroupExpanded,
   resolveSidebarGroupSection,
   sidebarActivityMs,
   type SidebarGroupSection,
@@ -3194,17 +3195,48 @@ export default function Sidebar() {
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
   }, [routeThreadKey, workingShelfExpanded, workingThreads]);
 
-  // Groups: expansion persists per group; the one holding the open chat is
-  // forced open without writing that preference.
+  // Groups: expansion persists per group. Navigating into a group's chat
+  // opens the group once (written to the preference), so the user can still
+  // collapse it afterwards.
   const groupExpandedById = useUiStateStore((store) => store.groupExpandedById);
   const setGroupExpanded = useUiStateStore((store) => store.setGroupExpanded);
-  const forcedOpenGroupKey = resolveForcedOpenGroupKey({ routeThreadKey, groupKeyByThreadKey });
+  const routeGroupKey = resolveForcedOpenGroupKey({ routeThreadKey, groupKeyByThreadKey });
+  const lastRouteGroupKeyRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (routeGroupKey !== null && routeGroupKey !== lastRouteGroupKeyRef.current) {
+      setGroupExpanded(routeGroupKey, true);
+    }
+    lastRouteGroupKeyRef.current = routeGroupKey;
+  }, [routeGroupKey, setGroupExpanded]);
+  // Snoozed and Settled groups start collapsed; toggles there are
+  // session-only so the persisted Active choice is never overwritten.
+  const parkedGroupKeys = useMemo(
+    () => new Set([...snoozedGroups, ...settledGroups].map((entry) => entry.key)),
+    [settledGroups, snoozedGroups],
+  );
+  const [parkedGroupExpanded, setParkedGroupExpanded] = useState<ReadonlyMap<string, boolean>>(
+    () => new Map(),
+  );
   const isGroupExpanded = useCallback(
     (groupKey: string) =>
-      resolveGroupExpanded(groupExpandedById, groupKey, {
-        forced: groupKey === forcedOpenGroupKey,
+      resolveSidebarGroupExpanded({
+        groupKey,
+        parked: parkedGroupKeys.has(groupKey),
+        persisted: resolveGroupExpanded(groupExpandedById, groupKey, { forced: false }),
+        parkedOverride: parkedGroupExpanded.get(groupKey),
+        routeGroupKey,
       }),
-    [forcedOpenGroupKey, groupExpandedById],
+    [groupExpandedById, parkedGroupExpanded, parkedGroupKeys, routeGroupKey],
+  );
+  const toggleGroupExpanded = useCallback(
+    (groupKey: string, expanded: boolean) => {
+      if (parkedGroupKeys.has(groupKey)) {
+        setParkedGroupExpanded((current) => new Map(current).set(groupKey, expanded));
+      } else {
+        setGroupExpanded(groupKey, expanded);
+      }
+    },
+    [parkedGroupKeys, setGroupExpanded],
   );
   // Tree headings name logical projects, the same keys the project scope uses.
   const logicalProjectKeyByPhysicalKey = useMemo(
@@ -3245,7 +3277,7 @@ export default function Sidebar() {
   const shownGroupsBySection = useMemo(() => {
     const shown = (entries: readonly SidebarGroupEntry[], shelfExpanded: boolean) =>
       entries
-        .filter((entry) => shelfExpanded || entry.key === forcedOpenGroupKey)
+        .filter((entry) => shelfExpanded || entry.key === routeGroupKey)
         .map((entry) => ({
           entry,
           renderedMembers: isGroupExpanded(entry.key) ? entry.members : EMPTY_THREADS,
@@ -3256,9 +3288,9 @@ export default function Sidebar() {
       settled: shown(settledGroups, settledShelfExpanded),
     };
   }, [
-    forcedOpenGroupKey,
     isGroupExpanded,
     pinnedGroups,
+    routeGroupKey,
     settledGroups,
     settledShelfExpanded,
     snoozedGroups,
@@ -5841,7 +5873,7 @@ export default function Sidebar() {
                               section={item.section}
                               expanded={isGroupExpanded(item.key)}
                               isRenaming={renamingGroupKey === item.key}
-                              onToggle={setGroupExpanded}
+                              onToggle={toggleGroupExpanded}
                               onContextMenu={handleGroupContextMenu}
                               onCommitRename={commitGroupRename}
                               onCancelRename={cancelGroupRename}

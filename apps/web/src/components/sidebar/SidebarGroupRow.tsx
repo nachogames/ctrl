@@ -221,6 +221,14 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
         )}
         <GroupPullRequestNumber group={group} />
         <span className="ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end text-xs text-secondary-label tabular-nums">
+          {/* On hover a collapsed group trades its time for its chat count;
+              a status dot stays beside it. */}
+          {dot ? null : (
+            <span className={cn(!expanded && "group-hover/sidebar-group:hidden")}>{timeLabel}</span>
+          )}
+          {expanded ? null : (
+            <span className="hidden group-hover/sidebar-group:inline">{countLabel}</span>
+          )}
           {dot ? (
             <span
               role="img"
@@ -229,16 +237,7 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
             >
               <span className={cn("size-1.5 rounded-full", dot.className)} />
             </span>
-          ) : (
-            <>
-              <span className={cn(!expanded && "group-hover/sidebar-group:hidden")}>
-                {timeLabel}
-              </span>
-              {expanded ? null : (
-                <span className="hidden group-hover/sidebar-group:inline">{countLabel}</span>
-              )}
-            </>
-          )}
+          ) : null}
         </span>
       </div>
     </li>

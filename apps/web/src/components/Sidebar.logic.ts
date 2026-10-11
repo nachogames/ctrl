@@ -1231,7 +1231,24 @@ export function buildSidebarActiveTree<T extends SidebarActivityInput>(input: {
   return entries;
 }
 
-/** The group that must be open because it holds the routed chat. */
+/**
+ * Whether a group row shows its chats. Active and Pinned groups follow the
+ * persisted choice. A group parked in Snoozed or Settled starts collapsed
+ * whatever it was in Active; only the open chat's group may show open there,
+ * and a toggle made there (`parkedOverride`) lasts for the session only.
+ */
+export function resolveSidebarGroupExpanded(input: {
+  readonly groupKey: string;
+  readonly parked: boolean;
+  readonly persisted: boolean;
+  readonly parkedOverride: boolean | undefined;
+  readonly routeGroupKey: string | null;
+}): boolean {
+  if (!input.parked) return input.persisted;
+  return input.parkedOverride ?? (input.groupKey === input.routeGroupKey && input.persisted);
+}
+
+/** The group holding the routed chat; entering it opens it once. */
 export function resolveForcedOpenGroupKey(input: {
   readonly routeThreadKey: string | null;
   readonly groupKeyByThreadKey: ReadonlyMap<string, string>;

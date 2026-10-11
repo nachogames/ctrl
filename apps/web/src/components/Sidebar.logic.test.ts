@@ -11,6 +11,7 @@ import {
   buildSidebarActiveTree,
   partitionThreadsByGroup,
   resolveForcedOpenGroupKey,
+  resolveSidebarGroupExpanded,
   resolveSidebarGroupSection,
   resolveThreadGroupStatus,
   sidebarActivityMs,
@@ -2654,6 +2655,37 @@ describe("buildSidebarActiveTree", () => {
       isExpanded: () => true,
     });
     expect(tree).toEqual([]);
+  });
+});
+
+describe("resolveSidebarGroupExpanded", () => {
+  const base = {
+    groupKey: "g",
+    parked: false,
+    persisted: true,
+    parkedOverride: undefined,
+    routeGroupKey: null,
+  };
+  it("follows the persisted choice outside the parked shelves", () => {
+    expect(resolveSidebarGroupExpanded(base)).toBe(true);
+    expect(resolveSidebarGroupExpanded({ ...base, persisted: false, routeGroupKey: "g" })).toBe(
+      false,
+    );
+  });
+  it("shows a parked group collapsed unless it holds the open chat", () => {
+    expect(resolveSidebarGroupExpanded({ ...base, parked: true })).toBe(false);
+    expect(resolveSidebarGroupExpanded({ ...base, parked: true, routeGroupKey: "g" })).toBe(true);
+  });
+  it("lets a toggle in a parked shelf win for the session", () => {
+    expect(resolveSidebarGroupExpanded({ ...base, parked: true, parkedOverride: true })).toBe(true);
+    expect(
+      resolveSidebarGroupExpanded({
+        ...base,
+        parked: true,
+        routeGroupKey: "g",
+        parkedOverride: false,
+      }),
+    ).toBe(false);
   });
 });
 
