@@ -93,6 +93,14 @@ export const ThreadGroupMutation = Schema.Union([
     threadId: ThreadId,
     /** Null detaches the thread; it keeps its branch and worktree. */
     groupId: Schema.NullOr(ThreadGroupId),
+    /** Switch the thread to the group's branch and worktree when they differ from its own. */
+    adoptGroupWorkspace: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({
+    /** Recreate the group's worktree on its branch when the directory is gone. */
+    type: Schema.Literal("thread-group.recreate-worktree"),
+    commandId: CommandId,
+    groupId: ThreadGroupId,
   }),
 ]);
 export type ThreadGroupMutation = typeof ThreadGroupMutation.Type;

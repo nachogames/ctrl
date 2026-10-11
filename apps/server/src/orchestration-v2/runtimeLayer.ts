@@ -251,6 +251,7 @@ export const layerThreadGroupService = ThreadGroupService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       ThreadGroupStore.layer,
+      ProjectStore.layer,
       layerEventSinkProvided,
       IdAllocator.layer,
       layerThreadManagementProvided,

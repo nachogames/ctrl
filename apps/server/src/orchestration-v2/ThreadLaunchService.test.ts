@@ -239,6 +239,9 @@ function makeHarness(options: HarnessOptions = {}) {
   const layerGroupService = ThreadGroupService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerExternalServices,
+        layerProjectedProjects,
+        FileSystem.layerNoop({}),
         layerThreadGroups,
         RuntimeLayer.layerEventSink.pipe(Layer.provide(layerDatabase)),
         IdAllocator.layer,

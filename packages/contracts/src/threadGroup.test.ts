@@ -101,6 +101,36 @@ describe("thread group contracts", () => {
       }),
     ).toMatchObject({ type: "thread-group.move-thread", groupId: null });
   });
+
+  it("asks to adopt the group's workspace only when the caller says so", () => {
+    const move = {
+      type: "thread-group.move-thread",
+      commandId: "command-3",
+      threadId: "thread-1",
+      groupId: "group-1",
+    };
+    expect("adoptGroupWorkspace" in decodeMutation(move)).toBe(false);
+    expect(decodeMutation({ ...move, adoptGroupWorkspace: true })).toMatchObject({
+      adoptGroupWorkspace: true,
+    });
+  });
+
+  it("recreates a group's worktree by group id", () => {
+    expect(
+      decodeMutation({
+        type: "thread-group.recreate-worktree",
+        commandId: "command-4",
+        groupId: "group-1",
+      }),
+    ).toEqual({
+      type: "thread-group.recreate-worktree",
+      commandId: "command-4",
+      groupId: "group-1",
+    });
+    expect(() =>
+      decodeMutation({ type: "thread-group.recreate-worktree", commandId: "command-4" }),
+    ).toThrow();
+  });
 });
 
 const decodeAppThreadJson = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
