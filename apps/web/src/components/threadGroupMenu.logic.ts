@@ -3,6 +3,7 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 
 /** Ids for a chat group's right-click menu. Snooze presets dispatch as `snooze-group:<presetId>`. */
 export type ThreadGroupMenuId =
+  | "new-chat-in-group"
   | "rename-group"
   | "pin-group"
   | "unpin-group"
@@ -57,7 +58,8 @@ export function buildThreadGroupMenuItems(
   state: ThreadGroupMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadGroupMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadGroupMenuId>> = [
-    { id: "rename-group", label: "Rename…", icon: "pencil" },
+    { id: "new-chat-in-group", label: "New chat in group", icon: "message-square-plus" },
+    { id: "rename-group", label: "Rename…", icon: "pencil", separatorBefore: true },
     state.isPinned
       ? { id: "unpin-group", label: "Unpin group", icon: "pin-off" }
       : { id: "pin-group", label: "Pin group", icon: "pin" },

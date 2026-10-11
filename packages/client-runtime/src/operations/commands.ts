@@ -180,6 +180,8 @@ interface StartThreadBootstrap {
     readonly branch: string | null;
     readonly worktreePath: string | null;
     readonly createdAt: string;
+    /** The new thread joins this group; the launch runs under the group's lock. */
+    readonly groupId?: ThreadGroupId;
   };
   readonly prepareWorktree?: {
     /** V2 worktree launches always fail rather than falling back to the project checkout. */
@@ -756,6 +758,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
       workspaceStrategy,
+      ...(bootstrap?.groupId === undefined ? {} : { groupId: bootstrap.groupId }),
       initialMessage: {
         messageId: input.message.messageId,
         text: input.message.text,

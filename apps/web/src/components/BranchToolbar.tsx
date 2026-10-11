@@ -9,6 +9,7 @@ import {
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
+  LayersIcon,
   ScaleIcon,
 } from "lucide-react";
 import {
@@ -27,6 +28,7 @@ import {
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject, useThreadShell, useThreadShellsForProjectRefs } from "../state/entities";
+import { useLiveDraftGroup } from "../state/threadGroups";
 import {
   type EnvMode,
   type EnvironmentOption,
@@ -626,6 +628,8 @@ export const BranchToolbar = memo(function BranchToolbar({
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
   const serverThread = useThreadShell(threadRef);
+  // "New chat in group": the draft joins this group on its first send.
+  const draftGroup = useLiveDraftGroup(serverThread === null ? draftThread : null);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const activeProjectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
@@ -840,6 +844,23 @@ export const BranchToolbar = memo(function BranchToolbar({
           data-chat-resting-composer-controls-host="true"
           className="flex min-w-0 flex-1 items-center justify-start overflow-x-clip overflow-y-visible"
         />
+      ) : null}
+
+      {draftGroup !== null ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                data-composer-context-control
+                className="inline-flex h-7 min-w-0 shrink items-center gap-1 px-1.75 sm:h-6"
+              />
+            }
+          >
+            <LayersIcon aria-hidden className="size-3 shrink-0" />
+            <ComposerContextLabel>in {draftGroup.title}</ComposerContextLabel>
+          </TooltipTrigger>
+          <TooltipPopup>Joins “{draftGroup.title}” when you send</TooltipPopup>
+        </Tooltip>
       ) : null}
 
       {showGitControls ? (

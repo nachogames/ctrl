@@ -288,7 +288,7 @@ import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { GroupPanel } from "./group/GroupPanel";
-import { useThreadGroup } from "../state/threadGroups";
+import { readLiveDraftGroup, useThreadGroup } from "../state/threadGroups";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
@@ -9520,6 +9520,9 @@ export default function ChatView(props: ChatViewProps) {
         };
       }),
     );
+    // "New chat in group": the first send joins the draft's group, unless the
+    // group has gone since, in which case the chat launches ungrouped.
+    const launchGroupId = isLocalDraftThread ? readLiveDraftGroup(draftThread)?.id : undefined;
     if (multipleModelSelections !== null) {
       const failedSelections: ModelSelection[] = [];
       let clearedDraft = false;
@@ -9608,6 +9611,7 @@ export default function ChatView(props: ChatViewProps) {
                       branch: activeThreadBranch,
                       worktreePath: null,
                       createdAt: messageCreatedAt,
+                      ...(launchGroupId === undefined ? {} : { groupId: launchGroupId }),
                     },
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
@@ -9948,6 +9952,7 @@ export default function ChatView(props: ChatViewProps) {
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
+                      ...(launchGroupId === undefined ? {} : { groupId: launchGroupId }),
                     },
                   }
                 : {}),

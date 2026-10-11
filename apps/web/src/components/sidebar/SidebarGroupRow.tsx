@@ -2,13 +2,14 @@ import type {
   EnvironmentThreadGroup,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
-import { ChevronRightIcon, LayersIcon } from "lucide-react";
+import { ChevronRightIcon, LayersIcon, PlusIcon } from "lucide-react";
 import {
   memo,
   useCallback,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -183,6 +184,7 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
     <li
       ref={setNodeRef}
       data-thread-selection-safe
+      data-sidebar-group-block={groupKey}
       data-testid="sidebar-group-row"
       className="list-none"
       style={style}
@@ -240,6 +242,62 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
           ) : null}
         </span>
       </div>
+    </li>
+  );
+});
+
+/**
+ * Which group block (group row, members, "New chat" row) the pointer is over.
+ * Only the "New chat" rows whose visibility flips re-render.
+ */
+export function createSidebarGroupHover() {
+  let hovered: string | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    set(groupKey: string | null) {
+      if (groupKey === hovered) return;
+      hovered = groupKey;
+      for (const listener of listeners) listener();
+    },
+    get: () => hovered,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+export type SidebarGroupHover = ReturnType<typeof createSidebarGroupHover>;
+
+/**
+ * "+ New chat in group", the last child of an expanded group. It stays
+ * mounted (so list motion never sees it come and go) and shows while the
+ * pointer is over its group's block.
+ */
+export const SidebarGroupNewChatRow = memo(function SidebarGroupNewChatRow(props: {
+  groupKey: string;
+  hover: SidebarGroupHover;
+  onNewChat: (groupKey: string) => void;
+}) {
+  const { groupKey, hover, onNewChat } = props;
+  const visible = useSyncExternalStore(hover.subscribe, () => hover.get() === groupKey);
+  return (
+    <li
+      data-thread-selection-safe
+      data-sidebar-group-block={groupKey}
+      className={cn("list-none", !visible && "hidden")}
+    >
+      <button
+        type="button"
+        onClick={() => onNewChat(groupKey)}
+        className="flex h-7 w-full cursor-pointer items-center rounded-md px-2.5 pl-6 text-left text-xs text-sidebar-muted-foreground/70 outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <span className="flex h-full min-w-0 flex-1 items-center gap-2 border-l border-sidebar-border pl-5">
+          <PlusIcon aria-hidden className="size-3.5 shrink-0" />
+          New chat in group
+        </span>
+      </button>
     </li>
   );
 });

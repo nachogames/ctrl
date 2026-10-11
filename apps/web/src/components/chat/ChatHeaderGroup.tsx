@@ -1,9 +1,10 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadGroup } from "@t3tools/client-runtime/state/models";
 import type { ThreadId, ThreadPullRequestLink } from "@t3tools/contracts";
-import { ChevronDownIcon, GitBranchIcon, LayersIcon } from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon, LayersIcon, MessageSquarePlusIcon } from "lucide-react";
 import { useMemo } from "react";
 
+import { useThreadGroupActions } from "~/hooks/useThreadGroupActions";
 import { cn } from "~/lib/utils";
 import { type GroupPanelSection, useRightPanelStore } from "~/rightPanelStore";
 import { useThreadShellsForProjectRefs } from "~/state/entities";
@@ -112,6 +113,7 @@ function ChatHeaderGroupMenuItems(props: {
 }) {
   const { group, activeThreadId, onOpenThread } = props;
   const members = useGroupMembers(group, activeThreadId);
+  const { newChatInGroup } = useThreadGroupActions();
   return (
     <>
       <MenuRadioGroup
@@ -131,6 +133,10 @@ function ChatHeaderGroupMenuItems(props: {
         ))}
       </MenuRadioGroup>
       <MenuSeparator />
+      <MenuItem onClick={() => void newChatInGroup(group)}>
+        <MessageSquarePlusIcon aria-hidden />
+        New chat in group
+      </MenuItem>
       <MenuItem onClick={() => openGroupSurface(group, activeThreadId, null)}>
         <LayersIcon aria-hidden />
         Open group panel

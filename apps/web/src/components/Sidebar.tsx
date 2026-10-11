@@ -190,7 +190,11 @@ import {
   isThreadGroupSnoozed,
   type ThreadGroupMenuId,
 } from "./threadGroupMenu.logic";
-import { SidebarGroupRow } from "./sidebar/SidebarGroupRow";
+import {
+  createSidebarGroupHover,
+  SidebarGroupNewChatRow,
+  SidebarGroupRow,
+} from "./sidebar/SidebarGroupRow";
 import { SidebarProjectHeading } from "./sidebar/SidebarProjectHeading";
 import { indexThreadGroups, useThreadGroups } from "../state/threadGroups";
 import { useThreadGroupActions } from "../hooks/useThreadGroupActions";
@@ -3309,6 +3313,7 @@ export default function Sidebar() {
   groupEntryByKeyRef.current = groupEntryByKey;
   const groupKeyByThreadKeyRef = useRef(groupKeyByThreadKey);
   groupKeyByThreadKeyRef.current = groupKeyByThreadKey;
+  const [groupHover] = useState(createSidebarGroupHover);
 
   // Only rendered thread rows, in render order: jump hints, traversal and
   // shift-select all walk this list.
@@ -5189,6 +5194,14 @@ export default function Sidebar() {
     },
     [groupActions],
   );
+  const handleNewChatInGroup = useCallback(
+    (groupKey: string) => {
+      const entry = groupEntryByKeyRef.current.get(groupKey);
+      if (!entry || !checkThreadOperations([entry.group])) return;
+      void groupActions.newChatInGroup(entry.group);
+    },
+    [groupActions],
+  );
   const handleGroupContextMenu = useCallback(
     (groupKey: string, position: { x: number; y: number }) => {
       void (async () => {
@@ -5226,6 +5239,9 @@ export default function Sidebar() {
           return;
         }
         switch (action) {
+          case "new-chat-in-group":
+            await groupActions.newChatInGroup(group);
+            return;
           case "rename-group":
             setRenamingGroupKey(groupKey);
             return;
@@ -5679,6 +5695,30 @@ export default function Sidebar() {
                       // controls that opt back in, like the Woke pill.
                       actionSweep !== null && "**:pointer-events-none",
                     )}
+                    // Tracks the hovered group block for its "New chat in group" row.
+                    // Members are siblings in this flat list, so CSS hover cannot.
+                    onPointerOver={(event) => {
+                      const target = event.target instanceof Element ? event.target : null;
+                      const blockKey =
+                        target
+                          ?.closest("[data-sidebar-group-block]")
+                          ?.getAttribute("data-sidebar-group-block") ?? null;
+                      const threadKey =
+                        blockKey === null
+                          ? (target
+                              ?.closest("[data-thread-item]")
+                              ?.getAttribute("data-thread-item") ?? null)
+                          : null;
+                      groupHover.set(
+                        dragState !== null
+                          ? null
+                          : (blockKey ??
+                              (threadKey === null
+                                ? null
+                                : (groupKeyByThreadKeyRef.current.get(threadKey) ?? null))),
+                      );
+                    }}
+                    onPointerLeave={() => groupHover.set(null)}
                   >
                     {(() => {
                       const renderThreadRowInner = (
@@ -5849,7 +5889,32 @@ export default function Sidebar() {
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       ];
-                      for (const item of sidebarListItems) {
+                      // "+ New chat in group" closes each expanded group's block.
+                      const pushNewChatRowAfter = (index: number) => {
+                        const item = sidebarListItems[index];
+                        if (item === undefined) return;
+                        const blockKey =
+                          item.kind === "group"
+                            ? isGroupExpanded(item.key)
+                              ? item.key
+                              : null
+                            : item.kind === "thread"
+                              ? (item.groupKey ?? null)
+                              : null;
+                        if (blockKey === null) return;
+                        const next = sidebarListItems[index + 1];
+                        if (next?.kind === "thread" && next.groupKey === blockKey) return;
+                        items.push(
+                          <SidebarGroupNewChatRow
+                            key={`group-new-chat:${blockKey}`}
+                            groupKey={blockKey}
+                            hover={groupHover}
+                            onNewChat={handleNewChatInGroup}
+                          />,
+                        );
+                      };
+                      for (const [index, item] of sidebarListItems.entries()) {
+                        pushNewChatRowAfter(index - 1);
                         if (item.kind === "thread") {
                           items.push(
                             renderThreadRow(
@@ -6021,6 +6086,7 @@ export default function Sidebar() {
                             break;
                         }
                       }
+                      pushNewChatRowAfter(sidebarListItems.length - 1);
                       return items;
                     })()}
                     {settledShelfExpanded && hiddenSettledCount > 0 ? (

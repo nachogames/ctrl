@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadGroupKey } from "@t3tools/client-runtime/state/entities";
 import type {
   EnvironmentThreadGroup,
@@ -25,6 +25,7 @@ import { buildThreadRouteParams } from "../threadRoutes";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { applyThreadGroupSettlement } from "./threadGroupSettlement";
 import * as ThreadUndo from "./threadUndo";
+import { useNewThreadHandler } from "./useHandleNewThread";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -51,6 +52,7 @@ function readGroupMembers(group: EnvironmentThreadGroup): EnvironmentThreadShell
  */
 export function useThreadGroupActions() {
   const router = useRouter();
+  const handleNewThread = useNewThreadHandler();
   const updateGroup = useOrchestrationCommand(threadGroupCommands.update, {
     reportFailure: false,
   });
@@ -135,8 +137,31 @@ export function useThreadGroupActions() {
     [settleThreadCommand, unsettleThreadCommand, updateGroup],
   );
 
+  /**
+   * Opens a draft on the group's branch and worktree that joins the group on
+   * its first send.
+   */
+  const newChatInGroup = useCallback(
+    async (group: EnvironmentThreadGroup) => {
+      const result = await settlePromise(() =>
+        handleNewThread(scopeProjectRef(group.environmentId, group.projectId), {
+          branch: group.branch,
+          worktreePath: group.worktreePath,
+          envMode: group.worktreePath ? "worktree" : "local",
+          startFromOrigin: false,
+          groupId: group.id,
+        }),
+      );
+      if (result._tag === "Failure") {
+        failureToast("Could not create chat", squashAtomCommandFailure(result));
+      }
+    },
+    [handleNewThread],
+  );
+
   return useMemo(
     () => ({
+      newChatInGroup,
       pinGroup: (group: EnvironmentThreadGroup) =>
         patchGroup(group, { pinnedAt: new Date().toISOString() }, "Failed to pin group"),
       unpinGroup: (group: EnvironmentThreadGroup) =>
@@ -193,6 +218,6 @@ export function useThreadGroupActions() {
         });
       },
     }),
-    [deleteGroup, patchGroup, router, setGroupSettled],
+    [deleteGroup, newChatInGroup, patchGroup, router, setGroupSettled],
   );
 }

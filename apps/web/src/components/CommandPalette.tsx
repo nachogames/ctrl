@@ -88,6 +88,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useThreadGroupActions } from "../hooks/useThreadGroupActions";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
@@ -773,6 +774,7 @@ function OpenCommandPaletteDialog(props: {
     [activeThreadEnvironmentId, activeThreadGroupId],
   );
   const activeGroup = useThreadGroup(activeGroupRef);
+  const { newChatInGroup } = useThreadGroupActions();
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -1934,6 +1936,23 @@ function OpenCommandPaletteDialog(props: {
             handleNewThread,
           });
         },
+      });
+    }
+
+    if (activeGroup !== null) {
+      const group = activeGroup;
+      actionItems.push({
+        kind: "action",
+        value: "action:new-chat-in-group",
+        searchTerms: ["new chat", "new thread", "group", "chat", "create"],
+        title: (
+          <>
+            New chat in <span className="font-semibold">{group.title}</span>
+          </>
+        ),
+        icon: <LayersIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "chat.newInGroup",
+        run: () => newChatInGroup(group),
       });
     }
 

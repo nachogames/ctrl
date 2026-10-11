@@ -5,8 +5,14 @@ import {
   createEnvironmentThreadGroupAtoms,
   createThreadGroupEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/thread-groups";
-import type { ScopedThreadGroupRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  ScopedThreadGroupRef,
+  ThreadGroupId,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -50,4 +56,46 @@ export function indexThreadGroups(
         [threadGroupKey({ environmentId: group.environmentId, groupId: group.id }), group] as const,
     ),
   );
+}
+
+/** A draft that may carry a group from "New chat in group". */
+interface DraftGroupTarget {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly groupId?: ThreadGroupId | undefined;
+}
+
+function draftGroupRef(draft: DraftGroupTarget | null | undefined): ScopedThreadGroupRef | null {
+  return draft?.groupId ? { environmentId: draft.environmentId, groupId: draft.groupId } : null;
+}
+
+function liveDraftGroup(
+  draft: DraftGroupTarget | null | undefined,
+  group: EnvironmentThreadGroup | null,
+): EnvironmentThreadGroup | null {
+  return group !== null && draft?.projectId === group.projectId ? group : null;
+}
+
+/**
+ * The draft's group while it still exists in the draft's project. A draft
+ * whose group has gone launches ungrouped.
+ */
+export function readLiveDraftGroup(
+  draft: DraftGroupTarget | null | undefined,
+): EnvironmentThreadGroup | null {
+  const ref = draftGroupRef(draft);
+  return ref === null ? null : liveDraftGroup(draft, readThreadGroup(ref));
+}
+
+export function useLiveDraftGroup(
+  draft: DraftGroupTarget | null | undefined,
+): EnvironmentThreadGroup | null {
+  const environmentId = draft?.environmentId;
+  const groupId = draft?.groupId;
+  const ref = useMemo(
+    () =>
+      environmentId !== undefined && groupId !== undefined ? { environmentId, groupId } : null,
+    [environmentId, groupId],
+  );
+  return liveDraftGroup(draft, useThreadGroup(ref));
 }

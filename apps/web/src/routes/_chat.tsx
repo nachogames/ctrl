@@ -16,6 +16,8 @@ import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useThreadGroupActions } from "../hooks/useThreadGroupActions";
+import { readThreadGroup } from "../state/threadGroups";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
@@ -35,6 +37,7 @@ function ChatRouteGlobalShortcuts() {
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const { newChatInGroup } = useThreadGroupActions();
   const canOperatePreview = useEnvironmentScope(
     routeThreadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
@@ -110,6 +113,26 @@ function ChatRouteGlobalShortcuts() {
           defaultProjectRef,
           handleNewThread,
         });
+        return;
+      }
+
+      if (command === "chat.newInGroup") {
+        event.preventDefault();
+        event.stopPropagation();
+        const group =
+          activeThread?.groupId != null
+            ? readThreadGroup({
+                environmentId: activeThread.environmentId,
+                groupId: activeThread.groupId,
+              })
+            : null;
+        if (group === null) {
+          toastManager.add(
+            stackedThreadToast({ type: "info", title: "This chat is not in a group" }),
+          );
+          return;
+        }
+        void newChatInGroup(group);
         return;
       }
 
@@ -200,6 +223,7 @@ function ChatRouteGlobalShortcuts() {
     handleNewThread,
     keybindings,
     defaultProjectRef,
+    newChatInGroup,
     previewOpen,
     primaryEnvironmentId,
     projectGroupCount,

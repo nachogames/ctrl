@@ -4,7 +4,12 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ScopedProjectRef,
+  type ThreadGroupId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
@@ -71,6 +76,8 @@ export function useNewThreadHandler() {
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
+        /** The draft joins this group on first send. */
+        groupId?: ThreadGroupId;
         replace?: boolean;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
@@ -164,6 +171,9 @@ export function useNewThreadHandler() {
       const logicalProjectKey = project
         ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
         : scopedProjectKey(projectRef);
+      // A new chat is in a group only when the caller asked for one, so a
+      // reused draft always has its group set or cleared here.
+      const groupContext = { groupId: options?.groupId ?? null };
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
@@ -299,6 +309,7 @@ export function useNewThreadHandler() {
             {
               threadId: emptyStoredDraftThread.threadId,
               ...workspaceContext,
+              ...groupContext,
               ...(!isDraftAlreadyOpen ? { runtimeMode: defaultRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
@@ -349,6 +360,7 @@ export function useNewThreadHandler() {
           runtimeMode: latestActiveDraftThread.runtimeMode,
           interactionMode: latestActiveDraftThread.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
+          ...groupContext,
         });
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
@@ -392,6 +404,7 @@ export function useNewThreadHandler() {
             runtimeMode: racedDraft.runtimeMode,
             interactionMode: racedDraft.interactionMode,
             ...pickExplicitWorkspaceOptions(options),
+            ...(options?.groupId !== undefined ? { groupId: options.groupId } : {}),
           });
           await router.navigate({
             to: "/draft/$draftId",
@@ -412,6 +425,7 @@ export function useNewThreadHandler() {
               envMode: initialEnvMode,
               newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
             }),
+          ...groupContext,
           runtimeMode: defaultRuntimeMode,
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });

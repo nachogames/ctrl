@@ -9,7 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { LayersIcon, PencilIcon } from "lucide-react";
+import { LayersIcon, PencilIcon, PlusIcon } from "lucide-react";
 import {
   useEffect,
   useMemo,
@@ -109,6 +109,7 @@ function GroupPanelContent(props: {
   }, [props.surface]);
 
   const navigate = useNavigate();
+  const { newChatInGroup } = useThreadGroupActions();
   const openChat = (threadId: ThreadId) => {
     const ref = scopeThreadRef(group.environmentId, threadId);
     // Moving between a group's chats keeps the group in view.
@@ -137,6 +138,12 @@ function GroupPanelContent(props: {
             />
           ))}
         </ul>
+        <div className="mt-1">
+          <Button size="xs" variant="ghost-muted" onClick={() => void newChatInGroup(group)}>
+            <PlusIcon aria-hidden />
+            New chat in group
+          </Button>
+        </div>
       </GroupSection>
       <GroupSection section="running" title="Running">
         <GroupRunningSection group={group} threadRef={props.threadRef} />

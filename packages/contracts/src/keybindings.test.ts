@@ -151,6 +151,12 @@ it.effect("parses keybinding rules", () =>
       command: "thread.stop",
     });
     assert.strictEqual(parsedThreadStop.command, "thread.stop");
+
+    const parsedNewInGroup = yield* decode(KeybindingRule, {
+      key: "mod+alt+g",
+      command: "chat.newInGroup",
+    });
+    assert.strictEqual(parsedNewInGroup.command, "chat.newInGroup");
   }),
 );
 

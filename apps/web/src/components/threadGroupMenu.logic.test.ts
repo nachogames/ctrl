@@ -19,6 +19,7 @@ const ids = (state: ThreadGroupMenuState) =>
 describe("buildThreadGroupMenuItems", () => {
   it("offers the forward actions for an active group", () => {
     expect(ids(baseState)).toEqual([
+      "new-chat-in-group",
       "rename-group",
       "pin-group",
       "snooze-group",
@@ -35,6 +36,7 @@ describe("buildThreadGroupMenuItems", () => {
 
   it("offers the way back for a pinned, snoozed and settled group", () => {
     expect(ids({ ...baseState, isPinned: true, isSnoozed: true, isSettled: true })).toEqual([
+      "new-chat-in-group",
       "rename-group",
       "unpin-group",
       "unsnooze-group",
@@ -46,6 +48,7 @@ describe("buildThreadGroupMenuItems", () => {
 
   it("hides settle and snooze where the environment cannot settle or snooze chats", () => {
     expect(ids({ ...baseState, supports: { settlement: false, snooze: false } })).toEqual([
+      "new-chat-in-group",
       "rename-group",
       "pin-group",
       "open-group-panel",

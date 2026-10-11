@@ -411,6 +411,55 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("launches a grouped draft into its group", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+      const bootstrapThread = {
+        projectId: ProjectId.make("project-1"),
+        title: "Thread",
+        modelSelection: v2Projection.thread.modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: "feature",
+        worktreePath: "/workspace/project-worktrees/feature",
+        createdAt: "2026-06-20T00:00:00.000Z",
+      };
+      const send = (id: string, groupId?: ThreadGroupId) =>
+        startThreadTurn({
+          commandId: CommandId.make(`launch-${id}`),
+          threadId: v2ThreadId,
+          message: {
+            messageId: MessageId.make(`message-${id}`),
+            role: "user",
+            text: "Next step",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          bootstrap: {
+            createThread: {
+              ...bootstrapThread,
+              ...(groupId === undefined ? {} : { groupId }),
+            },
+          },
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      yield* send("grouped", ThreadGroupId.make("group-1"));
+      yield* send("ungrouped");
+
+      expect(launches[0]).toMatchObject({
+        groupId: "group-1",
+        workspaceStrategy: {
+          type: "existing_worktree",
+          worktreePath: "/workspace/project-worktrees/feature",
+          branch: "feature",
+        },
+      });
+      expect(launches[1]).not.toHaveProperty("groupId");
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("provisions an origin-based worktree for an existing empty thread", () =>
     Effect.gen(function* () {
       const launches: OrchestrationV2ThreadLaunchInput[] = [];
