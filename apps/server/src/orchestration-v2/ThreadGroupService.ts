@@ -122,6 +122,13 @@ export interface ThreadGroupMoveThreadInput {
   readonly groupId: ThreadGroupId | null;
 }
 
+export interface ThreadGroupSetHandoffLinksInput {
+  /** Each link commits under an id derived from this one, so a retry replays. */
+  readonly commandId: CommandId;
+  readonly fromThreadId: ThreadId;
+  readonly toThreadId: ThreadId;
+}
+
 export class ThreadGroupService extends Context.Service<
   ThreadGroupService,
   {
@@ -139,6 +146,10 @@ export class ThreadGroupService extends Context.Service<
     readonly moveThread: (
       input: ThreadGroupMoveThreadInput,
     ) => Effect.Effect<OrchestrationThreadGroupShell | null, ThreadGroupServiceError>;
+    /** Links a handoff: `handedOffFrom` on the new chat, `handedOffTo` on the source. */
+    readonly setHandoffLinks: (
+      input: ThreadGroupSetHandoffLinksInput,
+    ) => Effect.Effect<void, ThreadGroupOperationError>;
     /** Delete the group when no live thread is left in it. */
     readonly pruneIfEmpty: (groupId: ThreadGroupId) => Effect.Effect<void, ThreadGroupServiceError>;
     /** Prune every live group; a restart uses it to catch deletes it missed. */
@@ -520,6 +531,34 @@ export const make = Effect.gen(function* () {
     },
   ).pipe(Effect.withSpan("ThreadGroupService.pruneEmptyGroups"));
 
+  const setHandoffLinks: ThreadGroupService["Service"]["setHandoffLinks"] = (input) =>
+    Effect.forEach(
+      [
+        {
+          commandId: CommandId.make(`${input.commandId}:link-from`),
+          threadId: input.toThreadId,
+          handedOffFrom: input.fromThreadId,
+        },
+        {
+          commandId: CommandId.make(`${input.commandId}:link-to`),
+          threadId: input.fromThreadId,
+          handedOffTo: input.toThreadId,
+        },
+      ],
+      (link) =>
+        threads.dispatch({ type: "thread.metadata.update", ...link }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ThreadGroupOperationError({
+                operation: "update-thread",
+                threadId: link.threadId,
+                cause,
+              }),
+          ),
+        ),
+      { concurrency: 1, discard: true },
+    ).pipe(Effect.withSpan("ThreadGroupService.setHandoffLinks"));
+
   const withGroupLaunch: ThreadGroupService["Service"]["withGroupLaunch"] = (
     groupId,
     launch,
@@ -561,6 +600,7 @@ export const make = Effect.gen(function* () {
     update,
     delete: deleteGroup,
     moveThread,
+    setHandoffLinks,
     pruneIfEmpty,
     pruneEmptyGroups,
     withGroupLaunch,
