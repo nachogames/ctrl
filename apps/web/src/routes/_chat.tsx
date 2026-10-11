@@ -10,14 +10,17 @@ import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings
 import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironmentIdentities, usePrimaryEnvironmentId } from "../state/environments";
 import { useEnvironmentScope } from "../state/session";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useScratchProject } from "../hooks/useScratchProject";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadActionContext, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { resolveSidebarEnvironmentScope } from "../components/Sidebar.logic";
+import { useUiStateStore } from "../uiStateStore";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isEditableFocused } from "../lib/editableFocus";
@@ -33,8 +36,14 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
-  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
-    useHandleNewThread();
+  const {
+    activeDraftThread,
+    activeThread,
+    defaultProjectRef,
+    handleNewThread,
+    orderedProjects,
+    routeThreadRef,
+  } = useHandleNewThread();
   const canOperatePreview = useEnvironmentScope(
     routeThreadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
@@ -45,15 +54,56 @@ function ChatRouteGlobalShortcuts() {
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, startScratchThread } = useScratchProject();
-  const projectGroupCount = useMemo(
+  const environments = useEnvironmentIdentities();
+  const storedEnvironmentScopeId = useUiStateStore((store) => store.sidebarEnvironmentScopeId);
+  // New-thread shortcuts follow the default sidebar's machine filter, like its
+  // New thread button. The legacy sidebar has no filter.
+  const environmentScopeId = legacySidebarEnabled
+    ? null
+    : resolveSidebarEnvironmentScope(environments, storedEnvironmentScopeId);
+  const projectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects,
+        projects:
+          environmentScopeId === null
+            ? projects
+            : projects.filter((project) => project.environmentId === environmentScopeId),
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: () => null,
-      }).length,
-    [primaryEnvironmentId, projectGroupingSettings, projects],
+      }),
+    [environmentScopeId, primaryEnvironmentId, projectGroupingSettings, projects],
+  );
+  const projectGroupCount = projectGroups.length;
+  // Same manual order as the unfiltered default, so the shortcut and the
+  // sidebar button pick the same project.
+  const scopedDefaultProjectRef = useMemo(() => {
+    if (environmentScopeId === null) return null;
+    const project = orderedProjects.find(
+      (candidate) => candidate.environmentId === environmentScopeId,
+    );
+    return project ? scopeProjectRef(project.environmentId, project.id) : null;
+  }, [environmentScopeId, orderedProjects]);
+  const newThreadContext = useMemo(
+    () =>
+      scopeThreadActionContext(
+        {
+          activeDraftThread,
+          activeThread: activeThread ?? undefined,
+          defaultProjectRef,
+          handleNewThread,
+        },
+        environmentScopeId,
+        scopedDefaultProjectRef,
+      ),
+    [
+      activeDraftThread,
+      activeThread,
+      defaultProjectRef,
+      environmentScopeId,
+      handleNewThread,
+      scopedDefaultProjectRef,
+    ],
   );
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
@@ -104,18 +154,16 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.newLocal") {
         event.preventDefault();
         event.stopPropagation();
-        void startNewThreadFromContext({
-          activeDraftThread,
-          activeThread: activeThread ?? undefined,
-          defaultProjectRef,
-          handleNewThread,
-        });
+        void startNewThreadFromContext(newThreadContext);
         return;
       }
 
       if (command === "chat.newWithoutProject") {
         const environmentId = scratchEnvironmentId(
-          activeThread?.environmentId ?? activeDraftThread?.environmentId ?? primaryEnvironmentId,
+          newThreadContext.activeThread?.environmentId ??
+            newThreadContext.activeDraftThread?.environmentId ??
+            environmentScopeId ??
+            primaryEnvironmentId,
         );
         if (environmentId === null) return;
         event.preventDefault();
@@ -134,12 +182,7 @@ function ChatRouteGlobalShortcuts() {
           openCommandPalette({ open: "new-thread-in" });
           return;
         }
-        void startNewThreadFromContext({
-          activeDraftThread,
-          activeThread: activeThread ?? undefined,
-          defaultProjectRef,
-          handleNewThread,
-        });
+        void startNewThreadFromContext(newThreadContext);
         return;
       }
 
@@ -193,13 +236,11 @@ function ChatRouteGlobalShortcuts() {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [
-    activeDraftThread,
-    activeThread,
     clearSelection,
     canOperatePreview,
-    handleNewThread,
+    environmentScopeId,
     keybindings,
-    defaultProjectRef,
+    newThreadContext,
     previewOpen,
     primaryEnvironmentId,
     projectGroupCount,

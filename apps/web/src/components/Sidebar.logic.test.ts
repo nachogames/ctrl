@@ -59,6 +59,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  resolveSidebarEnvironmentScope,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
@@ -2314,5 +2315,22 @@ describe("Working shelf (beta)", () => {
         unsnooze: false,
       });
     });
+  });
+});
+
+describe("resolveSidebarEnvironmentScope", () => {
+  const work = { environmentId: EnvironmentId.make("environment-work") };
+  const home = { environmentId: EnvironmentId.make("environment-home") };
+
+  it("limits the sidebar to a saved machine", () => {
+    expect(resolveSidebarEnvironmentScope([work, home], "environment-work")).toBe(
+      work.environmentId,
+    );
+  });
+
+  it("shows every machine when the saved one is gone or there is only one", () => {
+    expect(resolveSidebarEnvironmentScope([work, home], "environment-removed")).toBeNull();
+    expect(resolveSidebarEnvironmentScope([work], "environment-work")).toBeNull();
+    expect(resolveSidebarEnvironmentScope([work, home], null)).toBeNull();
   });
 });

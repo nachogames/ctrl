@@ -567,6 +567,23 @@ export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "line
   return thread.lineage.relationshipToParent === "subagent";
 }
 
+/**
+ * The machine the sidebar is limited to: the stored choice while that machine
+ * is still saved and there is more than one, otherwise null (all machines).
+ * The stored id is kept, so a machine that drops out of the catalog for a
+ * while gets its filter back when it returns.
+ */
+export function resolveSidebarEnvironmentScope(
+  environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+  storedEnvironmentId: string | null,
+): EnvironmentId | null {
+  if (environments.length <= 1 || storedEnvironmentId === null) return null;
+  return (
+    environments.find((environment) => environment.environmentId === storedEnvironmentId)
+      ?.environmentId ?? null
+  );
+}
+
 export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
     environmentId: string;

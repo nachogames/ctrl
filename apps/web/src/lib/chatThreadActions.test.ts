@@ -11,6 +11,7 @@ import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
+  scopeThreadActionContext,
   startNewThreadFromContext,
   type ChatThreadActionContext,
 } from "./chatThreadActions";
@@ -167,5 +168,35 @@ describe("chatThreadActions", () => {
 
     expect(didStart).toBe(false);
     expect(handleNewThread).not.toHaveBeenCalled();
+  });
+});
+
+describe("scopeThreadActionContext", () => {
+  const workEnvironmentId = EnvironmentId.make("environment-work");
+  const homeProjectRef = scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID);
+
+  it("keeps a new thread off machines the sidebar hides", () => {
+    const scoped = scopeThreadActionContext(
+      createContext({
+        activeThread: { environmentId: workEnvironmentId, projectId: PROJECT_ID },
+        activeDraftThread: { environmentId: workEnvironmentId, projectId: PROJECT_ID },
+        defaultProjectRef: scopeProjectRef(workEnvironmentId, FALLBACK_PROJECT_ID),
+      }),
+      ENVIRONMENT_ID,
+      homeProjectRef,
+    );
+
+    expect(resolveThreadActionProjectRef(scoped)).toEqual(homeProjectRef);
+  });
+
+  it("keeps context from the filtered machine and leaves an unfiltered one alone", () => {
+    const context = createContext({
+      activeThread: { environmentId: ENVIRONMENT_ID, projectId: PROJECT_ID },
+    });
+
+    expect(
+      resolveThreadActionProjectRef(scopeThreadActionContext(context, ENVIRONMENT_ID, null)),
+    ).toEqual(homeProjectRef);
+    expect(scopeThreadActionContext(context, null, null)).toBe(context);
   });
 });
