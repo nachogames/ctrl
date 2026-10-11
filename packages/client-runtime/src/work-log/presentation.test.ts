@@ -572,7 +572,24 @@ describe("browser group summaries", () => {
           toolData: { server: "t3-code", tool: "task_status" },
         },
       ]),
-    ).toBe("Used browser 1 time, ran 1 command, and performed 1 other action");
+    ).toBe("Used browser 1 time, ran 1 command, and checked task status 1 time");
+  });
+
+  it("names a third category, and folds the rest once there are more", () => {
+    const t3Tool = (tool: string): WorkLogPresentationEntry => ({
+      ...browserEntry,
+      id: tool,
+      toolData: { server: "t3-code", tool },
+    });
+    const listThreads = t3Tool("t3_thread_list");
+    const createGroup = t3Tool("t3_group_create");
+    const readGroup = t3Tool("t3_group_read");
+    expect(summarizeGroupLabel([listThreads, createGroup, readGroup])).toBe(
+      "Listed threads 1 time, created 1 group, and read 1 group",
+    );
+    expect(summarizeGroupLabel([listThreads, createGroup, readGroup, commandEntry])).toBe(
+      "Created 1 group, ran 1 command, and performed 2 other actions",
+    );
   });
 
   it("recognizes Claude browser identity without treating script metadata as a shell command", () => {
@@ -604,7 +621,7 @@ describe("browser group summaries", () => {
           itemType: "web_search",
         },
       ]),
-    ).toBe("Used browser 1 time, searched the web 1 time, and performed 1 other action");
+    ).toBe("Used browser 1 time, used 1 tool, and searched the web 1 time");
   });
 
   it("keeps browser screenshots in the browser count while preserving their image path", () => {

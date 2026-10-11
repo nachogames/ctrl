@@ -628,6 +628,12 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "project-update":
     case "project-delete":
     case "project-clone":
+    case "group-create":
+    case "group-update":
+    case "group-new-thread":
+    case "group-handoff":
+    case "group-move-thread":
+    case "group-resource":
     case "environment-update":
     case "attachment-prepare":
     case "attachment-discard":
@@ -641,7 +647,10 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
   }
 }
 
-/** Summarizes at most two action categories; every omitted call still counts in the remainder. */
+/**
+ * Summarizes the two most important action categories, or all three when there are three;
+ * every omitted call still counts in the remainder.
+ */
 export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEntry>): {
   summary: string;
   hasFailure: boolean;
@@ -689,9 +698,11 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
           failedCount: group.entries.filter(workEntryDisplayIndicatesToolFailure).length,
         }),
   }));
+  // A lone leftover category is named rather than folded into "performed 1 other action".
+  const shown = summaries.length === 3 && sources.size === 0 ? 3 : 2;
   const selected = [...summaries]
     .sort((a, b) => a.priority - b.priority || a.index - b.index)
-    .slice(0, 2)
+    .slice(0, shown)
     .sort((a, b) => a.index - b.index);
   const labels = selected.map(({ label }) => label);
   if (sources.size > 0) {
