@@ -169,8 +169,13 @@ export const layer = Layer.effectDiscard(
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
+        // Re-send on every foreground: the server may have dropped this device
+        // (a stale token, a restored devices.json) without telling the phone,
+        // and an unchanged registration costs the server nothing.
         const appState = AppState.addEventListener("change", (state) => {
-          if (state === "active") requestRegistration();
+          if (state !== "active") return;
+          accepted.clear();
+          requestRegistration();
         });
         const tokenListener = Notifications.addPushTokenListener(() => {
           accepted.clear();

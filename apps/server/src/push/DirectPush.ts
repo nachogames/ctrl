@@ -18,6 +18,8 @@ import {
   type AgentAwarenessState,
   projectThreadAwarenessV2,
 } from "@t3tools/shared/agentAwareness";
+import * as NodeOS from "node:os";
+
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -27,7 +29,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
@@ -106,13 +109,13 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
   const devices = new Map<string, StoredDevice>();
   const phases = new Map<ThreadId, AgentAwarenessPhase | null>();
 
-  const homeDir = process.env.HOME ?? "";
+  // Config paths may start with `~/`; other relative paths resolve against the push dir.
+  const resolveConfigPath = (filePath: string) =>
+    filePath.startsWith("~/")
+      ? pathService.join(NodeOS.homedir(), filePath.slice(2))
+      : pathService.resolve(pushDir, filePath);
   const readOptionalFile = (filePath: string) =>
-    fileSystem
-      .readFileString(
-        filePath.startsWith("~/") ? pathService.join(homeDir, filePath.slice(2)) : filePath,
-      )
-      .pipe(Effect.option);
+    fileSystem.readFileString(resolveConfigPath(filePath)).pipe(Effect.option);
 
   const storedDevices = yield* readOptionalFile(devicesPath);
   if (Option.isSome(storedDevices)) {
@@ -123,6 +126,8 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     for (const device of Option.getOrElse(decoded, () => [])) devices.set(device.deviceId, device);
   }
 
+  // Writes share one temp file, so they must not overlap.
+  const saveLock = yield* Semaphore.make(1);
   const saveDevices = Effect.gen(function* () {
     yield* fileSystem.makeDirectory(pushDir, { recursive: true, mode: 0o700 });
     const temporaryPath = `${devicesPath}.tmp`;
@@ -133,6 +138,7 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     );
     yield* fileSystem.rename(temporaryPath, devicesPath);
   }).pipe(
+    saveLock.withPermits(1),
     Effect.catchCause((cause) =>
       Effect.logWarning("Could not save direct push devices", { devicesPath, cause }),
     ),
@@ -199,7 +205,8 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
           nowMs,
         });
       }
-      if (result === "unregistered") {
+      // The phone may have re-registered with a new token while this send was in flight.
+      if (result === "unregistered" && devices.get(device.deviceId)?.token === device.token) {
         devices.delete(device.deviceId);
         yield* saveDevices;
         yield* Effect.logInfo("Removed direct push device the push service no longer accepts", {
@@ -228,7 +235,10 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     });
   });
 
-  const handleThread = Effect.fn("DirectPush.handleThread")(function* (threadId: ThreadId) {
+  const handleThread = Effect.fn("DirectPush.handleThread")(function* (
+    threadId: ThreadId,
+    sendScope: Scope.Scope,
+  ) {
     const shell = yield* threads.getThreadShell(threadId);
     // Subagents never project activity; their parent thread carries it.
     if (shell?.lineage.relationshipToParent === "subagent") return;
@@ -253,7 +263,9 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     const kind = alertKind({ state, previousPhase, finishedSinceStart, nowMs });
     if (state !== null && kind !== null) {
       yield* Effect.logInfo("Sending direct push alert", { threadId, kind });
-      yield* notify(state, kind);
+      // Sends run in the background so a slow push service cannot delay, and
+      // miss phases of, the events behind this one.
+      yield* notify(state, kind).pipe(Effect.forkIn(sendScope));
     }
   });
 
@@ -282,10 +294,11 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
   });
 
   const start = Effect.fn("DirectPush.start")(function* () {
+    const sendScope = yield* Effect.scope;
     yield* forkParked(
       Stream.runForEach(threads.streamDomainEvents, (event: OrchestrationV2DomainEvent) =>
         shouldPublishAgentAwarenessEvent(event)
-          ? handleThread(event.threadId).pipe(
+          ? handleThread(event.threadId, sendScope).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Direct push could not evaluate thread", {
                   threadId: event.threadId,

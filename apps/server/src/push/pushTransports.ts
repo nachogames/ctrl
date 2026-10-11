@@ -130,7 +130,9 @@ export const sendApns = Effect.fn("DirectPush.sendApns")(function* (input: {
   );
   if (response.status === 200) return "sent" as PushSendResult;
   const reason = Option.getOrUndefined(decodeReason(response.text))?.reason;
-  if (response.status === 410 || reason === "BadDeviceToken" || reason === "Unregistered") {
+  // BadDeviceToken also means a sandbox/production mismatch, so it is an error,
+  // not proof the device is gone.
+  if (response.status === 410 || reason === "Unregistered") {
     return "unregistered" as PushSendResult;
   }
   if (reason === "ExpiredProviderToken") apnsTokens.clear();
@@ -219,7 +221,9 @@ export const sendFcm = Effect.fn("DirectPush.sendFcm")(function* (input: {
   if (response.status >= 200 && response.status < 300) return "sent" as PushSendResult;
   if (response.status === 401) fcmAccessTokens.delete(input.account.client_email);
   const text = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-  if (response.status === 404 || text.includes('"UNREGISTERED"')) {
+  // Only the UNREGISTERED error code means a stale token. A bare 404 can also be
+  // a wrong project or a disabled API, which must not drop every device.
+  if (text.includes('"UNREGISTERED"')) {
     return "unregistered" as PushSendResult;
   }
   return yield* new PushSendError({ service: "fcm", status: response.status });

@@ -68,4 +68,23 @@ it.layer(NodeServices.layer)("DirectPush", (it) => {
       assert.strictEqual(yield* fs.readFileString(devicesPath), "[]");
     }),
   );
+
+  it.effect("resolves relative key paths against the push directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const pushDir = yield* fs.makeTempDirectoryScoped({ prefix: "direct-push-" });
+      yield* fs.writeFileString(
+        path.join(pushDir, "fcm.json"),
+        '{"project_id":"p","client_email":"c@example.com","private_key":"k"}',
+      );
+      yield* fs.writeFileString(
+        path.join(pushDir, "config.json"),
+        '{"fcm":{"serviceAccountPath":"fcm.json"}}',
+      );
+      const service = yield* makeService(pushDir);
+
+      assert.deepStrictEqual(yield* service.registerDevice(phone), { ios: false, android: true });
+    }),
+  );
 });

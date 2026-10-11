@@ -21,13 +21,13 @@ Your server can send alerts itself, using your own Apple Push Notification servi
      "apns": {
        "teamId": "ABCDE12345",
        "keyId": "XYZ9876543",
-       "keyPath": "~/push/AuthKey_XYZ9876543.p8"
+       "keyPath": "AuthKey_XYZ9876543.p8"
      },
-     "fcm": { "serviceAccountPath": "~/push/firebase-service-account.json" }
+     "fcm": { "serviceAccountPath": "firebase-service-account.json" }
    }
    ```
 
-   The APNs key needs the Apple Push Notifications service enabled. The Firebase file is a service account key from **Project settings → Service accounts**. Changes take effect without restarting the server.
+   The APNs key needs the Apple Push Notifications service enabled. The Firebase file is a service account key from **Project settings → Service accounts**. Relative paths are read from the `push` folder; absolute and `~/` paths also work. Changes take effect without restarting the server.
 
 2. In the mobile app, turn on **Settings → Notifications → Server Notifications**, then choose which events alert you. Each connected environment shows **Ready** once it has registered this device and has keys for its platform.
 
