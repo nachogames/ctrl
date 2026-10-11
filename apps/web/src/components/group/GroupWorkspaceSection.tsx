@@ -12,21 +12,17 @@ import { useMemo } from "react";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { useProject, useServerConfigs } from "~/state/entities";
-import { pullRequestEnvironment } from "~/state/pullRequests";
+import { useProject } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { primaryServerAvailableEditorsAtom } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
 import { vcsEnvironment } from "~/state/vcs";
 
-import { classifyPullRequestChecks } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
-import {
-  PullRequestCheckStatusIcon,
-  resolvePullRequestState,
-} from "../pullRequest/pullRequestPresentation";
+import { PullRequestCheckStatusIcon } from "../pullRequest/pullRequestPresentation";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { groupWorkspaceLabel } from "./GroupPanel.logic";
+import { useGroupPullRequestStatus } from "./useGroupPullRequestStatus";
 
 const ROW_CLASS =
   "flex h-7 w-full min-w-0 items-center gap-2 rounded-md px-1.5 text-left text-sm text-foreground";
@@ -122,38 +118,7 @@ function GroupPullRequestRow(props: {
   threadRef: ScopedThreadRef;
 }) {
   const { group, link } = props;
-  const capabilities = useServerConfigs().get(group.environmentId)?.environment.capabilities;
-  const reference =
-    capabilities?.pullRequests === true
-      ? {
-          projectId: group.projectId,
-          host: link.host,
-          repository: link.repository,
-          number: link.number,
-        }
-      : null;
-  const detail = useEnvironmentQuery(
-    reference === null
-      ? null
-      : pullRequestEnvironment.detail({ environmentId: group.environmentId, input: reference }),
-  ).data;
-  const checks = useEnvironmentQuery(
-    reference !== null && detail !== null && capabilities?.pullRequestChecks === true
-      ? pullRequestEnvironment.checks({ environmentId: group.environmentId, input: reference })
-      : null,
-  ).data;
-  const snapshot = link.snapshot;
-  const title = detail?.title ?? snapshot?.title ?? null;
-  const state = detail?.state ?? snapshot?.state ?? null;
-  const presentation =
-    state === null
-      ? null
-      : resolvePullRequestState({
-          state,
-          isDraft: detail?.isDraft ?? snapshot?.isDraft ?? false,
-        });
-  const checksState =
-    state === "open" ? classifyPullRequestChecks(checks?.checks ?? detail?.checks ?? []) : "none";
+  const { title, presentation, checksState, checkStatus } = useGroupPullRequestStatus(group, link);
   const Icon = presentation?.Icon ?? PullRequestGlyph.pullRequest;
 
   return (
@@ -181,19 +146,11 @@ function GroupPullRequestRow(props: {
           )}
         >
           {presentation.label.toLowerCase()}
-          {checksState !== "none" ? (
+          {checkStatus !== null ? (
             <>
               <span aria-hidden>·</span>
               <span className="sr-only">checks {checksState}</span>
-              <PullRequestCheckStatusIcon
-                status={
-                  checksState === "failing"
-                    ? "failure"
-                    : checksState === "pending"
-                      ? "pending"
-                      : "success"
-                }
-              />
+              <PullRequestCheckStatusIcon status={checkStatus} />
             </>
           ) : null}
         </span>

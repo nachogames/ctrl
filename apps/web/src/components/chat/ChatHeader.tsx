@@ -4,6 +4,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThreadGroup } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -39,6 +40,8 @@ import {
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
+import { ChatHeaderGroupChips, ChatHeaderGroupItem } from "./ChatHeaderGroup";
+import { shouldShowGroupChips } from "./ChatHeaderGroup.logic";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -50,6 +53,10 @@ interface ChatHeaderProps {
   parentThreadLink: { threadId: ThreadId; title: string } | null;
   onOpenThread: (threadId: ThreadId) => void;
   rightPanelOpen: boolean;
+  /** The chat's group; null when ungrouped or its group is unknown. */
+  group: EnvironmentThreadGroup | null;
+  /** The Group surface is the visible right-panel surface, which shows what the chips would. */
+  groupPanelVisible: boolean;
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
 }
@@ -84,6 +91,8 @@ export const ChatHeader = memo(function ChatHeader({
   parentThreadLink,
   onOpenThread,
   rightPanelOpen,
+  group,
+  groupPanelVisible,
   onNewThreadInProject,
   onOpenProjectSettings,
 }: ChatHeaderProps) {
@@ -92,6 +101,7 @@ export const ChatHeader = memo(function ChatHeader({
   const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
   const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
   const [collapseParentTitle, setCollapseParentTitle] = useState(false);
+  const [groupChipsFit, setGroupChipsFit] = useState(false);
   const activeThreadRef = useMemo(
     () => scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
     [activeThreadEnvironmentId, activeThreadId],
@@ -127,15 +137,22 @@ export const ChatHeader = memo(function ChatHeader({
       : null;
   // Leaving rename swaps the input back for the title, which needs a fresh fit.
   const isRenamingTitle = renamingTitle !== null;
+  // The chips sit out while renaming: the rename input fills the title's slot.
+  const renderGroupChips = group !== null && !groupPanelVisible && !isRenamingTitle;
+  const showGroupChips = renderGroupChips && groupChipsFit;
   useEffect(() => {
     const list = breadcrumbContainerRef.current?.querySelector("ol");
-    if (!list || !parentThreadLink) return;
+    if (!list || (!parentThreadLink && !renderGroupChips)) return;
+    const chips = list.querySelector("[data-header-group-chips]");
     // Measure the untruncated labels, including a collapsed parent's hidden
     // text, so expanding and collapsing never change the fit calculation.
-    // Width-capped labels (the project) never grow, so their overflow is skipped.
+    // Width-capped labels (the project, the group) never grow, so their
+    // overflow is skipped. The chips are measured apart: they show only when
+    // they fit beside the whole breadcrumb, so they give up width first.
     const measure = () => {
       const gap = Number.parseFloat(getComputedStyle(list).columnGap) || 0;
-      const width = Array.from(list.children).reduce(
+      const items = Array.from(list.children).filter((item) => item !== chips);
+      const width = items.reduce(
         (total, item) => {
           const label = item.querySelector('[data-slot="workspace-breadcrumb-text"]');
           const ellipsis = item.querySelector("[data-parent-breadcrumb-ellipsis]");
@@ -148,20 +165,41 @@ export const ChatHeader = memo(function ChatHeader({
             (ellipsis?.getBoundingClientRect().width ?? 0)
           );
         },
-        gap * (list.children.length - 1),
+        gap * (items.length - 1),
       );
       setCollapseParentTitle(width > list.clientWidth);
+      setGroupChipsFit(
+        chips !== null &&
+          shouldShowGroupChips({
+            availableWidth: list.clientWidth,
+            breadcrumbWidth: width,
+            chipsWidth: chips.getBoundingClientRect().width + gap,
+            groupPanelVisible,
+          }),
+      );
     };
     measure();
     const frame = requestAnimationFrame(measure);
     document.fonts.addEventListener("loadingdone", measure);
-    const stopObserving = observeResize(list, measure);
+    // The chips resize on their own as PR checks load; showing or hiding them
+    // changes neither the list's width nor theirs, so this never feeds back.
+    const stopObserving = observeResize(chips ? [list, chips] : list, measure);
     return () => {
       cancelAnimationFrame(frame);
       document.fonts.removeEventListener("loadingdone", measure);
       stopObserving();
     };
-  }, [activeProjectName, activeThreadTitle, parentThreadLink, interfaceFont, isRenamingTitle]);
+  }, [
+    activeProjectName,
+    activeThreadTitle,
+    parentThreadLink,
+    interfaceFont,
+    isRenamingTitle,
+    group?.id,
+    group?.title,
+    groupPanelVisible,
+    renderGroupChips,
+  ]);
   const renameCommittedRef = useRef(false);
   const startRename = useCallback(() => {
     if (
@@ -340,6 +378,13 @@ export const ChatHeader = memo(function ChatHeader({
             </WorkspaceBreadcrumbSeparator>
           </>
         ) : null}
+        {group !== null ? (
+          <ChatHeaderGroupItem
+            group={group}
+            activeThreadId={activeThreadId}
+            onOpenThread={onOpenThread}
+          />
+        ) : null}
         {parentThreadLink ? (
           <>
             <WorkspaceBreadcrumbItem>
@@ -374,7 +419,8 @@ export const ChatHeader = memo(function ChatHeader({
             </WorkspaceBreadcrumbSeparator>
           </>
         ) : null}
-        <WorkspaceBreadcrumbItem current className="min-w-10 flex-1">
+        {/* Visible chips follow the title directly, so the title stops filling the row. */}
+        <WorkspaceBreadcrumbItem current className={cn("min-w-10", !showGroupChips && "flex-1")}>
           {renamingTitle !== null ? (
             <input
               autoFocus
@@ -435,6 +481,13 @@ export const ChatHeader = memo(function ChatHeader({
             </Tooltip>
           )}
         </WorkspaceBreadcrumbItem>
+        {renderGroupChips ? (
+          <ChatHeaderGroupChips
+            group={group}
+            activeThreadId={activeThreadId}
+            visible={showGroupChips}
+          />
+        ) : null}
       </WorkspaceBreadcrumb>
     </div>
   );
