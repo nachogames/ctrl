@@ -113,6 +113,7 @@ function GroupPanelContent(props: {
   const navigate = useNavigate();
   const { newChatInGroup, handOffThread } = useThreadGroupActions();
   const currentThread = threadsById.get(props.threadRef.threadId);
+  const canHandOffCurrent = currentThread !== undefined && canHandOffThread(currentThread);
   const openChat = (threadId: ThreadId) => {
     const ref = scopeThreadRef(group.environmentId, threadId);
     // Moving between a group's chats keeps the group in view.
@@ -147,13 +148,13 @@ function GroupPanelContent(props: {
             New chat in group
           </Button>
           {currentThread !== undefined ? (
-            <Tooltip disabled={canHandOffThread(currentThread)}>
+            <Tooltip disabled={canHandOffCurrent}>
               {/* A disabled button takes no pointer events, so the wrapper carries the tooltip. */}
               <TooltipTrigger render={<span className="inline-flex" />}>
                 <Button
                   size="xs"
                   variant="ghost-muted"
-                  disabled={!canHandOffThread(currentThread)}
+                  disabled={!canHandOffCurrent}
                   onClick={() => void handOffThread(currentThread)}
                 >
                   <SendIcon aria-hidden />

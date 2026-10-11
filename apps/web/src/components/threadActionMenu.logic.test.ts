@@ -267,6 +267,10 @@ describe("buildThreadActionMenuItems", () => {
     expect(busy?.label).toContain("wait for the turn to finish");
   });
 
+  it("offers no handoff on a subagent chat", () => {
+    expect(ids({ ...baseState, isSubagent: true })).not.toContain("handoff");
+  });
+
   it("offers moving between groups only where the surface supplies the project's groups", () => {
     expect(ids(baseState)).not.toContain("move-to-group");
     const groupId = "group-auth" as ThreadGroupId;

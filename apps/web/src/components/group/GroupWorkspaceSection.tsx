@@ -74,7 +74,7 @@ export function GroupWorkspaceSection(props: {
   };
 
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
-  const canOpenEditor = useEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope);
+  const canOperate = useEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope);
   const openInEditor = useOpenInPreferredEditor(group.environmentId, availableEditors);
   const openWorkspace = async () => {
     if (cwd === null) return;
@@ -102,7 +102,7 @@ export function GroupWorkspaceSection(props: {
         <button
           type="button"
           className={ROW_BUTTON_CLASS}
-          disabled={missing || !canOpenEditor || availableEditors.length === 0}
+          disabled={missing || !canOperate || availableEditors.length === 0}
           aria-label={`Open ${cwd} in editor`}
           onClick={() => void openWorkspace()}
         >
@@ -118,7 +118,7 @@ export function GroupWorkspaceSection(props: {
             size="xs"
             variant="outline"
             className="ms-auto shrink-0"
-            disabled={!canOpenEditor || recreating}
+            disabled={!canOperate || recreating}
             onClick={() => void recreate()}
           >
             {recreating ? "Recreating…" : "Recreate worktree"}

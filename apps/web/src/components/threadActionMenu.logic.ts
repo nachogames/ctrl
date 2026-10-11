@@ -112,6 +112,8 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
+  /** Subagents belong to their parent thread: no handoff. */
+  readonly isSubagent?: boolean;
   readonly supports: {
     readonly settlement: boolean;
     /** Server understands thread.auto-settle.set. */
@@ -173,14 +175,18 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     // Disabled mid-turn: the prompt would queue behind work the summary must cover.
-    {
-      id: "handoff",
-      label: state.isRunning
-        ? `Hand off to new chat (${THREAD_HANDOFF_BUSY_HINT.toLowerCase()})`
-        : "Hand off to new chat",
-      icon: "message-square-plus",
-      disabled: state.isRunning,
-    },
+    ...(state.isSubagent
+      ? []
+      : [
+          {
+            id: "handoff" as const,
+            label: state.isRunning
+              ? `Hand off to new chat (${THREAD_HANDOFF_BUSY_HINT.toLowerCase()})`
+              : "Hand off to new chat",
+            icon: "message-square-plus",
+            disabled: state.isRunning,
+          },
+        ]),
     ...(group
       ? [
           group.isPinned

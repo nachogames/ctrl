@@ -169,6 +169,7 @@ export function useThreadActionMenu(input: {
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
           isRunning: !threadRuntimeCanArchive(thread.runtime),
+          isSubagent: thread.lineage.relationshipToParent === "subagent",
           supports,
           snoozePresets,
           group:

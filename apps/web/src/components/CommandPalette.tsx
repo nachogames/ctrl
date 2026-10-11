@@ -89,7 +89,11 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { canHandOffThread, useThreadGroupActions } from "../hooks/useThreadGroupActions";
+import {
+  canHandOffThread,
+  offersHandOff,
+  useThreadGroupActions,
+} from "../hooks/useThreadGroupActions";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
@@ -1958,7 +1962,7 @@ function OpenCommandPaletteDialog(props: {
       });
     }
 
-    if (activeThread) {
+    if (activeThread && offersHandOff(activeThread)) {
       const thread = activeThread;
       const canHandOff = canHandOffThread(thread);
       actionItems.push({

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildMoveToGroupMenuItems,
+  groupWithTarget,
+  workspacesDiffer,
   isThreadGroupWorkspaceMismatch,
   moveWithWorkspaceConfirm,
   parseMoveToGroupTarget,
@@ -128,5 +130,78 @@ describe("moving with a workspace confirm", () => {
     const dirty = failure(mutationError());
     const run = runMove([failure(mutationError("workspace-mismatch")), dirty], true);
     expect(await run.outcome).toEqual({ kind: "failed", result: dirty });
+  });
+});
+
+describe("grouping with a dropped-on chat", () => {
+  function run(input: { needsWorkspaceSwitch: boolean; confirmed?: boolean; moves?: boolean }) {
+    const calls: string[] = [];
+    const outcome = groupWithTarget({
+      needsWorkspaceSwitch: input.needsWorkspaceSwitch,
+      confirm: async () => {
+        calls.push("confirm");
+        return input.confirmed ?? true;
+      },
+      create: async () => {
+        calls.push("create");
+        return "group-new";
+      },
+      move: async (group, adopt) => {
+        calls.push(`move:${group}:${adopt}`);
+        return input.moves ?? true;
+      },
+      deleteGroup: async (group) => {
+        calls.push(`delete:${group}`);
+        return true;
+      },
+    });
+    return { outcome, calls };
+  }
+
+  it("creates nothing when the user declines the workspace switch", async () => {
+    const { outcome, calls } = run({ needsWorkspaceSwitch: true, confirmed: false });
+    expect(await outcome).toEqual({ kind: "cancelled" });
+    expect(calls).toEqual(["confirm"]);
+  });
+
+  it("asks first, then groups and adopts the target's workspace", async () => {
+    const { outcome, calls } = run({ needsWorkspaceSwitch: true });
+    expect(await outcome).toEqual({ kind: "grouped", group: "group-new" });
+    expect(calls).toEqual(["confirm", "create", "move:group-new:true"]);
+  });
+
+  it("groups without asking when the workspaces match", async () => {
+    const { outcome, calls } = run({ needsWorkspaceSwitch: false });
+    expect(await outcome).toEqual({ kind: "grouped", group: "group-new" });
+    expect(calls).toEqual(["create", "move:group-new:false"]);
+  });
+
+  it("deletes the new group again when the move fails", async () => {
+    const { outcome, calls } = run({ needsWorkspaceSwitch: false, moves: false });
+    expect(await outcome).toEqual({ kind: "move-failed", cleanedUp: true });
+    expect(calls).toEqual(["create", "move:group-new:false", "delete:group-new"]);
+  });
+
+  it("does not move when the group could not be created", async () => {
+    const calls: string[] = [];
+    const outcome = await groupWithTarget({
+      needsWorkspaceSwitch: false,
+      confirm: async () => true,
+      create: async () => null,
+      move: async () => {
+        calls.push("move");
+        return true;
+      },
+      deleteGroup: async () => true,
+    });
+    expect(outcome).toEqual({ kind: "create-failed" });
+    expect(calls).toEqual([]);
+  });
+
+  it("treats a different branch or worktree as a different workspace", () => {
+    const at = (branch: string | null, worktreePath: string | null) => ({ branch, worktreePath });
+    expect(workspacesDiffer(at("main", null), at("main", null))).toBe(false);
+    expect(workspacesDiffer(at("main", null), at("feat/x", null))).toBe(true);
+    expect(workspacesDiffer(at("feat/x", "/wt/a"), at("feat/x", "/wt/b"))).toBe(true);
   });
 });

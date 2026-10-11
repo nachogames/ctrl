@@ -112,3 +112,40 @@ export async function moveWithWorkspaceConfirm<R extends { readonly _tag: string
   const retry = await input.move(true);
   return retry._tag === "Success" ? { kind: "moved" } : { kind: "failed", result: retry };
 }
+
+/** A chat joining a group formed from `target` must switch workspace when either differs. */
+export function workspacesDiffer(
+  left: { readonly branch: string | null; readonly worktreePath: string | null },
+  right: { readonly branch: string | null; readonly worktreePath: string | null },
+): boolean {
+  return left.worktreePath !== right.worktreePath || left.branch !== right.branch;
+}
+
+export type GroupWithTargetOutcome<G> =
+  | { readonly kind: "grouped"; readonly group: G }
+  | { readonly kind: "cancelled" }
+  | { readonly kind: "create-failed" }
+  | { readonly kind: "move-failed"; readonly cleanedUp: boolean };
+
+/**
+ * Drag onto a lone chat: the dragged chat joins a new group formed from the
+ * target. The workspace confirm comes before anything is created, so a
+ * decline changes nothing; a failed move deletes the new group again, so the
+ * target never ends up alone in a group it did not ask for.
+ */
+export async function groupWithTarget<G>(input: {
+  readonly needsWorkspaceSwitch: boolean;
+  readonly confirm: () => Promise<boolean>;
+  /** Null when the create failed (the caller reports it). */
+  readonly create: () => Promise<G | null>;
+  /** False when the move failed (the caller reports it). */
+  readonly move: (group: G, adoptGroupWorkspace: boolean) => Promise<boolean>;
+  /** False when the cleanup failed. */
+  readonly deleteGroup: (group: G) => Promise<boolean>;
+}): Promise<GroupWithTargetOutcome<G>> {
+  if (input.needsWorkspaceSwitch && !(await input.confirm())) return { kind: "cancelled" };
+  const group = await input.create();
+  if (group === null) return { kind: "create-failed" };
+  if (await input.move(group, input.needsWorkspaceSwitch)) return { kind: "grouped", group };
+  return { kind: "move-failed", cleanedUp: await input.deleteGroup(group) };
+}

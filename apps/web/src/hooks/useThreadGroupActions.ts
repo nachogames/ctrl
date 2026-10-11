@@ -13,6 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   ThreadGroupId,
   type ThreadGroupUpdatePayload,
   type ThreadId,
@@ -21,9 +22,11 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
 import {
+  groupWithTarget,
   type MoveToGroupCandidate,
   moveWithWorkspaceConfirm,
   workspaceMismatchConfirmMessage,
+  workspacesDiffer,
 } from "../components/moveToGroupMenu.logic";
 import { sidebarActivityMs } from "../components/Sidebar.logic";
 import {
@@ -98,9 +101,34 @@ export function readMoveToGroupState(thread: EnvironmentThreadShell): {
   };
 }
 
+/** Subagents belong to their parent thread, so the server never hands one off. */
+export function offersHandOff(thread: Pick<EnvironmentThreadShell, "lineage">): boolean {
+  return thread.lineage.relationshipToParent !== "subagent";
+}
+
 /** A chat may hand off only between turns; the prompt must not queue behind live work. */
 export function canHandOffThread(thread: Pick<EnvironmentThreadShell, "runtime">): boolean {
   return threadRuntimeCanArchive(thread.runtime);
+}
+
+/** Asks before a chat moves into a group's workspace; says so when no dialog is available. */
+async function confirmWorkspaceSwitch(
+  thread: Pick<EnvironmentThreadShell, "title">,
+  group: Pick<EnvironmentThreadGroup, "title" | "branch" | "worktreePath">,
+): Promise<boolean> {
+  const api = readLocalApi();
+  if (!api) {
+    toastManager.add({
+      type: "error",
+      title: "Chat not moved",
+      description: "Moving it needs a confirmation this window cannot show.",
+    });
+    return false;
+  }
+  const confirmed = await settlePromise(() =>
+    api.dialogs.confirm(workspaceMismatchConfirmMessage({ chatTitle: thread.title, group })),
+  );
+  return confirmed._tag === "Success" && confirmed.value;
 }
 
 /**
@@ -247,7 +275,6 @@ export function useThreadGroupActions() {
       thread: EnvironmentThreadShell,
       group: Pick<EnvironmentThreadGroup, "id" | "title" | "branch" | "worktreePath">,
     ) => {
-      const api = readLocalApi();
       const outcome = await moveWithWorkspaceConfirm({
         move: (adoptGroupWorkspace) =>
           moveThreadCommand({
@@ -260,15 +287,7 @@ export function useThreadGroupActions() {
           }),
         failureOf: (result) =>
           result._tag === "Failure" ? squashAtomCommandFailure(result) : undefined,
-        confirm: async () => {
-          if (!api) return false;
-          const confirmed = await settlePromise(() =>
-            api.dialogs.confirm(
-              workspaceMismatchConfirmMessage({ chatTitle: thread.title, group }),
-            ),
-          );
-          return confirmed._tag === "Success" && confirmed.value;
-        },
+        confirm: () => confirmWorkspaceSwitch(thread, group),
       });
       if (outcome.kind === "failed") toastCommandFailure("Failed to move chat", outcome.result);
       return outcome.kind === "moved";
@@ -278,13 +297,19 @@ export function useThreadGroupActions() {
 
   /** Creates a group from `threads`; the first supplies its workspace. */
   const createGroupWith = useCallback(
-    async (threads: ReadonlyArray<EnvironmentThreadShell>) => {
+    async (
+      threads: ReadonlyArray<EnvironmentThreadShell>,
+      ids: { readonly groupId: ThreadGroupId; readonly commandId?: CommandId } = {
+        groupId: newThreadGroupId(),
+      },
+    ) => {
       const first = threads[0];
       if (first === undefined) return null;
       const result = await createGroup({
         environmentId: first.environmentId,
         input: {
-          groupId: newThreadGroupId(),
+          ...(ids.commandId === undefined ? {} : { commandId: ids.commandId }),
+          groupId: ids.groupId,
           projectId: first.projectId,
           threadIds: threads.map((thread) => thread.id),
         },
@@ -320,8 +345,39 @@ export function useThreadGroupActions() {
        * workspace), then move the dragged chat in.
        */
       groupThreadWith: async (target: EnvironmentThreadShell, moved: EnvironmentThreadShell) => {
-        const group = await createGroupWith([target]);
-        if (group !== null) await moveThreadIntoGroup(moved, group);
+        const groupId = newThreadGroupId();
+        const createCommandId = CommandId.make(`thread-group-create:${groupId}`);
+        await groupWithTarget({
+          needsWorkspaceSwitch: workspacesDiffer(moved, target),
+          // The group takes the target's workspace and, before a rename, its branch as title.
+          confirm: () =>
+            confirmWorkspaceSwitch(moved, {
+              title: `“${target.title}”`,
+              branch: target.branch,
+              worktreePath: target.worktreePath,
+            }),
+          create: () => createGroupWith([target], { groupId, commandId: createCommandId }),
+          move: async (group, adoptGroupWorkspace) => {
+            const result = await moveThreadCommand({
+              environmentId: moved.environmentId,
+              input: {
+                threadId: moved.id,
+                groupId: group.id,
+                ...(adoptGroupWorkspace ? { adoptGroupWorkspace } : {}),
+              },
+            });
+            toastCommandFailure("Failed to move chat", result);
+            return result._tag === "Success";
+          },
+          deleteGroup: async (group) => {
+            const result = await deleteGroup({
+              environmentId: target.environmentId,
+              input: { groupId: group.id, commandId: CommandId.make(`${createCommandId}:undo`) },
+            });
+            toastCommandFailure("Failed to remove the new group", result);
+            return result._tag === "Success";
+          },
+        });
       },
       removeThreadFromGroup: async (thread: EnvironmentThreadShell) => {
         const result = await moveThreadCommand({
@@ -344,6 +400,7 @@ export function useThreadGroupActions() {
           });
           return;
         }
+        if (!offersHandOff(thread)) return;
         if (!canHandOffThread(thread)) {
           toastManager.add({ type: "info", title: `${THREAD_HANDOFF_BUSY_HINT}, then hand off` });
           return;
