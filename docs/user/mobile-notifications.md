@@ -12,7 +12,7 @@ Notification permission and Android notification channels are controlled in syst
 
 ## Server notifications without T3 Connect
 
-Your server can send alerts itself, using your own Apple Push Notification service key or Firebase project. Use this when you connect directly, such as over your LAN or Tailscale, and do not want a T3 Connect account. It only alerts when an agent needs approval or asks for input, not when a run finishes or fails, and it does not drive Live Activities or ongoing activity cards. The app must be built with your Apple team or your Firebase `google-services.json`.
+Your server can send alerts itself, using your own Apple Push Notification service key or Firebase project. Use this when you connect directly, such as over your LAN or Tailscale, and do not want a T3 Connect account. By default it alerts when an agent needs approval or asks for input; you can also turn on alerts for finished and failed runs. It does not drive Live Activities or ongoing activity cards. The app must be built with your Apple team or your Firebase `google-services.json`.
 
 1. On the server machine, create `push/config.json` in the server's data directory (for example `~/.t3/userdata/push/config.json`). Include whichever platforms you use:
 
@@ -29,6 +29,6 @@ Your server can send alerts itself, using your own Apple Push Notification servi
 
    The APNs key needs the Apple Push Notifications service enabled. The Firebase file is a service account key from **Project settings → Service accounts**. Changes take effect without restarting the server.
 
-2. In the mobile app, turn on **Settings → Notifications → Server Notifications**. Each connected environment shows **Ready** once it has registered this device and has keys for its platform.
+2. In the mobile app, turn on **Settings → Notifications → Server Notifications**, then choose which events alert you. Each connected environment shows **Ready** once it has registered this device and has keys for its platform.
 
 Turning the switch off removes this device from your servers.
