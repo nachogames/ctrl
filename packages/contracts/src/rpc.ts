@@ -77,6 +77,11 @@ import {
   HostPowerSnapshot,
 } from "./background.ts";
 import {
+  DirectPushDeviceRegistration,
+  DirectPushStatus,
+  DirectPushUnregisterInput,
+} from "./directPush.ts";
+import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
@@ -508,6 +513,8 @@ export const WS_METHODS = {
   serverReportClientActivity: "server.reportClientActivity",
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
+  pushRegisterDevice: "push.registerDevice",
+  pushUnregisterDevice: "push.unregisterDevice",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
 
@@ -928,6 +935,17 @@ const WsCloudInstallRelayClientRpc = Rpc.make(WS_METHODS.cloudInstallRelayClient
 
 const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientActivity, {
   payload: ClientActivityReportInput,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsPushRegisterDeviceRpc = Rpc.make(WS_METHODS.pushRegisterDevice, {
+  payload: DirectPushDeviceRegistration,
+  success: DirectPushStatus,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsPushUnregisterDeviceRpc = Rpc.make(WS_METHODS.pushUnregisterDevice, {
+  payload: DirectPushUnregisterInput,
   error: EnvironmentAuthorizationError,
 });
 
@@ -1910,6 +1928,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
   WsServerReportClientActivityRpc,
+  WsPushRegisterDeviceRpc,
+  WsPushUnregisterDeviceRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,
   WsCloudGetRelayClientStatusRpc,
