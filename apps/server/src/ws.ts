@@ -2744,17 +2744,22 @@ const layerWsRpc = (
           startup
             .enqueueCommand(ThreadGroupService.mutateThreadGroup(threadGroupService, mutation))
             .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ThreadGroupMutationError({
+              Effect.mapError((cause) => {
+                if (cause._tag === "ServerRuntimeStartupError") {
+                  return new ThreadGroupMutationError({
                     commandId: mutation.commandId,
-                    message:
-                      cause._tag === "ServerRuntimeStartupError"
-                        ? "Failed to change the thread group."
-                        : ThreadGroupService.threadGroupMutationErrorMessage(mutation, cause),
+                    message: "Failed to change the thread group.",
                     cause,
-                  }),
-              ),
+                  });
+                }
+                const reason = ThreadGroupService.threadGroupMutationFailureReason(cause);
+                return new ThreadGroupMutationError({
+                  commandId: mutation.commandId,
+                  message: ThreadGroupService.threadGroupMutationErrorMessage(mutation, cause),
+                  ...(reason === undefined ? {} : { reason }),
+                  cause,
+                });
+              }),
             ),
         [WS_METHODS.threadGroupsSubscribeResources]: (input) =>
           groupResources.changes(input.groupId).pipe(Stream.map((resources) => ({ resources }))),

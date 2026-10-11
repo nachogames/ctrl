@@ -133,11 +133,26 @@ export const ThreadGroupMutationResult = Schema.Struct({
 });
 export type ThreadGroupMutationResult = typeof ThreadGroupMutationResult.Type;
 
+/** Why a group mutation was refused, for failures a client answers with its own flow. */
+export const ThreadGroupMutationFailureReason = Schema.Literals([
+  "group-not-found",
+  "thread-not-found",
+  "project-mismatch",
+  "subagent",
+  "workspace-mismatch",
+  "thread-busy",
+  "workspace-dirty",
+  "worktree-missing",
+]);
+export type ThreadGroupMutationFailureReason = typeof ThreadGroupMutationFailureReason.Type;
+
 export class ThreadGroupMutationError extends Schema.TaggedError<ThreadGroupMutationError>()(
   "ThreadGroupMutationError",
   {
     commandId: CommandId,
     message: Schema.String,
+    /** Absent for operation failures and startup errors. */
+    reason: Schema.optional(ThreadGroupMutationFailureReason),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

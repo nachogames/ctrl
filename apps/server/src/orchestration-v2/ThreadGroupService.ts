@@ -7,6 +7,7 @@ import {
   ThreadGroupId,
   type ThreadGroupManualResource,
   type ThreadGroupMutation,
+  type ThreadGroupMutationFailureReason,
   type ThreadGroupUpdatePayload,
   ThreadId,
 } from "@t3tools/contracts";
@@ -897,6 +898,32 @@ export function threadGroupMutationErrorMessage(
         ? `Failed to ${verb}.`
         : `Failed to ${verb}: ${detail}`;
     }
+  }
+}
+
+/** The machine-readable reason a client sees next to the message; none for operation failures. */
+export function threadGroupMutationFailureReason(
+  error: ThreadGroupServiceError,
+): ThreadGroupMutationFailureReason | undefined {
+  switch (error._tag) {
+    case "ThreadGroupNotFoundError":
+      return "group-not-found";
+    case "ThreadGroupThreadNotFoundError":
+      return "thread-not-found";
+    case "ThreadGroupProjectMismatchError":
+      return "project-mismatch";
+    case "ThreadGroupSubagentError":
+      return "subagent";
+    case "ThreadGroupWorkspaceMismatchError":
+      return "workspace-mismatch";
+    case "ThreadGroupThreadBusyError":
+      return "thread-busy";
+    case "ThreadGroupWorkspaceDirtyError":
+      return "workspace-dirty";
+    case "ThreadGroupWorktreeMissingError":
+      return "worktree-missing";
+    case "ThreadGroupOperationError":
+      return undefined;
   }
 }
 

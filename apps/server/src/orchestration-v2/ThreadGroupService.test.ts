@@ -986,6 +986,19 @@ it("passes user-facing service errors through as the mutation message", () => {
   for (const error of errors) {
     assert.equal(ThreadGroupService.threadGroupMutationErrorMessage(create, error), error.message);
   }
+  assert.deepStrictEqual(errors.map(ThreadGroupService.threadGroupMutationFailureReason), [
+    "group-not-found",
+    "thread-not-found",
+    "project-mismatch",
+    "subagent",
+    "workspace-mismatch",
+    "thread-busy",
+    "workspace-dirty",
+    "worktree-missing",
+  ]);
+  assert.isUndefined(
+    ThreadGroupService.threadGroupMutationFailureReason(operationError(new Error("disk full"))),
+  );
 });
 
 it("names the attempted mutation and the cause for operation failures", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
+import { CommandId } from "./baseSchemas.ts";
 import { ScopedThreadGroupRef } from "./environment.ts";
 import {
   OrchestrationV2AppThreadJson,
@@ -12,6 +13,7 @@ import {
 import {
   OrchestrationThreadGroupShell,
   ThreadGroupMutation,
+  ThreadGroupMutationError,
   ThreadGroupRunningResource,
   ThreadGroupUpdatePayload,
 } from "./threadGroup.ts";
@@ -137,6 +139,27 @@ describe("thread group contracts", () => {
     expect(decodeMutation({ ...move, adoptGroupWorkspace: true })).toMatchObject({
       adoptGroupWorkspace: true,
     });
+  });
+
+  it("carries a mutation failure's reason across the wire, and decodes errors without one", () => {
+    const codec = Schema.toCodecJson(ThreadGroupMutationError);
+    const encoded = Schema.encodeSync(codec)(
+      new ThreadGroupMutationError({
+        commandId: CommandId.make("command-4"),
+        message: "Different workspace.",
+        reason: "workspace-mismatch",
+      }),
+    );
+    expect(Schema.decodeUnknownSync(codec)(encoded)).toMatchObject({
+      reason: "workspace-mismatch",
+    });
+    expect(
+      Schema.decodeUnknownSync(codec)({
+        _tag: "ThreadGroupMutationError",
+        commandId: "command-5",
+        message: "Failed.",
+      }).reason,
+    ).toBeUndefined();
   });
 
   it("recreates a group's worktree by group id", () => {

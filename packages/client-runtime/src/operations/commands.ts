@@ -93,6 +93,12 @@ export interface MoveThreadToGroupInput extends CommandMetadata {
   readonly threadId: ThreadId;
   /** Null detaches the thread; it keeps its branch and worktree. */
   readonly groupId: ThreadGroupId | null;
+  /** Switch the thread to the group's branch and worktree when they differ from its own. */
+  readonly adoptGroupWorkspace?: boolean;
+}
+
+export interface RecreateThreadGroupWorktreeInput extends CommandMetadata {
+  readonly groupId: ThreadGroupId;
 }
 
 export interface CreateThreadInput extends CommandMetadata {
@@ -467,6 +473,19 @@ export const moveThreadToGroup = Effect.fn("EnvironmentCommands.moveThreadToGrou
     type: "thread-group.move-thread",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    groupId: input.groupId,
+    ...(input.adoptGroupWorkspace === undefined
+      ? {}
+      : { adoptGroupWorkspace: input.adoptGroupWorkspace }),
+  });
+});
+
+export const recreateThreadGroupWorktree = Effect.fn(
+  "EnvironmentCommands.recreateThreadGroupWorktree",
+)(function* (input: RecreateThreadGroupWorktreeInput) {
+  return yield* mutateThreadGroup({
+    type: "thread-group.recreate-worktree",
+    commandId: yield* allocateCommandId(input),
     groupId: input.groupId,
   });
 });
