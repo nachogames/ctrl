@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadShell,
   ProjectId,
   ThreadGroupId,
+  type ThreadGroupMutation,
   ThreadId,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -470,4 +471,91 @@ it.effect("runs client mutations and reports no group after a delete", () => {
     });
     assert.isNull(deleted.group);
   }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+const subagent = (id: ThreadId) =>
+  shell(id, { lineage: { ...shell(id).lineage, relationshipToParent: "subagent" } });
+
+it.effect("rejects a subagent at create and commits no group", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [b, subagent(b)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    const error = yield* service
+      .create({ commandId: CommandId.make("command:sub"), groupId, projectId, threadIds: [a, b] })
+      .pipe(Effect.flip);
+    assert.equal(error._tag, "ThreadGroupSubagentError");
+    assert.isTrue(Option.isNone(yield* groups.getShell(groupId)));
+    assert.equal(dispatched.length, 0);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("rejects moving a subagent into a group or detaching it", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [b, subagent(b)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    yield* service.create({
+      commandId: CommandId.make("command:sub:create"),
+      groupId,
+      projectId,
+      threadIds: [a],
+    });
+    const into = yield* service
+      .moveThread({ commandId: CommandId.make("command:sub:into"), threadId: b, groupId })
+      .pipe(Effect.flip);
+    assert.equal(into._tag, "ThreadGroupSubagentError");
+    const out = yield* service
+      .moveThread({ commandId: CommandId.make("command:sub:out"), threadId: b, groupId: null })
+      .pipe(Effect.flip);
+    assert.equal(out._tag, "ThreadGroupSubagentError");
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+const create = { type: "thread-group.create" } as const;
+const operationError = (cause: unknown) =>
+  new ThreadGroupService.ThreadGroupOperationError({ operation: "update-thread", cause });
+
+it("passes user-facing service errors through as the mutation message", () => {
+  const errors = [
+    new ThreadGroupService.ThreadGroupNotFoundError({ groupId }),
+    new ThreadGroupService.ThreadGroupThreadNotFoundError({ threadId: a }),
+    new ThreadGroupService.ThreadGroupProjectMismatchError({
+      threadId: a,
+      threadProjectId: projectId,
+      groupProjectId: otherProjectId,
+    }),
+    new ThreadGroupService.ThreadGroupSubagentError({ threadId: a }),
+  ];
+  for (const error of errors) {
+    assert.equal(ThreadGroupService.threadGroupMutationErrorMessage(create, error), error.message);
+  }
+});
+
+it("names the attempted mutation and the cause for operation failures", () => {
+  const message = (type: ThreadGroupMutation["type"], cause?: unknown) =>
+    ThreadGroupService.threadGroupMutationErrorMessage({ type }, operationError(cause));
+  assert.equal(
+    message("thread-group.create", new Error("disk full")),
+    "Failed to create the thread group: disk full",
+  );
+  assert.equal(
+    message("thread-group.update", "locked"),
+    "Failed to update the thread group: locked",
+  );
+  assert.equal(
+    message("thread-group.delete", new ThreadGroupService.ThreadGroupNotFoundError({ groupId })),
+    `Failed to ungroup the thread group: Thread group ${groupId} was not found.`,
+  );
+  assert.equal(message("thread-group.move-thread", 42), "Failed to move the thread.");
+  assert.equal(message("thread-group.move-thread"), "Failed to move the thread.");
 });

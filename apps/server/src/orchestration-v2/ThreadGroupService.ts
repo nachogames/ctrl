@@ -59,6 +59,15 @@ export class ThreadGroupProjectMismatchError extends Schema.TaggedError<ThreadGr
   }
 }
 
+export class ThreadGroupSubagentError extends Schema.TaggedError<ThreadGroupSubagentError>()(
+  "ThreadGroupSubagentError",
+  { threadId: ThreadId },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} is a subagent; subagents belong to their parent thread, not to a group.`;
+  }
+}
+
 export class ThreadGroupOperationError extends Schema.TaggedError<ThreadGroupOperationError>()(
   "ThreadGroupOperationError",
   {
@@ -82,6 +91,7 @@ export type ThreadGroupServiceError =
   | ThreadGroupNotFoundError
   | ThreadGroupThreadNotFoundError
   | ThreadGroupProjectMismatchError
+  | ThreadGroupSubagentError
   | ThreadGroupOperationError;
 
 export interface ThreadGroupCreateInput {
@@ -333,6 +343,7 @@ export const make = Effect.gen(function* () {
         });
       }
       for (const member of members) {
+        if (isSubagent(member)) return yield* new ThreadGroupSubagentError({ threadId: member.id });
         if (member.projectId !== input.projectId) {
           return yield* new ThreadGroupProjectMismatchError({
             threadId: member.id,
@@ -433,6 +444,7 @@ export const make = Effect.gen(function* () {
     "ThreadGroupService.moveThread",
   )(function* (input) {
     const thread = yield* readThread(input.threadId);
+    if (isSubagent(thread)) return yield* new ThreadGroupSubagentError({ threadId: thread.id });
     const previous = thread.groupId ?? null;
     if (previous === input.groupId) {
       return input.groupId === null ? null : yield* readShell(input.groupId);
@@ -546,6 +558,46 @@ export const mutateThreadGroup = Effect.fn("mutateThreadGroup")(function* (
       };
   }
 });
+
+const mutationVerb = (type: ThreadGroupMutation["type"]): string => {
+  switch (type) {
+    case "thread-group.create":
+      return "create the thread group";
+    case "thread-group.update":
+      return "update the thread group";
+    case "thread-group.delete":
+      return "ungroup the thread group";
+    case "thread-group.move-thread":
+      return "move the thread";
+  }
+};
+
+const causeMessage = (cause: unknown): string | undefined =>
+  cause instanceof Error ? cause.message : typeof cause === "string" ? cause : undefined;
+
+/**
+ * The message a client sees when a group mutation fails. Errors a user can act
+ * on pass their own message; operation failures name what was being attempted.
+ */
+export function threadGroupMutationErrorMessage(
+  mutation: Pick<ThreadGroupMutation, "type">,
+  error: ThreadGroupServiceError,
+): string {
+  switch (error._tag) {
+    case "ThreadGroupNotFoundError":
+    case "ThreadGroupThreadNotFoundError":
+    case "ThreadGroupProjectMismatchError":
+    case "ThreadGroupSubagentError":
+      return error.message;
+    case "ThreadGroupOperationError": {
+      const detail = causeMessage(error.cause);
+      const verb = mutationVerb(mutation.type);
+      return detail === undefined || detail === ""
+        ? `Failed to ${verb}.`
+        : `Failed to ${verb}: ${detail}`;
+    }
+  }
+}
 
 /**
  * Group membership and handoff links change only through ThreadGroupService,

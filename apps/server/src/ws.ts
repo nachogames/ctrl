@@ -2718,11 +2718,9 @@ const layerWsRpc = (
                   new ThreadGroupMutationError({
                     commandId: mutation.commandId,
                     message:
-                      cause._tag === "ThreadGroupNotFoundError" ||
-                      cause._tag === "ThreadGroupThreadNotFoundError" ||
-                      cause._tag === "ThreadGroupProjectMismatchError"
-                        ? cause.message
-                        : "Failed to change the thread group.",
+                      cause._tag === "ServerRuntimeStartupError"
+                        ? "Failed to change the thread group."
+                        : ThreadGroupService.threadGroupMutationErrorMessage(mutation, cause),
                     cause,
                   }),
               ),
