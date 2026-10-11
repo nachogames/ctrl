@@ -6,7 +6,7 @@ import { useMemo } from "react";
 
 import { cn } from "~/lib/utils";
 import { type GroupPanelSection, useRightPanelStore } from "~/rightPanelStore";
-import { useThreadShells } from "~/state/entities";
+import { useThreadShellsForProjectRefs } from "~/state/entities";
 
 import { useGroupPullRequestStatus } from "../group/useGroupPullRequestStatus";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
@@ -29,9 +29,17 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { groupChatCountLabel } from "./ChatHeaderGroup.logic";
 
-/** The group's live (unarchived) chats in group order. */
-function useGroupMembers(group: EnvironmentThreadGroup) {
-  const shells = useThreadShells();
+/**
+ * The group's unarchived chats in group order, plus `keepThreadId` even when
+ * archived (the open chat stays listed and checked). Reads only the group
+ * project's shells, so unrelated threads do not re-render the header.
+ */
+function useGroupMembers(group: EnvironmentThreadGroup, keepThreadId: ThreadId | null = null) {
+  const projectRefs = useMemo(
+    () => [{ environmentId: group.environmentId, projectId: group.projectId }],
+    [group.environmentId, group.projectId],
+  );
+  const shells = useThreadShellsForProjectRefs(projectRefs);
   return useMemo(() => {
     const byId = new Map(
       shells
@@ -40,9 +48,11 @@ function useGroupMembers(group: EnvironmentThreadGroup) {
     );
     return group.threadIds.flatMap((threadId) => {
       const member = byId.get(threadId);
-      return member !== undefined && member.archivedAt === null ? [member] : [];
+      return member !== undefined && (member.archivedAt === null || member.id === keepThreadId)
+        ? [member]
+        : [];
     });
-  }, [group.environmentId, group.threadIds, shells]);
+  }, [group.environmentId, group.threadIds, keepThreadId, shells]);
 }
 
 function openGroupSurface(
@@ -101,7 +111,7 @@ function ChatHeaderGroupMenuItems(props: {
   onOpenThread: (threadId: ThreadId) => void;
 }) {
   const { group, activeThreadId, onOpenThread } = props;
-  const members = useGroupMembers(group);
+  const members = useGroupMembers(group, activeThreadId);
   return (
     <>
       <MenuRadioGroup
@@ -148,7 +158,7 @@ export function ChatHeaderGroupChips(props: {
       data-header-group-chips
       aria-hidden={visible ? undefined : true}
       className={cn(
-        "flex shrink-0 items-center gap-1.5",
+        "flex w-max shrink-0 items-center gap-1.5",
         !visible && "pointer-events-none invisible absolute",
       )}
     >
@@ -164,7 +174,7 @@ export function ChatHeaderGroupChips(props: {
           }
         >
           <GitBranchIcon aria-hidden />
-          {group.branch}
+          <span className="min-w-0 max-w-40 truncate">{group.branch}</span>
         </Badge>
       ) : null}
       {group.pullRequest !== null ? (

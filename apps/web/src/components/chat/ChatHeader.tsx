@@ -41,7 +41,7 @@ import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
 import { ChatHeaderGroupChips, ChatHeaderGroupItem } from "./ChatHeaderGroup";
-import { shouldShowGroupChips } from "./ChatHeaderGroup.logic";
+import { breadcrumbNaturalWidth, shouldShowGroupChips } from "./ChatHeaderGroup.logic";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -141,37 +141,49 @@ export const ChatHeader = memo(function ChatHeader({
   const renderGroupChips = group !== null && !groupPanelVisible && !isRenamingTitle;
   const showGroupChips = renderGroupChips && groupChipsFit;
   useEffect(() => {
-    const list = breadcrumbContainerRef.current?.querySelector("ol");
-    if (!list || (!parentThreadLink && !renderGroupChips)) return;
+    const container = breadcrumbContainerRef.current;
+    const list = container?.querySelector("ol");
+    if (!container || !list || (!parentThreadLink && !renderGroupChips)) {
+      // Chips that come back later re-measure before trusting an old fit.
+      setGroupChipsFit(false);
+      return;
+    }
     const chips = list.querySelector("[data-header-group-chips]");
     // Measure the untruncated labels, including a collapsed parent's hidden
-    // text, so expanding and collapsing never change the fit calculation.
-    // Width-capped labels (the project, the group) never grow, so their
-    // overflow is skipped. The chips are measured apart: they show only when
-    // they fit beside the whole breadcrumb, so they give up width first.
+    // text and a title stretched across the row, so expanding, collapsing and
+    // showing the chips never change the fit calculation. Width-capped labels
+    // (the project, the group) never grow, so their overflow is skipped. The
+    // chips are measured apart: they show only when they fit beside the whole
+    // breadcrumb, so they give up width first.
+    const textRange = document.createRange();
     const measure = () => {
       const gap = Number.parseFloat(getComputedStyle(list).columnGap) || 0;
       const items = Array.from(list.children).filter((item) => item !== chips);
-      const width = items.reduce(
-        (total, item) => {
+      const width = breadcrumbNaturalWidth(
+        items.map((item) => {
           const label = item.querySelector('[data-slot="workspace-breadcrumb-text"]');
           const ellipsis = item.querySelector("[data-parent-breadcrumb-ellipsis]");
-          return (
-            total +
-            (item.firstElementChild?.getBoundingClientRect().width ?? 0) +
-            (label && getComputedStyle(label).maxWidth === "none"
-              ? label.scrollWidth - label.clientWidth
-              : 0) -
-            (ellipsis?.getBoundingClientRect().width ?? 0)
-          );
-        },
-        gap * (items.length - 1),
+          const growable = label !== null && getComputedStyle(label).maxWidth === "none";
+          if (growable) textRange.selectNodeContents(label);
+          return {
+            boxWidth: item.firstElementChild?.getBoundingClientRect().width ?? 0,
+            labelBoxWidth: growable ? label.clientWidth : null,
+            labelTextWidth: growable ? textRange.getBoundingClientRect().width : 0,
+            ellipsisWidth: ellipsis?.getBoundingClientRect().width ?? 0,
+          };
+        }),
+        gap,
       );
-      setCollapseParentTitle(width > list.clientWidth);
+      const containerStyle = getComputedStyle(container);
+      const headerWidth =
+        container.clientWidth -
+        (Number.parseFloat(containerStyle.paddingLeft) || 0) -
+        (Number.parseFloat(containerStyle.paddingRight) || 0);
+      setCollapseParentTitle(width > headerWidth);
       setGroupChipsFit(
         chips !== null &&
           shouldShowGroupChips({
-            availableWidth: list.clientWidth,
+            headerWidth,
             breadcrumbWidth: width,
             chipsWidth: chips.getBoundingClientRect().width + gap,
             groupPanelVisible,
@@ -182,8 +194,8 @@ export const ChatHeader = memo(function ChatHeader({
     const frame = requestAnimationFrame(measure);
     document.fonts.addEventListener("loadingdone", measure);
     // The chips resize on their own as PR checks load; showing or hiding them
-    // changes neither the list's width nor theirs, so this never feeds back.
-    const stopObserving = observeResize(chips ? [list, chips] : list, measure);
+    // changes neither the header's width nor theirs, so this never feeds back.
+    const stopObserving = observeResize(chips ? [container, chips] : container, measure);
     return () => {
       cancelAnimationFrame(frame);
       document.fonts.removeEventListener("loadingdone", measure);
