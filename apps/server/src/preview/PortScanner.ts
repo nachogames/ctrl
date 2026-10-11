@@ -53,7 +53,9 @@ export class PortDiscovery extends Context.Service<
     /**
      * Every local TCP listener with its pid, process name and terminal owner,
      * unprobed and including listeners no T3 terminal owns. Unlike `scan`, it
-     * never sends a request to a listener.
+     * never sends a request to a listener. Rows from an enumeration younger
+     * than the poll interval are reused, so callers share the retained poll's
+     * `lsof` run instead of starting their own.
      */
     readonly listListeners: Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
     readonly subscribe: (
@@ -364,6 +366,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const webProbeCacheRef = yield* Ref.make<ReadonlyMap<string, WebProbeCacheEntry>>(new Map());
   const scanSemaphore = yield* Semaphore.make(1);
   const lsofMissingRef = yield* Ref.make(false);
+  /** The most recent enumeration, reused by `listListeners` while it is fresh. */
+  const lastListenersRef = yield* Ref.make<{
+    readonly rows: ReadonlyArray<DiscoveredLocalServer>;
+    readonly atMillis: number;
+  } | null>(null);
   /** Confirmed owners of listening socket inodes. */
   const socketOwnersRef = yield* Ref.make<
     ReadonlyMap<string, { readonly pid: number; readonly processName: string | null }>
@@ -680,10 +687,18 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return (yield* scanProcListeners(terminalByProcessId)) ?? [];
   });
 
+  const enumerateListenersUnlocked = Effect.fn("PortDiscovery.enumerateListenersUnlocked")(
+    function* () {
+      const rows = yield* listListenersUnlocked();
+      yield* Ref.set(lastListenersRef, { rows, atMillis: yield* Clock.currentTimeMillis });
+      return rows;
+    },
+  );
+
   const scanUnlocked = Effect.fn("PortDiscovery.scanUnlocked")(function* (
     configuredUrls: ReadonlyArray<string>,
   ) {
-    return yield* probeWebServers(yield* listListenersUnlocked(), configuredUrls);
+    return yield* probeWebServers(yield* enumerateListenersUnlocked(), configuredUrls);
   });
 
   const scanSnapshot = Effect.fn("PortDiscovery.scanSnapshot")(
@@ -691,8 +706,16 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       scanSemaphore.withPermits(1)(scanUnlocked(configuredUrls)),
   );
 
-  const listListeners: PortDiscovery["Service"]["listListeners"] =
-    scanSemaphore.withPermits(1)(listListenersUnlocked());
+  const listListeners: PortDiscovery["Service"]["listListeners"] = scanSemaphore.withPermits(1)(
+    Effect.gen(function* () {
+      const last = yield* Ref.get(lastListenersRef);
+      const now = yield* Clock.currentTimeMillis;
+      if (last !== null && now - last.atMillis < Duration.toMillis(POLL_INTERVAL)) {
+        return last.rows;
+      }
+      return yield* enumerateListenersUnlocked();
+    }),
+  );
 
   const scanOnce: PortDiscovery["Service"]["scan"] = (configuredUrls = []) => {
     const normalized = normalizeConfiguredUrls(configuredUrls);

@@ -8,6 +8,7 @@ import {
   type OrchestrationThreadGroupShell,
   type OrchestrationV2ThreadShell,
   type ThreadGroupManualResource,
+  type ThreadGroupRunningResource,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as DateTime from "effect/DateTime";
@@ -21,6 +22,7 @@ import * as ThreadGroup from "../../../orchestration-v2/ThreadGroupService.ts";
 import * as ThreadGroupStore from "../../../orchestration-v2/ThreadGroupStore.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as GroupResourceScanner from "../../../threadGroups/GroupResourceScanner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as GroupHandlers from "./handlers.ts";
@@ -89,6 +91,8 @@ const makeHarness = (options: {
   readonly callerGroupId: ThreadGroupId | null;
   readonly createError?: ThreadGroup.ThreadGroupServiceError;
   readonly buildFields?: Partial<OrchestrationV2ThreadShell>;
+  readonly manualResources?: ReadonlyArray<ThreadGroupManualResource>;
+  readonly scan?: GroupResourceScanner.GroupResourceScanner["Service"]["scan"];
 }) =>
   Effect.gen(function* () {
     const caller = thread(callerId, { groupId: options.callerGroupId });
@@ -96,7 +100,7 @@ const makeHarness = (options: {
       [callerId, caller],
       [buildId, thread(buildId, { status: "idle", ...options.buildFields })],
     ]);
-    let resources: ReadonlyArray<ThreadGroupManualResource> = [];
+    let resources: ReadonlyArray<ThreadGroupManualResource> = options.manualResources ?? [];
     const recorded: Recorded = {
       created: [],
       moved: [],
@@ -173,6 +177,9 @@ const makeHarness = (options: {
         },
       }),
       Layer.mock(Project.ProjectService)({}),
+      Layer.mock(GroupResourceScanner.GroupResourceScanner)({
+        scan: options.scan ?? (() => Effect.succeed([])),
+      }),
     );
     const toolkit = yield* GroupToolkit.pipe(
       Effect.provide(
@@ -203,6 +210,63 @@ it.effect("reads the caller's group by default and names its chats", () =>
         { threadId: buildId, isCaller: false, status: "idle" },
       ],
       running: { resources: [] },
+    });
+  }),
+);
+
+it.effect("reads what is running for the group from the scanner", () =>
+  Effect.gen(function* () {
+    const running: ReadonlyArray<ThreadGroupRunningResource> = [
+      {
+        id: "server:5173",
+        kind: "server",
+        name: "vite :5173",
+        detail: ":5173",
+        url: "http://localhost:5173",
+        source: "terminal",
+      },
+    ];
+    const scanned: Array<ThreadGroupId> = [];
+    const { handle } = yield* makeHarness({
+      callerGroupId: groupId,
+      scan: (id) => {
+        scanned.push(id);
+        return Effect.succeed(running);
+      },
+    });
+    expect(yield* handle("t3_group_read", {})).toMatchObject({ running: { resources: running } });
+    expect(scanned).toEqual([groupId]);
+  }),
+);
+
+it.effect("falls back to the registered resources when the scan fails", () =>
+  Effect.gen(function* () {
+    const { handle } = yield* makeHarness({
+      callerGroupId: groupId,
+      manualResources: [
+        { id: "staging", name: "Staging API", kind: "server", url: "https://staging.example.com" },
+      ],
+      scan: () =>
+        Effect.fail(
+          new ThreadGroup.ThreadGroupOperationError({
+            operation: "read-group",
+            groupId,
+            cause: new Error("store down"),
+          }),
+        ),
+    });
+    expect(yield* handle("t3_group_read", {})).toMatchObject({
+      running: {
+        resources: [
+          {
+            id: "manual:staging",
+            kind: "manual",
+            name: "Staging API",
+            url: "https://staging.example.com",
+            source: "registered",
+          },
+        ],
+      },
     });
   }),
 );

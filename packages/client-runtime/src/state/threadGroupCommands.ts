@@ -1,3 +1,4 @@
+import { type ScopedThreadGroupRef, WS_METHODS } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/reactivity";
 
@@ -12,7 +13,11 @@ import {
   moveThreadToGroup,
   updateThreadGroup,
 } from "../operations/commands.ts";
-import { createAtomCommandScheduler, createEnvironmentCommand } from "./runtime.ts";
+import {
+  createAtomCommandScheduler,
+  createEnvironmentCommand,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "./runtime.ts";
 
 export type {
   CreateThreadGroupInput,
@@ -31,7 +36,16 @@ export function createThreadGroupEnvironmentAtoms<R, E>(
     key: ({ environmentId, input }: { environmentId: string; input: { groupId: string } }) =>
       JSON.stringify([environmentId, input.groupId]),
   };
+  const resources = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:thread-group:resources",
+    tag: WS_METHODS.threadGroupsSubscribeResources,
+    // The server scans while this is subscribed, so stop with the last reader.
+    idleTtlMs: 0,
+  });
   return {
+    /** A group's running resources, live while a component reads it. */
+    resources: (ref: ScopedThreadGroupRef) =>
+      resources({ environmentId: ref.environmentId, input: { groupId: ref.groupId } }),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread-group:create",
       execute: (input: CreateThreadGroupInput) => createThreadGroup(input),

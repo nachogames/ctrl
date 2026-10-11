@@ -38,6 +38,12 @@ export const ThreadGroupRunningResource = Schema.Struct({
 });
 export type ThreadGroupRunningResource = typeof ThreadGroupRunningResource.Type;
 
+/** One emission of `threadGroups.subscribeResources`: the group's resources right now. */
+export const ThreadGroupRunningResources = Schema.Struct({
+  resources: Schema.Array(ThreadGroupRunningResource),
+});
+export type ThreadGroupRunningResources = typeof ThreadGroupRunningResources.Type;
+
 /** The most recent handoff between two chats of a group. */
 export const ThreadGroupHandoff = Schema.Struct({
   summary: TrimmedNonEmptyString,

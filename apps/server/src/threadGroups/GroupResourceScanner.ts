@@ -7,6 +7,10 @@
  * `working_dir` label is inside the worktree. A group without a worktree gets
  * terminal attribution only. Registered resources come from the group shell.
  * Scanner failures degrade to fewer results, never an error.
+ *
+ * `changes` streams a group's resources while someone watches it. Every
+ * watcher of one group shares a single scan loop, so open panels never
+ * multiply `lsof` or `docker` runs.
  */
 import type {
   DiscoveredLocalServer,
@@ -17,10 +21,16 @@ import type {
 } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as RcMap from "effect/RcMap";
+import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as ThreadGroupService from "../orchestration-v2/ThreadGroupService.ts";
 import * as ThreadGroupStore from "../orchestration-v2/ThreadGroupStore.ts";
@@ -39,15 +49,22 @@ export interface GroupAttributionScope {
 const ownedByMember = (listener: DiscoveredLocalServer, scope: GroupAttributionScope) =>
   listener.terminal !== null && scope.memberThreadIds.has(listener.terminal.threadId);
 
-/** Listeners whose working directory decides attribution. */
+/**
+ * Listeners whose working directory decides attribution. `serverPid` is the
+ * T3 server's own process, which is never a group's server even when it runs
+ * from the group's worktree.
+ */
 export const listenersNeedingCwd = (
   listeners: ReadonlyArray<DiscoveredLocalServer>,
   scope: GroupAttributionScope,
+  serverPid: number,
 ): ReadonlyArray<number> =>
   scope.worktreeRoot === null
     ? []
     : listeners.flatMap((listener) =>
-        listener.pid === null || ownedByMember(listener, scope) ? [] : [listener.pid],
+        listener.pid === null || listener.pid === serverPid || ownedByMember(listener, scope)
+          ? []
+          : [listener.pid],
       );
 
 /** The group's servers among `listeners`, in listener order. */
@@ -153,6 +170,82 @@ export const mergeGroupResources = (input: {
   ];
 };
 
+/** How often a watched group rescans. Docker has no events, so this is its poll. */
+export const RESOURCE_RESCAN_INTERVAL = Duration.seconds(5);
+
+const resourcesEqual = (
+  left: ReadonlyArray<ThreadGroupRunningResource>,
+  right: ReadonlyArray<ThreadGroupRunningResource>,
+) =>
+  left.length === right.length &&
+  left.every((resource, index) => {
+    const other = right[index];
+    return (
+      other !== undefined &&
+      resource.id === other.id &&
+      resource.kind === other.kind &&
+      resource.name === other.name &&
+      resource.detail === other.detail &&
+      resource.url === other.url &&
+      resource.source === other.source
+    );
+  });
+
+/**
+ * One scan loop per watched group, shared by all of its watchers and stopped
+ * when the last one leaves. The loop scans, then waits for `interval` or a
+ * wake from `watch`, whichever comes first. A watcher sees the current list,
+ * then each changed list. A scan that returns null keeps the previous list,
+ * or yields an empty one when there is none yet.
+ */
+export const makeResourceFeed = Effect.fn("GroupResourceScanner.makeResourceFeed")(
+  function* (options: {
+    readonly scan: (
+      groupId: ThreadGroupId,
+    ) => Effect.Effect<ReadonlyArray<ThreadGroupRunningResource> | null>;
+    /** Held while a group is watched; runs `wake` to rescan before the next tick. */
+    readonly watch: (wake: Effect.Effect<void>) => Effect.Effect<void, never, Scope.Scope>;
+    readonly interval: Duration.Input;
+  }) {
+    const feeds = yield* RcMap.make({
+      lookup: (groupId: ThreadGroupId) =>
+        Effect.gen(function* () {
+          const latest =
+            yield* SubscriptionRef.make<ReadonlyArray<ThreadGroupRunningResource> | null>(null);
+          const wake = yield* Queue.sliding<void>(1);
+          const rescan = Effect.gen(function* () {
+            const next = yield* options.scan(groupId);
+            const current = yield* SubscriptionRef.get(latest);
+            if (current !== null && (next === null || resourcesEqual(current, next))) return;
+            yield* SubscriptionRef.set(latest, next ?? []);
+          });
+          yield* options.watch(Queue.offer(wake, undefined).pipe(Effect.asVoid));
+          yield* Effect.forkScoped(
+            rescan.pipe(
+              Effect.andThen(Effect.race(Effect.sleep(options.interval), Queue.take(wake))),
+              Effect.forever,
+            ),
+          );
+          return latest;
+        }),
+    });
+    const changes = (groupId: ThreadGroupId) =>
+      Stream.unwrap(
+        RcMap.get(feeds, groupId).pipe(
+          Effect.map((latest) =>
+            SubscriptionRef.changes(latest).pipe(
+              Stream.filter(
+                (resources): resources is ReadonlyArray<ThreadGroupRunningResource> =>
+                  resources !== null,
+              ),
+            ),
+          ),
+        ),
+      );
+    return { changes };
+  },
+);
+
 export type GroupResourceScanError =
   | ThreadGroupService.ThreadGroupNotFoundError
   | ThreadGroupService.ThreadGroupOperationError;
@@ -164,6 +257,14 @@ export class GroupResourceScanner extends Context.Service<
     readonly scan: (
       groupId: ThreadGroupId,
     ) => Effect.Effect<ReadonlyArray<ThreadGroupRunningResource>, GroupResourceScanError>;
+    /**
+     * The group's resources now, then each time they change, rescanning every
+     * few seconds and whenever the preview scanner sees new servers. A deleted
+     * group streams an empty list; a failed scan keeps the last list.
+     */
+    readonly changes: (
+      groupId: ThreadGroupId,
+    ) => Stream.Stream<ReadonlyArray<ThreadGroupRunningResource>>;
   }
 >()("t3/threadGroups/GroupResourceScanner") {}
 
@@ -180,7 +281,7 @@ export const make = Effect.gen(function* () {
     scope: GroupAttributionScope,
   ) {
     const listeners = yield* ports.listListeners;
-    const pids = listenersNeedingCwd(listeners, scope);
+    const pids = listenersNeedingCwd(listeners, scope, process.pid);
     const cwdByPid = pids.length === 0 ? new Map<number, string>() : yield* cwds.lookup(pids);
     return attributeServers(listeners, scope, cwdByPid);
   });
@@ -251,7 +352,29 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  return GroupResourceScanner.of({ scan });
+  const feed = yield* makeResourceFeed({
+    scan: (groupId) =>
+      scan(groupId).pipe(
+        Effect.catchTags({
+          ThreadGroupNotFoundError: () => Effect.succeed([]),
+          ThreadGroupOperationError: (error) =>
+            Effect.logDebug("group resource scan failed; keeping the last list", {
+              cause: error,
+              groupId,
+            }).pipe(Effect.as(null)),
+        }),
+      ),
+    // Shares the preview scanner's retain, so its poll keeps the listener rows
+    // fresh, and rescans as soon as it sees a server come or go.
+    watch: (wake) =>
+      Effect.gen(function* () {
+        yield* ports.retain;
+        yield* ports.subscribe({ configuredUrls: [], initialSnapshot: [] }, () => wake);
+      }),
+    interval: RESOURCE_RESCAN_INTERVAL,
+  });
+
+  return GroupResourceScanner.of({ scan, changes: feed.changes });
 });
 
 export const layer = Layer.effect(GroupResourceScanner, make);

@@ -8,6 +8,7 @@ import {
   ThreadGroupId,
   ThreadGroupManualResource,
   ThreadGroupManualResourceKind,
+  ThreadGroupRunningResource,
   ThreadId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -20,6 +21,7 @@ import * as ThreadGroupService from "../../../orchestration-v2/ThreadGroupServic
 import * as ThreadGroupStore from "../../../orchestration-v2/ThreadGroupStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as GroupResourceScanner from "../../../threadGroups/GroupResourceScanner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const groupTool = {
@@ -58,13 +60,14 @@ const GroupChat = Schema.Struct({
 
 const GroupReadTool = Tool.make("t3_group_read", {
   ...groupTool,
+  dependencies: [...groupTool.dependencies, GroupResourceScanner.GroupResourceScanner],
   description:
-    "Read a chat group: its title, goal, branch, worktree, pull request, last handoff, its chats (oldest first, with handoff links and which one is you), and the running resources registered on it. Omit groupId to read the group your chat is in. Chats in one group share a project and a workspace and work toward one goal.",
+    'Read a chat group: its title, goal, branch, worktree, pull request, last handoff, its chats (oldest first, with handoff links and which one is you), and what is running for it right now: local servers started by its chats or from its worktree, its worktree\'s docker compose containers, and resources registered by hand (source "registered", never health-checked). Omit groupId to read the group your chat is in. Chats in one group share a project and a workspace and work toward one goal.',
   parameters: Schema.Struct({ groupId: groupIdParameter }),
   success: Schema.Struct({
     group: OrchestrationThreadGroupShell,
     chats: Schema.Array(GroupChat),
-    running: Schema.Struct({ resources: Schema.Array(ThreadGroupManualResource) }),
+    running: Schema.Struct({ resources: Schema.Array(ThreadGroupRunningResource) }),
   }),
 })
   .annotate(Tool.Title, "Read a chat group")

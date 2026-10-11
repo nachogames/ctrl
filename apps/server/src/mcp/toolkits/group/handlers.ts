@@ -18,6 +18,7 @@ import * as ThreadGroupLaunch from "../../../orchestration-v2/ThreadGroupLaunchS
 import * as ThreadGroup from "../../../orchestration-v2/ThreadGroupService.ts";
 import * as ThreadGroupStore from "../../../orchestration-v2/ThreadGroupStore.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as GroupResourceScanner from "../../../threadGroups/GroupResourceScanner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { stableCommandId } from "../../OrchestratorMcpService.ts";
@@ -218,6 +219,19 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
       const context = yield* readCaller();
       const group = yield* readGroup(yield* resolveGroupId(context, input.groupId));
       const members = yield* readMembers(context, group);
+      const scanner = yield* GroupResourceScanner.GroupResourceScanner;
+      // Best effort: when the scan fails, the registered resources still show.
+      const resources = yield* scanner.scan(group.id).pipe(
+        Effect.catch(() =>
+          Effect.succeed(
+            GroupResourceScanner.mergeGroupResources({
+              servers: [],
+              containers: [],
+              manual: group.manualResources,
+            }),
+          ),
+        ),
+      );
       return {
         group,
         chats: members.map((thread) => ({
@@ -229,7 +243,7 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
           handedOffTo: thread.handedOffTo ?? null,
           archived: thread.archivedAt !== null,
         })),
-        running: { resources: group.manualResources },
+        running: { resources },
       };
     }),
   ),

@@ -6,12 +6,17 @@ import {
   ProjectId,
   ThreadGroupId,
   ThreadId,
+  type ThreadGroupRunningResource,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadGroupStore from "../orchestration-v2/ThreadGroupStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -323,5 +328,138 @@ describe("GroupResourceScanner containers and registered resources", () => {
           }),
         ),
       ),
+  );
+});
+
+describe("listenersNeedingCwd", () => {
+  it("never looks up the T3 server's own process", () => {
+    const scope = { memberThreadIds: new Set([member]), worktreeRoot: "/a/wt" };
+    expect(GroupResourceScanner.listenersNeedingCwd(listeners, scope, 300)).toEqual([200, 400]);
+  });
+});
+
+const resource = (id: string): ThreadGroupRunningResource => ({
+  id,
+  kind: id.startsWith("container:") ? "container" : "server",
+  name: id,
+  detail: id.startsWith("container:") ? "docker" : ":3000",
+  url: null,
+  source: id.startsWith("container:") ? "docker" : "terminal",
+});
+
+/** A feed over a scan whose result the test changes, counting scans and watches. */
+const makeTestFeed = Effect.gen(function* () {
+  const state = {
+    resources: [resource("server:3000")] as ReadonlyArray<ThreadGroupRunningResource> | null,
+    scans: 0,
+    watching: 0,
+    wake: Effect.void as Effect.Effect<void>,
+  };
+  const feed = yield* GroupResourceScanner.makeResourceFeed({
+    scan: () =>
+      Effect.sync(() => {
+        state.scans += 1;
+        return state.resources;
+      }),
+    watch: (wake) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          state.watching += 1;
+          state.wake = wake;
+        }),
+        () => Effect.sync(() => (state.watching -= 1)),
+      ),
+    interval: Duration.seconds(5),
+  });
+  const watch = Effect.gen(function* () {
+    const seen: Array<ReadonlyArray<string>> = [];
+    const fiber = yield* Effect.forkChild(
+      feed
+        .changes(groupId)
+        .pipe(
+          Stream.runForEach((resources) =>
+            Effect.sync(() => seen.push(resources.map((entry) => entry.id))),
+          ),
+        ),
+    );
+    return { seen, fiber };
+  });
+  return { state, watch };
+});
+
+const tick = TestClock.adjust(Duration.seconds(5));
+
+describe("GroupResourceScanner.makeResourceFeed", () => {
+  it.effect("emits the first list, stays quiet while it holds, and emits a new container", () =>
+    Effect.gen(function* () {
+      const { state, watch } = yield* makeTestFeed;
+      const { seen } = yield* watch;
+      yield* TestClock.adjust(Duration.zero);
+      expect(seen).toEqual([["server:3000"]]);
+
+      yield* tick;
+      expect(state.scans).toBe(2);
+      expect(seen).toHaveLength(1);
+
+      state.resources = [resource("server:3000"), resource("container:db")];
+      yield* tick;
+      expect(state.scans).toBe(3);
+      expect(seen).toEqual([["server:3000"], ["server:3000", "container:db"]]);
+    }),
+  );
+
+  it.effect("runs one scan per tick for every watcher of a group, and stops after the last", () =>
+    Effect.gen(function* () {
+      const { state, watch } = yield* makeTestFeed;
+      const first = yield* watch;
+      const second = yield* watch;
+      yield* TestClock.adjust(Duration.zero);
+      expect(state.scans).toBe(1);
+      expect(state.watching).toBe(1);
+
+      yield* tick;
+      yield* tick;
+      expect(state.scans).toBe(3);
+      expect(first.seen).toEqual([["server:3000"]]);
+      expect(second.seen).toEqual([["server:3000"]]);
+
+      yield* Fiber.interrupt(first.fiber);
+      yield* tick;
+      expect(state.scans).toBe(4);
+      yield* Fiber.interrupt(second.fiber);
+      expect(state.watching).toBe(0);
+      yield* tick;
+      expect(state.scans).toBe(4);
+    }),
+  );
+
+  it.effect("rescans as soon as the watch wakes it", () =>
+    Effect.gen(function* () {
+      const { state, watch } = yield* makeTestFeed;
+      const { seen } = yield* watch;
+      yield* TestClock.adjust(Duration.zero);
+      state.resources = [resource("server:3000"), resource("server:4000")];
+      yield* state.wake;
+      yield* TestClock.adjust(Duration.zero);
+      expect(state.scans).toBe(2);
+      expect(seen).toEqual([["server:3000"], ["server:3000", "server:4000"]]);
+    }),
+  );
+
+  it.effect("keeps the last list when a scan fails, and starts empty when the first one does", () =>
+    Effect.gen(function* () {
+      const { state, watch } = yield* makeTestFeed;
+      state.resources = null;
+      const { seen } = yield* watch;
+      yield* TestClock.adjust(Duration.zero);
+      expect(seen).toEqual([[]]);
+
+      state.resources = [resource("server:3000")];
+      yield* tick;
+      state.resources = null;
+      yield* tick;
+      expect(state.scans).toBe(3);
+      expect(seen).toEqual([[], ["server:3000"]]);
+    }),
   );
 });
