@@ -22,6 +22,22 @@ export const ThreadGroupManualResource = Schema.Struct({
 });
 export type ThreadGroupManualResource = typeof ThreadGroupManualResource.Type;
 
+/**
+ * A server, container or registered resource attributed to a group. Computed
+ * live, never stored; scanned ones are running by construction.
+ */
+export const ThreadGroupRunningResource = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  kind: Schema.Literals(["server", "container", "manual"]),
+  name: TrimmedNonEmptyString,
+  /** ":5733" for a server, "docker" for a container, the URL for a registered resource. */
+  detail: TrimmedNonEmptyString,
+  url: Schema.NullOr(TrimmedNonEmptyString),
+  /** How it was attributed: a member's terminal, a working directory in the worktree, a compose label, or by hand. */
+  source: Schema.Literals(["terminal", "cwd", "docker", "registered"]),
+});
+export type ThreadGroupRunningResource = typeof ThreadGroupRunningResource.Type;
+
 /** The most recent handoff between two chats of a group. */
 export const ThreadGroupHandoff = Schema.Struct({
   summary: TrimmedNonEmptyString,

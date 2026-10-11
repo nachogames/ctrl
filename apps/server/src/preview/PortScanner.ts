@@ -50,6 +50,12 @@ export class PortDiscovery extends Context.Service<
     readonly scan: (
       configuredUrls?: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
+    /**
+     * Every local TCP listener with its pid, process name and terminal owner,
+     * unprobed and including listeners no T3 terminal owns. Unlike `scan`, it
+     * never sends a request to a listener.
+     */
+    readonly listListeners: Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
     readonly subscribe: (
       input: {
         readonly configuredUrls: ReadonlyArray<string>;
@@ -612,9 +618,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         platform: hostPlatform,
       }).pipe(Effect.as(null));
 
-  const scanUnlocked = Effect.fn("PortDiscovery.scanUnlocked")(function* (
-    configuredUrls: ReadonlyArray<string>,
-  ) {
+  /** Every local TCP listener, before the terminal filter and HTTP probe. */
+  const listListenersUnlocked = Effect.fn("PortDiscovery.listListenersUnlocked")(function* () {
     const state = yield* Ref.get(stateRef);
     const terminalByProcessId = new Map<number, TerminalProcessOwner>();
     for (const registration of state.terminalProcesses.values()) {
@@ -643,13 +648,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             ProcessTimeoutError: recoverWindowsProbeFailure,
           }),
         );
-      if (listeners !== null) return yield* probeWebServers(listeners, configuredUrls);
-      return yield* probeWebServers([], configuredUrls);
+      return listeners ?? [];
     }
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
     if (yield* Ref.get(lsofMissingRef)) {
-      const fromProc = yield* scanProcListeners(terminalByProcessId);
-      return yield* probeWebServers(fromProc ?? [], configuredUrls);
+      return (yield* scanProcListeners(terminalByProcessId)) ?? [];
     }
     const lsofResult = yield* processRunner
       .run({
@@ -673,15 +676,23 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           ProcessTimeoutError: recoverLsofProbeFailure,
         }),
       );
-    if (lsofResult !== null) return yield* probeWebServers(lsofResult, configuredUrls);
-    const fromProc = yield* scanProcListeners(terminalByProcessId);
-    return yield* probeWebServers(fromProc ?? [], configuredUrls);
+    if (lsofResult !== null) return lsofResult;
+    return (yield* scanProcListeners(terminalByProcessId)) ?? [];
+  });
+
+  const scanUnlocked = Effect.fn("PortDiscovery.scanUnlocked")(function* (
+    configuredUrls: ReadonlyArray<string>,
+  ) {
+    return yield* probeWebServers(yield* listListenersUnlocked(), configuredUrls);
   });
 
   const scanSnapshot = Effect.fn("PortDiscovery.scanSnapshot")(
     (configuredUrls: ReadonlyArray<string>) =>
       scanSemaphore.withPermits(1)(scanUnlocked(configuredUrls)),
   );
+
+  const listListeners: PortDiscovery["Service"]["listListeners"] =
+    scanSemaphore.withPermits(1)(listListenersUnlocked());
 
   const scanOnce: PortDiscovery["Service"]["scan"] = (configuredUrls = []) => {
     const normalized = normalizeConfiguredUrls(configuredUrls);
@@ -799,6 +810,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   return PortDiscovery.of({
     scan: scanOnce,
+    listListeners,
     subscribe,
     retain,
     registerTerminalProcesses,

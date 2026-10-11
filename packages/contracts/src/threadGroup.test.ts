@@ -12,12 +12,14 @@ import {
 import {
   OrchestrationThreadGroupShell,
   ThreadGroupMutation,
+  ThreadGroupRunningResource,
   ThreadGroupUpdatePayload,
 } from "./threadGroup.ts";
 
 const decodeShell = Schema.decodeUnknownSync(OrchestrationThreadGroupShell);
 const decodeMutation = Schema.decodeUnknownSync(ThreadGroupMutation);
 const decodePatch = Schema.decodeUnknownSync(ThreadGroupUpdatePayload);
+const decodeResource = Schema.decodeUnknownSync(ThreadGroupRunningResource);
 const at = "2026-10-10T00:00:00.000Z";
 
 const shellInput = {
@@ -62,6 +64,28 @@ describe("thread group contracts", () => {
         manualResources: [{ id: "db", name: "Database", url: null, kind: "database" }],
       }),
     ).toThrow();
+  });
+
+  it("decodes running resources and rejects an unknown source", () => {
+    const server = {
+      id: "server:5733",
+      kind: "server",
+      name: "node :5733",
+      detail: ":5733",
+      url: "http://localhost:5733",
+      source: "cwd",
+    };
+    expect(decodeResource(server)).toEqual(server);
+    expect(
+      decodeResource({
+        ...server,
+        id: "manual:api",
+        kind: "manual",
+        url: null,
+        source: "registered",
+      }).url,
+    ).toBeNull();
+    expect(() => decodeResource({ ...server, source: "guess" })).toThrow();
   });
 
   it("keeps absent and null apart in an update patch", () => {
