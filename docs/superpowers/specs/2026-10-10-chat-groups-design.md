@@ -77,7 +77,7 @@ the existing Settled section collapsed. Pin and snooze apply to the whole group.
   count shows on hover of a collapsed group, not inline.
 - The group containing the open chat auto-expands; others remember their own expanded state
   (per group, persisted like project expansion is today).
-- "+ New chat in group" appears as the last child of an expanded group on hover.
+- "+ New chat in group" is the last child of an expanded group: a muted row that brightens on hover or focus (a hover-only row read as a blank gap and shifted the list).
 - Pinned and Settled sections keep working: a pinned group shows as a group row in Pinned; a
   settled group appears collapsed in Settled. Snoozed works the same way.
 - The existing project-scope filter still applies.
