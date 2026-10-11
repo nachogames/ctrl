@@ -2736,7 +2736,28 @@ describe("resolveSidebarGroupDropTarget", () => {
     ...overrides,
   });
   const resolve = (overItem: SidebarListItem | undefined, activeThread = active()) =>
-    resolveSidebarGroupDropTarget({ activeThread, overItem, groups, threads });
+    resolveSidebarGroupDropTarget({
+      activeThread,
+      overItem,
+      groups,
+      threads,
+      supportsGroups: true,
+    });
+
+  it("offers no group drop where the chat's server cannot run groups", () => {
+    const drop = (overItem: SidebarListItem) =>
+      resolveSidebarGroupDropTarget({
+        activeThread: active(),
+        overItem,
+        groups,
+        threads,
+        supportsGroups: false,
+      });
+    expect(drop({ kind: "group", key: "group:auth", section: "active" })).toBeNull();
+    expect(
+      drop({ kind: "thread", key: "env:member", section: "active", groupKey: null }),
+    ).toBeNull();
+  });
 
   it("joins a group row in any section", () => {
     for (const section of ["pinned", "active", "snoozed", "settled"] as const) {

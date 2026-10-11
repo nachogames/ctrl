@@ -7,7 +7,7 @@ const baseState: ThreadGroupMenuState = {
   isPinned: false,
   isSnoozed: false,
   isSettled: false,
-  supports: { settlement: true, snooze: true },
+  supports: { settlement: true, snooze: true, threadGroups: true },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
@@ -47,13 +47,15 @@ describe("buildThreadGroupMenuItems", () => {
   });
 
   it("hides settle and snooze where the environment cannot settle or snooze chats", () => {
-    expect(ids({ ...baseState, supports: { settlement: false, snooze: false } })).toEqual([
-      "new-chat-in-group",
-      "rename-group",
-      "pin-group",
-      "open-group-panel",
-      "ungroup",
-    ]);
+    expect(
+      ids({ ...baseState, supports: { settlement: false, snooze: false, threadGroups: true } }),
+    ).toEqual(["new-chat-in-group", "rename-group", "pin-group", "open-group-panel", "ungroup"]);
+  });
+
+  it("only opens the panel where the server cannot run groups", () => {
+    expect(ids({ ...baseState, supports: { ...baseState.supports, threadGroups: false } })).toEqual(
+      ["open-group-panel"],
+    );
   });
 
   it("asks before ungrouping", () => {

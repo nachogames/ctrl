@@ -36,7 +36,11 @@ import {
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { readLocalApi } from "../localApi";
 import { useRightPanelStore } from "../rightPanelStore";
-import { readEnvironmentSupportsSettlement, readThreadShell } from "../state/entities";
+import {
+  readEnvironmentSupportsSettlement,
+  readEnvironmentSupportsThreadGroups,
+  readThreadShell,
+} from "../state/entities";
 import { readEnvironmentScope } from "../state/session";
 import { readThreadGroup, readThreadGroups, threadGroupCommands } from "../state/threadGroups";
 import { threadEnvironment } from "../state/threads";
@@ -64,6 +68,20 @@ function toastCommandFailure(title: string, result: AtomCommandResult<unknown, u
   }
 }
 
+/**
+ * Every menu hides group actions on a server without chat groups; this catches
+ * the entry points that cannot (keybindings, stale views) before anything is sent.
+ */
+function groupsUnavailable(environmentId: EnvironmentThreadShell["environmentId"]): boolean {
+  if (readEnvironmentSupportsThreadGroups(environmentId)) return false;
+  toastManager.add({
+    type: "error",
+    title: "Chat groups unavailable",
+    description: "This environment's server does not support chat groups. Update it first.",
+  });
+  return true;
+}
+
 /** The group's live chats, in group order. */
 function readGroupMembers(group: EnvironmentThreadGroup): EnvironmentThreadShell[] {
   return group.threadIds.flatMap((threadId) => {
@@ -82,6 +100,7 @@ export function readMoveToGroupState(thread: EnvironmentThreadShell): {
   readonly currentGroupId: EnvironmentThreadGroup["id"] | null;
 } | null {
   if (thread.lineage.relationshipToParent === "subagent") return null;
+  if (!readEnvironmentSupportsThreadGroups(thread.environmentId)) return null;
   const groups = readThreadGroups().filter(
     (group) => group.environmentId === thread.environmentId && group.projectId === thread.projectId,
   );
@@ -242,6 +261,7 @@ export function useThreadGroupActions() {
    */
   const newChatInGroup = useCallback(
     async (group: EnvironmentThreadGroup) => {
+      if (groupsUnavailable(group.environmentId)) return;
       if (!readEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope)) {
         toastManager.add({
           type: "error",
@@ -275,6 +295,7 @@ export function useThreadGroupActions() {
       thread: EnvironmentThreadShell,
       group: Pick<EnvironmentThreadGroup, "id" | "title" | "branch" | "worktreePath">,
     ) => {
+      if (groupsUnavailable(thread.environmentId)) return false;
       const outcome = await moveWithWorkspaceConfirm({
         move: (adoptGroupWorkspace) =>
           moveThreadCommand({
@@ -304,7 +325,7 @@ export function useThreadGroupActions() {
       },
     ) => {
       const first = threads[0];
-      if (first === undefined) return null;
+      if (first === undefined || groupsUnavailable(first.environmentId)) return null;
       const result = await createGroup({
         environmentId: first.environmentId,
         input: {
@@ -345,6 +366,7 @@ export function useThreadGroupActions() {
        * workspace), then move the dragged chat in.
        */
       groupThreadWith: async (target: EnvironmentThreadShell, moved: EnvironmentThreadShell) => {
+        if (groupsUnavailable(target.environmentId)) return;
         const groupId = newThreadGroupId();
         const createCommandId = CommandId.make(`thread-group-create:${groupId}`);
         await groupWithTarget({
@@ -392,6 +414,8 @@ export function useThreadGroupActions() {
        * `t3_group_handoff`, which creates the group when needed.
        */
       handOffThread: async (thread: EnvironmentThreadShell) => {
+        // Without groups the agent has no t3_group_handoff, so the prompt would waste a turn.
+        if (groupsUnavailable(thread.environmentId)) return;
         if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
           toastManager.add({
             type: "error",

@@ -274,7 +274,8 @@ interface SidebarGroupDropThread {
  * Pinned, Settled and shelf chat rows keep their pin and settle drops, and so
  * does an ungrouped chat dragged in from a shelf (its drop into Active means
  * unpin, un-settle or wake). Targets in another project, the chat's own group
- * and subagents never are group drops.
+ * and subagents never are group drops, nor is any drop where the chat's
+ * server cannot run groups.
  */
 export function resolveSidebarGroupDropTarget(input: {
   readonly activeThread: SidebarGroupDropThread & {
@@ -285,8 +286,11 @@ export function resolveSidebarGroupDropTarget(input: {
   readonly overItem: SidebarListItem | undefined;
   readonly groups: ReadonlyMap<string, Pick<EnvironmentThreadGroup, "environmentId" | "projectId">>;
   readonly threads: ReadonlyMap<string, SidebarGroupDropThread>;
+  /** The chat's environment advertises `threadGroups`. */
+  readonly supportsGroups: boolean;
 }): SidebarGroupDropTarget | null {
   const { activeThread: active, overItem } = input;
+  if (!input.supportsGroups) return null;
   const isSubagent = (thread: SidebarGroupDropThread) =>
     thread.lineage.relationshipToParent === "subagent";
   if (isSubagent(active) || overItem === undefined) return null;

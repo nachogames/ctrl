@@ -121,6 +121,8 @@ export interface ThreadActionMenuState {
     readonly snooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
+    /** Server runs chat groups; without it no group action shows. */
+    readonly threadGroups: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   /**
@@ -163,7 +165,8 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
-  const group = state.group ?? null;
+  // A group only places the chat where the server can act on groups.
+  const group = state.supports.threadGroups ? (state.group ?? null) : null;
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.branch
       ? [
@@ -175,7 +178,7 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     // Disabled mid-turn: the prompt would queue behind work the summary must cover.
-    ...(state.isSubagent
+    ...(state.isSubagent || !state.supports.threadGroups
       ? []
       : [
           {
@@ -222,6 +225,10 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
+    // A chat snoozed before it joined keeps its own snooze; let it be cancelled.
+    ...(state.supports.snooze && group && state.isSnoozed
+      ? [{ id: "unsnooze" as const, label: "Wake chat", icon: "clock" }]
+      : []),
     ...(state.supports.snooze && !group
       ? [
           state.isSnoozed
@@ -242,7 +249,9 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     ...(group ? [{ id: "open-group-panel" as const, label: "Open group panel" }] : []),
-    ...(state.moveToGroup ? buildMoveToGroupMenuItems(state.moveToGroup) : []),
+    ...(state.moveToGroup && state.supports.threadGroups
+      ? buildMoveToGroupMenuItems(state.moveToGroup)
+      : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration
       ? [

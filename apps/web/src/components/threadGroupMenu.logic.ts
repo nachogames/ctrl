@@ -27,6 +27,8 @@ export interface ThreadGroupMenuState {
     readonly settlement: boolean;
     /** Same presets as chats; hidden where chats cannot snooze either. */
     readonly snooze: boolean;
+    /** Server runs chat groups. Without it a group still shows, but only its panel opens. */
+    readonly threadGroups: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
 }
@@ -57,6 +59,7 @@ export function groupSnoozeChildren(
 export function buildThreadGroupMenuItems(
   state: ThreadGroupMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadGroupMenuId>> {
+  if (!state.supports.threadGroups) return [{ id: "open-group-panel", label: "Open group panel" }];
   const items: ReadonlyArray<ContextMenuItem<ThreadGroupMenuId>> = [
     { id: "new-chat-in-group", label: "New chat in group", icon: "message-square-plus" },
     { id: "rename-group", label: "Rename…", icon: "pencil", separatorBefore: true },

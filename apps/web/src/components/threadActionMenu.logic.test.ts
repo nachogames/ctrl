@@ -24,6 +24,7 @@ const baseState: ThreadActionMenuState = {
     snooze: true,
     pinning: true,
     titleRegeneration: true,
+    threadGroups: true,
   },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
@@ -104,17 +105,10 @@ describe("buildThreadActionMenuItems", () => {
           snooze: false,
           pinning: false,
           titleRegeneration: false,
+          threadGroups: false,
         },
       }),
-    ).toEqual([
-      "handoff",
-      "rename",
-      "mark-unread",
-      "copy",
-      "project-settings",
-      "archive",
-      "delete",
-    ]);
+    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
   });
 
   it("groups project settings with utility actions before archive", () => {
@@ -222,6 +216,7 @@ describe("buildThreadActionMenuItems", () => {
           snooze: false,
           pinning: false,
           titleRegeneration: false,
+          threadGroups: false,
         },
       }),
     ).toContain("archive");
@@ -288,6 +283,41 @@ describe("buildThreadActionMenuItems", () => {
     expect(ids({ ...baseState, moveToGroup: { groups: [], currentGroupId: null } })).not.toContain(
       "remove-from-group",
     );
+  });
+
+  it("keeps Wake chat for a grouped chat's own earlier snooze", () => {
+    const group = { isPinned: false, isSnoozed: false };
+    expect(ids({ ...baseState, group, isSnoozed: true })).toContain("unsnooze");
+    expect(ids({ ...baseState, group, isSnoozed: false })).not.toContain("unsnooze");
+    expect(
+      buildThreadActionMenuItems({ ...baseState, group, isSnoozed: true }).find(
+        (item) => item.id === "unsnooze",
+      )?.label,
+    ).toBe("Wake chat");
+  });
+
+  it("offers no group action where the server cannot run groups", () => {
+    const groupId = "group-auth" as ThreadGroupId;
+    const state: ThreadActionMenuState = {
+      ...baseState,
+      group: { isPinned: false, isSnoozed: false },
+      moveToGroup: {
+        groups: [{ id: groupId, title: "Auth", activityMs: 1 }],
+        currentGroupId: groupId,
+      },
+    };
+    const groupActions = [
+      "handoff",
+      "move-to-group",
+      "remove-from-group",
+      "pin-group",
+      "snooze-group",
+    ];
+    expect(ids(state)).toEqual(expect.arrayContaining(groupActions));
+    const unsupported = ids({ ...state, supports: { ...state.supports, threadGroups: false } });
+    for (const id of groupActions) expect(unsupported).not.toContain(id);
+    // Pin and snooze fall back to the chat itself.
+    expect(unsupported).toEqual(expect.arrayContaining(["pin", "snooze"]));
   });
 
   it("keeps the group panel reachable for read-only connections", () => {

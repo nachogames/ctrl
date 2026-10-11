@@ -4146,9 +4146,11 @@ export default function Sidebar() {
         overItem: sidebarListItemById.get(overId),
         groups: threadGroupByKey,
         threads: threadByKey,
+        supportsGroups:
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadGroups === true,
       });
     },
-    [sidebarListItemById, threadByKey, threadGroupByKey],
+    [serverConfigs, sidebarListItemById, threadByKey, threadGroupByKey],
   );
   useEffect(() => {
     if (
@@ -4968,6 +4970,8 @@ export default function Sidebar() {
         const supportsTitleRegeneration =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
+        const supportsThreadGroups =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadGroups === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         // A grouped chat's shelf is its group's: its own settle state still
         // shows, while Pin and Snooze act on the group.
@@ -4977,7 +4981,10 @@ export default function Sidebar() {
         const isSettled = groupEntry
           ? supportsSettlement && thread.settledOverride === "settled"
           : settledThreadKeysRef.current.has(threadKey);
-        const isSnoozed = groupEntry ? false : snoozedThreadKeysRef.current.has(threadKey);
+        // A grouped chat sits on its group's shelf, but keeps any snooze of its own.
+        const isSnoozed = groupEntry
+          ? supportsSnooze && effectiveSnoozed(thread, { now: new Date().toISOString() })
+          : snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
@@ -5017,6 +5024,7 @@ export default function Sidebar() {
                 snooze: supportsSnooze,
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
+                threadGroups: supportsThreadGroups,
               },
               snoozePresets,
               group: groupEntry
@@ -5315,6 +5323,7 @@ export default function Sidebar() {
               supports: {
                 settlement: capabilities?.threadSettlement === true,
                 snooze: capabilities?.threadSnooze === true,
+                threadGroups: capabilities?.threadGroups === true,
               },
               snoozePresets,
             }),

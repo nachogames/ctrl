@@ -795,6 +795,9 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
+  // The active group is the active chat's, so it shares the chat's server.
+  const activeThreadSupportsGroups =
+    activeThreadServerConfig?.environment.capabilities.threadGroups === true;
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -1945,7 +1948,7 @@ function OpenCommandPaletteDialog(props: {
       });
     }
 
-    if (activeGroup !== null) {
+    if (activeGroup !== null && activeThreadSupportsGroups) {
       const group = activeGroup;
       actionItems.push({
         kind: "action",
@@ -1962,7 +1965,7 @@ function OpenCommandPaletteDialog(props: {
       });
     }
 
-    if (activeThread && offersHandOff(activeThread)) {
+    if (activeThread && offersHandOff(activeThread) && activeThreadSupportsGroups) {
       const thread = activeThread;
       const canHandOff = canHandOffThread(thread);
       actionItems.push({
