@@ -352,6 +352,44 @@ it.effect("a group launch that reuses a thread prunes the group it left", () => 
   }).pipe(Effect.provide(makeLayer(threads, dispatched)));
 });
 
+it.effect("a reuse launch that moves the thread and then fails still prunes the old group", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [b, shell(b)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    yield* service.create({
+      commandId: CommandId.make("command:failed:target"),
+      groupId,
+      projectId,
+      threadIds: [a],
+    });
+    yield* service.create({
+      commandId: CommandId.make("command:failed:previous"),
+      groupId: otherGroupId,
+      projectId,
+      threadIds: [b],
+    });
+
+    const error = yield* service
+      .withGroupLaunch(
+        groupId,
+        Effect.sync(() => threads.set(b, { ...threads.get(b)!, groupId })).pipe(
+          Effect.andThen(Effect.fail("dispatch-message failed" as const)),
+        ),
+        { reusedThreadId: b },
+      )
+      .pipe(Effect.flip);
+
+    assert.equal(error, "dispatch-message failed");
+    assert.isTrue(Option.isNone(yield* groups.getShell(otherGroupId)));
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
 it.effect("moving the parent out prunes a group whose other threads are subagents", () => {
   const liveChild = ThreadId.make("thread-a:subagent");
   const archivedChild = ThreadId.make("thread-a:subagent:archived");

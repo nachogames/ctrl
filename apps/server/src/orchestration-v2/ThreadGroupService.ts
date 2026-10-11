@@ -537,9 +537,23 @@ export const make = Effect.gen(function* () {
             );
       // The launch checks the group itself, after its receipt, so a retried
       // launch replays even when the group has gone since.
-      const result = yield* groupLocks.withLock(groupId, launch);
-      if (previous !== null && previous !== groupId) yield* pruneIfEmpty(previous);
-      return result;
+      const launchLocked = groupLocks.withLock(groupId, launch);
+      if (previous === null || previous === groupId) return yield* launchLocked;
+      // A reuse launch can move the thread and then fail, so prune on every
+      // exit. A prune failure must not fail a launch that already committed;
+      // the restart sweep catches what it misses.
+      return yield* launchLocked.pipe(
+        Effect.ensuring(
+          pruneIfEmpty(previous).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestration-v2.thread-group.launch-prune-failed", {
+                groupId: previous,
+                cause,
+              }),
+            ),
+          ),
+        ),
+      );
     }).pipe(Effect.withSpan("ThreadGroupService.withGroupLaunch"));
 
   return ThreadGroupService.of({
