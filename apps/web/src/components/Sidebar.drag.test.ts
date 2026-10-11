@@ -680,6 +680,74 @@ describe("sidebar drag projection", () => {
     ).toBe(true);
   });
 
+  it("keeps the boundary labels' space while the layout is held", () => {
+    const items: SidebarListItem[] = [
+      pinnedHeader,
+      { kind: "group", key: "g", section: "pinned" },
+      thread("p", "pinned"),
+      divider,
+      { kind: "project-heading", key: "one" },
+      thread("a1", "active"),
+      thread("a2", "active"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const overGroup = sidebarListItemId(items[1]!);
+    const held = preview(
+      {
+        items,
+        settledOrder: [],
+        settledExpanded: true,
+        boundaryLabelHeight: 24,
+        holdsLayout: (_active, over) => over === overGroup,
+      },
+      "a1",
+      overGroup,
+      1,
+      36,
+    );
+    // Rows keep their order; each label opens its own space above them.
+    expect(held.get(overGroup)?.y).toBe(24);
+    expect(held.get("p")?.y).toBe(24);
+    expect(held.get("sidebar-project-one")?.y).toBe(48);
+    expect(held.get("a1")).toEqual(stationary);
+    expect(held.get("a2")?.y).toBe(48);
+    expect(held.get(sidebarMarkerId("settled-header"))?.y).toBe(48);
+  });
+
+  it("carries the space an unsortable row leaves after a group's last chat", () => {
+    const items: SidebarListItem[] = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      { kind: "group", key: "g", section: "active" },
+      { kind: "thread", key: "m1", section: "active", groupKey: "g" },
+      thread("a1", "active"),
+      thread("a2", "active"),
+    ];
+    const strategy = createSidebarSortingStrategy({
+      items,
+      settledOrder: [],
+      settledExpanded: true,
+      boundaryLabelHeight: 24,
+    });
+    const args = layout(items, "a2", "a1", 1, 82, 36);
+    // A 28px "New chat in group" row sits between m1 and a1.
+    const rects = args.rects.map((rect, index) =>
+      index >= 5 ? { ...rect, top: rect.top + 29, bottom: rect.bottom + 29 } : rect,
+    );
+    const at = (key: string) =>
+      strategy({
+        ...args,
+        rects,
+        index: items.findIndex((item) => sidebarListItemId(item) === key),
+      });
+    expect(at("m1")?.y).toBe(48);
+    // a2 lands above a1, below the New chat row's space.
+    expect(at("a2")).toEqual(stationary);
+    expect(at("a1")?.y).toBe(48 + 37);
+  });
+
   it("previews a time-ordered drop into a new project heading", () => {
     const items: SidebarListItem[] = [
       pinnedHeader,

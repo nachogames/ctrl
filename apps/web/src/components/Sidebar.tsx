@@ -1958,7 +1958,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item={threadKey}
-        data-sidebar-group-block={props.tree === "member" ? "" : undefined}
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(

@@ -85,7 +85,7 @@ describe("move to group menu", () => {
         group: { title: "Auth refactor", branch: "feat/auth", worktreePath: "/wt/auth" },
       }),
     ).toBe(
-      "Move “Fix login” to Auth refactor's workspace (feat/auth)? The chat will continue in /wt/auth.",
+      "Move “Fix login” into “Auth refactor”?\nIt will switch to the group's workspace (feat/auth) and continue in /wt/auth.",
     );
     expect(
       workspaceMismatchConfirmMessage({
@@ -93,7 +93,7 @@ describe("move to group menu", () => {
         group: { title: "Docs", branch: null, worktreePath: null },
       }),
     ).toBe(
-      "Move “Fix login” to Docs's workspace? The chat will continue in the project's main checkout.",
+      "Move “Fix login” into “Docs”?\nIt will switch to the group's workspace and continue in the project's main checkout.",
     );
   });
 });

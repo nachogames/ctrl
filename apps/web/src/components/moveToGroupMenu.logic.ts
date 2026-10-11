@@ -85,7 +85,10 @@ export function workspaceMismatchConfirmMessage(input: {
   const { group } = input;
   const branch = group.branch === null ? "" : ` (${group.branch})`;
   const where = group.worktreePath ?? "the project's main checkout";
-  return `Move “${input.chatTitle}” to ${group.title}'s workspace${branch}? The chat will continue in ${where}.`;
+  return [
+    `Move “${input.chatTitle}” into “${group.title}”?`,
+    `It will switch to the group's workspace${branch} and continue in ${where}.`,
+  ].join("\n");
 }
 
 export type MoveWithWorkspaceConfirmOutcome<R> =

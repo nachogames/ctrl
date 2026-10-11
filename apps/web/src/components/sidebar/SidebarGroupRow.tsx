@@ -185,8 +185,6 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
     <li
       ref={setNodeRef}
       data-thread-selection-safe
-      // An expanded group opens a block that its "New chat" row closes.
-      data-sidebar-group-block={expanded ? "" : undefined}
       data-testid="sidebar-group-row"
       className="list-none"
       style={style}
@@ -251,9 +249,8 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
 });
 
 /**
- * "+ New chat in group", the last child of an expanded group. Its space is
- * always reserved so the list never shifts; it fades in while a row of its
- * group is hovered (the `group-block-hover` variant) or it has focus.
+ * "+ New chat in group", the last child of an expanded group: a muted row that
+ * brightens on hover or focus, so the space it takes always reads as an action.
  */
 export const SidebarGroupNewChatRow = memo(function SidebarGroupNewChatRow(props: {
   groupKey: string;
@@ -261,15 +258,11 @@ export const SidebarGroupNewChatRow = memo(function SidebarGroupNewChatRow(props
 }) {
   const { groupKey, onNewChat } = props;
   return (
-    <li
-      data-thread-selection-safe
-      data-sidebar-group-new-chat
-      className="list-none opacity-0 transition-opacity delay-100 duration-100 group-block-hover:opacity-100 group-block-hover:delay-0 motion-reduce:transition-none"
-    >
+    <li data-thread-selection-safe className="list-none">
       <button
         type="button"
         onClick={() => onNewChat(groupKey)}
-        className="flex h-7 w-full cursor-pointer items-center rounded-md px-2.5 pl-6 text-left text-xs text-sidebar-muted-foreground/70 outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="flex h-7 w-full cursor-pointer items-center rounded-md px-2.5 pl-6 text-left text-xs text-sidebar-muted-foreground/60 outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <span className="flex h-full min-w-0 flex-1 items-center gap-2 border-l border-sidebar-border pl-5">
           <PlusIcon aria-hidden className="size-3.5 shrink-0" />
