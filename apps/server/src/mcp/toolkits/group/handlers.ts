@@ -8,6 +8,7 @@ import {
   type ThreadGroupUpdatePayload,
   type ThreadId,
 } from "@t3tools/contracts";
+import { resolveNewestCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -254,7 +255,11 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
         ),
       );
       return {
-        group,
+        // A group usually forms before its pull request exists; show the newest one a chat linked since.
+        group: {
+          ...group,
+          pullRequest: group.pullRequest ?? resolveNewestCurrentPullRequestLink(members),
+        },
         chats: members.map((thread) => ({
           threadId: thread.id,
           title: thread.title,

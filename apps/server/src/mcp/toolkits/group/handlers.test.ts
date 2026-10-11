@@ -215,6 +215,31 @@ it.effect("reads the caller's group by default and names its chats", () =>
   }),
 );
 
+it.effect("reads the newest pull request a chat linked when the group has none", () =>
+  Effect.gen(function* () {
+    const { handle } = yield* makeHarness({
+      callerGroupId: groupId,
+      buildFields: {
+        pullRequests: [
+          {
+            host: "github.com",
+            repository: "t3tools/t3code",
+            number: 12,
+            url: "https://github.com/t3tools/t3code/pull/12",
+            source: "manual",
+            linkedAt: "2026-10-10T01:00:00.000Z",
+            snapshot: null,
+            stack: null,
+          },
+        ],
+      },
+    });
+    expect(yield* handle("t3_group_read", {})).toMatchObject({
+      group: { id: groupId, pullRequest: { number: 12 } },
+    });
+  }),
+);
+
 it.effect("reads what is running for the group from the scanner", () =>
   Effect.gen(function* () {
     const running: ReadonlyArray<ThreadGroupRunningResource> = [

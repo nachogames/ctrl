@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -77,5 +77,34 @@ describe("thread group presentation", () => {
     });
     const group = presentThreadGroup(environmentId, v2ThreadGroup, [parent, subagent]);
     expect(group.threadIds).toEqual(["parent"]);
+  });
+
+  it("falls back to the newest pull request a member linked when the group has none", () => {
+    const link = (number: number, linkedAt: string): ThreadPullRequestLink => ({
+      host: "github.com",
+      repository: "t3tools/t3code",
+      number,
+      url: `https://github.com/t3tools/t3code/pull/${number}`,
+      source: "manual",
+      linkedAt,
+      snapshot: null,
+      stack: null,
+    });
+    const older = member("older", "2026-06-20T01:00:00.000Z", {
+      pullRequests: [link(1, "2026-06-20T02:00:00.000Z")],
+    });
+    const newer = member("newer", "2026-06-20T02:00:00.000Z", {
+      pullRequests: [link(2, "2026-06-20T03:00:00.000Z")],
+    });
+    const bare = member("bare", "2026-06-20T03:00:00.000Z");
+    const groupWithout = { ...v2ThreadGroup, pullRequest: null };
+    expect(
+      presentThreadGroup(environmentId, groupWithout, [older, newer, bare]).pullRequest?.number,
+    ).toBe(2);
+    expect(presentThreadGroup(environmentId, groupWithout, [bare]).pullRequest).toBeNull();
+    // A pull request stored on the group wins.
+    const stored = link(9, "2026-06-20T00:00:00.000Z");
+    const groupWith = { ...v2ThreadGroup, pullRequest: stored };
+    expect(presentThreadGroup(environmentId, groupWith, [older, newer]).pullRequest).toBe(stored);
   });
 });
