@@ -69,6 +69,7 @@ import * as DesktopBrowserChannel from "./preview/DesktopBrowserChannel.ts";
 import * as ServerBrowserStream from "./preview/ServerBrowserStream.ts";
 import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
 import * as ProcessRunner from "./processRunner.ts";
+import * as DockerScanner from "./threadGroups/DockerScanner.ts";
 import * as GroupResourceScanner from "./threadGroups/GroupResourceScanner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
@@ -579,7 +580,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
   // Reads the preview scanner, group store and threads provided below.
-  GroupResourceScanner.layer.pipe(Layer.provide(ProcessRunner.layer)),
+  GroupResourceScanner.layer.pipe(
+    Layer.provide(DockerScanner.layer),
+    Layer.provide(ProcessRunner.layer),
+  ),
 ).pipe(
   // Core Services
   Layer.provideMerge(layerOrchestrationApplication),
