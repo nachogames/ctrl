@@ -158,7 +158,7 @@ describe("GroupResourceScanner servers", () => {
           expect(resources[0]).toEqual({
             id: "server:3000",
             kind: "server",
-            name: "vite :3000",
+            name: "vite",
             detail: ":3000",
             url: "http://localhost:3000",
             source: "terminal",

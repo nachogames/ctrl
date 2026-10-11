@@ -91,11 +91,12 @@ const makeHarness = (options: {
   readonly callerGroupId: ThreadGroupId | null;
   readonly createError?: ThreadGroup.ThreadGroupServiceError;
   readonly buildFields?: Partial<OrchestrationV2ThreadShell>;
+  readonly callerFields?: Partial<OrchestrationV2ThreadShell>;
   readonly manualResources?: ReadonlyArray<ThreadGroupManualResource>;
   readonly scan?: GroupResourceScanner.GroupResourceScanner["Service"]["scan"];
 }) =>
   Effect.gen(function* () {
-    const caller = thread(callerId, { groupId: options.callerGroupId });
+    const caller = thread(callerId, { groupId: options.callerGroupId, ...options.callerFields });
     const shells = new Map([
       [callerId, caller],
       [buildId, thread(buildId, { status: "idle", ...options.buildFields })],
@@ -287,6 +288,39 @@ it.effect("creates a group from the caller's chat by default", () =>
     ]);
     expect(recorded.created[0]?.groupId).toMatch(/^group:/);
     expect(result).toMatchObject({ group: { title: "Auth refactor" } });
+  }),
+);
+
+it.effect(
+  "groups the caller with the chats it names, the named first chat supplying the workspace",
+  () =>
+    Effect.gen(function* () {
+      const { handle, recorded } = yield* makeHarness({ callerGroupId: null });
+      yield* handle("t3_group_create", { threadIds: [buildId] });
+      yield* handle("t3_group_create", { threadIds: [callerId, buildId] });
+      yield* handle("t3_group_create", { threadIds: [buildId], includeCaller: false });
+      expect(recorded.created.map((input) => input.threadIds)).toEqual([
+        [buildId, callerId],
+        [callerId, buildId],
+        [buildId],
+      ]);
+    }),
+);
+
+it.effect("does not add a subagent caller to the chats it names", () =>
+  Effect.gen(function* () {
+    const { handle, recorded } = yield* makeHarness({
+      callerGroupId: null,
+      callerFields: {
+        lineage: {
+          parentThreadId: buildId,
+          relationshipToParent: "subagent",
+          rootThreadId: buildId,
+        },
+      },
+    });
+    yield* handle("t3_group_create", { threadIds: [buildId] });
+    expect(recorded.created.map((input) => input.threadIds)).toEqual([[buildId]]);
   }),
 );
 

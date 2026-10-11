@@ -105,6 +105,22 @@ const readGroup = Effect.fn("mcp.group.readGroup")(function* (groupId: ThreadGro
 const isSubagent = (thread: OrchestrationV2ThreadShell) =>
   thread.lineage.relationshipToParent === "subagent";
 
+/**
+ * The chats a create groups: the listed ones, then the calling chat unless it is listed, left
+ * out, or a subagent (which cannot join a group), so the first listed chat still supplies the
+ * workspace. Defaults to the calling chat alone; undefined with neither a list nor a caller.
+ */
+const groupCreateThreadIds = (
+  threadIds: ReadonlyArray<ThreadId> | undefined,
+  caller: OrchestrationV2ThreadShell | undefined,
+  includeCaller: boolean,
+): ReadonlyArray<ThreadId> | undefined => {
+  if (threadIds === undefined) return caller === undefined ? undefined : [caller.id];
+  if (!includeCaller || caller === undefined || isSubagent(caller) || threadIds.includes(caller.id))
+    return threadIds;
+  return [...threadIds, caller.id];
+};
+
 /** The group's chats, archived ones included, oldest first. */
 const readMembers = Effect.fn("mcp.group.readMembers")(function* (
   context: Caller,
@@ -257,8 +273,11 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
     (input) =>
       Effect.gen(function* () {
         const context = yield* readCaller();
-        const threadIds =
-          input.threadIds ?? (context.caller === undefined ? undefined : [context.caller.id]);
+        const threadIds = groupCreateThreadIds(
+          input.threadIds,
+          context.caller,
+          input.includeCaller ?? true,
+        );
         const firstId = threadIds?.[0];
         if (threadIds === undefined || firstId === undefined)
           return yield* new OrchestratorMcpFailure({

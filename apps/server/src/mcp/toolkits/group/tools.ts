@@ -77,10 +77,15 @@ const GroupReadTool = Tool.make("t3_group_read", {
 const GroupCreateTool = Tool.make("t3_group_create", {
   ...groupTool,
   description:
-    "Group chats that work toward one goal, for example a planning chat and the build chat it launched. threadIds defaults to just your own chat; list your chat first and then the others to group them together. The first chat supplies the group's branch, worktree, pull request and default title, and the group belongs to that chat's project; every chat must be in that project. A chat already in another group moves to this one. Use t3_group_move_thread to add a chat to an existing group.",
+    "Group chats that work toward one goal, for example a planning chat and the build chat it launched. Your own chat is always included: call it with no threadIds to group just your chat, or with threadIds: [buildThreadId] to group your chat with the build chat in one call (pass includeCaller: false to leave your chat out). The first listed chat supplies the group's branch, worktree, pull request and default title (your chat does when you list none), and the group belongs to that chat's project; every chat must be in that project. A chat already in another group moves to this one. Use t3_group_move_thread to add a chat to an existing group.",
   parameters: Schema.Struct({
     threadIds: Schema.optional(Schema.Array(ThreadId).check(Schema.isMinLength(1))).annotate({
-      description: "Chats to group, first one supplying the workspace. Defaults to [your chat].",
+      description:
+        "Chats to group, first one supplying the workspace. Your chat is added after them unless includeCaller is false. Defaults to [your chat].",
+    }),
+    includeCaller: Schema.optional(Schema.Boolean).annotate({
+      description:
+        "Whether your own chat joins the group when you pass threadIds. Defaults to true. Ignored outside a T3 chat.",
     }),
     title: Schema.optional(TrimmedNonEmptyString).annotate({
       description:

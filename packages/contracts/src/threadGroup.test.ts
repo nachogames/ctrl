@@ -72,7 +72,7 @@ describe("thread group contracts", () => {
     const server = {
       id: "server:5733",
       kind: "server",
-      name: "node :5733",
+      name: "node",
       detail: ":5733",
       url: "http://localhost:5733",
       source: "cwd",

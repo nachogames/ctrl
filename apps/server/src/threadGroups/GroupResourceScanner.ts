@@ -89,7 +89,7 @@ export const attributeServers = (
       {
         id: `server:${listener.port}`,
         kind: "server",
-        name: `${listener.processName ?? "server"} ${detail}`,
+        name: listener.processName ?? "server",
         detail,
         url: `http://${listener.host}:${listener.port}`,
         source,
