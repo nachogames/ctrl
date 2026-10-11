@@ -65,6 +65,8 @@ interface LayerOptions {
   /** Paths the injected file system reports as present. */
   readonly existingPaths?: ReadonlySet<string>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
+  readonly pruneWorktrees?: GitWorkflow.GitWorkflowService["Service"]["pruneWorktrees"];
+  readonly localStatus?: GitWorkflow.GitWorkflowService["Service"]["localStatus"];
 }
 
 function makeLayer(
@@ -80,6 +82,8 @@ function makeLayer(
         }),
         Layer.mock(GitWorkflow.GitWorkflowService)({
           createWorktree: options.createWorktree ?? (() => Effect.die("unused")),
+          pruneWorktrees: options.pruneWorktrees ?? (() => Effect.void),
+          localStatus: options.localStatus ?? (() => Effect.die("unused")),
         }),
         RuntimeLayer.layerEventSink,
         ThreadGroupStore.layer,
@@ -451,6 +455,94 @@ it.effect("recreating a worktree that exists does nothing", () => {
   );
 });
 
+it.effect("refuses to move a chat away from a worktree with uncommitted changes", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [c, shell(c, otherWorkspace)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    const service = yield* createGroupOfA;
+    const before = dispatched.length;
+    const error = yield* service
+      .moveThread({
+        commandId: CommandId.make("command:adopt-dirty"),
+        threadId: c,
+        groupId,
+        adoptGroupWorkspace: true,
+      })
+      .pipe(Effect.flip);
+    assert.deepStrictEqual(
+      error,
+      new ThreadGroupService.ThreadGroupWorkspaceDirtyError({
+        threadId: c,
+        worktreePath: otherWorkspace.worktreePath,
+      }),
+    );
+    assert.equal(dispatched.length, before);
+    assert.deepInclude(threads.get(c), { groupId: null, ...otherWorkspace });
+  }).pipe(
+    Effect.provide(
+      makeLayer(threads, dispatched, {
+        existingPaths: new Set([groupWorktree, otherWorkspace.worktreePath]),
+        localStatus: () => Effect.succeed({ hasWorkingTreeChanges: true } as never),
+      }),
+    ),
+  );
+});
+
+it.effect("moves a chat away from a clean worktree", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [c, shell(c, otherWorkspace)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  const statusReads: Array<string> = [];
+  return Effect.gen(function* () {
+    const service = yield* createGroupOfA;
+    yield* service.moveThread({
+      commandId: CommandId.make("command:adopt-clean"),
+      threadId: c,
+      groupId,
+      adoptGroupWorkspace: true,
+    });
+    assert.deepStrictEqual(statusReads, [otherWorkspace.worktreePath]);
+    assert.deepInclude(threads.get(c), { groupId, worktreePath: groupWorktree });
+  }).pipe(
+    Effect.provide(
+      makeLayer(threads, dispatched, {
+        existingPaths: new Set([groupWorktree, otherWorkspace.worktreePath]),
+        localStatus: (input) =>
+          Effect.sync(() => {
+            statusReads.push(input.cwd);
+            return { hasWorkingTreeChanges: false } as never;
+          }),
+      }),
+    ),
+  );
+});
+
+it.effect("a chat without a worktree adopts the group's without a status read", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [c, shell(c, { branch: "main", worktreePath: null })],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    const service = yield* createGroupOfA;
+    // localStatus dies if called.
+    yield* service.moveThread({
+      commandId: CommandId.make("command:adopt-local"),
+      threadId: c,
+      groupId,
+      adoptGroupWorkspace: true,
+    });
+    assert.deepInclude(threads.get(c), { groupId, worktreePath: groupWorktree });
+  }).pipe(
+    Effect.provide(makeLayer(threads, dispatched, { existingPaths: new Set([groupWorktree]) })),
+  );
+});
+
 it.effect("recreates a missing worktree on the group's branch from the project root", () => {
   const threads = new Map([[a, shell(a)]]);
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
@@ -459,7 +551,8 @@ it.effect("recreates a missing worktree on the group's branch from the project r
     const service = yield* createGroupOfA;
     const error = yield* service.recreateWorktree(groupId).pipe(Effect.flip);
     assert.deepStrictEqual(calls, [
-      { cwd: `/repo/${projectId}`, refName: "feat/auth-refactor", path: groupWorktree },
+      { prune: { cwd: `/repo/${projectId}` } },
+      { create: { cwd: `/repo/${projectId}`, refName: "feat/auth-refactor", path: groupWorktree } },
     ]);
     assert.equal(error._tag, "ThreadGroupOperationError");
     assert.equal(
@@ -474,9 +567,10 @@ it.effect("recreates a missing worktree on the group's branch from the project r
   }).pipe(
     Effect.provide(
       makeLayer(threads, dispatched, {
+        pruneWorktrees: (input) => Effect.sync(() => void calls.push({ prune: input })),
         createWorktree: (input) =>
           Effect.suspend(() => {
-            calls.push(input);
+            calls.push({ create: input });
             return Effect.fail(
               new GitCommandError({
                 operation: "createWorktree",
@@ -883,6 +977,7 @@ it("passes user-facing service errors through as the mutation message", () => {
     new ThreadGroupService.ThreadGroupSubagentError({ threadId: a }),
     new ThreadGroupService.ThreadGroupWorkspaceMismatchError({ threadId: a, groupId }),
     new ThreadGroupService.ThreadGroupThreadBusyError({ threadId: a }),
+    new ThreadGroupService.ThreadGroupWorkspaceDirtyError({ threadId: a, worktreePath: "/wt" }),
     new ThreadGroupService.ThreadGroupWorktreeMissingError({
       groupId,
       worktreePath: "/repo-worktrees/auth",

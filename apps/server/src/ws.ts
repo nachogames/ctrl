@@ -2078,6 +2078,7 @@ const layerWsRpc = (
                     ThreadGroupSubagentError: groupLaunchError,
                     ThreadGroupWorkspaceMismatchError: groupLaunchError,
                     ThreadGroupThreadBusyError: groupLaunchError,
+                    ThreadGroupWorkspaceDirtyError: groupLaunchError,
                     ThreadGroupWorktreeMissingError: groupLaunchError,
                     ThreadGroupOperationError: groupLaunchError,
                   }),

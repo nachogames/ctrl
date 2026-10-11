@@ -90,6 +90,15 @@ export class ThreadGroupThreadBusyError extends Schema.TaggedError<ThreadGroupTh
   }
 }
 
+export class ThreadGroupWorkspaceDirtyError extends Schema.TaggedError<ThreadGroupWorkspaceDirtyError>()(
+  "ThreadGroupWorkspaceDirtyError",
+  { threadId: ThreadId, worktreePath: Schema.String },
+) {
+  override get message(): string {
+    return `“${this.worktreePath}” has uncommitted changes. Commit or stash them before moving this chat to the group's workspace.`;
+  }
+}
+
 export class ThreadGroupWorktreeMissingError extends Schema.TaggedError<ThreadGroupWorktreeMissingError>()(
   "ThreadGroupWorktreeMissingError",
   { groupId: ThreadGroupId, worktreePath: Schema.String },
@@ -108,6 +117,7 @@ export class ThreadGroupOperationError extends Schema.TaggedError<ThreadGroupOpe
       "commit-group-command",
       "update-thread",
       "recreate-worktree",
+      "read-worktree-status",
     ]),
     groupId: Schema.optional(ThreadGroupId),
     threadId: Schema.optional(ThreadId),
@@ -126,6 +136,7 @@ export type ThreadGroupServiceError =
   | ThreadGroupSubagentError
   | ThreadGroupWorkspaceMismatchError
   | ThreadGroupThreadBusyError
+  | ThreadGroupWorkspaceDirtyError
   | ThreadGroupWorktreeMissingError
   | ThreadGroupOperationError;
 
@@ -185,7 +196,8 @@ export class ThreadGroupService extends Context.Service<
     ) => Effect.Effect<OrchestrationThreadGroupShell | null, ThreadGroupServiceError>;
     /**
      * Recreate the group's worktree at its path on its branch when the
-     * directory is gone. A no-op when it exists or the group has no worktree.
+     * directory is gone. A no-op when it exists or the group has no worktree,
+     * so a retry needs no command receipt.
      */
     readonly recreateWorktree: (
       groupId: ThreadGroupId,
@@ -318,7 +330,8 @@ export const make = Effect.gen(function* () {
   });
 
   // An unreadable path counts as missing: neither a move nor a recreate should
-  // trust a workspace it cannot see.
+  // trust a workspace it cannot see. (Turn start assumes present instead, so it
+  // never recreates over a worktree it merely failed to stat.)
   const pathExists = (path: string) =>
     fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
 
@@ -565,6 +578,27 @@ export const make = Effect.gen(function* () {
           if (worktreePath !== null && !(yield* pathExists(worktreePath))) {
             return yield* new ThreadGroupWorktreeMissingError({ groupId: target, worktreePath });
           }
+          // Re-pointing leaves the old worktree behind, so uncommitted work there
+          // would drop out of the chat's sight.
+          const current = thread.worktreePath;
+          if (current !== null && (yield* pathExists(current))) {
+            const status = yield* git.localStatus({ cwd: current }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ThreadGroupOperationError({
+                    operation: "read-worktree-status",
+                    threadId: thread.id,
+                    cause,
+                  }),
+              ),
+            );
+            if (status.hasWorkingTreeChanges) {
+              return yield* new ThreadGroupWorkspaceDirtyError({
+                threadId: thread.id,
+                worktreePath: current,
+              });
+            }
+          }
           // One update joins and switches together, so a failed check or a
           // raced worktree change leaves the chat where it was.
           yield* threads
@@ -647,9 +681,15 @@ export const make = Effect.gen(function* () {
         if (Option.isNone(project)) {
           return yield* recreateError(`Project ${group.projectId} was not found.`);
         }
+        const cwd = project.value.workspaceRoot;
+        // A folder deleted outside T3 stays registered in git, and
+        // `git worktree add` refuses a registered path until it is pruned.
         yield* git
-          .createWorktree({ cwd: project.value.workspaceRoot, refName: branch, path: worktreePath })
-          .pipe(Effect.mapError(recreateError));
+          .pruneWorktrees({ cwd })
+          .pipe(
+            Effect.andThen(git.createWorktree({ cwd, refName: branch, path: worktreePath })),
+            Effect.mapError(recreateError),
+          );
       }),
     );
     return yield* readShell(groupId);
@@ -811,6 +851,7 @@ export function threadGroupMutationErrorMessage(
     case "ThreadGroupSubagentError":
     case "ThreadGroupWorkspaceMismatchError":
     case "ThreadGroupThreadBusyError":
+    case "ThreadGroupWorkspaceDirtyError":
     case "ThreadGroupWorktreeMissingError":
       return error.message;
     case "ThreadGroupOperationError": {
