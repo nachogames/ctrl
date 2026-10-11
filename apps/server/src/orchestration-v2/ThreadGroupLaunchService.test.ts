@@ -13,10 +13,12 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -62,13 +64,27 @@ interface Harness {
 
 function makeLayer(
   harness: Harness,
-  options: { readonly autoSettleAfterDays?: number | null; readonly failLaunch?: boolean } = {},
+  options: {
+    readonly autoSettleAfterDays?: number | null;
+    readonly failLaunch?: boolean;
+    readonly failSettle?: boolean;
+    /** Fails the next read of this thread once, e.g. a crash between launch and group create. */
+    readonly failReadOnce?: ThreadId;
+  } = {},
 ) {
+  let failReadPending = options.failReadOnce;
   const { threads, launches, settles } = harness;
   const launchedByCommand = new Map<CommandId, ThreadId>();
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   const management = Layer.mock(ThreadManagement.ThreadManagementService)({
-    getThreadShell: (threadId) => Effect.succeed(threads.get(threadId) ?? null),
+    getThreadShell: (threadId) =>
+      Effect.suspend(() => {
+        if (threadId === failReadPending) {
+          failReadPending = undefined;
+          return Effect.die("read failed");
+        }
+        return Effect.succeed(threads.get(threadId) ?? null);
+      }),
     listProjectThreads: (input) =>
       Effect.succeed(
         [...threads.values()].filter(
@@ -115,10 +131,15 @@ function makeLayer(
         return { sequence: dispatched.length, storedEvents: [] };
       }),
     settleThread: (input) =>
-      Effect.sync(() => {
-        settles.push({ threadId: input.threadId, commandId: input.commandId });
-        return { sequence: settles.length };
-      }),
+      Effect.suspend(() => {
+        if (options.failSettle === true) return Effect.die("settle failed");
+        return Effect.void;
+      }).pipe(
+        Effect.map(() => {
+          settles.push({ threadId: input.threadId, commandId: input.commandId });
+          return { sequence: settles.length };
+        }),
+      ),
   });
   const launcher = Layer.effect(
     ThreadLaunch.ThreadLaunchService,
@@ -177,6 +198,8 @@ function makeLayer(
     Layer.provideMerge(Layer.merge(ThreadGroupService.layer, launcher)),
     Layer.provideMerge(
       Layer.mergeAll(
+        FileSystem.layerNoop({}),
+        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         RuntimeLayer.layerEventSink,
         ThreadGroupStore.layer,
         ProjectStore.layer,
@@ -290,8 +313,15 @@ it.effect("handoff from an ungrouped chat creates a group and links the two chat
     assert.isTrue(result.createdGroup);
     assert.equal(result.group.worktreePath, "/repo-worktrees/auth");
     assert.equal(harness.threads.get(source)?.groupId, result.group.id);
+    assert.equal(harness.threads.get(result.threadId)?.groupId, result.group.id);
     const launch = harness.launches[0]!;
-    assert.equal(launch.groupId, result.group.id);
+    // The group is created after the launch, from both chats.
+    assert.isUndefined(launch.groupId);
+    assert.deepStrictEqual(launch.workspaceStrategy, {
+      type: "existing_worktree",
+      worktreePath: "/repo-worktrees/auth",
+      branch: "feat/auth-refactor",
+    });
     assert.equal(launch.title, "Continue: Auth refactor");
     assert.equal(launch.initialMessage?.text, ThreadGroupLaunchService.HANDOFF_DEFAULT_PROMPT);
     assert.deepStrictEqual(launch.initialMessage?.context?.records, [
@@ -418,7 +448,7 @@ it.effect("a retried handoff returns the same chat and keeps the recorded handof
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 
-it.effect("a failed launch links nothing and records no handoff", () => {
+it.effect("a failed launch leaves the source untouched", () => {
   const harness = newHarness([shell(source)]);
   return Effect.gen(function* () {
     yield* seedProject;
@@ -428,9 +458,64 @@ it.effect("a failed launch links nothing and records no handoff", () => {
     const error = yield* service.handoff(handoffInput).pipe(Effect.flip);
 
     assert.equal(error._tag, "ThreadLaunchError");
-    assert.isNull(harness.threads.get(source)?.handedOffTo);
-    const group = yield* groups.getShell(ThreadGroupId.make("command:handoff:group"));
-    assert.isNull(Option.getOrUndefined(group)?.lastHandoff);
+    assert.deepStrictEqual(harness.threads.get(source), shell(source));
+    assert.isTrue(Option.isNone(yield* groups.get(ThreadGroupId.make("command:handoff:group"))));
     assert.equal(harness.settles.length, 0);
   }).pipe(Effect.provide(makeLayer(harness, { failLaunch: true })));
+});
+
+it.effect("a handoff that failed after its launch completes on retry with one new chat", () => {
+  const harness = newHarness([shell(source)]);
+  const launchedId = ThreadId.make("thread-launched-1");
+  return Effect.gen(function* () {
+    yield* seedProject;
+    const service = yield* ThreadGroupLaunchService.ThreadGroupLaunchService;
+
+    yield* service.handoff(handoffInput).pipe(Effect.exit);
+    assert.isNull(harness.threads.get(source)?.groupId);
+    const result = yield* service.handoff(handoffInput);
+
+    assert.equal(result.threadId, launchedId);
+    assert.isTrue(result.createdGroup);
+    assert.equal(harness.threads.get(source)?.groupId, result.group.id);
+    assert.equal(harness.threads.get(launchedId)?.groupId, result.group.id);
+    assert.equal(harness.threads.size, 2);
+    assert.equal(harness.threads.get(source)?.handedOffTo, launchedId);
+  }).pipe(Effect.provide(makeLayer(harness, { failReadOnce: launchedId })));
+});
+
+it.effect("a failed settle still reports the handoff", () => {
+  const harness = newHarness([shell(source)]);
+  return Effect.gen(function* () {
+    yield* seedProject;
+    const service = yield* ThreadGroupLaunchService.ThreadGroupLaunchService;
+
+    const result = yield* service.handoff(handoffInput);
+
+    assert.equal(result.sourceSettle, "failed");
+    assert.equal(harness.threads.get(source)?.handedOffTo, result.threadId);
+    assert.equal(result.group.lastHandoff?.toThreadId, result.threadId);
+  }).pipe(Effect.provide(makeLayer(harness, { failSettle: true })));
+});
+
+it.effect.each([
+  { name: "an empty", summary: "   ", reason: "empty" },
+  {
+    name: "an oversize",
+    summary: "x".repeat(ThreadGroupLaunchService.HANDOFF_SUMMARY_MAX_CHARS + 1),
+    reason: "too-long",
+  },
+] as const)("handoff rejects $name summary before any write", ({ summary, reason }) => {
+  const harness = newHarness([shell(source)]);
+  return Effect.gen(function* () {
+    yield* seedProject;
+    const service = yield* ThreadGroupLaunchService.ThreadGroupLaunchService;
+
+    const error = yield* service.handoff({ ...handoffInput, summary }).pipe(Effect.flip);
+
+    assert.equal(error._tag, "ThreadGroupHandoffSummaryError");
+    assert.equal(error._tag === "ThreadGroupHandoffSummaryError" && error.reason, reason);
+    assert.equal(harness.launches.length, 0);
+    assert.deepStrictEqual(harness.threads.get(source), shell(source));
+  }).pipe(Effect.provide(makeLayer(harness)));
 });

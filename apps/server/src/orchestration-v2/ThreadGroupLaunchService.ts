@@ -30,7 +30,7 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 export class ThreadGroupLaunchOperationError extends Schema.TaggedError<ThreadGroupLaunchOperationError>()(
   "ThreadGroupLaunchOperationError",
   {
-    operation: Schema.Literals(["read-settings", "settle-source"]),
+    operation: Schema.Literals(["read-settings"]),
     threadId: ThreadId,
     cause: Schema.Defect(),
   },
@@ -40,10 +40,25 @@ export class ThreadGroupLaunchOperationError extends Schema.TaggedError<ThreadGr
   }
 }
 
+/** Matches the bound of `HandoffContextRecord.summary`. */
+export const HANDOFF_SUMMARY_MAX_CHARS = 16_000;
+
+export class ThreadGroupHandoffSummaryError extends Schema.TaggedError<ThreadGroupHandoffSummaryError>()(
+  "ThreadGroupHandoffSummaryError",
+  { reason: Schema.Literals(["empty", "too-long"]) },
+) {
+  override get message(): string {
+    return this.reason === "empty"
+      ? "A handoff needs a summary. Summarize where this chat got to and what is left, then hand off again."
+      : `The handoff summary is longer than ${HANDOFF_SUMMARY_MAX_CHARS} characters. Shorten it and hand off again.`;
+  }
+}
+
 export type ThreadGroupLaunchServiceError =
   | ThreadGroupService.ThreadGroupServiceError
   | ThreadLaunch.ThreadLaunchError
-  | ThreadGroupLaunchOperationError;
+  | ThreadGroupLaunchOperationError
+  | ThreadGroupHandoffSummaryError;
 
 export interface ThreadGroupNewThreadInput {
   readonly commandId: CommandId;
@@ -78,7 +93,8 @@ export interface ThreadGroupHandoffResult {
   readonly group: OrchestrationThreadGroupShell;
   readonly threadId: ThreadId;
   readonly createdGroup: boolean;
-  readonly sourceSettle: "settled" | "settles-when-turn-ends" | "skipped";
+  /** "failed" means the handoff happened but settling the source did not; it was logged. */
+  readonly sourceSettle: "settled" | "settles-when-turn-ends" | "skipped" | "failed";
 }
 
 export class ThreadGroupLaunchService extends Context.Service<
@@ -197,18 +213,31 @@ export const make = Effect.gen(function* () {
   const handoff: ThreadGroupLaunchService["Service"]["handoff"] = Effect.fn(
     "ThreadGroupLaunchService.handoff",
   )(function* (input) {
-    const source = yield* readSource(input.sourceThreadId);
     const summary = input.summary.trim();
-    // A retry finds the source already in the group its first attempt created.
+    if (summary === "") return yield* new ThreadGroupHandoffSummaryError({ reason: "empty" });
+    if (summary.length > HANDOFF_SUMMARY_MAX_CHARS) {
+      return yield* new ThreadGroupHandoffSummaryError({ reason: "too-long" });
+    }
+    const source = yield* readSource(input.sourceThreadId);
+    // Everything that can fail before a write is read up front, so a failed
+    // handoff leaves the source as it was.
+    const settings = yield* settingsService.getSettings.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThreadGroupLaunchOperationError({
+            operation: "read-settings",
+            threadId: source.id,
+            cause,
+          }),
+      ),
+    );
+    const environmentId = yield* environment.getEnvironmentId;
     const derivedGroupId = ThreadGroupId.make(`${input.commandId}:group`);
-    const group =
-      source.groupId == null
-        ? yield* groupService.create({
-            commandId: CommandId.make(`${input.commandId}:group`),
-            groupId: derivedGroupId,
-            projectId: source.projectId,
-            threadIds: [source.id],
-          })
+    // A retry finds the source in the group its first attempt created, and
+    // replays the same steps.
+    const existingGroup =
+      source.groupId == null || source.groupId === derivedGroupId
+        ? null
         : yield* readGroup(source.groupId);
 
     const sourceTitle = clampTitle(source.title);
@@ -217,32 +246,43 @@ export const make = Effect.gen(function* () {
       contextId: ComposerContextId.make("handoff"),
       label: sourceTitle,
       kind: "handoff",
-      environmentId: yield* environment.getEnvironmentId,
+      environmentId,
       threadId: source.id,
       title: sourceTitle,
       summary,
     };
-    // Launching locks the group, so group writes wait until it has returned.
-    const launched = yield* groupService.withGroupLaunch(
-      group.id,
-      launcher.launch({
-        commandId: CommandId.make(`${input.commandId}:launch`),
+    const launchInput: ThreadLaunch.ThreadLaunchInput = {
+      commandId: CommandId.make(`${input.commandId}:launch`),
+      projectId: source.projectId,
+      title: input.title ?? clampTitle(`Continue: ${source.title}`),
+      modelSelection: source.modelSelection,
+      runtimeMode: source.runtimeMode,
+      interactionMode: source.interactionMode,
+      workspaceStrategy: workspaceOf(existingGroup ?? source),
+      ...(existingGroup === null ? {} : { groupId: existingGroup.id }),
+      initialMessage: {
+        text: input.prompt ?? HANDOFF_DEFAULT_PROMPT,
+        attachments: [],
+        context: { version: 1, records: [record] },
+      },
+      createdBy: input.createdBy,
+      creationSource: input.creationSource,
+    };
+    // An ungrouped source gets its group only once the new chat exists, so a
+    // failed launch changes nothing. The source comes first and gives the
+    // group its workspace, pull request and title.
+    const launched =
+      existingGroup === null
+        ? yield* launcher.launch(launchInput)
+        : yield* groupService.withGroupLaunch(existingGroup.id, launcher.launch(launchInput));
+    const group =
+      existingGroup ??
+      (yield* groupService.create({
+        commandId: CommandId.make(`${input.commandId}:group`),
+        groupId: derivedGroupId,
         projectId: source.projectId,
-        title: input.title ?? clampTitle(`Continue: ${source.title}`),
-        modelSelection: source.modelSelection,
-        runtimeMode: source.runtimeMode,
-        interactionMode: source.interactionMode,
-        workspaceStrategy: workspaceOf(group),
-        groupId: group.id,
-        initialMessage: {
-          text: input.prompt ?? HANDOFF_DEFAULT_PROMPT,
-          attachments: [],
-          context: { version: 1, records: [record] },
-        },
-        createdBy: input.createdBy,
-        creationSource: input.creationSource,
-      }),
-    );
+        threadIds: [source.id, launched.threadId],
+      }));
     yield* groupService.setHandoffLinks({
       commandId: input.commandId,
       fromThreadId: source.id,
@@ -261,45 +301,37 @@ export const make = Effect.gen(function* () {
       },
     });
 
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ThreadGroupLaunchOperationError({
-            operation: "read-settings",
-            threadId: source.id,
-            cause,
-          }),
-      ),
-    );
     const autoSettleOff =
       source.autoSettleDisabledAt != null ||
       resolveProjectSettings(settings, source.projectId).settings.sidebarAutoSettleAfterDays ===
         null;
-    let sourceSettle: ThreadGroupHandoffResult["sourceSettle"] = "skipped";
-    if (!autoSettleOff) {
-      // The source's own agent usually asks mid-turn; it settles once that turn ends.
-      const settled = yield* threads
-        .settleThread({
-          threadId: source.id,
-          commandId: CommandId.make(`${input.commandId}:settle`),
-          byOwnAgent: true,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ThreadGroupLaunchOperationError({
-                operation: "settle-source",
+    // The handoff has happened by now, so a settle that fails is reported, not raised.
+    const sourceSettle: ThreadGroupHandoffResult["sourceSettle"] = autoSettleOff
+      ? "skipped"
+      : yield* threads
+          .settleThread({
+            threadId: source.id,
+            commandId: CommandId.make(`${input.commandId}:settle`),
+            // The source's own agent usually asks mid-turn; it settles once that turn ends.
+            byOwnAgent: true,
+          })
+          .pipe(
+            Effect.map((settled) =>
+              "settlesWhenTurnEnds" in settled
+                ? ("settles-when-turn-ends" as const)
+                : ("settled" as const),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestration-v2.thread-group.handoff-settle-failed", {
                 threadId: source.id,
                 cause,
-              }),
-          ),
-        );
-      sourceSettle = "settlesWhenTurnEnds" in settled ? "settles-when-turn-ends" : "settled";
-    }
+              }).pipe(Effect.as("failed" as const)),
+            ),
+          );
     return {
       group: updated,
       threadId: launched.threadId,
-      createdGroup: group.id === derivedGroupId,
+      createdGroup: existingGroup === null,
       sourceSettle,
     };
   });
