@@ -784,6 +784,23 @@ const make = Effect.gen(function* () {
             "resolve-group",
           )("Thread group belongs to another project.");
         }
+        // A chat launched into a group works in the group's workspace.
+        const groupWorktreePath = group.value.worktreePath;
+        const strategy = input.workspaceStrategy;
+        const onGroupWorkspace =
+          groupWorktreePath === null
+            ? strategy.type === "root"
+            : strategy.type === "existing_worktree" && strategy.worktreePath === groupWorktreePath;
+        if (!onGroupWorkspace) {
+          return yield* mapError(
+            input,
+            "resolve-group",
+          )(
+            groupWorktreePath === null
+              ? "A chat launched into this group must start at the project root, the group's workspace."
+              : `A chat launched into this group must start in the group's worktree ${groupWorktreePath}.`,
+          );
+        }
       }
       return yield* Effect.gen(function* () {
         // A retried launch has no client-supplied id to replay against, so

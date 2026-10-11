@@ -543,6 +543,102 @@ it.effect("a chat without a worktree adopts the group's without a status read", 
   );
 });
 
+it.effect("an explicit create groups chats on different workspaces, each keeping its own", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [c, shell(c, otherWorkspace)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const group = yield* service.create({
+      commandId: CommandId.make("command:create-mixed"),
+      groupId,
+      projectId,
+      threadIds: [a, c],
+    });
+    assert.equal(group.worktreePath, groupWorktree);
+    assert.deepInclude(threads.get(c), { groupId, ...otherWorkspace });
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("a create that adopts moves the other chats onto the first chat's workspace", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [b, shell(b)],
+    [c, shell(c, otherWorkspace)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const input = {
+      commandId: CommandId.make("command:create-adopt"),
+      groupId,
+      projectId,
+      threadIds: [a, b, c],
+      adoptGroupWorkspace: true,
+    };
+    yield* service.create(input);
+    assert.deepStrictEqual(dispatched, [
+      {
+        type: "thread.metadata.update",
+        commandId: CommandId.make("command:create-adopt:join:thread-a"),
+        threadId: a,
+        groupId,
+      },
+      {
+        type: "thread.metadata.update",
+        commandId: CommandId.make("command:create-adopt:join:thread-b"),
+        threadId: b,
+        groupId,
+      },
+      {
+        type: "thread.metadata.update",
+        commandId: CommandId.make("command:create-adopt:join:thread-c"),
+        threadId: c,
+        groupId,
+        branch: "feat/auth-refactor",
+        worktreePath: groupWorktree,
+        expectedWorktreePath: otherWorkspace.worktreePath,
+      },
+    ]);
+    // A retry finds every chat already in the group and changes nothing.
+    yield* service.create(input);
+    assert.equal(dispatched.length, 3);
+  }).pipe(
+    Effect.provide(makeLayer(threads, dispatched, { existingPaths: new Set([groupWorktree]) })),
+  );
+});
+
+it.effect("a create that adopts fails as a whole when one chat cannot move", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [c, shell(c, { ...otherWorkspace, status: "running" })],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    const error = yield* service
+      .create({
+        commandId: CommandId.make("command:create-adopt-busy"),
+        groupId,
+        projectId,
+        threadIds: [a, c],
+        adoptGroupWorkspace: true,
+      })
+      .pipe(Effect.flip);
+    assert.equal(error._tag, "ThreadGroupThreadBusyError");
+    assert.deepEqual(dispatched, []);
+    assert.isTrue(Option.isNone(yield* groups.getShell(groupId)));
+  }).pipe(
+    Effect.provide(makeLayer(threads, dispatched, { existingPaths: new Set([groupWorktree]) })),
+  );
+});
+
 it.effect("recreates a missing worktree on the group's branch from the project root", () => {
   const threads = new Map([[a, shell(a)]]);
   const dispatched: Array<OrchestrationV2ServerCommand> = [];

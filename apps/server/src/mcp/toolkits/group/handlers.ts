@@ -311,6 +311,9 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
             threadIds,
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.goal === undefined ? {} : { goal: input.goal }),
+            ...(input.adoptGroupWorkspace === undefined
+              ? {}
+              : { adoptGroupWorkspace: input.adoptGroupWorkspace }),
           })
           .pipe(Effect.mapError(groupFailure));
         return { group };

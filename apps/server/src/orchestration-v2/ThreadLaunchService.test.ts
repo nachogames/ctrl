@@ -2303,9 +2303,18 @@ it.effect("launches into a group of its project and rejects a foreign one", () =
     const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
     const ownGroup = ThreadGroupId.make("group:launch:own");
     const foreignGroup = ThreadGroupId.make("group:launch:foreign");
-    yield* groups.apply(sequenced(threadGroupCreatedEvent({ groupId: ownGroup, projectId }), 1));
     yield* groups.apply(
-      sequenced(threadGroupCreatedEvent({ groupId: foreignGroup, projectId: otherProjectId }), 2),
+      sequenced(threadGroupCreatedEvent({ groupId: ownGroup, projectId, worktreePath: null }), 1),
+    );
+    yield* groups.apply(
+      sequenced(
+        threadGroupCreatedEvent({
+          groupId: foreignGroup,
+          projectId: otherProjectId,
+          worktreePath: null,
+        }),
+        2,
+      ),
     );
 
     const launched = yield* launches.launch({
@@ -2326,6 +2335,80 @@ it.effect("launches into a group of its project and rejects a foreign one", () =
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("launches into a group only on the group's workspace", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    const worktreeGroup = ThreadGroupId.make("group:launch:worktree");
+    const rootGroup = ThreadGroupId.make("group:launch:root");
+    const groupWorktree = "/repo-worktrees/group";
+    yield* groups.apply(
+      sequenced(
+        threadGroupCreatedEvent({
+          groupId: worktreeGroup,
+          projectId,
+          branch: "feat/group",
+          worktreePath: groupWorktree,
+        }),
+        1,
+      ),
+    );
+    yield* groups.apply(
+      sequenced(threadGroupCreatedEvent({ groupId: rootGroup, projectId, worktreePath: null }), 2),
+    );
+    const launchInto = (
+      name: string,
+      groupId: ThreadGroupId,
+      workspace: ThreadLaunch.ThreadLaunchWorkspaceStrategy,
+    ) =>
+      launches.launch({
+        ...launchInput({
+          command: `command:launch:${name}`,
+          thread: `thread:launch:${name}`,
+          workspace,
+        }),
+        groupId,
+      });
+
+    const inWorktree = yield* launchInto("group-worktree", worktreeGroup, {
+      type: "existing_worktree",
+      worktreePath: groupWorktree,
+      branch: "feat/group",
+    });
+    assert.equal((yield* threads.getThreadShell(inWorktree.threadId))?.worktreePath, groupWorktree);
+    const atRoot = yield* launchInto("group-root", rootGroup, { type: "root" });
+    assert.equal((yield* threads.getThreadShell(atRoot.threadId))?.groupId, rootGroup);
+
+    const rejected: ReadonlyArray<
+      readonly [string, ThreadGroupId, ThreadLaunch.ThreadLaunchWorkspaceStrategy]
+    > = [
+      ["group-new-worktree", worktreeGroup, { type: "worktree", baseRef: "main" }],
+      [
+        "group-other-worktree",
+        worktreeGroup,
+        { type: "existing_worktree", worktreePath: "/repo-worktrees/other" },
+      ],
+      ["group-root-mismatch", worktreeGroup, { type: "root" }],
+      ["group-root-new-worktree", rootGroup, { type: "worktree", baseRef: "main" }],
+    ];
+    for (const [name, groupId, workspace] of rejected) {
+      const failed = yield* launchInto(name, groupId, workspace).pipe(Effect.flip);
+      assert.equal(failed.operation, "resolve-group", name);
+      assert.isNull(yield* threads.getThreadShell(ThreadId.make(`thread:launch:${name}`)), name);
+    }
+
+    // The workspace check runs after the receipt read, so a retry replays whatever it asks for.
+    const retry = yield* launchInto("group-worktree", worktreeGroup, {
+      type: "worktree",
+      baseRef: "main",
+    });
+    assert.isTrue(retry.resumed);
+    assert.equal(retry.threadId, inWorktree.threadId);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("replays a retried group launch after the group is gone", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
@@ -2333,7 +2416,9 @@ it.effect("replays a retried group launch after the group is gone", () => {
     const groupService = yield* ThreadGroupService.ThreadGroupService;
     const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
     const groupId = ThreadGroupId.make("group:launch:retry");
-    yield* groups.apply(sequenced(threadGroupCreatedEvent({ groupId, projectId }), 1));
+    yield* groups.apply(
+      sequenced(threadGroupCreatedEvent({ groupId, projectId, worktreePath: null }), 1),
+    );
     // The WebSocket launch path runs a grouped launch this way.
     const launchInGroup = (command: string, thread: string) =>
       groupService.withGroupLaunch(

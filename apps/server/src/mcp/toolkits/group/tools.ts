@@ -77,7 +77,7 @@ const GroupReadTool = Tool.make("t3_group_read", {
 const GroupCreateTool = Tool.make("t3_group_create", {
   ...groupTool,
   description:
-    "Group chats that work toward one goal, for example a planning chat and the build chat it launched. Your own chat is always included: call it with no threadIds to group just your chat, or with threadIds: [buildThreadId] to group your chat with the build chat in one call (pass includeCaller: false to leave your chat out). The first listed chat supplies the group's branch, worktree, pull request and default title (your chat does when you list none), and the group belongs to that chat's project; every chat must be in that project. A chat already in another group moves to this one. Use t3_group_move_thread to add a chat to an existing group.",
+    "Group chats that work toward one goal, for example a planning chat and the build chat it launched. Your own chat is always included: call it with no threadIds to group just your chat, or with threadIds: [buildThreadId] to group your chat with the build chat in one call (pass includeCaller: false to leave your chat out). The first listed chat supplies the group's branch, worktree, pull request and default title (your chat does when you list none), and the group belongs to that chat's project; every chat must be in that project. Chats may work in different worktrees: each keeps its own unless adoptGroupWorkspace is true, which switches every other chat to the first chat's worktree and branch (each must be idle with no uncommitted changes, and that worktree must exist). A chat already in another group moves to this one. Use t3_group_move_thread to add a chat to an existing group.",
   parameters: Schema.Struct({
     threadIds: Schema.optional(Schema.Array(ThreadId).check(Schema.isMinLength(1))).annotate({
       description:
@@ -93,6 +93,10 @@ const GroupCreateTool = Tool.make("t3_group_create", {
     }),
     goal: Schema.optional(TrimmedNonEmptyString).annotate({
       description: "One or two sentences on what the group is working toward.",
+    }),
+    adoptGroupWorkspace: Schema.optional(Schema.Boolean).annotate({
+      description:
+        "Move every other chat onto the first chat's worktree and branch. Defaults to false: each chat keeps its own workspace.",
     }),
     clientRequestId,
   }),

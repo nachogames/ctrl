@@ -150,6 +150,12 @@ export interface ThreadGroupCreateInput {
   readonly threadIds: ReadonlyArray<ThreadId>;
   readonly title?: string;
   readonly goal?: string | null;
+  /**
+   * Explicit grouping may mix workspaces: by default each chat keeps its own.
+   * When true, every other chat moves onto the first chat's worktree and branch,
+   * with the same checks as `moveThread`.
+   */
+  readonly adoptGroupWorkspace?: boolean;
 }
 
 export interface ThreadGroupUpdateInput {
@@ -369,6 +375,74 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * The checks before a chat switches to a group's workspace: it is idle, the
+   * group's worktree exists, and its own worktree has no uncommitted work.
+   */
+  const checkAdoptable = Effect.fn("ThreadGroupService.checkAdoptable")(function* (
+    thread: OrchestrationV2ThreadShell,
+    groupId: ThreadGroupId,
+    worktreePath: string | null,
+  ) {
+    if (isBusy(thread)) return yield* new ThreadGroupThreadBusyError({ threadId: thread.id });
+    if (worktreePath !== null && !(yield* pathExists(worktreePath))) {
+      return yield* new ThreadGroupWorktreeMissingError({ groupId, worktreePath });
+    }
+    // Re-pointing leaves the old worktree behind, so uncommitted work there
+    // would drop out of the chat's sight.
+    const current = thread.worktreePath;
+    if (current !== null && (yield* pathExists(current))) {
+      const status = yield* git.localStatus({ cwd: current }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadGroupOperationError({
+              operation: "read-worktree-status",
+              threadId: thread.id,
+              cause,
+            }),
+        ),
+      );
+      if (status.hasWorkingTreeChanges) {
+        return yield* new ThreadGroupWorkspaceDirtyError({
+          threadId: thread.id,
+          worktreePath: current,
+        });
+      }
+    }
+  });
+
+  /**
+   * Join the group and switch to its workspace in one update, so a failed check
+   * or a raced worktree change leaves the chat where it was. Run `checkAdoptable` first.
+   */
+  const adoptWorkspace = (
+    commandId: CommandId,
+    thread: OrchestrationV2ThreadShell,
+    groupId: ThreadGroupId,
+    workspace: { readonly branch: string | null; readonly worktreePath: string | null },
+  ) =>
+    threads
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId,
+        threadId: thread.id,
+        groupId,
+        branch: workspace.branch,
+        worktreePath: workspace.worktreePath,
+        expectedWorktreePath: thread.worktreePath,
+      })
+      .pipe(
+        Effect.asVoid,
+        Effect.mapError(
+          (cause) =>
+            new ThreadGroupOperationError({
+              operation: "update-thread",
+              threadId: thread.id,
+              cause,
+            }),
+        ),
+      );
+
   /** Plan and commit one group command. The caller holds the group's lock. */
   const commitLocked = Effect.fn("ThreadGroupService.commitLocked")(function* (
     command: ThreadGroupCommand,
@@ -462,6 +536,21 @@ export const make = Effect.gen(function* () {
           });
         }
       }
+      const workspace = { branch: first.branch, worktreePath: first.worktreePath };
+      const adopters =
+        input.adoptGroupWorkspace === true
+          ? members.filter(
+              (member) =>
+                member.groupId !== input.groupId && member.worktreePath !== workspace.worktreePath,
+            )
+          : [];
+      // Check every chat before the group exists, so one busy or dirty chat fails the whole create.
+      yield* Effect.forEach(
+        adopters,
+        (member) => checkAdoptable(member, input.groupId, workspace.worktreePath),
+        { concurrency: 1, discard: true },
+      );
+      const adopting = new Set(adopters.map((member) => member.id));
       const pullRequest = resolveThreadCurrentPullRequestLink(first.pullRequests ?? []);
       const previousGroups = new Set<ThreadGroupId>();
       // Commit and join under one lock, so a prune cannot delete the group between them.
@@ -477,8 +566,7 @@ export const make = Effect.gen(function* () {
               input.title ??
               defaultThreadGroupTitle({ pullRequest, branch: first.branch, fallback: first.title }),
             goal: input.goal ?? null,
-            branch: first.branch,
-            worktreePath: first.worktreePath,
+            ...workspace,
             pullRequest,
           });
           // A retried create replays as accepted even after the group was pruned or deleted.
@@ -491,11 +579,10 @@ export const make = Effect.gen(function* () {
             (member) => {
               if (member.groupId === input.groupId) return Effect.void;
               if (member.groupId != null) previousGroups.add(member.groupId);
-              return setThreadGroup(
-                CommandId.make(`${input.commandId}:join:${member.id}`),
-                member.id,
-                input.groupId,
-              );
+              const joinCommandId = CommandId.make(`${input.commandId}:join:${member.id}`);
+              return adopting.has(member.id)
+                ? adoptWorkspace(joinCommandId, member, input.groupId, workspace)
+                : setThreadGroup(joinCommandId, member.id, input.groupId);
             },
             { concurrency: 1, discard: true },
           );
@@ -610,53 +697,8 @@ export const make = Effect.gen(function* () {
               groupId: target,
             });
           }
-          if (isBusy(thread)) return yield* new ThreadGroupThreadBusyError({ threadId: thread.id });
-          if (worktreePath !== null && !(yield* pathExists(worktreePath))) {
-            return yield* new ThreadGroupWorktreeMissingError({ groupId: target, worktreePath });
-          }
-          // Re-pointing leaves the old worktree behind, so uncommitted work there
-          // would drop out of the chat's sight.
-          const current = thread.worktreePath;
-          if (current !== null && (yield* pathExists(current))) {
-            const status = yield* git.localStatus({ cwd: current }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ThreadGroupOperationError({
-                    operation: "read-worktree-status",
-                    threadId: thread.id,
-                    cause,
-                  }),
-              ),
-            );
-            if (status.hasWorkingTreeChanges) {
-              return yield* new ThreadGroupWorkspaceDirtyError({
-                threadId: thread.id,
-                worktreePath: current,
-              });
-            }
-          }
-          // One update joins and switches together, so a failed check or a
-          // raced worktree change leaves the chat where it was.
-          yield* threads
-            .dispatch({
-              type: "thread.metadata.update",
-              commandId: setCommandId,
-              threadId: thread.id,
-              groupId: target,
-              branch,
-              worktreePath,
-              expectedWorktreePath: thread.worktreePath,
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ThreadGroupOperationError({
-                    operation: "update-thread",
-                    threadId: thread.id,
-                    cause,
-                  }),
-              ),
-            );
+          yield* checkAdoptable(thread, target, worktreePath);
+          yield* adoptWorkspace(setCommandId, thread, target, { branch, worktreePath });
         }),
       );
     }

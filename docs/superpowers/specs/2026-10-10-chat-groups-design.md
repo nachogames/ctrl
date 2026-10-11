@@ -57,6 +57,14 @@ Groups are only created on purpose:
 | "Move to group…" / "Remove from group" (chat menu)                                                                                              | Move or detach. Detaching keeps the chat's current branch/worktree.                                                                                                                                    |
 | "Ungroup" (group menu)                                                                                                                          | Deletes the group; chats keep their workspace and become ungrouped.                                                                                                                                    |
 
+**Deviation (decided 2026-10-10, final review):** explicit grouping may mix workspaces. A create
+(`t3_group_create`, "New group with this chat") takes the first listed chat's workspace as the
+group's; other chats keep their own unless the agent passes `adoptGroupWorkspace: true`, which moves
+each of them onto the group's worktree with the same busy/dirty/missing checks as a move. This keeps
+the common flow working: a planning chat on the main checkout groups itself with the build chat it
+launched in a worktree. Moves and drags still confirm before adopting, and a launch into a group
+(new chat in group, handoff, `launchThread` with a `groupId`) must start on the group's workspace.
+
 The title defaults to the PR title if there is a PR, else the branch name humanized
 (`feat/auth-refactor` → "Auth refactor"). Rename anytime.
 
