@@ -3,11 +3,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type {
-  ProjectScript,
-  ScopedThreadRef,
-  ThreadGroupRunningResource,
-  ThreadId,
+import {
+  AuthOrchestrationOperateScope,
+  type ProjectScript,
+  type ScopedThreadRef,
+  type ThreadGroupRunningResource,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -16,12 +17,13 @@ import {
   PlayIcon,
   RotateCwIcon,
   SquareIcon,
+  TagIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
+import { useEnvironmentScope } from "~/state/session";
 import { threadGroupCommands } from "~/state/threadGroups";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 
@@ -30,16 +32,18 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { GroupInlineEdit } from "./GroupInlineEdit";
 import {
+  NO_STOPPED_TRACKING,
   RUNNING_FOOTNOTE,
   expireStoppedRows,
+  observeScan,
   renameManualResources,
   runningView,
-  trackStoppedRows,
   type FoundRow,
   type KnownRow,
-  type StoppedRow,
 } from "./GroupRunningSection.logic";
 import type { GroupScriptRunner } from "./useGroupScriptRunner";
+import type { ScriptStartState } from "./useGroupScriptRunner.logic";
+import { useOpenServerUrl } from "./useOpenServerUrl";
 
 function errorToast(title: string, error: unknown) {
   toastManager.add(
@@ -66,19 +70,18 @@ export function GroupRunningSection(props: {
   chatTitles: ReadonlyMap<ThreadId, string>;
 }) {
   const { group, runner } = props;
-  const [stopped, setStopped] = useState<ReadonlyArray<StoppedRow>>([]);
+  // The last scan lives in this state, not a ref: the updater runs during the next
+  // render, when a ref written beside it would already hold this scan.
+  const [tracking, setTracking] = useState(NO_STOPPED_TRACKING);
+  const { stopped } = tracking;
   const [now, setNow] = useState(() => Date.now());
-  const previousRef = useRef<ReadonlyArray<ThreadGroupRunningResource> | null>(null);
   useEffect(() => {
     const next = props.resources;
     if (next === null) return;
     const at = Date.now();
     // oxlint-disable-next-line react/set-state-in-effect -- Diffs each scan against the last; the clock read keeps render pure.
     setNow(at);
-    setStopped((current) =>
-      trackStoppedRows({ previous: previousRef.current, next, stopped: current, now: at }),
-    );
-    previousRef.current = next;
+    setTracking((current) => observeScan(current, next, at));
   }, [props.resources]);
   const hasStopped = stopped.length > 0;
   // Ticks only while a stopped row is shown, to age its label and let it go.
@@ -87,7 +90,7 @@ export function GroupRunningSection(props: {
     const id = setInterval(() => {
       const at = Date.now();
       setNow(at);
-      setStopped((current) => expireStoppedRows(current, at));
+      setTracking((current) => ({ ...current, stopped: expireStoppedRows(current.stopped, at) }));
     }, 5_000);
     return () => clearInterval(id);
   }, [hasStopped]);
@@ -97,15 +100,26 @@ export function GroupRunningSection(props: {
         resources: props.resources ?? [],
         stopped,
         scripts: props.scripts,
+        manual: group.manualResources,
         chatTitles: props.chatTitles,
         currentThreadId: props.threadRef.threadId,
         now,
       }),
-    [now, props.chatTitles, props.resources, props.scripts, props.threadRef.threadId, stopped],
+    [
+      group.manualResources,
+      now,
+      props.chatTitles,
+      props.resources,
+      props.scripts,
+      props.threadRef.threadId,
+      stopped,
+    ],
   );
   const [showFound, setShowFound] = useState(false);
 
-  const openLink = useOpenLink(props.threadRef);
+  const openServer = useOpenServerUrl(props.threadRef);
+  // Naming and removing change the group, which takes orchestration access.
+  const canOrchestrate = useEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope);
   const removeResource = useOrchestrationCommand(threadGroupCommands.removeResource, {
     reportFailure: false,
   });
@@ -114,7 +128,7 @@ export function GroupRunningSection(props: {
   });
 
   const open = (url: string) => {
-    void openLink(url).catch((error: unknown) => errorToast("Unable to open the link", error));
+    void openServer(url).catch((error: unknown) => errorToast("Unable to open the link", error));
   };
 
   const remove = async (manualId: string) => {
@@ -171,6 +185,10 @@ export function GroupRunningSection(props: {
                     key={row.id}
                     row={row}
                     canOperate={runner.canOperate}
+                    canOrchestrate={canOrchestrate}
+                    restartState={
+                      row.restart === null ? "idle" : runner.startState(row.restart.scriptId)
+                    }
                     onOpen={open}
                     onRename={(port, draft) => void rename(port, row.name, draft)}
                     onStop={(terminal) => void runner.stop(terminal)}
@@ -185,6 +203,7 @@ export function GroupRunningSection(props: {
               })}
               {view.start.map((row) => {
                 const script = scriptById(row.scriptId);
+                const state = runner.startState(row.scriptId);
                 return (
                   <li
                     key={row.scriptId}
@@ -197,13 +216,13 @@ export function GroupRunningSection(props: {
                     <Button
                       size="xs"
                       variant="ghost-muted"
-                      disabled={!runner.canOperate || script === null}
+                      disabled={!runner.canOperate || script === null || state !== "idle"}
                       onClick={() => {
                         if (script !== null) void runner.start(script, props.threadRef.threadId);
                       }}
                     >
                       <PlayIcon aria-hidden />
-                      Start
+                      {START_LABEL[state]}
                     </Button>
                   </li>
                 );
@@ -237,6 +256,7 @@ export function GroupRunningSection(props: {
                       <FoundRunRow
                         key={row.id}
                         row={row}
+                        canOrchestrate={canOrchestrate}
                         onOpen={open}
                         onName={(port, draft) => void rename(port, row.name, draft)}
                       />
@@ -252,6 +272,13 @@ export function GroupRunningSection(props: {
     </>
   );
 }
+
+/** Start reads "Starting…" until the scan shows the server, and "Running" while its terminal is busy. */
+const START_LABEL: Record<ScriptStartState, string> = {
+  idle: "Start",
+  starting: "Starting…",
+  busy: "Running",
+};
 
 function StatusDot(props: { running: boolean }) {
   return (
@@ -294,6 +321,8 @@ function RowEnd(props: { label: string; struck?: boolean; actions: ReactNode | n
 function KnownRunRow(props: {
   row: KnownRow;
   canOperate: boolean;
+  canOrchestrate: boolean;
+  restartState: ScriptStartState;
   onOpen: (url: string) => void;
   onRename: (port: number, draft: string) => void;
   onStop: (terminal: NonNullable<KnownRow["stopTerminal"]>) => void;
@@ -301,11 +330,18 @@ function KnownRunRow(props: {
   onRestart: (() => void) | null;
 }) {
   const { row } = props;
-  const { openUrl, stopTerminal, manualId, port } = row;
+  const { openUrl, stopTerminal, port } = row;
+  const canRename = row.canRename && props.canOrchestrate;
+  const manualId = props.canOrchestrate ? row.manualId : null;
+  const nameId = props.canOrchestrate ? row.nameId : null;
   const [editing, setEditing] = useState(false);
   const stopped = row.state === "stopped";
   const actions =
-    openUrl === null && !row.canRename && stopTerminal === null && manualId === null ? null : (
+    openUrl === null &&
+    !canRename &&
+    stopTerminal === null &&
+    manualId === null &&
+    nameId === null ? null : (
       <>
         {openUrl !== null ? (
           <Button
@@ -317,7 +353,7 @@ function KnownRunRow(props: {
             <ExternalLinkIcon />
           </Button>
         ) : null}
-        {row.canRename && port !== null ? (
+        {canRename && port !== null ? (
           <Button
             size="icon-xs"
             variant="ghost-muted"
@@ -325,6 +361,16 @@ function KnownRunRow(props: {
             onClick={() => setEditing(true)}
           >
             <PencilIcon />
+          </Button>
+        ) : null}
+        {nameId !== null ? (
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={`Remove the name ${row.name}`}
+            onClick={() => props.onRemove(nameId)}
+          >
+            <TagIcon />
           </Button>
         ) : null}
         {stopTerminal !== null ? (
@@ -396,11 +442,11 @@ function KnownRunRow(props: {
             <Button
               size="xs"
               variant="ghost-muted"
-              disabled={!props.canOperate}
+              disabled={!props.canOperate || props.restartState !== "idle"}
               onClick={props.onRestart}
             >
               <RotateCwIcon aria-hidden />
-              Restart
+              {props.restartState === "starting" ? "Starting…" : "Restart"}
             </Button>
           ) : null}
         </>
@@ -411,6 +457,7 @@ function KnownRunRow(props: {
 
 function FoundRunRow(props: {
   row: FoundRow;
+  canOrchestrate: boolean;
   onOpen: (url: string) => void;
   onName: (port: number, draft: string) => void;
 }) {
@@ -435,7 +482,7 @@ function FoundRunRow(props: {
         <>
           <span className="flex min-w-0 flex-1 items-center gap-1">
             <span className="min-w-0 truncate text-muted-foreground text-sm">{row.name}</span>
-            {row.canNameIt ? (
+            {row.canNameIt && props.canOrchestrate ? (
               <Button size="xs" variant="ghost-muted" onClick={() => setNaming(true)}>
                 Name it
               </Button>

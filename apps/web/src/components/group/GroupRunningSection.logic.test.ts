@@ -3,7 +3,10 @@ import type { ProjectScript, ThreadGroupRunningResource } from "@t3tools/contrac
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  NO_STOPPED_TRACKING,
   STOPPED_ROW_MS,
+  manualNameIdFor,
+  observeScan,
   renameManualResources,
   runningView,
   trackStoppedRows,
@@ -46,6 +49,7 @@ const view = (
     resources,
     stopped: [],
     scripts: [],
+    manual: [],
     chatTitles: new Map([[planner, "Plan auth"]]),
     currentThreadId: builder,
     now: NOW,
@@ -277,6 +281,90 @@ describe("stopped rows", () => {
   it("offers no Restart for a script that no longer exists", () => {
     const stopped = trackStoppedRows({ previous: [dev], next: [], stopped: [], now: NOW });
     expect(view([], { stopped, scripts: [] }).known[0]?.restart).toBeNull();
+  });
+});
+
+describe("observeScan", () => {
+  // A python server the panel started from the "Web" script, then stopped.
+  const web = server(8765, {
+    name: "Web",
+    scriptId: "web",
+    terminal: { threadId: builder, terminalId: "script-web" },
+    startedByThreadId: builder,
+  });
+  const scripts = [script("web", { name: "Web", previewUrl: "http://localhost:8765" })];
+
+  it("shows a server that left the scan as stopped with Restart, hiding its Start row", () => {
+    const running = observeScan(NO_STOPPED_TRACKING, [web], NOW);
+    expect(running.stopped).toEqual([]);
+    const after = observeScan(running, [], NOW + 3_000);
+    const result = view([], { stopped: after.stopped, scripts, now: NOW + 3_000 });
+    expect(result.known).toMatchObject([
+      {
+        id: "server:8765",
+        state: "stopped",
+        note: "stopped just now",
+        restart: { scriptId: "web", threadId: builder },
+      },
+    ]);
+    expect(result.start).toEqual([]);
+    // Once the row expires, the script offers Start again.
+    const later = observeScan(after, [], NOW + 3_000 + STOPPED_ROW_MS);
+    expect(later.stopped).toEqual([]);
+    expect(view([], { stopped: later.stopped, scripts }).start.map((row) => row.scriptId)).toEqual([
+      "web",
+    ]);
+  });
+
+  it("keeps the previous scan in its state, so a late or repeated fold still sees the stop", () => {
+    // The panel used to read the previous scan from a ref inside its state updater. React runs
+    // that updater during the next render, after the ref already held the new scan, so the
+    // diff compared the empty scan with itself and nothing ever looked stopped.
+    const next: ReadonlyArray<Resource> = [];
+    expect(trackStoppedRows({ previous: next, next, stopped: [], now: NOW })).toEqual([]);
+    const running = observeScan(NO_STOPPED_TRACKING, [web], NOW);
+    expect(running.previous).toEqual([web]);
+    // Strict mode calls an updater twice with the same state: both calls agree.
+    const first = observeScan(running, next, NOW + 1_000);
+    const second = observeScan(running, next, NOW + 1_000);
+    expect(first.stopped.map((row) => row.resource.id)).toEqual(["server:8765"]);
+    expect(second).toEqual(first);
+  });
+});
+
+describe("removing a server's name", () => {
+  const manual = [
+    { id: "web", name: "Web app", url: "http://127.0.0.1:5173/app", kind: "server" as const },
+    { id: "docs", name: "Docs", url: "https://docs.example.test", kind: "server" as const },
+  ];
+
+  it("matches the registered resource on the server's port", () => {
+    expect(manualNameIdFor(manual, 5173)).toBe("web");
+    expect(manualNameIdFor(manual, 3000)).toBeNull();
+    expect(manualNameIdFor(manual, null)).toBeNull();
+  });
+
+  it("offers Remove name on a named running or stopped server, never on a registered row", () => {
+    const named = server(5173, { name: "Web app" });
+    expect(view([named], { manual }).known[0]?.nameId).toBe("web");
+    expect(view([server(3000)], { manual }).known[0]?.nameId).toBeNull();
+    const stopped = trackStoppedRows({ previous: [named], next: [], stopped: [], now: NOW });
+    expect(view([], { stopped, manual }).known[0]).toMatchObject({
+      state: "stopped",
+      nameId: "web",
+    });
+    const registered: Resource = {
+      ...server(5173),
+      id: "manual:web",
+      kind: "manual",
+      source: "registered",
+      terminal: null,
+      startedByThreadId: null,
+    };
+    expect(view([registered], { manual }).known[0]).toMatchObject({
+      manualId: "web",
+      nameId: null,
+    });
   });
 });
 

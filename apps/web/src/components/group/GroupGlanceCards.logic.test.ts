@@ -10,6 +10,7 @@ import {
   glanceFrontend,
   groupActivity,
   ticketChips,
+  compactTicketChips,
 } from "./GroupGlanceCards.logic";
 
 const NOW = Date.parse("2026-10-11T12:00:00.000Z");
@@ -40,6 +41,11 @@ describe("glanceCards", () => {
       compact: "3↑ 1↓",
     });
     expect(worktree).toMatchObject({ secondary: "4 changes", compact: "4 changes", empty: false });
+  });
+
+  it("counts one changed file as one change", () => {
+    const { worktree } = cards({ vcs: { ahead: 0, behind: 0, baseRef: null, changedFiles: 1 } });
+    expect(worktree).toMatchObject({ secondary: "1 change", compact: "1 change" });
   });
 
   it("leaves out the base and the behind count when there are none", () => {
@@ -192,5 +198,26 @@ describe("groupActivity", () => {
       lastActivityLabel: formatElapsedDurationLabel(new Date(at).toISOString(), NOW),
     });
     expect(groupActivity([], NOW).lastActivityLabel).toBeNull();
+  });
+});
+
+describe("compactTicketChips", () => {
+  const chip = (label: string) => ({
+    url: `https://linear.app/acme/issue/${label}`,
+    href: `https://linear.app/acme/issue/${label}`,
+    label,
+    linkId: `link:${label}`,
+  });
+
+  it("shows two chips and folds the rest into +N until expanded", () => {
+    const tickets = [chip("ENG-1"), chip("ENG-2"), chip("ENG-3"), chip("ENG-4")];
+    const folded = compactTicketChips(tickets, false);
+    expect(folded.shown.map((ticket) => ticket.label)).toEqual(["ENG-1", "ENG-2"]);
+    expect(folded.hidden).toBe(2);
+    expect(compactTicketChips(tickets, true)).toEqual({ shown: tickets, hidden: 0 });
+    expect(compactTicketChips(tickets.slice(0, 2), false)).toEqual({
+      shown: tickets.slice(0, 2),
+      hidden: 0,
+    });
   });
 });

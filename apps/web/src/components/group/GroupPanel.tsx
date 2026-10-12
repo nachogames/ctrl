@@ -111,7 +111,8 @@ function GroupPanelContent(props: {
     () => (project === null ? [] : resolveProjectScripts(settings, project)),
     [project, settings],
   );
-  const runner = useGroupScriptRunner(group, project?.workspaceRoot ?? null);
+  const resources = resourcesQuery.data?.resources ?? null;
+  const runner = useGroupScriptRunner(group, project?.workspaceRoot ?? null, scripts, resources);
   const chatTitles = useMemo(
     () => new Map([...threadsById].map(([id, shell]) => [id, shell.title])),
     [threadsById],
@@ -151,7 +152,7 @@ function GroupPanelContent(props: {
           group={group}
           threadRef={props.threadRef}
           members={members}
-          resources={resourcesQuery.data?.resources ?? null}
+          resources={resources}
           scripts={scripts}
           runner={runner}
         />
@@ -160,7 +161,7 @@ function GroupPanelContent(props: {
         <GroupRunningSection
           group={group}
           threadRef={props.threadRef}
-          resources={resourcesQuery.data?.resources ?? null}
+          resources={resources}
           error={resourcesQuery.error}
           scripts={scripts}
           runner={runner}

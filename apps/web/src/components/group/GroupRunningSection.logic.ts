@@ -38,6 +38,8 @@ export interface KnownRow {
   readonly canRename: boolean;
   /** The stored manual resource id, for rows that can be removed. */
   readonly manualId: string | null;
+  /** The stored manual resource naming this server by its port, for "Remove name". */
+  readonly nameId: string | null;
 }
 
 export interface FoundRow {
@@ -111,6 +113,30 @@ export function trackStoppedRows(input: {
   return [...kept, ...newly];
 }
 
+export interface StoppedTracking {
+  /** The last scan, which the next one is diffed against. */
+  readonly previous: ReadonlyArray<Resource> | null;
+  readonly stopped: ReadonlyArray<StoppedRow>;
+}
+
+export const NO_STOPPED_TRACKING: StoppedTracking = { previous: null, stopped: [] };
+
+/**
+ * Folds one scan into the tracking state. The previous scan lives in the same
+ * state rather than a ref: a state updater runs later, during render, so a ref
+ * written beside it already holds `next` and nothing would ever look stopped.
+ */
+export function observeScan(
+  state: StoppedTracking,
+  next: ReadonlyArray<Resource>,
+  now: number,
+): StoppedTracking {
+  return {
+    previous: next,
+    stopped: trackStoppedRows({ previous: state.previous, next, stopped: state.stopped, now }),
+  };
+}
+
 export function stoppedLabel(stoppedAt: number, now: number): string {
   const seconds = Math.floor((now - stoppedAt) / 1000);
   return seconds < 5 ? "stopped just now" : `stopped ${seconds - (seconds % 5)}s ago`;
@@ -122,6 +148,18 @@ function manualIdOf(resource: Resource): string | null {
   return resource.kind === "manual" && resource.id.startsWith(MANUAL_ID_PREFIX)
     ? resource.id.slice(MANUAL_ID_PREFIX.length)
     : null;
+}
+
+/** The registered resource that names whatever runs on `port`: the first one on that port. */
+export function manualNameIdFor(
+  manual: ReadonlyArray<ThreadGroupManualResource>,
+  port: number | null,
+): string | null {
+  if (port === null) return null;
+  return (
+    manual.find((resource) => resource.url !== null && loopbackPort(resource.url) === port)?.id ??
+    null
+  );
 }
 
 function startedBy(
@@ -153,10 +191,13 @@ export function runningView(input: {
   readonly resources: ReadonlyArray<Resource>;
   readonly stopped: ReadonlyArray<StoppedRow>;
   readonly scripts: ReadonlyArray<ProjectScript>;
+  /** The group's registered resources, which name servers on their ports. */
+  readonly manual: ReadonlyArray<ThreadGroupManualResource>;
   readonly chatTitles: ReadonlyMap<ThreadId, string>;
   readonly currentThreadId: ThreadId;
   readonly now: number;
 }): RunningView {
+  const manualResources = input.manual;
   const runnable = input.scripts.filter(isRunnableScript);
   const runnableIds = new Set(runnable.map((script) => script.id));
   const live: Array<KnownRow> = input.resources
@@ -175,6 +216,7 @@ export function runningView(input: {
         restart: null,
         canRename: resource.port !== null,
         manualId: manualIdOf(resource),
+        nameId: manual ? null : manualNameIdFor(manualResources, resource.port),
       };
     });
   // Also drop stopped rows already back in this scan, so a restart never shows twice
@@ -194,6 +236,7 @@ export function runningView(input: {
       restart: restartOf(resource, runnableIds),
       canRename: false,
       manualId: null,
+      nameId: manualNameIdFor(manualResources, resource.port),
     }));
   const stoppedPorts = new Set(stopped.flatMap((row) => (row.port === null ? [] : [row.port])));
   const foundResources = input.resources.filter((resource) => resource.tier === "found");

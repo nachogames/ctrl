@@ -133,8 +133,8 @@ export function glanceCards(input: GlanceInput): ReadonlyArray<GlanceCard> {
           }),
     card("worktree", "Worktree", {
       primary: input.worktreePath ?? "Project folder",
-      secondary: vcs === null ? null : `${vcs.changedFiles} changes`,
-      compact: vcs === null ? null : `${vcs.changedFiles} changes`,
+      secondary: vcs === null ? null : changesLabel(vcs.changedFiles),
+      compact: vcs === null ? null : changesLabel(vcs.changedFiles),
     }),
     activity.working + activity.idle === 0
       ? card("activity", "Activity", { primary: "No activity yet", tone: "muted", empty: true })
@@ -147,6 +147,23 @@ export function glanceCards(input: GlanceInput): ReadonlyArray<GlanceCard> {
           compact: activity.lastActivityLabel,
         }),
   ];
+}
+
+const changesLabel = (count: number) => `${count} ${count === 1 ? "change" : "changes"}`;
+
+/** How many ticket chips the compact row shows before folding the rest into "+N". */
+export const COMPACT_TICKET_CHIPS = 2;
+
+/** The chips the compact row shows, and how many fold into its "+N". */
+export function compactTicketChips(
+  tickets: ReadonlyArray<TicketChip>,
+  expanded: boolean,
+): { readonly shown: ReadonlyArray<TicketChip>; readonly hidden: number } {
+  if (expanded || tickets.length <= COMPACT_TICKET_CHIPS) return { shown: tickets, hidden: 0 };
+  return {
+    shown: tickets.slice(0, COMPACT_TICKET_CHIPS),
+    hidden: tickets.length - COMPACT_TICKET_CHIPS,
+  };
 }
 
 /** The URL when it is http(s), else null: only those are safe to open as a link. */

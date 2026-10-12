@@ -56,6 +56,7 @@ import { Input } from "../ui/input";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
+  compactTicketChips,
   frontendScript,
   glanceCards,
   glanceFrontend,
@@ -67,6 +68,7 @@ import {
 } from "./GroupGlanceCards.logic";
 import { useGroupPullRequestStatus } from "./useGroupPullRequestStatus";
 import type { GroupScriptRunner } from "./useGroupScriptRunner";
+import { useOpenServerUrl } from "./useOpenServerUrl";
 
 const TONE_CLASS: Record<GlanceTone, string> = {
   default: "text-foreground",
@@ -135,8 +137,11 @@ export function GroupGlanceCards(props: {
   const [recreating, setRecreating] = useState(false);
   const recreate = async () => {
     setRecreating(true);
-    await recreateWorktree(group);
-    setRecreating(false);
+    try {
+      await recreateWorktree(group);
+    } finally {
+      setRecreating(false);
+    }
     // The worktree is back on disk: read its status again.
     status.refresh();
   };
@@ -165,6 +170,7 @@ export function GroupGlanceCards(props: {
       errorToast("Unable to open the link", error);
     });
   };
+  const openServer = useOpenServerUrl(props.threadRef);
   const navigate = useNavigate();
 
   const updateGroup = useOrchestrationCommand(threadGroupCommands.update, {
@@ -288,11 +294,25 @@ export function GroupGlanceCards(props: {
           </GlanceCardView>
         );
       }
-      case "tickets":
+      case "tickets": {
+        const chipProps = {
+          tickets,
+          canUnlink: canOrchestrate,
+          onOpen: openLink,
+          onUnlink: (linkId: string) =>
+            void saveLinks(
+              group.links.filter((link) => link.id !== linkId),
+              "Failed to unlink the ticket",
+            ),
+        };
         return (
           <GlanceCardView
             key={card.id}
-            card={card}
+            // The compact row shows the chips themselves, so they open and unlink at any width.
+            card={tickets.length === 0 ? card : { ...card, compact: null }}
+            compactContent={
+              tickets.length === 0 ? undefined : <CompactTicketChips {...chipProps} />
+            }
             action={
               <Button
                 size="icon-xs"
@@ -305,21 +325,10 @@ export function GroupGlanceCards(props: {
               </Button>
             }
           >
-            {tickets.length === 0 ? null : (
-              <TicketChips
-                tickets={tickets}
-                canUnlink={canOrchestrate}
-                onOpen={openLink}
-                onUnlink={(linkId) =>
-                  void saveLinks(
-                    group.links.filter((link) => link.id !== linkId),
-                    "Failed to unlink the ticket",
-                  )
-                }
-              />
-            )}
+            {tickets.length === 0 ? null : <TicketChips {...chipProps} />}
           </GlanceCardView>
         );
+      }
       case "frontend": {
         const running = frontend?.running === true;
         const previewUrl = script?.previewUrl;
@@ -343,7 +352,11 @@ export function GroupGlanceCards(props: {
                   size="icon-xs"
                   variant="ghost-muted"
                   aria-label="Open frontend in preview"
-                  onClick={() => openLink(previewUrl)}
+                  onClick={() =>
+                    void openServer(previewUrl).catch((error: unknown) => {
+                      errorToast("Unable to open the link", error);
+                    })
+                  }
                 >
                   <ExternalLinkIcon />
                 </Button>
@@ -352,11 +365,11 @@ export function GroupGlanceCards(props: {
                   size="xs"
                   variant="ghost-muted"
                   aria-label={`Start ${script.name}`}
-                  disabled={!runner.canOperate}
+                  disabled={!runner.canOperate || runner.startState(script.id) !== "idle"}
                   onClick={() => void runner.start(script, props.threadRef.threadId)}
                 >
                   <PlayIcon aria-hidden />
-                  Start
+                  {runner.startState(script.id) === "starting" ? "Starting…" : "Start"}
                 </Button>
               )
             }
@@ -442,8 +455,10 @@ export function GroupGlanceCards(props: {
 function GlanceCardView(props: {
   card: GlanceCard;
   action: ReactNode;
-  /** Replaces the card's primary line; the compact row always shows `card.primary`. */
+  /** Replaces the card's primary line. */
   children?: ReactNode;
+  /** Replaces the compact row's primary text. */
+  compactContent?: ReactNode | undefined;
   mono?: boolean;
   /** A running dot before the primary text. */
   dot?: boolean;
@@ -464,11 +479,11 @@ function GlanceCardView(props: {
   return (
     <div className="group/glance min-w-0 @min-[440px]/group-panel:rounded-lg @min-[440px]/group-panel:border @min-[440px]/group-panel:border-border @min-[440px]/group-panel:bg-muted/30 @min-[440px]/group-panel:p-2.5">
       {/* Compact row: one fact, its action replacing the right-hand text on hover or focus. */}
-      <div className="flex h-8 min-w-0 items-center gap-2 px-2.5 @min-[440px]/group-panel:hidden">
+      <div className="flex min-h-8 min-w-0 items-center gap-2 px-2.5 py-1 @min-[440px]/group-panel:hidden">
         <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="sr-only">{card.title}</span>
         {dot}
-        <span className={cn(primaryClass, "flex-1")}>{card.primary}</span>
+        {props.compactContent ?? <span className={cn(primaryClass, "flex-1")}>{card.primary}</span>}
         {card.compact !== null ? (
           <span className="shrink-0 text-muted-foreground text-xs tabular-nums group-focus-within/glance:hidden group-hover/glance:hidden">
             {card.compact}
@@ -556,6 +571,32 @@ function TicketChips(props: {
           </span>
         );
       })}
+    </span>
+  );
+}
+
+/** The compact row's chips: the first few, then a "+N" that shows the rest. */
+function CompactTicketChips(props: {
+  tickets: ReadonlyArray<TicketChip>;
+  canUnlink: boolean;
+  onOpen: (url: string) => void;
+  onUnlink: (linkId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const { shown, hidden } = compactTicketChips(props.tickets, expanded);
+  return (
+    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+      <TicketChips {...props} tickets={shown} />
+      {hidden > 0 ? (
+        <Badge
+          variant="outline"
+          size="sm"
+          render={<button type="button" aria-label={`Show ${hidden} more tickets`} />}
+          onClick={() => setExpanded(true)}
+        >
+          +{hidden}
+        </Badge>
+      ) : null}
     </span>
   );
 }
