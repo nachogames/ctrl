@@ -12,7 +12,7 @@ Notification permission and Android notification channels are controlled in syst
 
 ## Server notifications without T3 Connect
 
-Your server can send alerts itself, using your own Apple Push Notification service key or Firebase project. Use this when you connect directly, such as over your LAN or Tailscale, and do not want a T3 Connect account. By default it alerts when an agent needs approval or asks for input; you can also turn on alerts for finished and failed runs. It does not drive Live Activities or ongoing activity cards. The app must be built with your Apple team or your Firebase `google-services.json`.
+Your server can send alerts itself, using your own Apple Push Notification service key or Firebase project. Use this when you connect directly, such as over your LAN or Tailscale, and do not want a T3 Connect account. By default it alerts when an agent needs approval or asks for input; you can also turn on alerts for finished and failed runs. Once you answer, from any device, the question's alert is removed from your phone. iOS may delay this, and skips it while the app is force-quit. It does not drive Live Activities or ongoing activity cards. The app must be built with your Apple team or your Firebase `google-services.json`.
 
 1. On the server machine, create `push/config.json` in the server's data directory (for example `~/.t3/userdata/push/config.json`). Include whichever platforms you use:
 

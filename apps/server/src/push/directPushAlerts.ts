@@ -36,6 +36,21 @@ export function alertKind(input: {
   return alert.kind;
 }
 
+/**
+ * The question a thread just stopped waiting on, so phones can drop its
+ * alert, or null. Moving straight to another question is not an answer: that
+ * question's own alert follows, and a clear racing it could remove it.
+ */
+export function answeredKind(
+  previousPhase: AgentAwarenessPhase | null | undefined,
+  phase: AgentAwarenessPhase | null,
+): DirectPushAlertKind | null {
+  const isQuestion = (value: AgentAwarenessPhase | null | undefined) =>
+    value === "waiting_for_approval" || value === "waiting_for_input";
+  if (!isQuestion(previousPhase) || isQuestion(phase)) return null;
+  return ALERTS[previousPhase as AgentAwarenessPhase]?.kind ?? null;
+}
+
 export function deviceWantsAlert(
   alertOn: ReadonlyArray<DirectPushAlertKind> | undefined,
   kind: DirectPushAlertKind,
@@ -87,5 +102,34 @@ export function fcmAlertData(input: {
     alert_body: text.body,
     alert_path: state.deepLink,
     active: "false",
+  };
+}
+
+/** The thread whose alerts a clear removes, matching the alerts' grouping. */
+export interface AlertThread {
+  readonly environmentId: string;
+  readonly threadId: string;
+}
+
+/** Silent push the app handles natively by removing the thread's alerts. */
+export function apnsClearPayload(thread: AlertThread) {
+  return {
+    aps: { "content-available": 1 },
+    t3_clear_thread: `${thread.environmentId}/${thread.threadId}`,
+  };
+}
+
+export function fcmClearData(input: {
+  readonly thread: AlertThread;
+  readonly deviceId: string;
+  readonly userId: string;
+  readonly nowMs: number;
+}): Record<string, string> {
+  return {
+    t3_kind: "agent_alert_clear",
+    updated_at: String(input.nowMs),
+    device_id: input.deviceId,
+    user_id: input.userId,
+    alert_group: JSON.stringify([input.thread.environmentId, input.thread.threadId]),
   };
 }

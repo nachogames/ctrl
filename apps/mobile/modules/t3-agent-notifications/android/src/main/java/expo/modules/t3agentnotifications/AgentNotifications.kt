@@ -20,10 +20,10 @@ import expo.modules.notifications.service.ExpoFirebaseMessagingService
 
 class AgentMessagingService : ExpoFirebaseMessagingService() {
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
-    if (remoteMessage.data["t3_kind"] == "agent_activity") {
-      AgentNotifications.receive(this, remoteMessage.data)
-    } else {
-      super.onMessageReceived(remoteMessage)
+    when (remoteMessage.data["t3_kind"]) {
+      "agent_activity" -> AgentNotifications.receive(this, remoteMessage.data)
+      "agent_alert_clear" -> AgentNotifications.clearAlerts(this, remoteMessage.data)
+      else -> super.onMessageReceived(remoteMessage)
     }
   }
 }
@@ -131,6 +131,22 @@ object AgentNotifications {
       showAlert(context, prefs, scheme, data)
       updateActivity(context, prefs, scheme, data, updatedAt)
     }
+  }
+
+  /** Removes a thread's alerts once its question was answered elsewhere. */
+  @Synchronized
+  fun clearAlerts(context: Context, data: Map<String, String>) {
+    val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+    val registered = prefs.getBoolean("enabled", false) &&
+      data["device_id"] == prefs.getString("deviceId", null) &&
+      data["user_id"] == prefs.getString("userId", null)
+    val group = data["alert_group"]?.takeIf { it.isNotBlank() }
+    if (!registered || group == null) return
+    val manager = manager(context)
+    manager.activeNotifications.filter {
+      (it.tag == ALERT_TAG && it.notification.group == group) ||
+        it.tag == "$ALERT_TAG-summary:$group"
+    }.forEach { manager.cancel(it.tag, it.id) }
   }
 
   private fun showAlert(

@@ -3,7 +3,15 @@ import type { AgentAwarenessState } from "@t3tools/shared/agentAwareness";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
-import { alertKind, apnsAlertPayload, deviceWantsAlert, fcmAlertData } from "./directPushAlerts.ts";
+import {
+  alertKind,
+  answeredKind,
+  apnsAlertPayload,
+  apnsClearPayload,
+  deviceWantsAlert,
+  fcmAlertData,
+  fcmClearData,
+} from "./directPushAlerts.ts";
 
 const NOW = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-10T12:00:00.000Z"));
 const isoAt = (epochMillis: number) => DateTime.formatIso(DateTime.makeUnsafe(epochMillis));
@@ -59,6 +67,22 @@ describe("alertKind", () => {
   });
 });
 
+describe("answeredKind", () => {
+  it("names the question a thread stopped waiting on", () => {
+    expect(answeredKind("waiting_for_input", "running")).toBe("input");
+    expect(answeredKind("waiting_for_approval", "running")).toBe("approval");
+    expect(answeredKind("waiting_for_approval", "failed")).toBe("approval");
+    expect(answeredKind("waiting_for_input", null)).toBe("input");
+  });
+
+  it("does not clear for other changes, or when a new question replaces the old one", () => {
+    expect(answeredKind("running", "completed")).toBeNull();
+    expect(answeredKind(undefined, "running")).toBeNull();
+    expect(answeredKind("waiting_for_input", "waiting_for_input")).toBeNull();
+    expect(answeredKind("waiting_for_approval", "waiting_for_input")).toBeNull();
+  });
+});
+
 describe("deviceWantsAlert", () => {
   it("defaults to agents blocked on the user", () => {
     expect(deviceWantsAlert(undefined, "input")).toBe(true);
@@ -92,6 +116,27 @@ describe("payloads", () => {
       updated_at: String(NOW),
       alert_body: "Approval: Ctrl",
       alert_path: "/threads/env-1/thread-1",
+    });
+  });
+
+  it("clears by the same thread grouping the alerts use", () => {
+    const thread = { environmentId: "env-1", threadId: "thread-1" };
+    expect(apnsClearPayload(thread)).toEqual({
+      aps: { "content-available": 1 },
+      t3_clear_thread: apnsAlertPayload(state("waiting_for_input")).aps["thread-id"],
+    });
+    const alert = fcmAlertData({
+      state: state("waiting_for_input"),
+      deviceId: "d",
+      userId: "u",
+      nowMs: NOW,
+    });
+    expect(fcmClearData({ thread, deviceId: "d", userId: "u", nowMs: NOW })).toEqual({
+      t3_kind: "agent_alert_clear",
+      updated_at: String(NOW),
+      device_id: "d",
+      user_id: "u",
+      alert_group: alert.alert_group,
     });
   });
 });
