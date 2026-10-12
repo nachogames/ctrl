@@ -512,6 +512,32 @@ describe("GroupResourceScanner names and tiers", () => {
     ),
   );
 
+  it.effect("keeps a script's name when variables precede its launcher", () =>
+    scan({
+      listeners: [
+        listener(3000, 100, "node", member, "script-dev"),
+        listener(3001, 101, "node", member, "script-web"),
+      ],
+      terminals: new Map([
+        ["script-dev", { label: "node", hasRunningSubprocess: true }],
+        ["script-web", { label: "node", hasRunningSubprocess: true }],
+      ]),
+      scripts: [
+        script("dev", "Dev", "PORT=3000 vp dev"),
+        script("web", "Web", "cd web && FOO=1 BAR=2 npm run dev"),
+      ],
+    }).pipe(
+      Effect.tap((resources) =>
+        Effect.sync(() =>
+          expect(resources.map((r) => [r.id, r.name, r.scriptId])).toEqual([
+            ["server:3000", "Dev", "dev"],
+            ["server:3001", "Web", "web"],
+          ]),
+        ),
+      ),
+    ),
+  );
+
   it.effect("never names a server after its terminal's own label", () =>
     scan({
       listeners: [

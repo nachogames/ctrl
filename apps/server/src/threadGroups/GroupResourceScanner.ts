@@ -149,6 +149,7 @@ export const terminalKey = (terminal: { readonly threadId: string; readonly term
   `${terminal.threadId}\u0000${terminal.terminalId}`;
 
 const JS_RUNTIMES = new Set(["node", "bun", "deno"]);
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const JS_LAUNCHERS = new Set(["npm", "pnpm", "yarn", "npx", "bunx", "vp", "bun", "deno", "node"]);
 
 /**
@@ -176,7 +177,11 @@ const stillRunsScript = (command: string, program: string | null) => {
   return (
     JS_RUNTIMES.has(program) &&
     command.split(/&&|\|\||;/).some((segment) => {
-      const first = segment.trim().split(/\s+/)[0];
+      // `PORT=3000 vp dev` sets variables before the launcher.
+      const first = segment
+        .trim()
+        .split(/\s+/)
+        .find((word) => !ENV_ASSIGNMENT.test(word));
       return first !== undefined && JS_LAUNCHERS.has(programOf(first) ?? "");
     })
   );
