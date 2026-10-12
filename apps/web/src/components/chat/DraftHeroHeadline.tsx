@@ -75,7 +75,12 @@ export function DraftHeroHeadline({
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
-  const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
+  const {
+    scratchEnvironmentId,
+    scratchWorkspaceRootFor,
+    scratchUnavailableReasonFor,
+    openScratchProject,
+  } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
 
@@ -175,6 +180,11 @@ export function DraftHeroHeadline({
     activeProjectRef?.environmentId ?? primaryEnvironmentId,
   );
   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
+  // Said in place of the way into "No project" when this machine cannot offer it.
+  const scratchUnavailable =
+    scratchWorkspaceRoot === null
+      ? scratchUnavailableReasonFor(activeProjectRef?.environmentId ?? primaryEnvironmentId)
+      : null;
   const isScratchDraft =
     activeProject !== null && isScratchProject(activeProject, scratchWorkspaceRoot);
 
@@ -420,7 +430,18 @@ export function DraftHeroHeadline({
       </h1>
       {/* Reserved whenever threads can skip a project, so the heading does not
           move. Without a project, the picker moves here to choose one. */}
-      {scratchWorkspaceRoot === null ? null : (
+      {scratchWorkspaceRoot === null ? (
+        scratchUnavailable === null ? null : (
+          <p className="mt-2 flex h-6 items-center text-muted-foreground text-sm">
+            <Tooltip>
+              <TooltipTrigger render={<span className="pointer-events-auto cursor-default" />}>
+                No project isn't available on this machine
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">{scratchUnavailable}</TooltipPopup>
+            </Tooltip>
+          </p>
+        )
+      ) : (
         <p className="mt-2 flex h-6 items-center text-sm">
           {isScratchDraft ? projectSelector : orStartWithoutProject}
         </p>

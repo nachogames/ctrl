@@ -2747,7 +2747,8 @@ export default function ChatView(props: ChatViewProps) {
     },
     [navigate, setEnvironmentEnabled],
   );
-  const { scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
+  const { scratchWorkspaceRootFor, scratchUnavailableReasonFor, openScratchProject } =
+    useScratchProject();
   const activeProjectIsScratch =
     activeProject !== null &&
     isScratchProject(
@@ -2757,7 +2758,11 @@ export default function ChatView(props: ChatViewProps) {
   const logicalProjectEnvironments = useMemo(() => {
     if (!activeProject) return [];
     const envs: EnvironmentOption[] = [];
-    const pushEnvironment = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
+    const pushEnvironment = (
+      environmentId: EnvironmentId,
+      projectId: ProjectId | null,
+      disabledReason?: string,
+    ) => {
       const environment = environmentById.get(environmentId) ?? null;
       envs.push({
         environmentId,
@@ -2765,6 +2770,7 @@ export default function ChatView(props: ChatViewProps) {
         label: environment?.label ?? environmentId,
         isPrimary: environmentId === primaryEnvironmentId,
         machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
+        ...(disabledReason === undefined ? {} : { disabledReason }),
       });
     };
     if (activeProjectIsScratch && draftId) {
@@ -2772,9 +2778,14 @@ export default function ChatView(props: ChatViewProps) {
       // never group as one logical project. Offer every machine that has one.
       for (const environment of environments) {
         const scratchRoot = scratchWorkspaceRootFor(environment.environmentId);
-        // Keep the current machine visible so an offline source can still switch away.
-        if (scratchRoot === null && environment.environmentId !== activeProject.environmentId)
+        if (scratchRoot === null && environment.environmentId !== activeProject.environmentId) {
+          // A connected machine that says why it has no "No project" folder is
+          // listed, greyed out, so the choice of machine is never a mystery.
+          const reason = scratchUnavailableReasonFor(environment.environmentId);
+          if (reason !== null) pushEnvironment(environment.environmentId, null, reason);
           continue;
+        }
+        // Keep the current machine visible so an offline source can still switch away.
         const scratchProject =
           environment.environmentId === activeProject.environmentId
             ? activeProject
@@ -2814,6 +2825,7 @@ export default function ChatView(props: ChatViewProps) {
     primaryEnvironmentId,
     environmentById,
     scratchWorkspaceRootFor,
+    scratchUnavailableReasonFor,
   ]);
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
   // Auto balance retargets to an existing project; a machine's "No project"
@@ -4476,7 +4488,7 @@ export default function ChatView(props: ChatViewProps) {
       const target = logicalProjectEnvironments.find(
         (env) => env.environmentId === nextEnvironmentId,
       );
-      if (!target) return;
+      if (!target || target.disabledReason !== undefined) return;
       const request = { environmentId: target.environmentId };
       environmentChangeRef.current = request;
       setIsEnvironmentChanging(false);
@@ -8281,10 +8293,11 @@ export default function ChatView(props: ChatViewProps) {
         if (event.repeat) return;
         // Step from where a pending switch is heading, so repeated presses keep advancing.
         const currentId = environmentChangeRef.current?.environmentId ?? environmentId;
-        const index = logicalProjectEnvironments.findIndex(
-          (env) => env.environmentId === currentId,
+        const pickable = logicalProjectEnvironments.filter(
+          (env) => env.disabledReason === undefined || env.environmentId === currentId,
         );
-        const next = logicalProjectEnvironments[(index + 1) % logicalProjectEnvironments.length];
+        const index = pickable.findIndex((env) => env.environmentId === currentId);
+        const next = pickable[(index + 1) % pickable.length];
         if (next) onEnvironmentChange(next.environmentId);
         return;
       }
