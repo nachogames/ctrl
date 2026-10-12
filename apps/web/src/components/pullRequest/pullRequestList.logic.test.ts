@@ -33,6 +33,7 @@ import {
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
   applyPullRequestOverrides,
+  arrangePullRequestGroups,
   pullRequestOverrideAfterAction,
   reusePullRequestEntries,
   settlePullRequestOverrides,
@@ -1207,6 +1208,7 @@ describe("remembered pull request list controls", () => {
       author: "octocat",
       labels: ["bug", "priority"],
       sort: "largest",
+      groupBy: "project",
     } as const;
 
     writePullRequestListPreferences(preferences, storage);
@@ -1221,6 +1223,12 @@ describe("remembered pull request list controls", () => {
         sort: "ready",
       }),
     ).toEqual({ involvement: "all", state: "open" });
+  });
+
+  it("restores the Mine tab, which the hosts never see", () => {
+    const storage = makeStorage();
+    writePullRequestListPreferences({ involvement: "mine", state: "open" }, storage);
+    expect(readPullRequestListPreferences(storage)).toEqual({ involvement: "mine", state: "open" });
   });
 
   it("keeps an explicit recency sort", () => {
@@ -1717,5 +1725,79 @@ describe("pull request list override settlement", () => {
     const swapped = reusePullRequestEntries(previous, [entry(2, "open"), entry(1, "open")], key);
     expect(swapped).not.toBe(previous);
     expect(swapped.map((row) => row.number)).toEqual([2, 1]);
+  });
+});
+
+describe("arrangePullRequestGroups", () => {
+  const authored = [
+    entry({ number: 1 }),
+    entry({
+      number: 2,
+      projectId: "project-2" as ProjectId,
+      projectTitle: "alpha",
+      repository: "me/alpha",
+    }),
+  ];
+  const reviewing = [
+    entry({
+      number: 3,
+      projectId: "project-2" as ProjectId,
+      projectTitle: "alpha",
+      repository: "me/alpha",
+    }),
+  ];
+  const others = [
+    entry({
+      number: 4,
+      projectId: "project-3" as ProjectId,
+      projectTitle: "career-ops",
+      repository: "them/career-ops",
+    }),
+  ];
+  const groups = [
+    { key: "authored", label: "Authored", entries: authored },
+    { key: "reviewRequested", label: "Review requested", entries: reviewing },
+    { key: "others", label: "Others", entries: others },
+  ] as const;
+  const numbers = (arranged: ReturnType<typeof arrangePullRequestGroups>) =>
+    arranged.map((group) => [group.label, group.entries.map((row) => row.number)]);
+
+  it("leaves the involvement groups alone by default", () => {
+    expect(arrangePullRequestGroups(groups, { mine: false, byProject: false })).toBe(groups);
+  });
+
+  it("drops everyone else's rows for Mine", () => {
+    expect(numbers(arrangePullRequestGroups(groups, { mine: true, byProject: false }))).toEqual([
+      ["Authored", [1, 2]],
+      ["Review requested", [3]],
+    ]);
+  });
+
+  it("groups by project in title order, authored rows first within each", () => {
+    expect(numbers(arrangePullRequestGroups(groups, { mine: false, byProject: true }))).toEqual([
+      ["alpha", [2, 3]],
+      ["career-ops", [4]],
+      ["t3code", [1]],
+    ]);
+    expect(numbers(arrangePullRequestGroups(groups, { mine: true, byProject: true }))).toEqual([
+      ["alpha", [2, 3]],
+      ["t3code", [1]],
+    ]);
+  });
+
+  it("names the repository when two servers' projects share a title", () => {
+    const twin = entry({
+      number: 5,
+      environmentId: "env-2" as EnvironmentId,
+      repository: "me/fork",
+    });
+    const arranged = arrangePullRequestGroups(
+      [{ key: "others", label: "", entries: [entry({ number: 1 }), twin] }],
+      { mine: false, byProject: true },
+    );
+    expect(arranged.map((group) => group.label)).toEqual([
+      "t3code · me/fork",
+      "t3code · pingdotgg/t3code",
+    ]);
   });
 });

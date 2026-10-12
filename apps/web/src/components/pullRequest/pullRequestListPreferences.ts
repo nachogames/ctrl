@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
   ProjectId,
-  PullRequestInvolvement,
+  type PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
 } from "@t3tools/contracts";
@@ -19,8 +19,26 @@ export const PullRequestListSort = Schema.Literals([
 ]);
 export type PullRequestListSort = typeof PullRequestListSort.Type;
 
+/**
+ * The involvement tabs. "Mine" is a page-only view, never sent to a host: it reads the "all"
+ * listing and keeps the Authored and Review requested groups, dropping everyone else's rows.
+ */
+export const PullRequestListInvolvement = Schema.Literals(["all", "mine", "reviewing", "authored"]);
+export type PullRequestListInvolvement = typeof PullRequestListInvolvement.Type;
+
+/** What the hosts are asked for under a tab. */
+export function hostPullRequestInvolvement(
+  involvement: PullRequestListInvolvement,
+): PullRequestInvolvement {
+  return involvement === "mine" ? "all" : involvement;
+}
+
+/** Rows are grouped by involvement unless the reader asks for one group per project. */
+export const PullRequestListGroupBy = Schema.Literals(["involvement", "project"]);
+export type PullRequestListGroupBy = typeof PullRequestListGroupBy.Type;
+
 export interface PullRequestListPreferences {
-  readonly involvement: PullRequestInvolvement;
+  readonly involvement: PullRequestListInvolvement;
   readonly state: PullRequestListState;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
@@ -32,6 +50,7 @@ export interface PullRequestListPreferences {
   readonly author?: string;
   readonly labels?: ReadonlyArray<string>;
   readonly sort?: PullRequestListSort;
+  readonly groupBy?: PullRequestListGroupBy;
 }
 
 export type PullRequestListPreferencePatch = {
@@ -45,7 +64,7 @@ const DEFAULT_PULL_REQUEST_LIST_PREFERENCES = {
 
 const BoundedPreference = Schema.String.check(Schema.isMaxLength(200));
 const PullRequestListPreferencesSchema = Schema.Struct({
-  involvement: PullRequestInvolvement,
+  involvement: PullRequestListInvolvement,
   state: PullRequestListState,
   environmentId: Schema.optional(EnvironmentId),
   projectId: Schema.optional(ProjectId),
@@ -57,6 +76,7 @@ const PullRequestListPreferencesSchema = Schema.Struct({
   author: Schema.optional(BoundedPreference),
   labels: Schema.optional(Schema.Array(BoundedPreference).check(Schema.isMaxLength(10))),
   sort: Schema.optional(PullRequestListSort),
+  groupBy: Schema.optional(PullRequestListGroupBy),
 });
 
 const decodePullRequestListPreferences = Schema.decodeUnknownOption(
@@ -88,6 +108,7 @@ export function pullRequestListPreferences(
     ...(search.author ? { author: search.author } : {}),
     ...(search.labels && search.labels.length > 0 ? { labels: search.labels } : {}),
     ...(search.sort && search.sort !== "ready" ? { sort: search.sort } : {}),
+    ...(search.groupBy === "project" ? { groupBy: search.groupBy } : {}),
   };
 }
 

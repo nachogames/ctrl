@@ -1127,6 +1127,55 @@ export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
   );
 }
 
+/** A group as the page draws it: an involvement group, or one project's rows. */
+export interface PullRequestDisplayGroup<
+  Entry extends PullRequestListEntry = PullRequestListEntry,
+> {
+  readonly key: PullRequestGroupKey | `project:${string}`;
+  readonly label: string;
+  readonly entries: ReadonlyArray<Entry>;
+}
+
+/**
+ * The sorted groups shaped for the page. "Mine" drops everyone else's rows; grouping by project
+ * then regroups whatever is left, one group per project in title order, each keeping the order the
+ * involvement groups gave it (authored, then review requested, then the rest).
+ */
+export function arrangePullRequestGroups<Entry extends EnvironmentPullRequestEntry>(
+  groups: ReadonlyArray<PullRequestGroup<Entry>>,
+  options: { readonly mine: boolean; readonly byProject: boolean },
+): ReadonlyArray<PullRequestDisplayGroup<Entry>> {
+  const kept = options.mine ? groups.filter((group) => group.key !== "others") : groups;
+  if (!options.byProject) return kept;
+  const byProject = new Map<string, { title: string; repository: string; entries: Entry[] }>();
+  for (const entry of kept.flatMap((group) => group.entries)) {
+    const key = JSON.stringify([entry.environmentId, entry.projectId]);
+    const group = byProject.get(key);
+    if (group === undefined) {
+      byProject.set(key, {
+        title: entry.projectTitle,
+        repository: entry.repository,
+        entries: [entry],
+      });
+    } else group.entries.push(entry);
+  }
+  const titleCounts = new Map<string, number>();
+  for (const group of byProject.values()) {
+    titleCounts.set(group.title, (titleCounts.get(group.title) ?? 0) + 1);
+  }
+  return [...byProject.entries()]
+    .map(([key, group]) => ({
+      key: `project:${key}` as const,
+      // Two servers can name different projects alike; the repository tells them apart.
+      label:
+        (titleCounts.get(group.title) ?? 0) > 1
+          ? `${group.title} · ${group.repository}`
+          : group.title,
+      entries: group.entries,
+    }))
+    .toSorted((left, right) => left.label.localeCompare(right.label));
+}
+
 /**
  * A row with the line counts that arrived after it did. Only where the host left them out — a
  * listing that carried them is not second-guessed — and only where they have arrived, since a row
