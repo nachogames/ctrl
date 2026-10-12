@@ -34,6 +34,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -55,6 +56,7 @@ import {
   type PushSendResult,
   sendApns,
   sendFcm,
+  sendRelay,
 } from "./pushTransports.ts";
 
 export class DirectPush extends Context.Service<
@@ -108,7 +110,9 @@ function sameRegistration(a: DirectPushDeviceRegistration, b: DirectPushDeviceRe
 
 export const make = Effect.fn("DirectPush.make")(function* (options?: {
   readonly pushDir?: string;
+  readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
 }) {
+  const httpClientLayer = options?.httpClientLayer ?? FetchHttpClient.layer;
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -189,7 +193,13 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
       let result: PushSendResult;
-      if (device.platform === "ios") {
+      if (device.relayUrl !== undefined && device.relayToken !== undefined) {
+        result = yield* sendRelay({
+          relayUrl: device.relayUrl,
+          relayToken: device.relayToken,
+          message,
+        });
+      } else if (device.platform === "ios") {
         if (credentials.apns === null) {
           return yield* Effect.logWarning("Direct push skipped: APNs is not configured");
         }
@@ -222,12 +232,15 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
       if (result === "unregistered" && devices.get(device.deviceId)?.token === device.token) {
         devices.delete(device.deviceId);
         yield* saveDevices;
-        yield* Effect.logInfo("Removed direct push device the push service no longer accepts", {
-          label: device.label,
-        });
+        yield* Effect.logInfo(
+          "Removed direct push device the push service or relay no longer accepts",
+          {
+            label: device.label,
+          },
+        );
       }
     }).pipe(
-      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(httpClientLayer),
       Effect.catchCause((cause) =>
         Effect.logWarning("Direct push delivery failed", { label: device.label, cause }),
       ),
@@ -241,7 +254,10 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
       (device) => device.notificationsEnabled && deviceWantsAlert(device.alertOn, kind),
     );
     if (targets.length === 0) return;
-    const credentials = yield* readCredentials;
+    // Relay devices need no local keys, so only read them for direct devices.
+    const credentials = targets.some((device) => device.relayToken === undefined)
+      ? yield* readCredentials
+      : ({ apns: null, fcm: null } satisfies PushCredentials);
     yield* Effect.forEach(targets, (device) => sendToDevice(device, message, credentials), {
       concurrency: "unbounded",
       discard: true,
@@ -318,8 +334,9 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
         notificationsEnabled: registration.notificationsEnabled,
       });
     }
+    const relay = registration.relayToken !== undefined && registration.relayUrl !== undefined;
     const credentials = yield* readCredentials;
-    return { ios: credentials.apns !== null, android: credentials.fcm !== null };
+    return { ios: relay || credentials.apns !== null, android: relay || credentials.fcm !== null };
   });
 
   const unregisterDevice = Effect.fn("DirectPush.unregisterDevice")(function* (deviceId: string) {
