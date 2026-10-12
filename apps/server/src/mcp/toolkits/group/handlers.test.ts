@@ -262,6 +262,11 @@ it.effect("reads what is running for the group from the scanner", () =>
         detail: ":5173",
         url: "http://localhost:5173",
         source: "terminal",
+        tier: "known",
+        terminal: null,
+        startedByThreadId: null,
+        scriptId: null,
+        port: 5173,
       },
     ];
     const scanned: Array<ThreadGroupId> = [];

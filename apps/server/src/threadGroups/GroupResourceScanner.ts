@@ -6,6 +6,8 @@
  * the group's worktree. A container belongs to it when its compose
  * `working_dir` label is inside the worktree. A group without a worktree gets
  * terminal attribution only. Registered resources come from the group shell.
+ * Servers a member terminal owns, and anything registered, are "known"; the
+ * rest only run in the worktree and are "found".
  * Scanner failures degrade to fewer results, never an error.
  *
  * `changes` streams a group's resources while someone watches it. Every
@@ -14,12 +16,16 @@
  */
 import type {
   DiscoveredLocalServer,
+  ProjectId,
+  ProjectScript,
+  TerminalSummary,
   ThreadGroupId,
   ThreadGroupManualResource,
   ThreadGroupRunningResource,
   ThreadId,
 } from "@t3tools/contracts";
-import { isLoopbackHost } from "@t3tools/shared/preview";
+import { resolveProjectScripts, scriptIdFromTerminalId } from "@t3tools/shared/projectScripts";
+import { loopbackPort } from "@t3tools/shared/threadGroups";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -37,6 +43,9 @@ import * as ThreadGroupService from "../orchestration-v2/ThreadGroupService.ts";
 import * as ThreadGroupStore from "../orchestration-v2/ThreadGroupStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 import * as DockerScanner from "./DockerScanner.ts";
 import * as ProcessCwd from "./processCwd.ts";
 
@@ -84,15 +93,20 @@ export const attributeServers = (
         ? "cwd"
         : null;
     if (source === null) return [];
-    const detail = `:${listener.port}`;
+    const terminal = source === "terminal" ? listener.terminal : null;
     return [
       {
         id: `server:${listener.port}`,
         kind: "server",
         name: listener.processName ?? "server",
-        detail,
+        detail: `:${listener.port}`,
         url: `http://${listener.host}:${listener.port}`,
         source,
+        tier: source === "terminal" ? "known" : "found",
+        terminal,
+        startedByThreadId: terminal?.threadId ?? null,
+        scriptId: null,
+        port: listener.port,
       },
     ];
   });
@@ -119,55 +133,92 @@ export const attributeContainers = (
             detail: "docker",
             url: port === undefined ? null : `http://localhost:${port}`,
             source: "docker",
+            tier: "found",
+            terminal: null,
+            startedByThreadId: null,
+            scriptId: null,
+            port: port ?? null,
           },
         ];
       });
 
-/** The loopback port a registered URL points at, or null when it points elsewhere. */
-const loopbackPort = (raw: string): number | null => {
-  try {
-    const url = new URL(raw);
-    if (!isLoopbackHost(url.hostname) && url.hostname !== "0.0.0.0") return null;
-    if (url.port.length > 0) return Number.parseInt(url.port, 10);
-    return url.protocol === "http:" ? 80 : url.protocol === "https:" ? 443 : null;
-  } catch {
-    return null;
-  }
-};
+export type TerminalCommand = Pick<TerminalSummary, "label" | "hasRunningSubprocess">;
+
+export const terminalKey = (terminal: { readonly threadId: string; readonly terminalId: string }) =>
+  `${terminal.threadId}\u0000${terminal.terminalId}`;
 
 /**
- * Servers, then containers, then registered resources. A registered resource
- * whose URL is the local port of one of the group's scanned servers is
- * dropped, so the same thing never shows twice.
+ * Whether a script terminal still runs its script: it is idle or unknown, or its
+ * program is one of the command's words. A reused terminal keeps its id after
+ * the script stops, so the id alone would name a stranger.
+ */
+const stillRunsScript = (command: string, terminal: TerminalCommand | undefined) =>
+  terminal === undefined ||
+  !terminal.hasRunningSubprocess ||
+  command.split(/\s+/).some((word) => word.split("/").at(-1) === terminal.label);
+
+/**
+ * Servers, then containers, then registered resources. A server is named by a
+ * registered resource on its port (which also makes it known and drops that
+ * row), else its script, else its terminal's program, else its process.
  */
 export const mergeGroupResources = (input: {
   readonly servers: ReadonlyArray<ThreadGroupRunningResource>;
   readonly containers: ReadonlyArray<ThreadGroupRunningResource>;
   readonly manual: ReadonlyArray<ThreadGroupManualResource>;
+  readonly scripts?: ReadonlyArray<ProjectScript>;
+  /** Keyed by `terminalKey`. */
+  readonly terminals?: ReadonlyMap<string, TerminalCommand>;
 }): ReadonlyArray<ThreadGroupRunningResource> => {
-  const serverPorts = new Set(
-    input.servers.flatMap((server) => {
-      const port = server.url === null ? null : loopbackPort(server.url);
-      return port === null ? [] : [port];
-    }),
-  );
+  const scripts = new Map((input.scripts ?? []).map((script) => [script.id, script]));
+  const manualByPort = new Map<number, ThreadGroupManualResource>();
+  for (const resource of input.manual) {
+    const port = resource.url === null ? null : loopbackPort(resource.url);
+    if (port !== null && !manualByPort.has(port)) manualByPort.set(port, resource);
+  }
+  const naming = new Set<string>();
+  const servers = input.servers.map((server): ThreadGroupRunningResource => {
+    const named = server.port === null ? undefined : manualByPort.get(server.port);
+    if (named !== undefined) naming.add(named.id);
+    const terminal =
+      server.terminal === null ? undefined : input.terminals?.get(terminalKey(server.terminal));
+    const candidate =
+      server.terminal === null ? null : scriptIdFromTerminalId(server.terminal.terminalId);
+    const candidateScript = candidate === null ? undefined : scripts.get(candidate);
+    const script =
+      candidateScript !== undefined && stillRunsScript(candidateScript.command, terminal)
+        ? candidateScript
+        : undefined;
+    const program = terminal?.hasRunningSubprocess === true ? terminal.label.trim() : "";
+    return {
+      ...server,
+      name: named?.name ?? script?.name ?? (program.length > 0 ? program : server.name),
+      scriptId: script?.id ?? null,
+      tier: named !== undefined ? "known" : server.tier,
+    };
+  });
   return [
-    ...input.servers,
+    ...servers,
     ...input.containers,
-    ...input.manual.flatMap((resource): ReadonlyArray<ThreadGroupRunningResource> => {
-      const port = resource.url === null ? null : loopbackPort(resource.url);
-      if (port !== null && serverPorts.has(port)) return [];
-      return [
-        {
-          id: `manual:${resource.id}`,
-          kind: "manual",
-          name: resource.name,
-          detail: resource.url ?? "registered",
-          url: resource.url,
-          source: "registered",
-        },
-      ];
-    }),
+    ...input.manual.flatMap((resource): ReadonlyArray<ThreadGroupRunningResource> =>
+      naming.has(resource.id)
+        ? []
+        : [
+            {
+              id: `manual:${resource.id}`,
+              kind: "manual",
+              name: resource.name,
+              detail: resource.url ?? "registered",
+              url: resource.url,
+              source: "registered",
+              tier: "known",
+              terminal: null,
+              startedByThreadId: null,
+              scriptId: null,
+              port: resource.url === null ? null : loopbackPort(resource.url),
+            },
+          ],
+    ),
   ];
 };
 
@@ -182,6 +233,12 @@ const resourceKey = (resource: ThreadGroupRunningResource) =>
     resource.detail,
     resource.url,
     resource.source,
+    resource.tier,
+    resource.terminal?.threadId ?? null,
+    resource.terminal?.terminalId ?? null,
+    resource.startedByThreadId,
+    resource.scriptId,
+    resource.port,
   ]);
 
 /** Same resources, in any order: a reordered scan is not a change. */
@@ -288,6 +345,9 @@ export const make = Effect.gen(function* () {
   const docker = yield* DockerScanner.DockerScanner;
   const fileSystem = yield* FileSystem.FileSystem;
   const cwds = yield* ProcessCwd.makeProcessCwdLookup;
+  const terminalManager = yield* TerminalManager.TerminalManager;
+  const projects = yield* ProjectService.ProjectService;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
   const scanServers = Effect.fn("GroupResourceScanner.scanServers")(function* (
     scope: GroupAttributionScope,
@@ -314,6 +374,40 @@ export const make = Effect.gen(function* () {
       { concurrency: 16 },
     );
     return attributeContainers(resolved, worktreeRoot);
+  });
+
+  // Read only when a member terminal owns a listener, so most scans touch neither.
+  const describeTerminals = Effect.fn("GroupResourceScanner.describeTerminals")(function* (
+    projectId: ProjectId,
+    servers: ReadonlyArray<ThreadGroupRunningResource>,
+  ) {
+    const owned = servers.flatMap((server) => (server.terminal === null ? [] : [server.terminal]));
+    if (owned.length === 0) return { scripts: [], terminals: new Map<string, TerminalCommand>() };
+    const summaries = yield* Effect.forEach(
+      owned,
+      (terminal) =>
+        terminalManager
+          .readMetadata(terminal)
+          .pipe(Effect.map((summary) => [terminalKey(terminal), summary] as const)),
+      { concurrency: "unbounded" },
+    );
+    const scripts = yield* Effect.all([projects.getById(projectId), settings.getSettings]).pipe(
+      Effect.map(([project, current]) =>
+        Option.isNone(project) ? [] : resolveProjectScripts(current, project.value),
+      ),
+      Effect.catch((cause) =>
+        Effect.logDebug("group resource scan could not read project scripts", {
+          projectId,
+          cause,
+        }).pipe(Effect.as([])),
+      ),
+    );
+    return {
+      scripts,
+      terminals: new Map(
+        summaries.flatMap(([key, summary]) => (summary === null ? [] : [[key, summary] as const])),
+      ),
+    };
   });
 
   const scan = Effect.fn("GroupResourceScanner.scan")(function* (groupId: ThreadGroupId) {
@@ -357,11 +451,8 @@ export const make = Effect.gen(function* () {
       [scanServers(scope), scanContainers(scope.worktreeRoot)],
       { concurrency: "unbounded" },
     );
-    return mergeGroupResources({
-      servers,
-      containers,
-      manual: group.manualResources,
-    });
+    const named = yield* describeTerminals(group.projectId, servers);
+    return mergeGroupResources({ servers, containers, manual: group.manualResources, ...named });
   });
 
   const feed = yield* makeResourceFeed({

@@ -83,6 +83,11 @@ describe("thread group contracts", () => {
       detail: ":5733",
       url: "http://localhost:5733",
       source: "cwd",
+      tier: "found",
+      terminal: null,
+      startedByThreadId: null,
+      scriptId: null,
+      port: 5733,
     };
     expect(decodeResource(server)).toEqual(server);
     expect(
@@ -95,6 +100,7 @@ describe("thread group contracts", () => {
       }).url,
     ).toBeNull();
     expect(() => decodeResource({ ...server, source: "guess" })).toThrow();
+    expect(() => decodeResource({ ...server, tier: "maybe" })).toThrow();
   });
 
   it("keeps absent and null apart in an update patch", () => {

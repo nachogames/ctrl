@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupLinkLabel, pullRequestTitleIssueLinks } from "./threadGroups.ts";
+import { groupLinkLabel, loopbackPort, pullRequestTitleIssueLinks } from "./threadGroups.ts";
 
 describe("groupLinkLabel", () => {
   it("names a Linear issue by its key, ignoring the slug, query and hash", () => {
@@ -37,5 +37,18 @@ describe("pullRequestTitleIssueLinks", () => {
     expect(
       pullRequestTitleIssueLinks({ ...pr, title: "Bump abc#12, see https://x.test/#34" }),
     ).toEqual([]);
+  });
+});
+
+describe("loopbackPort", () => {
+  it("reads the port of a loopback URL, with protocol defaults", () => {
+    expect(loopbackPort("http://127.0.0.1:3000/app")).toBe(3000);
+    expect(loopbackPort("http://localhost")).toBe(80);
+    expect(loopbackPort("http://0.0.0.0:8080")).toBe(8080);
+  });
+
+  it("is null for other hosts and non-URLs", () => {
+    expect(loopbackPort("https://staging.example.test")).toBeNull();
+    expect(loopbackPort("registered")).toBeNull();
   });
 });

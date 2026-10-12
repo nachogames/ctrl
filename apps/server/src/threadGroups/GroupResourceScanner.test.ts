@@ -1,11 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   type DiscoveredLocalServer,
   type OrchestrationThreadGroupShell,
   type OrchestrationV2ThreadShell,
   ProjectId,
   ThreadGroupId,
   ThreadId,
+  type ProjectScript,
+  type TerminalSummary,
   type ThreadGroupRunningResource,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -22,6 +25,9 @@ import * as ThreadGroupStore from "../orchestration-v2/ThreadGroupStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 import type { DockerContainer } from "./DockerScanner.ts";
 import * as DockerScanner from "./DockerScanner.ts";
 import * as GroupResourceScanner from "./GroupResourceScanner.ts";
@@ -61,13 +67,22 @@ const listener = (
   pid: number,
   processName: string,
   terminalThread: ThreadId | null,
+  terminalId = "term-1",
 ): DiscoveredLocalServer => ({
   host: "localhost",
   port,
   url: `http://localhost:${port}`,
   processName,
   pid,
-  terminal: terminalThread === null ? null : { threadId: terminalThread, terminalId: "term-1" },
+  terminal: terminalThread === null ? null : { threadId: terminalThread, terminalId },
+});
+
+const script = (id: string, name: string, command: string): ProjectScript => ({
+  id,
+  name,
+  command,
+  icon: "play",
+  runOnWorktreeCreate: false,
 });
 
 const listeners = [
@@ -97,6 +112,10 @@ const makeLayer = (input: {
   readonly run: ProcessRunner.ProcessRunner["Service"]["run"];
   readonly manualResources?: OrchestrationThreadGroupShell["manualResources"];
   readonly listContainers?: Effect.Effect<ReadonlyArray<DockerContainer>>;
+  readonly listeners?: ReadonlyArray<DiscoveredLocalServer>;
+  /** Keyed by terminal id. */
+  readonly terminals?: ReadonlyMap<string, Pick<TerminalSummary, "label" | "hasRunningSubprocess">>;
+  readonly scripts?: ReadonlyArray<ProjectScript>;
 }) =>
   GroupResourceScanner.layer.pipe(
     Layer.provide(
@@ -108,9 +127,27 @@ const makeLayer = (input: {
         Layer.mock(ThreadManagement.ThreadManagementService)({
           listProjectThreads: () => Effect.succeed([thread(member, true), thread(outsider, false)]),
         }),
-        Layer.mock(PortScanner.PortDiscovery)({ listListeners: Effect.succeed(listeners) }),
+        Layer.mock(PortScanner.PortDiscovery)({
+          listListeners: Effect.succeed(input.listeners ?? listeners),
+        }),
         Layer.mock(DockerScanner.DockerScanner)({
           listContainers: input.listContainers ?? Effect.succeed([]),
+        }),
+        Layer.mock(TerminalManager.TerminalManager)({
+          readMetadata: ({ terminalId }) => {
+            const summary = input.terminals?.get(terminalId);
+            return Effect.succeed(summary === undefined ? null : (summary as TerminalSummary));
+          },
+        }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeed(Option.some({ id: projectId, scripts: [] } as never)),
+        }),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          getSettings: Effect.succeed({
+            ...DEFAULT_SERVER_SETTINGS,
+            projectSettingsFolded: true,
+            defaultProjectScripts: [...(input.scripts ?? [])],
+          }),
         }),
         Layer.succeed(ProcessRunner.ProcessRunner, { run: input.run }),
         // realPath fails, so paths are compared as given.
@@ -163,6 +200,11 @@ describe("GroupResourceScanner servers", () => {
             detail: ":3000",
             url: "http://localhost:3000",
             source: "terminal",
+            tier: "known",
+            terminal: { threadId: member, terminalId: "term-1" },
+            startedByThreadId: member,
+            scriptId: null,
+            port: 3000,
           }),
         ),
       ),
@@ -192,6 +234,20 @@ describe("GroupResourceScanner servers", () => {
       ),
     );
   });
+
+  it.effect("a group without a worktree finds nothing beyond its chats' terminals", () =>
+    GroupResourceScanner.GroupResourceScanner.pipe(
+      Effect.flatMap((scanner) => scanner.scan(groupId)),
+      Effect.tap((resources) =>
+        Effect.sync(() =>
+          expect(resources.map((resource) => [resource.id, resource.tier])).toEqual([
+            ["server:3000", "known"],
+          ]),
+        ),
+      ),
+      Effect.provide(makeLayer({ worktreePath: null, run: () => Effect.succeed(ok("")) })),
+    ),
+  );
 
   it.effect("keeps terminal-attributed servers when the cwd lookup fails", () =>
     scanServers.pipe(
@@ -243,6 +299,11 @@ describe("GroupResourceScanner containers and registered resources", () => {
               detail: "docker",
               url: "http://localhost:5432",
               source: "docker",
+              tier: "found",
+              terminal: null,
+              startedByThreadId: null,
+              scriptId: null,
+              port: 5432,
             },
             {
               id: "container:cache",
@@ -251,6 +312,11 @@ describe("GroupResourceScanner containers and registered resources", () => {
               detail: "docker",
               url: null,
               source: "docker",
+              tier: "found",
+              terminal: null,
+              startedByThreadId: null,
+              scriptId: null,
+              port: null,
             },
           ]),
         ),
@@ -332,6 +398,111 @@ describe("GroupResourceScanner containers and registered resources", () => {
   );
 });
 
+describe("GroupResourceScanner names and tiers", () => {
+  const scan = (overrides: Partial<Parameters<typeof makeLayer>[0]> = {}) =>
+    GroupResourceScanner.GroupResourceScanner.pipe(
+      Effect.flatMap((scanner) => scanner.scan(groupId)),
+      Effect.provide(
+        makeLayer({
+          worktreePath: "/a/wt",
+          run: () => Effect.succeed(ok(lsofCwdOutput)),
+          ...overrides,
+        }),
+      ),
+    );
+
+  it.effect("tiers a member's terminal server as known and a worktree server as found", () =>
+    scan().pipe(
+      Effect.tap((resources) =>
+        Effect.sync(() =>
+          expect(
+            resources.map((r) => [
+              r.id,
+              r.tier,
+              r.startedByThreadId,
+              r.terminal?.terminalId ?? null,
+              r.port,
+            ]),
+          ).toEqual([
+            ["server:3000", "known", member, "term-1", 3000],
+            ["server:5000", "found", null, null, 5000],
+          ]),
+        ),
+      ),
+    ),
+  );
+
+  it.effect(
+    "names a server by its registered name, then its script, its program, its process",
+    () =>
+      scan({
+        listeners: [
+          listener(3000, 100, "node", member, "script-dev"),
+          listener(3001, 101, "node", member, "term-2"),
+          listener(3002, 102, "node", member, "term-3"),
+          listener(3003, 103, "node", member, "settle-clean-0a1b2c3d"),
+        ],
+        terminals: new Map([
+          ["script-dev", { label: "vp", hasRunningSubprocess: true }],
+          ["term-2", { label: "python3", hasRunningSubprocess: true }],
+          ["settle-clean-0a1b2c3d", { label: "vp", hasRunningSubprocess: true }],
+        ]),
+        scripts: [
+          script("dev", "Dev server", "vp run dev"),
+          script("clean", "Clean", "vp run clean"),
+        ],
+        manualResources: [
+          { id: "web", name: "Web app", url: "http://localhost:3000", kind: "server" },
+        ],
+      }).pipe(
+        Effect.tap((resources) =>
+          Effect.sync(() =>
+            expect(resources.map((r) => [r.id, r.name, r.scriptId])).toEqual([
+              ["server:3000", "Web app", "dev"],
+              ["server:3001", "python3", null],
+              ["server:3002", "node", null],
+              ["server:3003", "Clean", "clean"],
+            ]),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("does not name a reused script terminal after the script it no longer runs", () =>
+    scan({
+      listeners: [listener(8000, 100, "Python", member, "script-dev")],
+      terminals: new Map([["script-dev", { label: "python3", hasRunningSubprocess: true }]]),
+      scripts: [script("dev", "Dev server", "vp run dev")],
+    }).pipe(
+      Effect.tap((resources) =>
+        Effect.sync(() =>
+          expect(resources.map((r) => [r.name, r.scriptId])).toEqual([["python3", null]]),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("a registered name promotes a worktree server and never lands on another's port", () =>
+    scan({
+      manualResources: [
+        { id: "docs", name: "Docs", url: "http://localhost:5000", kind: "server" },
+        // :4000 belongs to a chat outside the group.
+        { id: "api", name: "API", url: "http://localhost:4000", kind: "server" },
+      ],
+    }).pipe(
+      Effect.tap((resources) =>
+        Effect.sync(() =>
+          expect(resources.map((r) => [r.id, r.name, r.tier, r.source])).toEqual([
+            ["server:3000", "vite", "known", "terminal"],
+            ["server:5000", "Docs", "known", "cwd"],
+            ["manual:api", "API", "known", "registered"],
+          ]),
+        ),
+      ),
+    ),
+  );
+});
+
 describe("listenersNeedingCwd", () => {
   it("never looks up the T3 server's own process", () => {
     const scope = { memberThreadIds: new Set([member]), worktreeRoot: "/a/wt" };
@@ -346,6 +517,11 @@ const resource = (id: string): ThreadGroupRunningResource => ({
   detail: id.startsWith("container:") ? "docker" : ":3000",
   url: null,
   source: id.startsWith("container:") ? "docker" : "terminal",
+  tier: "known",
+  terminal: null,
+  startedByThreadId: null,
+  scriptId: null,
+  port: null,
 });
 
 /** A feed over a scan whose result the test changes, counting scans and watches. */

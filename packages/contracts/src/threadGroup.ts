@@ -44,6 +44,14 @@ export const ThreadGroupRunningResource = Schema.Struct({
   url: Schema.NullOr(TrimmedNonEmptyString),
   /** How it was attributed: a member's terminal, a working directory in the worktree, a compose label, or by hand. */
   source: Schema.Literals(["terminal", "cwd", "docker", "registered"]),
+  /** Known: a member chat's terminal started it, or someone named it. Found: it only runs in the worktree. */
+  tier: Schema.Literals(["known", "found"]),
+  /** The member chat's terminal that owns it; Stop interrupts this terminal. */
+  terminal: Schema.NullOr(Schema.Struct({ threadId: ThreadId, terminalId: TrimmedNonEmptyString })),
+  startedByThreadId: Schema.NullOr(ThreadId),
+  /** The project script it runs, when its terminal still runs that script. */
+  scriptId: Schema.NullOr(TrimmedNonEmptyString),
+  port: Schema.NullOr(Schema.Int),
 });
 export type ThreadGroupRunningResource = typeof ThreadGroupRunningResource.Type;
 

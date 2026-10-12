@@ -1,3 +1,5 @@
+import { isLoopbackHost } from "./preview.ts";
+
 /** Label for a link on a chat group: a Linear key, `#N` for a GitHub issue or pull request, else the host. Null when it is not an http(s) URL. */
 export function groupLinkLabel(raw: string): string | null {
   let url: URL;
@@ -41,4 +43,16 @@ export function pullRequestTitleIssueLinks(input: {
     });
   }
   return links;
+}
+
+/** The loopback port a URL points at, or null when it points elsewhere or is not a URL. */
+export function loopbackPort(raw: string): number | null {
+  try {
+    const url = new URL(raw);
+    if (!isLoopbackHost(url.hostname) && url.hostname !== "0.0.0.0") return null;
+    if (url.port.length > 0) return Number.parseInt(url.port, 10);
+    return url.protocol === "http:" ? 80 : url.protocol === "https:" ? 443 : null;
+  } catch {
+    return null;
+  }
 }
