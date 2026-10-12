@@ -125,6 +125,8 @@ function LocalSettingsRouteScreen() {
             valuePosition="trailing"
             target="SettingsEnvironments"
           />
+          {/* Ctrl: server push works without T3 Connect, so its settings stay reachable. */}
+          <SettingsRow icon="bell.badge" label="Notifications" target="SettingsNotifications" />
         </SettingsSection>
 
         <SettingsIndexSections />
