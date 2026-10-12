@@ -20,14 +20,14 @@ export function orderGroupMembers<Id extends string>(
 ): ReadonlyArray<Id> {
   const keyed = items
     .filter((item) => item.groupOrderKey != null)
-    .toSorted(
+    .sort(
       (left, right) =>
         compareText(left.groupOrderKey ?? "", right.groupOrderKey ?? "") ||
         compareText(left.id, right.id),
     );
   const newestFirst = (left: GroupOrderItem<Id>, right: GroupOrderItem<Id>) =>
     right.createdAtMs - left.createdAtMs || compareText(left.id, right.id);
-  const keyless = items.filter((item) => item.groupOrderKey == null).toSorted(newestFirst);
+  const keyless = items.filter((item) => item.groupOrderKey == null).sort(newestFirst);
 
   const ids = new Set<string>(keyless.map((item) => item.id));
   const successors = new Map<string, Array<GroupOrderItem<Id>>>();
@@ -62,7 +62,7 @@ export function orderGroupMembers<Id extends string>(
   const newestOf = (chain: ReadonlyArray<GroupOrderItem<Id>>) =>
     chain.reduce((newest, item) => (newestFirst(item, newest) < 0 ? item : newest));
   return [
-    ...chains.toSorted((left, right) => newestFirst(newestOf(left), newestOf(right))).flat(),
+    ...[...chains].sort((left, right) => newestFirst(newestOf(left), newestOf(right))).flat(),
     ...keyed,
   ].map((item) => item.id);
 }
