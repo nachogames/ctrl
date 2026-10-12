@@ -8,7 +8,7 @@ ALLOWED_BUNDLE_IDS = "com.nachogames.ctrl,com.nachogames.ctrl.dev,com.nachogames
 
 [[kv_namespaces]]
 binding = "DEVICES"
-id = "REPLACE_IN_TASK_6"
+id = "eefb550f3c0a4c339566fb1c3a26d730"
 
 [[ratelimits]]
 name = "REGISTER_LIMITER"
