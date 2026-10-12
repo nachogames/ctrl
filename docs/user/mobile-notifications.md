@@ -12,7 +12,15 @@ Notification permission and Android notification channels are controlled in syst
 
 ## Server notifications without T3 Connect
 
-Your server can send alerts itself, using your own Apple Push Notification service key or Firebase project. Use this when you connect directly, such as over your LAN or Tailscale, and do not want a T3 Connect account. By default it alerts when an agent needs approval or asks for input; you can also turn on alerts for finished and failed runs. Once you answer, from any device, the question's alert is removed from your phone. iOS may delay this, and skips it while the app is force-quit. It does not drive Live Activities or ongoing activity cards. The app must be built with your Apple team or your Firebase `google-services.json`.
+Your servers can alert your phone without a T3 Connect account. Turn on **Settings → Notifications → Server Notifications** in the mobile app, then choose which events alert you. By default you are alerted when an agent needs approval or asks for input; you can also turn on alerts for finished and failed runs. Every server the phone is connected to can then alert it, and the servers need no setup. Each connected server shows **Ready** once it has registered this device.
+
+Alerts go through Ctrl's push relay. The relay sees the thread title and project name it delivers, and an address that reaches only your phone. **Reset alerts** in the same screen gives your phone a new address, so a computer you no longer use stops reaching it.
+
+Once you answer a question, from any device, its alert is removed from your phone. iOS may delay this, and skips it while the app is force-quit. Server notifications do not drive Live Activities or ongoing activity cards.
+
+### Using your own push keys
+
+If you build the app yourself with your own Apple team or Firebase project, the relay cannot push to it. Give each server your keys instead:
 
 1. On the server machine, create `push/config.json` in the server's data directory (for example `~/.t3/userdata/push/config.json`). Include whichever platforms you use:
 
@@ -29,6 +37,6 @@ Your server can send alerts itself, using your own Apple Push Notification servi
 
    The APNs key needs the Apple Push Notifications service enabled. The Firebase file is a service account key from **Project settings → Service accounts**. Relative paths are read from the `push` folder; absolute and `~/` paths also work. Changes take effect without restarting the server.
 
-2. In the mobile app, turn on **Settings → Notifications → Server Notifications**, then choose which events alert you. Each connected environment shows **Ready** once it has registered this device and has keys for its platform.
+2. Set `CTRL_PUSH_RELAY_URL` to an empty value when building the app, so phones register with your servers directly.
 
 Turning the switch off removes this device from your servers.
