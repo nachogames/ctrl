@@ -14,7 +14,7 @@ git push origin ctrl-v0.1.1
 
 The version comes from the tag, not `package.json`, so upstream merges cannot move it. Each tag must be higher than the last one. Ctrl versions start at 0.1.0 so they stay ahead of upstream's 0.0.x and the mobile app does not offer upstream server updates.
 
-A run takes about 20 minutes. Installed apps pick it up on their next update check, or right away through the app's check-for-updates action.
+A desktop-only run takes about 10 minutes, and a release whose Android native code changed adds roughly half an hour for the APK. Installed apps pick it up on their next update check, or right away through the app's check-for-updates action.
 
 ## One-time setup
 
@@ -46,6 +46,6 @@ Releases are public because the repository is. Anyone can download the app, and 
 
 The same tag publishes the Android app from the `android` job. It publishes an OTA update to the `production` channel of the Expo project `@mceachinm/ctrl`, which hosts updates only; builds happen in the workflow, not EAS Build. When native code changed, it also attaches a signed `Ctrl-<version>-android-<fingerprint>.apk` to the release.
 
-A phone takes an OTA only when its APK has the same native fingerprint, which the workflow computes on the runner that builds and publishes. The job summary says when a release needs the new APK installed. Fingerprints differ between macOS and Linux, so a locally built APK never receives OTAs. Install the release APK instead. Local builds keep `T3CODE_MOBILE_UPDATES_ENABLED=0` in `.env.local`.
+A phone takes an OTA only when its APK has the same native fingerprint, which the workflow computes on the runner that builds and publishes. The job summary says when a release needs the new APK installed. Local builds are signed with a different key and keep `T3CODE_MOBILE_UPDATES_ENABLED=0` in `.env.local`, so install the release APK instead. The APK is arm64 only. Release builds carry no T3 Connect config, so the app offers only Ctrl's own server notifications.
 
 Secrets in the `release` environment: `EXPO_TOKEN`, `CTRL_ANDROID_KEYSTORE_BASE64`, `CTRL_ANDROID_KEYSTORE_PASSWORD` (key alias `ctrl`), and `CTRL_ANDROID_GOOGLE_SERVICES_JSON`. The keystore's only other copy is `~/.ctrl-signing/ctrl-android-release.keystore` on Neil's Mac, with its password in the Keychain as `ctrl-android-keystore-password`. Losing the key means phones must uninstall to take a new APK, so back it up.
