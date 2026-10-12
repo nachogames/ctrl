@@ -7,8 +7,8 @@ import { Input } from "../ui/input";
 import { SettingsRow, SettingResetButton } from "./settingsLayout";
 
 /**
- * The name every device shows for this environment. Empty means the name the
- * server detected, the computer's name, which is the placeholder.
+ * The name every device shows for this environment. Empty means each device
+ * shows the label it saved for its connection.
  */
 export function EnvironmentDisplayNameSetting({
   environmentId,
@@ -23,7 +23,6 @@ export function EnvironmentDisplayNameSetting({
   // Older servers drop the key on write, so they cannot keep a name.
   if (serverConfig?.environment.capabilities.environmentLabel !== true) return null;
   const current = serverConfig.settings.environmentLabel;
-  const detected = serverConfig.environment.label;
 
   return (
     <SettingsRow
@@ -43,7 +42,7 @@ export function EnvironmentDisplayNameSetting({
           aria-label="Display name"
           maxLength={64}
           disabled={!canWrite}
-          placeholder={detected}
+          placeholder="Not set"
           defaultValue={current ?? ""}
           onChange={() => {
             edited.current = true;

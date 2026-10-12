@@ -86,6 +86,7 @@ import {
   askUserQuestions,
   askUserResult,
   isAskUserToolCall,
+  isUnnamedMcpToolCall,
 } from "./askUserTool.ts";
 export { cursorSdkModelSelection } from "./sdkModel.ts";
 
@@ -1769,6 +1770,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             for (const [index, nestedTool] of toolCallsFromConversationSteps(
               result?.conversationSteps ?? [],
             ).entries()) {
+              // A subagent's question was its card, as in a live turn.
+              if (isAskUserToolCall(nestedTool.toolCall)) continue;
               const callId = `${nativeItemId}:child-tool:${nestedTool.callId || index + 1}`;
               const startedAt = task.startedAt ?? now;
               const active: ActiveCursorToolCall = {
@@ -1871,7 +1874,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               return;
             default: {
               // Shown as the question card the call raised, not as a tool row.
-              if (isAskUserToolCall(toolCall)) {
+              // An MCP call still streaming without its tool's name waits to be
+              // recognized, so an ask_user call never leaves a stray row; one
+              // that completes unnamed still gets its row.
+              if (isAskUserToolCall(toolCall) || (isUnnamedMcpToolCall(toolCall) && !completed)) {
                 return;
               }
               const active = yield* ensureToolStarted(context, update.callId, toolCall);
