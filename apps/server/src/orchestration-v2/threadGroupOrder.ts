@@ -52,7 +52,7 @@ function materialize<Id extends string>(
       const key = spread[index];
       return key === undefined || current.get(threadId) === key ? [] : [{ threadId, key }];
     })
-    .reverse();
+    .toReversed();
   return [
     ...plan.filter((entry) => entry.threadId !== last),
     ...plan.filter((entry) => entry.threadId === last),

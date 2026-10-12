@@ -224,8 +224,16 @@ export class ThreadGroupService extends Context.Service<
     readonly setHandoffLinks: (
       input: ThreadGroupSetHandoffLinksInput,
     ) => Effect.Effect<void, ThreadGroupOperationError>;
-    /** Delete the group when no live thread is left in it. */
-    readonly pruneIfEmpty: (groupId: ThreadGroupId) => Effect.Effect<void, ThreadGroupServiceError>;
+    /**
+     * Delete the group when no live thread is left in it, and clear the pin,
+     * snooze and settle of a group down to one live chat. With `unarchived`, a
+     * chat just came back from the archive: a group it grew from one live chat
+     * to two starts Active, dropping state set while it was hidden.
+     */
+    readonly pruneIfEmpty: (
+      groupId: ThreadGroupId,
+      options?: { readonly unarchived?: boolean },
+    ) => Effect.Effect<void, ThreadGroupServiceError>;
     /** Prune every live group; a restart uses it to catch deletes it missed. */
     readonly pruneEmptyGroups: Effect.Effect<void, ThreadGroupServiceError>;
     /**
@@ -686,6 +694,7 @@ export const make = Effect.gen(function* () {
 
   const pruneLocked = Effect.fn("ThreadGroupService.pruneLocked")(function* (
     groupId: ThreadGroupId,
+    unarchived = false,
   ) {
     const found = yield* readGroup(groupId);
     if (Option.isNone(found)) return;
@@ -693,6 +702,10 @@ export const make = Effect.gen(function* () {
     const live = yield* liveMembers(group.projectId, groupId);
     // A group of one is hidden; its state must not come back when it grows.
     if (live.length === 1) return yield* clearStateLocked(groupId, group, "solo");
+    // Two live chats right after an unarchive means it grew from a hidden group of one.
+    if (unarchived && live.length === 2) {
+      return yield* clearStateLocked(groupId, group, "active");
+    }
     if (live.length > 0) return;
     // Archived threads keep their group; only deleting or moving them empties it.
     const archived = yield* listArchived(group.projectId, groupId);
@@ -705,8 +718,8 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.catchTags({ ThreadGroupNotFoundError: () => Effect.void }));
   });
 
-  const pruneIfEmpty: ThreadGroupService["Service"]["pruneIfEmpty"] = (groupId) =>
-    groupLocks.withLock(groupId, pruneLocked(groupId));
+  const pruneIfEmpty: ThreadGroupService["Service"]["pruneIfEmpty"] = (groupId, options) =>
+    groupLocks.withLock(groupId, pruneLocked(groupId, options?.unarchived === true));
 
   /**
    * Name a group created for a goal from that goal, with the project's text
@@ -848,7 +861,10 @@ export const make = Effect.gen(function* () {
           yield* startActiveIfGrownLocked(input.groupId, liveBefore);
         }),
       );
-      yield* Effect.forEach(previousGroups, pruneIfEmpty, { concurrency: 1, discard: true });
+      yield* Effect.forEach(previousGroups, (previous) => pruneIfEmpty(previous), {
+        concurrency: 1,
+        discard: true,
+      });
       if (input.title === undefined && input.goal != null) {
         yield* titleFromGoal(input, title).pipe(Effect.forkIn(backgroundScope));
       }

@@ -74,9 +74,9 @@ it.effect("re-checks the group of an archived or unarchived thread", () =>
         Layer.mergeAll(
           Layer.mock(ThreadGroupService.ThreadGroupService)({
             pruneEmptyGroups: Effect.void,
-            pruneIfEmpty: (id) =>
+            pruneIfEmpty: (id, options) =>
               Effect.suspend(() => {
-                calls.push(id);
+                calls.push(options?.unarchived ? `${id}:unarchived` : id);
                 return calls.length === 2 ? Deferred.succeed(both, undefined) : Effect.void;
               }).pipe(Effect.asVoid),
           }),
@@ -100,6 +100,7 @@ it.effect("re-checks the group of an archived or unarchived thread", () =>
     );
 
     yield* Deferred.await(both).pipe(Effect.provide(layer));
-    assert.sameMembers(calls, [archivedGroup, unarchivedGroup]);
+    // An unarchive can grow a hidden group of one back to two chats.
+    assert.sameMembers(calls, [archivedGroup, `${unarchivedGroup}:unarchived`]);
   }),
 );

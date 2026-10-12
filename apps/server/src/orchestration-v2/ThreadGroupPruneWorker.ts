@@ -13,7 +13,8 @@ const membershipEvents = ["thread.deleted", "thread.archived", "thread.unarchive
 /**
  * Re-checks a thread's group when the thread is deleted, archived or
  * unarchived: an empty group is deleted, a group of one loses its pin, snooze
- * and settle. The streams start at the sequence read before the sweep, so an
+ * and settle, and a group an unarchive grows back to two live chats starts
+ * Active, dropping state set while it was hidden. The streams start at the sequence read before the sweep, so an
  * event that lands during the sweep, or while the server was down, still prunes.
  */
 export const layer = Layer.effectDiscard(
@@ -41,14 +42,16 @@ export const layer = Layer.effectDiscard(
                   : null;
               return groupId == null
                 ? Effect.void
-                : service.pruneIfEmpty(groupId).pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("orchestration-v2.thread-group.prune-failed", {
-                        groupId,
-                        cause,
-                      }),
-                    ),
-                  );
+                : service
+                    .pruneIfEmpty(groupId, { unarchived: event.type === "thread.unarchived" })
+                    .pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("orchestration-v2.thread-group.prune-failed", {
+                          groupId,
+                          cause,
+                        }),
+                      ),
+                    );
             }),
           ),
         ),

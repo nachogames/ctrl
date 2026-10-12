@@ -1505,13 +1505,13 @@ it.effect("a handoff in a partly keyed group materializes keys around its source
       ],
     );
     for (const command of keyWrites) {
-      const key =
+      const write =
         command.type === "thread.group.reorder"
-          ? command.orderKey
+          ? { threadId: command.threadId, key: command.orderKey }
           : command.type === "thread.metadata.update"
-            ? command.groupOrderKey
-            : undefined;
-      assert.match(command.commandId, new RegExp(`:order:${command.threadId}:${key}$`));
+            ? { threadId: command.threadId, key: command.groupOrderKey }
+            : null;
+      assert.match(command.commandId, new RegExp(`:order:${write?.threadId}:${write?.key}$`));
     }
     assert.deepEqual(threads.get(c)?.updatedAt, shell(c).updatedAt);
     assert.deepEqual(threads.get(a)?.updatedAt, shell(a).updatedAt);
@@ -1583,6 +1583,52 @@ const groupState = {
   settledAt: "2026-10-10T02:00:00.000Z",
 };
 const clearedState = { pinnedAt: null, snoozedUntil: null, settledAt: null };
+
+it.effect("unarchiving a hidden group back to two chats starts it active", () => {
+  const archivedAt = DateTime.makeUnsafe("2026-10-10T06:00:00.000Z");
+  const threads = new Map([
+    [a, shell(a)],
+    [b, shell(b)],
+    [c, shell(c)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    yield* service.create({
+      commandId: CommandId.make("command:unarchive"),
+      groupId,
+      projectId,
+      threadIds: [a, b, c],
+    });
+    // c is archived first, so the group shows with two live chats.
+    threads.set(c, { ...threads.get(c)!, archivedAt });
+    yield* service.pruneIfEmpty(groupId);
+    // An agent pins the group while it is hidden as a group of one.
+    threads.set(b, { ...threads.get(b)!, archivedAt });
+    yield* service.pruneIfEmpty(groupId);
+    yield* service.update({
+      commandId: CommandId.make("command:hidden-pin"),
+      groupId,
+      patch: groupState,
+    });
+
+    threads.set(b, { ...threads.get(b)!, archivedAt: null });
+    yield* service.pruneIfEmpty(groupId, { unarchived: true });
+    assert.deepInclude(Option.getOrThrow(yield* groups.getShell(groupId)), clearedState);
+
+    // A group already showing keeps its state when another chat comes back.
+    yield* service.update({
+      commandId: CommandId.make("command:shown-pin"),
+      groupId,
+      patch: groupState,
+    });
+    threads.set(c, { ...threads.get(c)!, archivedAt: null });
+    yield* service.pruneIfEmpty(groupId, { unarchived: true });
+    assert.deepInclude(Option.getOrThrow(yield* groups.getShell(groupId)), groupState);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
 
 it.effect("a pinned group of one starts active when a second chat moves in", () => {
   const threads = new Map([
