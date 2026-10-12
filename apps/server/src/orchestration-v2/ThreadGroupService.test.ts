@@ -1390,14 +1390,23 @@ it.effect("a chat joining a partly keyed group lands first", () => {
     const writes = yield* run;
     assert.deepEqual(displayOrder(threads), [c, b, a]);
     // Re-keying the chats already there is not activity on them; only the joiner is updated.
+    // Keys are written bottom-up so each write keeps the planned order on screen.
     assert.deepEqual(
       writes.map((command) => [command.type, "threadId" in command ? command.threadId : null]),
       [
-        ["thread.group.reorder", b],
         ["thread.group.reorder", a],
+        ["thread.group.reorder", b],
         ["thread.metadata.update", c],
       ],
     );
+    // Each re-key's id names its key, so a retry that re-plans never replays a stale key.
+    for (const command of writes) {
+      if (command.type !== "thread.group.reorder") continue;
+      assert.match(
+        command.commandId,
+        new RegExp(`:order:${command.threadId}:${command.orderKey}$`),
+      );
+    }
     for (const id of [a, b]) {
       assert.deepEqual(threads.get(id)?.updatedAt, updatedAtBefore.get(id));
     }
@@ -1489,12 +1498,21 @@ it.effect("a handoff in a partly keyed group materializes keys around its source
     assert.deepEqual(
       keyWrites.map((command) => [command.type, "threadId" in command ? command.threadId : null]),
       [
-        ["thread.group.reorder", b],
-        ["thread.group.reorder", c],
         ["thread.group.reorder", a],
+        ["thread.group.reorder", c],
+        ["thread.group.reorder", b],
         ["thread.metadata.update", successor],
       ],
     );
+    for (const command of keyWrites) {
+      const key =
+        command.type === "thread.group.reorder"
+          ? command.orderKey
+          : command.type === "thread.metadata.update"
+            ? command.groupOrderKey
+            : undefined;
+      assert.match(command.commandId, new RegExp(`:order:${command.threadId}:${key}$`));
+    }
     assert.deepEqual(threads.get(c)?.updatedAt, shell(c).updatedAt);
     assert.deepEqual(threads.get(a)?.updatedAt, shell(a).updatedAt);
   }).pipe(Effect.provide(makeLayer(threads, dispatched)));

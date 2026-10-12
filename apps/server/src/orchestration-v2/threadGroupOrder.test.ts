@@ -22,6 +22,29 @@ const applied = (
   );
 };
 
+/**
+ * Applying any prefix of the plan keeps the rows written so far at the bottom
+ * in their planned order, so other clients never see a row jump past one it
+ * ends up below, and the chat named `last` is written last.
+ */
+const assertWritesBottomUp = (
+  members: ReadonlyArray<ReturnType<typeof member>>,
+  plan: ReadonlyArray<{ readonly threadId: string; readonly key: string }>,
+  last: string,
+) => {
+  assert.equal(plan.at(-1)?.threadId, last);
+  const final = applied(members, plan);
+  for (let count = 1; count < plan.length; count += 1) {
+    const written = new Set(plan.slice(0, count).map((entry) => entry.threadId));
+    const shown = applied(members, plan.slice(0, count));
+    assert.deepEqual(
+      shown.slice(shown.length - written.size),
+      final.filter((id) => written.has(id)),
+      `after ${count} writes`,
+    );
+  }
+};
+
 describe("planGroupJoin", () => {
   it("writes nothing for the newest chat joining an unordered group", () => {
     const members = [member("a", 1), member("b", 2)];
@@ -41,6 +64,14 @@ describe("planGroupJoin", () => {
     const joiner = member("old", 2);
     const plan = planGroupJoin(members, joiner);
     assert.deepEqual(applied([...members, joiner], plan), ["old", "b", "a"]);
+  });
+
+  it("writes materialized keys bottom-up with the joiner last", () => {
+    const members = [member("a", 2), member("b", 3), member("c", 4, { groupOrderKey: "m" })];
+    const joiner = member("old", 1);
+    const plan = planGroupJoin(members, joiner);
+    assert.deepEqual(applied([...members, joiner], plan), ["old", "b", "a", "c"]);
+    assertWritesBottomUp([...members, joiner], plan, "old");
   });
 
   it("gives a joiner of a fully keyed group one key before the first", () => {
@@ -111,6 +142,7 @@ describe("planGroupInsertAbove", () => {
       ["a", "b", "c", "new"],
     );
     assert.deepEqual(applied(members, plan), ["new", "b", "c", "a"]);
+    assertWritesBottomUp(members, plan, "new");
   });
 
   it("materializes instead of throwing when keys are corrupt", () => {
@@ -121,6 +153,8 @@ describe("planGroupInsertAbove", () => {
     ];
     const plan = planGroupInsertAbove(members, "b", "new");
     assert.deepEqual(applied(members, plan), ["a", "new", "b"]);
+    // The new chat lands mid-group and is still written last.
+    assertWritesBottomUp(members, plan, "new");
   });
 
   it("writes nothing for a successor that already has a key", () => {

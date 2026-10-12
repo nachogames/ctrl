@@ -442,7 +442,10 @@ export const make = Effect.gen(function* () {
 
   /**
    * Plan a chat's join so it shows first in the group. Returns the writes that
-   * re-key other members (run them before the join) and the joiner's own key.
+   * re-key other members bottom-up (run them before the join) and the joiner's
+   * own key. Each re-key's command id names its key: a retry after a partial
+   * write re-plans from the keys that landed, and must not replay a receipt
+   * holding a key from the earlier plan.
    * `seated` is the group's order and is updated, so the next joiner sees it.
    */
   const placeJoiner = (
@@ -463,7 +466,7 @@ export const make = Effect.gen(function* () {
       reorder: Effect.forEach(
         others,
         ([threadId, key]) =>
-          reorderMember(CommandId.make(`${commandId}:order:${threadId}`), threadId, key),
+          reorderMember(CommandId.make(`${commandId}:order:${threadId}:${key}`), threadId, key),
         { concurrency: 1, discard: true },
       ),
       key: keys.get(joiner.id) ?? null,
@@ -1101,15 +1104,15 @@ export const make = Effect.gen(function* () {
           input.fromThreadId,
           input.toThreadId,
         );
-        // The new chat's key goes last, so a retry after a partial write re-plans.
-        const ordered = [
-          ...plan.filter((entry) => entry.threadId !== input.toThreadId),
-          ...plan.filter((entry) => entry.threadId === input.toThreadId),
-        ];
+        // The plan runs bottom-up and ends with the new chat's key. A retry after
+        // a partial write re-plans from what landed; ids name the key so it never
+        // replays a receipt from the earlier plan.
         yield* Effect.forEach(
-          ordered,
+          plan,
           (entry) => {
-            const commandId = CommandId.make(`${input.commandId}:order:${entry.threadId}`);
+            const commandId = CommandId.make(
+              `${input.commandId}:order:${entry.threadId}:${entry.key}`,
+            );
             return entry.threadId === input.toThreadId
               ? dispatchThreadUpdate({
                   commandId,
