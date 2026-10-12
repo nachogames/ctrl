@@ -53,6 +53,30 @@ export function answeredKind(
   return ALERTS[previousPhase as AgentAwarenessPhase] ?? null;
 }
 
+/**
+ * Whether another thread's `kind` alert still stands on `alertThreadId`.
+ * Phones drop a thread's alerts by kind, so answering one subagent's
+ * question must not clear the alert of a sibling, or of the parent, that is
+ * still waiting on the same thread.
+ */
+export function otherAlertStillWaiting(input: {
+  readonly threadId: string;
+  readonly alertThreadId: string;
+  readonly kind: DirectPushAlertKind;
+  readonly tracked: Iterable<
+    readonly [
+      string,
+      { readonly alertThreadId: string; readonly phase: AgentAwarenessPhase | null },
+    ]
+  >;
+}): boolean {
+  for (const [threadId, entry] of input.tracked) {
+    if (threadId === input.threadId || entry.alertThreadId !== input.alertThreadId) continue;
+    if (entry.phase !== null && ALERTS[entry.phase] === input.kind) return true;
+  }
+  return false;
+}
+
 export function deviceWantsAlert(
   alertOn: ReadonlyArray<DirectPushAlertKind> | undefined,
   kind: DirectPushAlertKind,

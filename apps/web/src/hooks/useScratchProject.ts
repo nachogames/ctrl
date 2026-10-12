@@ -1,5 +1,8 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import {
+  availableScratchWorkspaceRoot,
+  scratchUnavailableReason,
+} from "@t3tools/client-runtime/operations/projects";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -47,6 +50,15 @@ export function useScratchProject() {
     [environments],
   );
 
+  /** Why a connected environment offers no Scratch folder, or null. */
+  const scratchUnavailableReasonFor = useCallback(
+    (environmentId: EnvironmentId | null): string | null => {
+      const environment = environments.find((entry) => entry.environmentId === environmentId);
+      return scratchUnavailableReason(environment?.connection.phase, environment?.serverConfig);
+    },
+    [environments],
+  );
+
   // A thread without a project starts on the machine the user is working on,
   // and only there. With no current machine (the hosted app with nothing
   // open), it starts on the one machine that offers it, never a silent pick.
@@ -89,5 +101,11 @@ export function useScratchProject() {
     [handleNewThread, openScratchProject],
   );
 
-  return { scratchWorkspaceRootFor, scratchEnvironmentId, openScratchProject, startScratchThread };
+  return {
+    scratchWorkspaceRootFor,
+    scratchUnavailableReasonFor,
+    scratchEnvironmentId,
+    openScratchProject,
+    startScratchThread,
+  };
 }

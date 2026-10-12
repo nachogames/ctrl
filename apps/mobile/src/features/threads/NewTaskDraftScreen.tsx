@@ -452,8 +452,14 @@ export function NewTaskDraftScreen(props: {
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
   const cycleEnvironment = useCallback(() => {
     if (isComposerInteractionLocked) return true;
-    const next = nextEnvironmentId(environments, switchingToEnvironmentId ?? selectedEnvironmentId);
-    if (next !== null) void switchEnvironment(next);
+    const current = switchingToEnvironmentId ?? selectedEnvironmentId;
+    // Machines listed only to say why they are unavailable are skipped.
+    const pickable = environments.filter(
+      (environment) =>
+        environment.unavailableReason === undefined || environment.environmentId === current,
+    );
+    const next = nextEnvironmentId(pickable, current);
+    if (next !== null && next !== current) void switchEnvironment(next);
     return true;
   }, [
     environments,

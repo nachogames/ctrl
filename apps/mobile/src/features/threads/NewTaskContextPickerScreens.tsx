@@ -246,7 +246,10 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                   />
                 }
                 isLast={index === flow.environments.length - 1}
-                disabled={flow.switchingToEnvironmentId !== null}
+                disabled={
+                  flow.switchingToEnvironmentId !== null ||
+                  environment.unavailableReason !== undefined
+                }
                 onPress={() => {
                   void Haptics.selectionAsync();
                   void flow.switchEnvironment(environment.environmentId).then((switched) => {
@@ -255,6 +258,9 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                 }}
                 selected={flow.selectedEnvironmentId === environment.environmentId}
                 title={environment.environmentLabel}
+                {...(environment.unavailableReason === undefined
+                  ? {}
+                  : { subtitle: environment.unavailableReason })}
               />
             ))}
           </PickerSurface>

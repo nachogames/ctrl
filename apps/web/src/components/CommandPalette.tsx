@@ -743,7 +743,12 @@ function OpenCommandPaletteDialog(props: {
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
-  const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
+  const {
+    scratchEnvironmentId,
+    scratchWorkspaceRootFor,
+    scratchUnavailableReasonFor,
+    startScratchThread,
+  } = useScratchProject();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -1184,11 +1189,15 @@ function OpenCommandPaletteDialog(props: {
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
-  // Where "without a project" threads start: the current environment when it
-  // offers them, otherwise the first connected one that does.
+  // Where "without a project" threads start: the current environment, and
+  // only when it offers them. Otherwise the palette says why it cannot.
   const scratchTargetEnvironmentId = scratchEnvironmentId(
     currentProjectEnvironmentId ?? primaryEnvironmentId,
   );
+  const scratchUnavailable =
+    scratchTargetEnvironmentId === null
+      ? scratchUnavailableReasonFor(currentProjectEnvironmentId ?? primaryEnvironmentId)
+      : null;
   const currentProjectCwd = currentProjectId
     ? (projectCwdById.get(currentProjectId) ?? null)
     : null;
@@ -1990,15 +1999,19 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (scratchTargetEnvironmentId !== null) {
+  if (scratchTargetEnvironmentId !== null || scratchUnavailable !== null) {
     actionItems.push({
       kind: "action",
       value: "action:new-thread-without-project",
       searchTerms: ["new thread", "no project", "without project", "none", "chat"],
       title: "New thread without a project",
       icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
-      shortcutCommand: "chat.newWithoutProject",
-      run: () => startScratchThread(scratchTargetEnvironmentId),
+      ...(scratchTargetEnvironmentId !== null
+        ? {
+            shortcutCommand: "chat.newWithoutProject" as const,
+            run: () => startScratchThread(scratchTargetEnvironmentId),
+          }
+        : { description: scratchUnavailable, disabled: true, run: async () => {} }),
     });
   }
 

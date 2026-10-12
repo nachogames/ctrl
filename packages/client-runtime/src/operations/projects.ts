@@ -50,6 +50,35 @@ export function availableScratchWorkspaceRoot(
     : null;
 }
 
+/**
+ * Why a connected environment offers no threads without a project, as a short
+ * line to show next to it, or null when it offers them, is offline, or is an
+ * older server that does not say.
+ */
+export function scratchUnavailableReason(
+  connectionPhase: EnvironmentConnectionPhase | null | undefined,
+  serverConfig:
+    | Pick<ServerConfig, "scratchWorkspaceRoot" | "scratchUnavailable">
+    | null
+    | undefined,
+): string | null {
+  if (!canCreateProjectInEnvironment(connectionPhase) || serverConfig?.scratchWorkspaceRoot) {
+    return null;
+  }
+  const unavailable = serverConfig?.scratchUnavailable;
+  if (unavailable === undefined) return null;
+  switch (unavailable.reason) {
+    case "inside-git-repo":
+      return unavailable.repositoryRoot === undefined
+        ? "Unavailable: Ctrl's data folder is inside a Git repository"
+        : `Unavailable: Ctrl's data folder is inside the Git repository at ${unavailable.repositoryRoot}`;
+    case "detection-failed":
+      return "Unavailable: Ctrl couldn't check its data folder with Git";
+    default:
+      return "Unavailable on this machine";
+  }
+}
+
 export type AddProjectRemoteSourceReadiness = Record<
   AddProjectRemoteSource,
   { readonly ready: boolean; readonly hint: string | null }
