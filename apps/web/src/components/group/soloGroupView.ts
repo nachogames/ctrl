@@ -15,6 +15,11 @@ export type GroupWorkspaceSource = Pick<
 > & {
   /** The group that stores links and owns the worktree; null for a chat without one yet. */
   readonly id: ThreadGroupId | null;
+  /**
+   * The group whose own worktree `worktreePath` is, so recreating it has
+   * something to recreate. Unset means `id`; null when the path is the chat's.
+   */
+  readonly worktreeGroupId?: ThreadGroupId | null;
 };
 
 /**
@@ -35,14 +40,19 @@ export function soloGroupView(
   project: { readonly workspaceRoot: string } | null,
 ): GroupWorkspaceSource {
   const worktreePath = hiddenGroup?.worktreePath ?? thread.worktreePath;
+  const ownWorktree = worktreePath !== project?.workspaceRoot ? worktreePath : null;
   return {
     id: hiddenGroup?.id ?? null,
     environmentId: thread.environmentId,
     projectId: thread.projectId,
     branch: hiddenGroup?.branch ?? thread.branch,
-    worktreePath: worktreePath === project?.workspaceRoot ? null : worktreePath,
+    worktreePath: ownWorktree,
     pullRequest: hiddenGroup?.pullRequest ?? resolveNewestCurrentPullRequestLink([thread]),
     links: hiddenGroup?.links ?? [],
     threadIds: [thread.id],
+    worktreeGroupId:
+      hiddenGroup !== null && ownWorktree !== null && hiddenGroup.worktreePath === ownWorktree
+        ? hiddenGroup.id
+        : null,
   };
 }

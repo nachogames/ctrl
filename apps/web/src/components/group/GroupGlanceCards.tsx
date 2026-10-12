@@ -381,8 +381,13 @@ export function GroupGlanceCards(props: {
         );
       }
       case "worktree": {
-        // A solo chat without a group has nothing to recreate the worktree for.
-        const recreateGroupId = missing ? group.id : null;
+        // Only the group that owns the worktree can recreate it; a solo chat's own
+        // worktree has no group to recreate it from.
+        const recreateGroupId = missing
+          ? group.worktreeGroupId === undefined
+            ? group.id
+            : group.worktreeGroupId
+          : null;
         return (
           <GlanceCardView
             key={card.id}

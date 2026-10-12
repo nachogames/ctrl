@@ -58,7 +58,20 @@ describe("soloGroupView", () => {
       pullRequest: pullRequest(1),
       links: [],
       threadIds: [ThreadId.make("chat")],
+      worktreeGroupId: null,
     });
+  });
+
+  it("names the hidden group as the worktree's owner only when the worktree is its own", () => {
+    // The chat's own worktree: the hidden group cannot recreate it.
+    expect(soloGroupView(thread(), hiddenGroup(), { workspaceRoot: ROOT }).worktreeGroupId).toBe(
+      null,
+    );
+    expect(
+      soloGroupView(thread(), hiddenGroup({ worktreePath: "/worktrees/group" }), {
+        workspaceRoot: ROOT,
+      }).worktreeGroupId,
+    ).toBe(ThreadGroupId.make("group"));
   });
 
   it("takes tickets from the hidden group and keeps the chat's values where it has none", () => {
