@@ -1763,23 +1763,50 @@ describe("arrangePullRequestGroups", () => {
     arranged.map((group) => [group.label, group.entries.map((row) => row.number)]);
 
   it("leaves the involvement groups alone by default", () => {
-    expect(arrangePullRequestGroups(groups, { mine: false, byProject: false })).toBe(groups);
+    expect(
+      arrangePullRequestGroups(groups, { mine: false, byProject: false, viewers: VIEWERS }),
+    ).toBe(groups);
   });
 
   it("drops everyone else's rows for Mine", () => {
-    expect(numbers(arrangePullRequestGroups(groups, { mine: true, byProject: false }))).toEqual([
+    expect(
+      numbers(arrangePullRequestGroups(groups, { mine: true, byProject: false, viewers: VIEWERS })),
+    ).toEqual([
       ["Authored", [1, 2]],
       ["Review requested", [3]],
     ]);
   });
 
+  it("keeps own rows the partitions missed, at the end of their group", () => {
+    const ownOlder = entry({
+      number: 8,
+      author: { login: "bilal", name: null, avatarUrl: null },
+    });
+    const askedOlder = entry({ number: 9, viewerReviewRequested: true });
+    const arranged = arrangePullRequestGroups(
+      [
+        { key: "authored", label: "Authored", entries: authored },
+        { key: "others", label: "Others", entries: [...others, ownOlder, askedOlder] },
+      ],
+      { mine: true, byProject: false, viewers: VIEWERS },
+    );
+    expect(numbers(arranged)).toEqual([
+      ["Authored", [1, 2, 8]],
+      ["Review requested", [9]],
+    ]);
+  });
+
   it("groups by project in title order, authored rows first within each", () => {
-    expect(numbers(arrangePullRequestGroups(groups, { mine: false, byProject: true }))).toEqual([
+    expect(
+      numbers(arrangePullRequestGroups(groups, { mine: false, byProject: true, viewers: VIEWERS })),
+    ).toEqual([
       ["alpha", [2, 3]],
       ["career-ops", [4]],
       ["t3code", [1]],
     ]);
-    expect(numbers(arrangePullRequestGroups(groups, { mine: true, byProject: true }))).toEqual([
+    expect(
+      numbers(arrangePullRequestGroups(groups, { mine: true, byProject: true, viewers: VIEWERS })),
+    ).toEqual([
       ["alpha", [2, 3]],
       ["t3code", [1]],
     ]);
@@ -1793,7 +1820,7 @@ describe("arrangePullRequestGroups", () => {
     });
     const arranged = arrangePullRequestGroups(
       [{ key: "others", label: "", entries: [entry({ number: 1 }), twin] }],
-      { mine: false, byProject: true },
+      { mine: false, byProject: true, viewers: VIEWERS },
     );
     expect(arranged.map((group) => group.label)).toEqual([
       "t3code · me/fork",

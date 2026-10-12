@@ -884,6 +884,14 @@ function PullRequestsRouteView() {
   ]);
   const authoredQuery = usePullRequestList(partitionTargets.authored);
   const reviewingQuery = usePullRequestList(partitionTargets.reviewing);
+  // Mine reads the "all" feed, so its continuation pages are mostly everyone else's rows. Once
+  // both partitions have answered whole, every own row is already on screen and there is
+  // nothing more worth paging for.
+  const mineComplete =
+    search.involvement === "mine" &&
+    partitionsWanted &&
+    authoredQuery.data?.truncated === false &&
+    reviewingQuery.data?.truncated === false;
   // The header's refresh punches through the server's cache before re-reading; the error and
   // empty states retry plainly, because a failure is never cached.
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
@@ -1603,6 +1611,7 @@ function PullRequestsRouteView() {
     return arrangePullRequestGroups(sorted, {
       mine: search.involvement === "mine",
       byProject: search.groupBy === "project",
+      viewers,
     });
   }, [
     groups,
@@ -1932,7 +1941,11 @@ function PullRequestsRouteView() {
             search.host !== undefined
           }
           searching={typedQuery.length > 0 && (!querySettled || showingCarried)}
-          canLoadMore={listData?.truncated === true && (canContinue || pageSize < MAX_PAGE_SIZE)}
+          canLoadMore={
+            listData?.truncated === true &&
+            !mineComplete &&
+            (canContinue || pageSize < MAX_PAGE_SIZE)
+          }
           loadingMore={loadingMore}
           onClearQuery={() => updateListScope({ q: undefined })}
           onLoadMore={loadMore}
@@ -1990,7 +2003,7 @@ function PullRequestsRouteView() {
           </Button>
         </div>
       ) : null}
-      {listData?.truncated && entries.length > 0 ? (
+      {listData?.truncated && entries.length > 0 && !mineComplete ? (
         <div className="flex justify-center py-3 text-xs text-muted-foreground">
           {loadingMore ? (
             <span className="flex items-center gap-2">
