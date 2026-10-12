@@ -160,10 +160,14 @@ menu, in the chat header's group menu, and in the Group panel. You can bind the
 default.
 
 The **Group** panel (`G` in the right panel) shows the open chat's group: its title and goal,
-which you can edit, its workspace and pull request, its chats, what is running for it, and the
-last handoff summary. **Running** lists local servers started from the group's chats or from its
-worktree, the worktree's Docker Compose containers, and anything an agent registered for the
-group. These outlast handoffs, so the next chat can find the server the last one started.
+which you can edit, cards for its branch, pull request, tickets, frontend, worktree and activity,
+what is running for it, its chats, and the last handoff. **Link ticket** on the Tickets card adds
+a Linear or GitHub issue link; issue numbers in the pull request title show up there on their own.
+**Running** lists the servers the group's chats started and anything named for the group. Hover a
+server to open, rename or stop it; scripts that are not running offer **Start**. Other processes
+and Docker Compose containers in the group's worktree are folded into one line; **Name it** moves
+one into the list. These outlast handoffs, so the next chat can find the server the last one
+started.
 
 Right-click a group to rename, pin, snooze, settle, or ungroup it. Settling a group settles its
 chats, and un-settling it brings them back. A group also settles on its own once every chat in it
