@@ -149,7 +149,9 @@ export function glanceCards(input: GlanceInput): ReadonlyArray<GlanceCard> {
   ];
 }
 
-function webHref(url: string): string | null {
+/** The URL when it is http(s), else null: only those are safe to open as a link. */
+export function webUrl(url: string | null): string | null {
+  if (url === null) return null;
   try {
     const { protocol } = new URL(url);
     return protocol === "http:" || protocol === "https:" ? url : null;
@@ -170,7 +172,7 @@ export function ticketChips(
 ): ReadonlyArray<TicketChip> {
   const chips: Array<TicketChip> = links.map((link) => ({
     url: link.url,
-    href: webHref(link.url),
+    href: webUrl(link.url),
     label: link.label,
     linkId: link.id,
   }));
@@ -179,7 +181,7 @@ export function ticketChips(
   for (const ref of pullRequestTitleIssueLinks({ ...pullRequest, title: pullRequest.title })) {
     if (seen.has(ref.url)) continue;
     seen.add(ref.url);
-    chips.push({ url: ref.url, href: webHref(ref.url), label: ref.label, linkId: null });
+    chips.push({ url: ref.url, href: webUrl(ref.url), label: ref.label, linkId: null });
   }
   return chips;
 }

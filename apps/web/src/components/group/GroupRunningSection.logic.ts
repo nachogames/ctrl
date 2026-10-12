@@ -7,7 +7,7 @@ import type {
 import { projectScriptTerminalId } from "@t3tools/shared/projectScripts";
 import { loopbackPort } from "@t3tools/shared/threadGroups";
 
-import { isRunnableScript } from "./GroupGlanceCards.logic";
+import { isRunnableScript, webUrl } from "./GroupGlanceCards.logic";
 
 type Resource = ThreadGroupRunningResource;
 
@@ -67,12 +67,21 @@ export function expireStoppedRows(
   return stopped.filter((row) => now - row.stoppedAt < STOPPED_ROW_MS);
 }
 
-/** True when `resource`, or anything on its port, is in `resources`. */
-function isBackIn(resources: ReadonlyArray<Resource>) {
-  const ids = new Set(resources.map((resource) => resource.id));
-  const ports = new Set(
-    resources.flatMap((resource) => (resource.port === null ? [] : [resource.port])),
+/** Ports something actually listens on; a registered row only names a port, so it never counts. */
+function runningPorts(resources: ReadonlyArray<Resource>): ReadonlySet<number> {
+  return new Set(
+    resources.flatMap((resource) =>
+      resource.kind === "manual" || resource.port === null ? [] : [resource.port],
+    ),
   );
+}
+
+/** True when `resource`, or anything running on its port, is in `resources` (registered rows aside). */
+function isBackIn(resources: ReadonlyArray<Resource>) {
+  const ids = new Set(
+    resources.filter((resource) => resource.kind !== "manual").map((resource) => resource.id),
+  );
+  const ports = runningPorts(resources);
   return (resource: Resource) =>
     ids.has(resource.id) || (resource.port !== null && ports.has(resource.port));
 }
@@ -108,16 +117,6 @@ export function stoppedLabel(stoppedAt: number, now: number): string {
 }
 
 const MANUAL_ID_PREFIX = "manual:";
-
-function webUrl(url: string | null): string | null {
-  if (url === null) return null;
-  try {
-    const protocol = new URL(url).protocol;
-    return protocol === "http:" || protocol === "https:" ? url : null;
-  } catch {
-    return null;
-  }
-}
 
 function manualIdOf(resource: Resource): string | null {
   return resource.kind === "manual" && resource.id.startsWith(MANUAL_ID_PREFIX)
@@ -196,20 +195,25 @@ export function runningView(input: {
       canRename: false,
       manualId: null,
     }));
+  const stoppedPorts = new Set(stopped.flatMap((row) => (row.port === null ? [] : [row.port])));
   const foundResources = input.resources.filter((resource) => resource.tier === "found");
   const names = [...new Set(foundResources.map((resource) => resource.name))];
   const count = foundResources.length;
   const scriptIds = new Set(
     input.resources.flatMap((resource) => (resource.scriptId === null ? [] : [resource.scriptId])),
   );
-  const ports = new Set(
-    input.resources.flatMap((resource) => (resource.port === null ? [] : [resource.port])),
-  );
+  const ports = runningPorts(input.resources);
   const restarting = new Set(
     stopped.flatMap((row) => (row.restart === null ? [] : [row.restart.scriptId])),
   );
   return {
-    known: [...live, ...stopped],
+    // While a server's stopped row shows, the registered row naming its port would repeat it.
+    known: [
+      ...live.filter(
+        (row) => row.state !== "registered" || row.port === null || !stoppedPorts.has(row.port),
+      ),
+      ...stopped,
+    ],
     found:
       count === 0
         ? null

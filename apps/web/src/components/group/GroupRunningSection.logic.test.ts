@@ -172,9 +172,69 @@ describe("stopped rows", () => {
       kind: "manual" as const,
       tier: "known" as const,
     };
+    // A registered row on the port is only a name, not the server coming back.
     expect(
       trackStoppedRows({ previous: [], next: [registered], stopped, now: NOW + 5_000 }),
-    ).toEqual([]);
+    ).toEqual(stopped);
+  });
+
+  describe("a named server", () => {
+    // The server names a live row from the manual resource; once it stops, the
+    // manual row comes back on its own with the same port.
+    const named = { ...dev, name: "Web app" };
+    const manual: Resource = {
+      ...dev,
+      id: "manual:web",
+      kind: "manual",
+      name: "Web app",
+      detail: "http://localhost:5173",
+      source: "registered",
+      terminal: null,
+      startedByThreadId: null,
+      scriptId: null,
+    };
+    const scripts = [script("dev", { previewUrl: "http://localhost:5173" })];
+
+    it("still offers Start when a registered resource sits on the script's port", () => {
+      const result = view([manual], { scripts });
+      expect(result.start.map((row) => row.scriptId)).toEqual(["dev"]);
+      expect(result.known.map((row) => [row.id, row.state])).toEqual([
+        ["manual:web", "registered"],
+      ]);
+    });
+
+    it("shows a stopped row with Restart, hiding the registered row on its port", () => {
+      const stopped = trackStoppedRows({
+        previous: [named],
+        next: [manual],
+        stopped: [],
+        now: NOW,
+      });
+      expect(stopped.map((row) => row.resource.id)).toEqual(["server:5173"]);
+      const result = view([manual], { stopped, scripts, now: NOW + 10_000 });
+      expect(result.known.map((row) => [row.id, row.state, row.name])).toEqual([
+        ["server:5173", "stopped", "Web app"],
+      ]);
+      expect(result.known[0]?.restart).toEqual({ scriptId: "dev", threadId: planner });
+      expect(result.start).toEqual([]);
+    });
+
+    it("returns to the Start row and the registered row after 30 s", () => {
+      const stopped = trackStoppedRows({
+        previous: [named],
+        next: [manual],
+        stopped: [],
+        now: NOW,
+      });
+      const later = NOW + STOPPED_ROW_MS;
+      const kept = trackStoppedRows({ previous: [manual], next: [manual], stopped, now: later });
+      expect(kept).toEqual([]);
+      const result = view([manual], { stopped: kept, scripts, now: later });
+      expect(result.known.map((row) => [row.id, row.state])).toEqual([
+        ["manual:web", "registered"],
+      ]);
+      expect(result.start.map((row) => row.scriptId)).toEqual(["dev"]);
+    });
   });
 
   it("never marks a found process or a registered resource as stopped", () => {
