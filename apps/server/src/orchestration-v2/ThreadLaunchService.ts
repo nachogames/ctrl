@@ -762,7 +762,16 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
-      if (input.groupId !== undefined) {
+      if (input.reuseExistingThread === true && input.threadId === undefined) {
+        return yield* mapError(
+          input,
+          "update-thread",
+        )("Reusing an existing thread requires a thread id.");
+      }
+
+      const launchReceipt = yield* readReceipt(input, input.commandId);
+      // A retried launch replays its receipt even if the group has gone since.
+      if (input.groupId !== undefined && Option.isNone(launchReceipt)) {
         const group = yield* threadGroups
           .get(input.groupId)
           .pipe(Effect.mapError(mapError(input, "resolve-group")));
@@ -775,15 +784,24 @@ const make = Effect.gen(function* () {
             "resolve-group",
           )("Thread group belongs to another project.");
         }
+        // A chat launched into a group works in the group's workspace.
+        const groupWorktreePath = group.value.worktreePath;
+        const strategy = input.workspaceStrategy;
+        const onGroupWorkspace =
+          groupWorktreePath === null
+            ? strategy.type === "root"
+            : strategy.type === "existing_worktree" && strategy.worktreePath === groupWorktreePath;
+        if (!onGroupWorkspace) {
+          return yield* mapError(
+            input,
+            "resolve-group",
+          )(
+            groupWorktreePath === null
+              ? "A chat launched into this group must start at the project root, the group's workspace."
+              : `A chat launched into this group must start in the group's worktree ${groupWorktreePath}.`,
+          );
+        }
       }
-      if (input.reuseExistingThread === true && input.threadId === undefined) {
-        return yield* mapError(
-          input,
-          "update-thread",
-        )("Reusing an existing thread requires a thread id.");
-      }
-
-      const launchReceipt = yield* readReceipt(input, input.commandId);
       return yield* Effect.gen(function* () {
         // A retried launch has no client-supplied id to replay against, so
         // recover the thread id its accepted create was recorded under before

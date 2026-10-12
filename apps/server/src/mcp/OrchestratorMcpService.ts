@@ -565,7 +565,7 @@ function stablePart(value: string): string {
   return encodeURIComponent(value);
 }
 
-function stableCommandId(input: {
+export function stableCommandId(input: {
   readonly scope: McpInvocationScope;
   readonly requestKey: string;
   readonly operation: string;

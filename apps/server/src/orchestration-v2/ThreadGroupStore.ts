@@ -5,6 +5,7 @@ import {
   ProjectId,
   ThreadGroupHandoff,
   ThreadGroupId,
+  ThreadGroupLink,
   ThreadGroupManualResource,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
@@ -42,6 +43,7 @@ export const ThreadGroupRow = Schema.Struct({
   snoozedUntil: Schema.NullOr(IsoDateTime),
   settledAt: Schema.NullOr(IsoDateTime),
   manualResources: Schema.Array(ThreadGroupManualResource),
+  links: Schema.Array(ThreadGroupLink),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -53,6 +55,7 @@ const ThreadGroupDbRow = Schema.Struct({
   pullRequest: Schema.NullOr(Schema.fromJsonString(ThreadPullRequestLink)),
   lastHandoff: Schema.NullOr(Schema.fromJsonString(ThreadGroupHandoff)),
   manualResources: Schema.fromJsonString(Schema.Array(ThreadGroupManualResource)),
+  links: Schema.fromJsonString(Schema.Array(ThreadGroupLink)),
 });
 
 function toShell(row: ThreadGroupRow): OrchestrationThreadGroupShell {
@@ -69,6 +72,7 @@ function toShell(row: ThreadGroupRow): OrchestrationThreadGroupShell {
     snoozedUntil: row.snoozedUntil,
     settledAt: row.settledAt,
     manualResources: row.manualResources,
+    links: row.links,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -127,6 +131,7 @@ export const make = Effect.gen(function* () {
         snoozed_until AS "snoozedUntil",
         settled_at AS "settledAt",
         manual_resources_json AS "manualResources",
+        links_json AS "links",
         created_at AS "createdAt",
         updated_at AS "updatedAt",
         deleted_at AS "deletedAt"
@@ -164,6 +169,7 @@ export const make = Effect.gen(function* () {
             snoozed_until,
             settled_at,
             manual_resources_json,
+            links_json,
             created_at,
             updated_at,
             deleted_at
@@ -181,6 +187,7 @@ export const make = Effect.gen(function* () {
             ${encoded.snoozedUntil},
             ${encoded.settledAt},
             ${encoded.manualResources},
+            ${encoded.links},
             ${encoded.createdAt},
             ${encoded.updatedAt},
             ${encoded.deletedAt}
@@ -198,6 +205,7 @@ export const make = Effect.gen(function* () {
             snoozed_until = excluded.snoozed_until,
             settled_at = excluded.settled_at,
             manual_resources_json = excluded.manual_resources_json,
+            links_json = excluded.links_json,
             created_at = excluded.created_at,
             updated_at = excluded.updated_at,
             deleted_at = excluded.deleted_at
@@ -244,6 +252,7 @@ export const make = Effect.gen(function* () {
           snoozedUntil: null,
           settledAt: null,
           manualResources: [],
+          links: [],
           createdAt: payload.createdAt,
           updatedAt: payload.updatedAt,
           deletedAt: null,
@@ -272,6 +281,7 @@ export const make = Effect.gen(function* () {
         ...(patch.snoozedUntil === undefined ? {} : { snoozedUntil: patch.snoozedUntil }),
         ...(patch.settledAt === undefined ? {} : { settledAt: patch.settledAt }),
         ...(patch.manualResources === undefined ? {} : { manualResources: patch.manualResources }),
+        ...(patch.links === undefined ? {} : { links: patch.links }),
         updatedAt: patch.updatedAt,
       }).pipe(mapError("apply"));
     },

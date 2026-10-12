@@ -25,7 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadGroupId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -371,6 +371,7 @@ import {
   ThreadGroupMutation,
   ThreadGroupMutationError,
   ThreadGroupMutationResult,
+  ThreadGroupRunningResources,
 } from "./threadGroup.ts";
 
 export const WS_METHODS = {
@@ -389,6 +390,7 @@ export const WS_METHODS = {
 
   // Thread group methods
   threadGroupsMutate: "threadGroups.mutate",
+  threadGroupsSubscribeResources: "threadGroups.subscribeResources",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -1249,6 +1251,15 @@ const WsThreadGroupsMutateRpc = Rpc.make(WS_METHODS.threadGroupsMutate, {
   error: Schema.Union([ThreadGroupMutationError, EnvironmentAuthorizationError]),
 });
 
+// Emits a group's running resources now and again whenever they change. Scanner
+// failures degrade to fewer resources; a deleted group streams an empty list.
+const WsThreadGroupsSubscribeResourcesRpc = Rpc.make(WS_METHODS.threadGroupsSubscribeResources, {
+  payload: Schema.Struct({ groupId: ThreadGroupId }),
+  success: ThreadGroupRunningResources,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 // Finds or creates the Scratch project rooted at ServerConfig.scratchWorkspaceRoot.
 const WsProjectsEnsureScratchRpc = Rpc.make(WS_METHODS.projectsEnsureScratch, {
   payload: Schema.Struct({}),
@@ -1980,6 +1991,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
   WsThreadGroupsMutateRpc,
+  WsThreadGroupsSubscribeResourcesRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAgentSessionsScanRpc,

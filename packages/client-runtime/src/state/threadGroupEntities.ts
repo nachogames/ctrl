@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   OrchestrationV2ShellSnapshot,
   ScopedThreadGroupRef,
+  ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
@@ -10,6 +11,21 @@ import { arrayElementsEqual, parseThreadGroupKey, threadGroupKey } from "./entit
 import { type EnvironmentThreadGroup, presentThreadGroup } from "./models.ts";
 
 const EMPTY_GROUPS: ReadonlyArray<EnvironmentThreadGroup> = Object.freeze([]);
+
+/** A member's pull request link is rebuilt on every streamed batch, so compare what shows. */
+function samePullRequestLink(
+  left: ThreadPullRequestLink | null,
+  right: ThreadPullRequestLink | null,
+): boolean {
+  if (left === right) return true;
+  if (left === null || right === null) return false;
+  return (
+    left.url === right.url &&
+    left.linkedAt === right.linkedAt &&
+    // Every refresh of the snapshot (state, title, checks) moves syncedAt.
+    left.snapshot?.syncedAt === right.snapshot?.syncedAt
+  );
+}
 
 export function createEnvironmentThreadGroupAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
@@ -36,7 +52,8 @@ export function createEnvironmentThreadGroupAtoms(input: {
         const prior = priorById.get(group.id);
         return prior !== undefined &&
           prior.source === group &&
-          arrayElementsEqual(prior.threadIds, presented.threadIds)
+          arrayElementsEqual(prior.threadIds, presented.threadIds) &&
+          samePullRequestLink(prior.pullRequest, presented.pullRequest)
           ? prior
           : presented;
       });

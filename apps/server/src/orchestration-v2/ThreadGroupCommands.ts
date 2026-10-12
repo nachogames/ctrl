@@ -172,6 +172,12 @@ export function planThreadGroupCommand(input: {
           return invariant("Registered resource ids must be unique within a group.");
         }
       }
+      if (command.patch.links !== undefined) {
+        const ids = command.patch.links.map((link) => link.id);
+        if (new Set(ids).size !== ids.length) {
+          return invariant("Link ids must be unique within a group.");
+        }
+      }
       return Result.succeed({
         ...base,
         type: "thread-group.meta-updated",

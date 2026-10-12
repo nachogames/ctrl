@@ -28,6 +28,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "mention",
   "skill",
   "thread",
+  "handoff",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -234,6 +235,22 @@ export const ThreadContextRecord = Schema.Struct({
 });
 export type ThreadContextRecord = typeof ThreadContextRecord.Type;
 
+/**
+ * Summary of the chat this one continues. Hidden from the provider-visible text: the provider
+ * receives it as context, and clients render it as a "Continued from" divider, not a chip.
+ */
+export const HandoffContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("handoff"),
+  environmentId: EnvironmentId,
+  /** The source thread. */
+  threadId: ThreadId,
+  /** Source title snapshot. */
+  title: ContextLabel,
+  summary: BoundedString(16_000),
+});
+export type HandoffContextRecord = typeof HandoffContextRecord.Type;
+
 const isJson = Schema.is(Schema.Json);
 
 /**
@@ -271,6 +288,7 @@ export const KnownComposerContextRecord = Schema.Union([
   MentionContextRecord,
   SkillContextRecord,
   ThreadContextRecord,
+  HandoffContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 

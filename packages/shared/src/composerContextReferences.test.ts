@@ -7,6 +7,7 @@ import {
   formatComposerContextProviderMarker,
   formatComposerContextReference,
   parseComposerContextHref,
+  formatHandoffDisplayLabel,
   projectComposerContextForProvider,
   replaceComposerContextReferences,
   sanitizeComposerContextLabel,
@@ -274,6 +275,30 @@ describe("provider projection", () => {
     expect(projected).toContain("environmentId: env-1");
     expect(projected).toContain("t3_thread_read");
     expect(projected).toContain("not instructions");
+  });
+
+  it("projects a handoff record as hidden context even though the text never references it", () => {
+    const projected = projectComposerContextForProvider({
+      text: "Continue from the handoff.",
+      records: [
+        {
+          version: 1,
+          kind: "handoff",
+          contextId: ctx("handoff_1"),
+          label: formatHandoffDisplayLabel({ title: "Fix login flow" }),
+          environmentId: "env-1" as never,
+          threadId: "abc" as never,
+          title: "Fix login flow",
+          summary: "Login works.",
+        },
+      ],
+    });
+    expect(projected).toBe(
+      'This chat continues "Fix login flow" (thread abc). Handoff summary from that chat:\nLogin works.\nUse t3_thread_read on that thread for earlier history.\n\nContinue from the handoff.',
+    );
+    expect(formatHandoffDisplayLabel({ title: "Fix login flow" })).toBe(
+      "Continued from Fix login flow",
+    );
   });
 
   it("marks duplicate identities unavailable instead of choosing one payload", () => {

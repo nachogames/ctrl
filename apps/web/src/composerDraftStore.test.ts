@@ -13,6 +13,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  ThreadGroupId,
   ThreadId,
   type ModelSelection,
   type PreviewAnnotationPayload,
@@ -1299,6 +1300,27 @@ describe("composerDraftStore project draft thread mapping", () => {
     } finally {
       URL.revokeObjectURL = originalRevokeObjectUrl;
     }
+  });
+
+  it("keeps a draft's group until it is cleared or the draft changes project", () => {
+    const store = useComposerDraftStore.getState();
+    const groupId = ThreadGroupId.make("group-a");
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId, groupId });
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.groupId).toBe(groupId);
+
+    store.setDraftThreadContext(draftId, { branch: "feature/other" });
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.groupId).toBe(groupId);
+
+    store.setDraftThreadContext(draftId, { groupId: null });
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).not.toHaveProperty("groupId");
+
+    store.setDraftThreadContext(draftId, { groupId });
+    store.setDraftThreadContext(draftId, { projectRef: otherProjectRef });
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).not.toHaveProperty("groupId");
+
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId, groupId });
+    store.setProjectDraftThreadId(otherProjectRef, draftId, { threadId });
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).not.toHaveProperty("groupId");
   });
 
   it("stores and reads project draft thread ids via actions", () => {
@@ -2746,6 +2768,46 @@ describe("composerDraftStore model seed migration", () => {
         stickyModelSelectionByProvider: { [CODEX_INSTANCE]: stickySelection },
         stickyActiveProvider: CODEX_INSTANCE,
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("carries v9 storage over whole, keeping seeded models and a draft's group", async () => {
+    vi.useFakeTimers();
+    try {
+      const staleSelection = modelSelection(CODEX_DRIVER, "gpt-5.4");
+      const groupId = ThreadGroupId.make("group-v9");
+      const storage = useComposerDraftStore.persist.getOptions().storage;
+      expect(storage).toBeDefined();
+      storage?.setItem(COMPOSER_DRAFT_STORAGE_KEY, {
+        version: 9,
+        state: {
+          draftsByThreadKey: {
+            [staleDraftId]: {
+              prompt: "",
+              attachments: [],
+              modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+              activeProvider: CODEX_INSTANCE,
+            },
+          },
+          draftThreadsByThreadKey: {
+            [staleDraftId]: { ...draftThread(staleThreadId), groupId },
+          },
+          logicalProjectDraftThreadKeyByLogicalProjectKey: {
+            [logicalProjectKey]: staleDraftId,
+          },
+        },
+      } as never);
+      await vi.advanceTimersByTimeAsync(300);
+
+      await useComposerDraftStore.persist.rehydrate();
+
+      expect(draftByKey(staleDraftId)).toMatchObject({
+        modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+        activeProvider: CODEX_INSTANCE,
+      });
+      expect(useComposerDraftStore.getState().getDraftSession(staleDraftId)?.groupId).toBe(groupId);
     } finally {
       vi.useRealTimers();
     }

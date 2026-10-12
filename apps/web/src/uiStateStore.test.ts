@@ -10,8 +10,10 @@ import {
   type PersistedUiState,
   persistState,
   reorderProjects,
+  resolveGroupExpanded,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
+  setGroupExpanded,
   setProjectExpanded,
   setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
@@ -22,6 +24,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    groupExpandedById: {},
     sidebarProjectScopeKey: null,
     sidebarEnvironmentScopeId: null,
     threadLastVisitedAtById: {},
@@ -198,6 +201,7 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      groupExpandedById: {},
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -280,6 +284,38 @@ function createLocalStorageStub(): Storage {
   };
 }
 
+describe("group expansion", () => {
+  const key = "env\u0000group-1";
+
+  it("defaults to collapsed", () => {
+    expect(parsePersistedState({}).groupExpandedById).toEqual({});
+    expect(resolveGroupExpanded({}, key, { forced: false })).toBe(false);
+  });
+
+  it("forced expansion wins without writing state", () => {
+    const state = makeUiState();
+    expect(resolveGroupExpanded(state.groupExpandedById, key, { forced: true })).toBe(true);
+    expect(state.groupExpandedById).toEqual({});
+  });
+
+  it("stores only open groups", () => {
+    const open = setGroupExpanded(makeUiState(), key, true);
+    expect(open.groupExpandedById).toEqual({ [key]: true });
+    expect(resolveGroupExpanded(open.groupExpandedById, key, { forced: false })).toBe(true);
+    expect(setGroupExpanded(open, key, true)).toBe(open);
+    expect(setGroupExpanded(open, key, false).groupExpandedById).toEqual({});
+    const closed = makeUiState();
+    expect(setGroupExpanded(closed, key, false)).toBe(closed);
+  });
+
+  it("drops non-boolean entries when parsing", () => {
+    const parsed = parsePersistedState({
+      groupExpandedById: { [key]: true, bad: "yes" as unknown as boolean },
+    });
+    expect(parsed.groupExpandedById).toEqual({ [key]: true });
+  });
+});
+
 describe("uiStateStore persistence", () => {
   let localStorageStub: Storage;
 
@@ -299,6 +335,7 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      groupExpandedById: { "env\u0000group-1": true },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -321,6 +358,7 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      groupExpandedById: { "env\u0000group-1": true },
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },

@@ -93,6 +93,17 @@ export interface MoveThreadToGroupInput extends CommandMetadata {
   readonly threadId: ThreadId;
   /** Null detaches the thread; it keeps its branch and worktree. */
   readonly groupId: ThreadGroupId | null;
+  /** Switch the thread to the group's branch and worktree when they differ from its own. */
+  readonly adoptGroupWorkspace?: boolean;
+}
+
+export interface RecreateThreadGroupWorktreeInput extends CommandMetadata {
+  readonly groupId: ThreadGroupId;
+}
+
+export interface RemoveThreadGroupResourceInput extends CommandMetadata {
+  readonly groupId: ThreadGroupId;
+  readonly resourceId: string;
 }
 
 export interface CreateThreadInput extends CommandMetadata {
@@ -180,6 +191,8 @@ interface StartThreadBootstrap {
     readonly branch: string | null;
     readonly worktreePath: string | null;
     readonly createdAt: string;
+    /** The new thread joins this group; the launch runs under the group's lock. */
+    readonly groupId?: ThreadGroupId;
   };
   readonly prepareWorktree?: {
     /** V2 worktree launches always fail rather than falling back to the project checkout. */
@@ -465,6 +478,31 @@ export const moveThreadToGroup = Effect.fn("EnvironmentCommands.moveThreadToGrou
     type: "thread-group.move-thread",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    groupId: input.groupId,
+    ...(input.adoptGroupWorkspace === undefined
+      ? {}
+      : { adoptGroupWorkspace: input.adoptGroupWorkspace }),
+  });
+});
+
+/** Removes one registered resource by id, so it cannot undo a concurrent add or remove. */
+export const removeThreadGroupResource = Effect.fn("EnvironmentCommands.removeThreadGroupResource")(
+  function* (input: RemoveThreadGroupResourceInput) {
+    return yield* mutateThreadGroup({
+      type: "thread-group.remove-resource",
+      commandId: yield* allocateCommandId(input),
+      groupId: input.groupId,
+      resourceId: input.resourceId,
+    });
+  },
+);
+
+export const recreateThreadGroupWorktree = Effect.fn(
+  "EnvironmentCommands.recreateThreadGroupWorktree",
+)(function* (input: RecreateThreadGroupWorktreeInput) {
+  return yield* mutateThreadGroup({
+    type: "thread-group.recreate-worktree",
+    commandId: yield* allocateCommandId(input),
     groupId: input.groupId,
   });
 });
@@ -756,6 +794,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
       workspaceStrategy,
+      ...(bootstrap?.groupId === undefined ? {} : { groupId: bootstrap.groupId }),
       initialMessage: {
         messageId: input.message.messageId,
         text: input.message.text,

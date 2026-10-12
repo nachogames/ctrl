@@ -52,6 +52,8 @@ import {
   mergeThreadBack,
   moveThreadToGroup,
   promoteQueuedRun,
+  recreateThreadGroupWorktree,
+  removeThreadGroupResource,
   reorderActiveThread,
   reorderQueuedRun,
   revertThreadCheckpoint,
@@ -181,6 +183,13 @@ describe("V2 environment commands", () => {
       yield* moveThreadToGroup({ threadId: ThreadId.make("thread-2"), groupId: null }).pipe(
         provide,
       );
+      yield* moveThreadToGroup({
+        threadId: ThreadId.make("thread-3"),
+        groupId,
+        adoptGroupWorkspace: true,
+      }).pipe(provide);
+      yield* recreateThreadGroupWorktree({ groupId }).pipe(provide);
+      yield* removeThreadGroupResource({ groupId, resourceId: "staging" }).pipe(provide);
       yield* deleteThreadGroup({ groupId }).pipe(provide);
 
       expect(threadGroups).toEqual([
@@ -193,6 +202,20 @@ describe("V2 environment commands", () => {
         },
         { type: "thread-group.update", commandId, groupId: "group-1", patch: { goal: null } },
         { type: "thread-group.move-thread", commandId, threadId: "thread-2", groupId: null },
+        {
+          type: "thread-group.move-thread",
+          commandId,
+          threadId: "thread-3",
+          groupId: "group-1",
+          adoptGroupWorkspace: true,
+        },
+        { type: "thread-group.recreate-worktree", commandId, groupId: "group-1" },
+        {
+          type: "thread-group.remove-resource",
+          commandId,
+          groupId: "group-1",
+          resourceId: "staging",
+        },
         { type: "thread-group.delete", commandId, groupId: "group-1" },
       ]);
     }).pipe(Effect.provide(layerTestCrypto)),
@@ -407,6 +430,69 @@ describe("V2 environment commands", () => {
           worktreePath: "/workspace/project-worktrees/feature",
           branch: "feature",
         },
+      });
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("launches a grouped draft into its group", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+      const bootstrapThread = {
+        projectId: ProjectId.make("project-1"),
+        title: "Thread",
+        modelSelection: v2Projection.thread.modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: "feature",
+        worktreePath: "/workspace/project-worktrees/feature",
+        createdAt: "2026-06-20T00:00:00.000Z",
+      };
+      const send = (
+        id: string,
+        groupId?: ThreadGroupId,
+        workspace: { branch: string | null; worktreePath: string | null } = bootstrapThread,
+      ) =>
+        startThreadTurn({
+          commandId: CommandId.make(`launch-${id}`),
+          threadId: v2ThreadId,
+          message: {
+            messageId: MessageId.make(`message-${id}`),
+            role: "user",
+            text: "Next step",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          bootstrap: {
+            createThread: {
+              ...bootstrapThread,
+              ...workspace,
+              ...(groupId === undefined ? {} : { groupId }),
+            },
+          },
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      yield* send("grouped", ThreadGroupId.make("group-1"));
+      yield* send("ungrouped");
+      // A group without a worktree launches at the project root on its branch.
+      yield* send("grouped-root", ThreadGroupId.make("group-1"), {
+        branch: "feature",
+        worktreePath: null,
+      });
+
+      expect(launches[0]).toMatchObject({
+        groupId: "group-1",
+        workspaceStrategy: {
+          type: "existing_worktree",
+          worktreePath: "/workspace/project-worktrees/feature",
+          branch: "feature",
+        },
+      });
+      expect(launches[1]).not.toHaveProperty("groupId");
+      expect(launches[2]).toMatchObject({
+        groupId: "group-1",
+        workspaceStrategy: { type: "root", branch: "feature" },
       });
     }).pipe(Effect.provide(layerTestCrypto)),
   );

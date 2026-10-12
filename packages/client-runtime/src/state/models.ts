@@ -1,5 +1,8 @@
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import {
+  resolveNewestCurrentPullRequestLink,
+  threadPullRequestsOf,
+} from "@t3tools/shared/threadPullRequests";
 import type {
   ThreadLinkedPullRequest,
   EnvironmentId,
@@ -349,6 +352,7 @@ export interface EnvironmentThreadGroup extends OrchestrationThreadGroupShell {
   readonly environmentId: EnvironmentId;
   /** Live members: each handoff chain in order, chains by creation time. */
   readonly threadIds: ReadonlyArray<ThreadId>;
+  /** The stored group. Its `pullRequest` may be null where the presented one falls back to a member's. */
   readonly source: OrchestrationThreadGroupShell;
 }
 
@@ -403,5 +407,13 @@ export function presentThreadGroup(
       // Subagents belong to their parent thread, never to a group.
       thread.lineage.relationshipToParent !== "subagent",
   );
-  return { ...group, environmentId, threadIds: orderThreadGroupMembers(members), source: group };
+  return {
+    ...group,
+    // A group usually forms before its pull request exists, so until one is
+    // stored on it, show the newest one a member has linked since.
+    pullRequest: group.pullRequest ?? resolveNewestCurrentPullRequestLink(members),
+    environmentId,
+    threadIds: orderThreadGroupMembers(members),
+    source: group,
+  };
 }

@@ -287,6 +287,9 @@ import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavaila
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
+import { GroupPanel } from "./group/GroupPanel";
+import { readLiveDraftGroup, useLiveDraftGroup, useThreadGroup } from "../state/threadGroups";
+import { resolveDraftLaunchWorkspace } from "../lib/draftGroupLaunch";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
@@ -3027,7 +3030,29 @@ export default function ChatView(props: ChatViewProps) {
     advertisedFileAttachmentBytes === null
       ? null
       : clampFileAttachmentUploadBytes(advertisedFileAttachmentBytes);
-  const envLocked = Boolean(activeThread && (activeMessageCount > 0 || activeRuntime !== null));
+  // A draft started with "New chat in group" follows the group's workspace, so
+  // its workspace controls stay locked until it leaves the group.
+  const draftLaunchGroup = useLiveDraftGroup(isServerThread ? null : draftThread);
+  const envLocked =
+    Boolean(activeThread && (activeMessageCount > 0 || activeRuntime !== null)) ||
+    draftLaunchGroup !== null;
+  // Keep the locked draft showing the workspace its send will use.
+  useEffect(() => {
+    if (draftLaunchGroup === null || !draftId || !draftThread) return;
+    const envMode = draftLaunchGroup.worktreePath ? "worktree" : "local";
+    if (
+      draftThread.branch === draftLaunchGroup.branch &&
+      draftThread.worktreePath === draftLaunchGroup.worktreePath &&
+      draftThread.envMode === envMode
+    ) {
+      return;
+    }
+    setDraftThreadContext(draftId, {
+      branch: draftLaunchGroup.branch,
+      worktreePath: draftLaunchGroup.worktreePath,
+      envMode,
+    });
+  }, [draftId, draftLaunchGroup, draftThread, setDraftThreadContext]);
 
   const loadBalancingSettings = useClientSettings();
   const automaticEnvironment = Boolean(
@@ -5452,6 +5477,21 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !pullRequestsSurfaceAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
   }, [activeThreadRef, pullRequestsSurfaceAvailable]);
+  const activeShellEnvironmentId = activeThreadShell?.environmentId ?? null;
+  const activeShellGroupId = activeThreadShell?.groupId ?? null;
+  const activeGroupRef = useMemo(
+    () =>
+      activeShellEnvironmentId === null || activeShellGroupId === null
+        ? null
+        : { environmentId: activeShellEnvironmentId, groupId: activeShellGroupId },
+    [activeShellEnvironmentId, activeShellGroupId],
+  );
+  const activeGroup = useThreadGroup(activeGroupRef);
+  const groupSurfaceAvailable = activeGroup !== null;
+  const addGroupSurface = useCallback(() => {
+    if (!activeThreadRef || !groupSurfaceAvailable) return;
+    useRightPanelStore.getState().openGroup(activeThreadRef);
+  }, [activeThreadRef, groupSurfaceAvailable]);
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );
@@ -9257,15 +9297,29 @@ export default function ChatView(props: ChatViewProps) {
     }
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeMessageCount === 0;
+    // "New chat in group": the first send joins the draft's group in the
+    // group's workspace (never a worktree of its own), unless the group has
+    // gone since, in which case the chat launches ungrouped as drafted.
+    const launchGroup = isLocalDraftThread ? readLiveDraftGroup(draftThread) : null;
+    const launchWorkspace = resolveDraftLaunchWorkspace({
+      draft: { branch: activeThreadBranch, worktreePath: activeThread.worktreePath },
+      group: launchGroup,
+    });
     const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
+      launchGroup === null &&
+      isFirstMessage &&
+      sendEnvMode === "worktree" &&
+      !activeThread.worktreePath
         ? activeThreadBranch
         : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
+      launchGroup === null &&
+      isFirstMessage &&
+      sendEnvMode === "worktree" &&
+      !activeThread.worktreePath;
     if (shouldCreateWorktree && !activeThreadBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
@@ -9465,7 +9519,9 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     beginLocalDispatch({
-      preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
+      preparingWorktree:
+        (multipleModelSelections !== null && launchGroup === null) ||
+        Boolean(baseBranchForWorktree),
       // Only a draft has a background submission to hide behind its hero.
       submissionIntent:
         submissionIntent === "background" && !isLocalDraftThread ? "foreground" : submissionIntent,
@@ -9588,17 +9644,24 @@ export default function ChatView(props: ChatViewProps) {
                       modelSelection: target.selection,
                       runtimeMode,
                       interactionMode: target.interactionMode,
-                      branch: activeThreadBranch,
-                      worktreePath: null,
+                      // A grouped fan-out joins the group's existing workspace;
+                      // otherwise each model gets its own new worktree.
+                      ...(launchGroup !== null
+                        ? launchWorkspace
+                        : { branch: activeThreadBranch, worktreePath: null }),
                       createdAt: messageCreatedAt,
                     },
-                    prepareWorktree: {
-                      projectCwd: activeProject.workspaceRoot,
-                      baseBranch: activeThreadBranch!,
-                      requireWorktree: true,
-                      ...(startFromOrigin ? { startFromOrigin: true } : {}),
-                    },
-                    runSetupScript: true,
+                    ...(launchGroup !== null
+                      ? {}
+                      : {
+                          prepareWorktree: {
+                            projectCwd: activeProject.workspaceRoot,
+                            baseBranch: activeThreadBranch!,
+                            requireWorktree: true,
+                            ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                          },
+                          runSetupScript: true,
+                        }),
                   },
                   createdAt: messageCreatedAt,
                 },
@@ -9928,8 +9991,7 @@ export default function ChatView(props: ChatViewProps) {
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode: sendInteractionMode,
-                      branch: activeThreadBranch,
-                      worktreePath: activeThread.worktreePath,
+                      ...launchWorkspace,
                       createdAt: activeThread.createdAt,
                     },
                   }
@@ -11099,6 +11161,8 @@ export default function ChatView(props: ChatViewProps) {
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+    ) : renderedRightPanelSurface?.kind === "group" ? (
+      <GroupPanel threadRef={activeThreadRef} surface={renderedRightPanelSurface} />
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
@@ -11352,6 +11416,8 @@ export default function ChatView(props: ChatViewProps) {
             parentThreadLink={parentThreadLink}
             onOpenThread={onOpenRelatedThread}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
+            group={activeGroup}
+            groupPanelVisible={rightPanelOpen && activeRightPanelSurface?.kind === "group"}
             onNewThreadInProject={handleNewThreadInActiveProject}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
@@ -12002,6 +12068,9 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
           onAddDevice={addDeviceSurface}
+          onAddGroup={addGroupSurface}
+          groupAvailable={groupSurfaceAvailable}
+          groupTitle={activeGroup?.title ?? null}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}
@@ -12061,6 +12130,9 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
             onAddDevice={addDeviceSurface}
+            onAddGroup={addGroupSurface}
+            groupAvailable={groupSurfaceAvailable}
+            groupTitle={activeGroup?.title ?? null}
             browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             diffAvailable={isServerThread && isGitRepo}

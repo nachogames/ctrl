@@ -654,6 +654,59 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("opens the group surface as a singleton and re-targets its section", () => {
+    const store = useRightPanelStore.getState();
+    store.openGroup(refA, { section: "workspace" });
+    store.open(refA, "diff");
+    store.openGroup(refA, { section: "handoff" });
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "group",
+      surfaces: [
+        { id: "group", kind: "group", section: "handoff" },
+        { id: "diff", kind: "diff" },
+      ],
+    });
+
+    store.openGroup(refA);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "group",
+      kind: "group",
+      section: null,
+    });
+  });
+
+  it("restores a saved v14 panel without unknown kinds and with a group surface reset", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "group",
+            surfaces: [
+              { id: "diff", kind: "diff" },
+              { id: "mystery", kind: "mystery" },
+              { id: "group", kind: "group", section: "chats" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "group",
+          surfaces: [
+            { id: "diff", kind: "diff" },
+            { id: "group", kind: "group", section: null },
+          ],
+        },
+      },
+      threadPanelVisibilityByThreadKey: {},
+    });
+  });
+
   it("keeps files as a singleton surface", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().open(refA, "files");

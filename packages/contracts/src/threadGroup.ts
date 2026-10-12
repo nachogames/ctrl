@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -22,6 +23,44 @@ export const ThreadGroupManualResource = Schema.Struct({
 });
 export type ThreadGroupManualResource = typeof ThreadGroupManualResource.Type;
 
+/** A ticket or issue linked to a group; the label is derived from the URL unless an agent named it. */
+export const ThreadGroupLink = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  label: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+});
+export type ThreadGroupLink = typeof ThreadGroupLink.Type;
+
+/**
+ * A server, container or registered resource attributed to a group. Computed
+ * live, never stored; scanned ones are running by construction.
+ */
+export const ThreadGroupRunningResource = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  kind: Schema.Literals(["server", "container", "manual"]),
+  name: TrimmedNonEmptyString,
+  /** ":5733" for a server, "docker" for a container, the URL for a registered resource. */
+  detail: TrimmedNonEmptyString,
+  url: Schema.NullOr(TrimmedNonEmptyString),
+  /** How it was attributed: a member's terminal, a working directory in the worktree, a compose label, or by hand. */
+  source: Schema.Literals(["terminal", "cwd", "docker", "registered"]),
+  /** Known: a member chat's terminal started it, or someone named it. Found: it only runs in the worktree. */
+  tier: Schema.Literals(["known", "found"]),
+  /** The member chat's terminal that owns it; Stop interrupts this terminal. */
+  terminal: Schema.NullOr(Schema.Struct({ threadId: ThreadId, terminalId: TrimmedNonEmptyString })),
+  startedByThreadId: Schema.NullOr(ThreadId),
+  /** The project script it runs, when its terminal still runs that script. */
+  scriptId: Schema.NullOr(TrimmedNonEmptyString),
+  port: Schema.NullOr(Schema.Int),
+});
+export type ThreadGroupRunningResource = typeof ThreadGroupRunningResource.Type;
+
+/** One emission of `threadGroups.subscribeResources`: the group's resources right now. */
+export const ThreadGroupRunningResources = Schema.Struct({
+  resources: Schema.Array(ThreadGroupRunningResource),
+});
+export type ThreadGroupRunningResources = typeof ThreadGroupRunningResources.Type;
+
 /** The most recent handoff between two chats of a group. */
 export const ThreadGroupHandoff = Schema.Struct({
   summary: TrimmedNonEmptyString,
@@ -45,6 +84,8 @@ export const OrchestrationThreadGroupShell = Schema.Struct({
   snoozedUntil: Schema.NullOr(IsoDateTime),
   settledAt: Schema.NullOr(IsoDateTime),
   manualResources: Schema.Array(ThreadGroupManualResource),
+  /** Absent from servers before links; decodes as none. */
+  links: Schema.Array(ThreadGroupLink).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -62,6 +103,7 @@ export const ThreadGroupUpdatePayload = Schema.Struct({
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   settledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   manualResources: Schema.optional(Schema.Array(ThreadGroupManualResource)),
+  links: Schema.optional(Schema.Array(ThreadGroupLink)),
 });
 export type ThreadGroupUpdatePayload = typeof ThreadGroupUpdatePayload.Type;
 
@@ -93,6 +135,21 @@ export const ThreadGroupMutation = Schema.Union([
     threadId: ThreadId,
     /** Null detaches the thread; it keeps its branch and worktree. */
     groupId: Schema.NullOr(ThreadGroupId),
+    /** Switch the thread to the group's branch and worktree when they differ from its own. */
+    adoptGroupWorkspace: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({
+    /** Remove one registered resource by id; a missing id is already removed. */
+    type: Schema.Literal("thread-group.remove-resource"),
+    commandId: CommandId,
+    groupId: ThreadGroupId,
+    resourceId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    /** Recreate the group's worktree on its branch when the directory is gone. */
+    type: Schema.Literal("thread-group.recreate-worktree"),
+    commandId: CommandId,
+    groupId: ThreadGroupId,
   }),
 ]);
 export type ThreadGroupMutation = typeof ThreadGroupMutation.Type;
@@ -103,11 +160,26 @@ export const ThreadGroupMutationResult = Schema.Struct({
 });
 export type ThreadGroupMutationResult = typeof ThreadGroupMutationResult.Type;
 
+/** Why a group mutation was refused, for failures a client answers with its own flow. */
+export const ThreadGroupMutationFailureReason = Schema.Literals([
+  "group-not-found",
+  "thread-not-found",
+  "project-mismatch",
+  "subagent",
+  "workspace-mismatch",
+  "thread-busy",
+  "workspace-dirty",
+  "worktree-missing",
+]);
+export type ThreadGroupMutationFailureReason = typeof ThreadGroupMutationFailureReason.Type;
+
 export class ThreadGroupMutationError extends Schema.TaggedError<ThreadGroupMutationError>()(
   "ThreadGroupMutationError",
   {
     commandId: CommandId,
     message: Schema.String,
+    /** Absent for operation failures and startup errors. */
+    reason: Schema.optional(ThreadGroupMutationFailureReason),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

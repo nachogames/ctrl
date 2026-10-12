@@ -150,6 +150,28 @@ export function resolveThreadCurrentPullRequestLink(
   return current.kind === "single" ? current.link : current.top;
 }
 
+/**
+ * The newest current pull request among several threads, by when it was
+ * linked. A chat group with no pull request of its own shows its members' this way.
+ */
+export function resolveNewestCurrentPullRequestLink(
+  threads: ReadonlyArray<{
+    readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+    readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
+  }>,
+): ThreadPullRequestLink | null {
+  let newest: ThreadPullRequestLink | null = null;
+  for (const thread of threads) {
+    const link = resolveThreadCurrentPullRequestLink(threadPullRequestsOf(thread));
+    if (
+      link !== null &&
+      (newest === null || Date.parse(link.linkedAt) > Date.parse(newest.linkedAt))
+    )
+      newest = link;
+  }
+  return newest;
+}
+
 /** Legacy clients can only route links belonging to the thread's own repository. */
 export function legacyLinkedPullRequestOf(
   links: ReadonlyArray<ThreadPullRequestLink>,

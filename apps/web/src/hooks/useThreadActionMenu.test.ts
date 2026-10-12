@@ -52,6 +52,7 @@ vi.mock("../state/entities", () => ({
   readEnvironmentSupportsSettlement: () => true,
   readEnvironmentSupportsSnooze: () => true,
   readEnvironmentSupportsTitleRegeneration: () => true,
+  readEnvironmentSupportsThreadGroups: () => true,
   readThreadShell: () => ({
     id: "thread",
     environmentId: "secondary",
@@ -61,8 +62,15 @@ vi.mock("../state/entities", () => ({
     worktreePath: null,
     runtime: null,
     latestRun: null,
+    groupId: null,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread" },
   }),
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
+}));
+vi.mock("../state/threadGroups", () => ({ readThreadGroup: () => null }));
+vi.mock("./useThreadGroupActions", () => ({
+  useThreadGroupActions: () => ({}),
+  readMoveToGroupState: () => null,
 }));
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));

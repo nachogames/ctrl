@@ -540,6 +540,60 @@ effectIt.effect("falls back to HTTPS and does not follow redirects while probing
   }).pipe(Effect.provide(layer));
 });
 
+effectIt.effect("lists every listener with its terminal owner and never probes one", () => {
+  const stdout = `p1234\ncnode\nn*:${LSOF_TEST_PORT}\np5678\ncpostgres\nn127.0.0.1:5432\n`;
+  const requests: string[] = [];
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+    requests.push(String(input));
+    return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+  }) as typeof globalThis.fetch;
+  const layer = layerLsofScanner({ pid: () => 1234, fetch: fetchFn, stdout: () => stdout });
+
+  return Effect.gen(function* () {
+    const scanner = yield* ownedScanner();
+    const listeners = yield* scanner.listListeners;
+    expect(
+      listeners.map((listener) => [listener.port, listener.pid, listener.processName]),
+    ).toEqual([
+      [5432, 5678, "postgres"],
+      [LSOF_TEST_PORT, 1234, "node"],
+    ]);
+    expect(listeners[0]?.terminal).toBeNull();
+    expect(listeners[1]?.terminal).toEqual({
+      threadId: "scanner-thread",
+      terminalId: "scanner-terminal",
+    });
+    expect(requests).toEqual([]);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("reuses a listener enumeration younger than the poll interval", () => {
+  let runs = 0;
+  const fetchFn = (() => Promise.reject(new Error("no probe"))) as typeof globalThis.fetch;
+  const layer = layerLsofScanner({
+    pid: () => 1234,
+    fetch: fetchFn,
+    stdout: () => {
+      runs += 1;
+      return `p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`;
+    },
+  });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.scan();
+    expect(runs).toBe(1);
+    // A poll's enumeration serves the next listing.
+    expect(yield* scanner.listListeners).toHaveLength(1);
+    yield* TestClock.adjust(Duration.millis(2_999));
+    yield* scanner.listListeners;
+    expect(runs).toBe(1);
+    yield* TestClock.adjust(Duration.millis(1));
+    yield* scanner.listListeners;
+    expect(runs).toBe(2);
+  }).pipe(Effect.provide(layer));
+});
+
 effectIt.effect("probes a port only while T3 terminals own every listener on it", () => {
   const owned = `p1234\ncnode\nn[::1]:${LSOF_TEST_PORT}\n`;
   const unowned = `p5678\ncrpc\nn127.0.0.1:${LSOF_TEST_PORT}\n`;

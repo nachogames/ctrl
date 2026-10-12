@@ -16,6 +16,8 @@ import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useThreadGroupActions } from "../hooks/useThreadGroupActions";
+import { readThreadGroup } from "../state/threadGroups";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { scopeThreadActionContext, startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -44,6 +46,7 @@ function ChatRouteGlobalShortcuts() {
     orderedProjects,
     routeThreadRef,
   } = useHandleNewThread();
+  const { newChatInGroup } = useThreadGroupActions();
   const canOperatePreview = useEnvironmentScope(
     routeThreadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
@@ -158,6 +161,26 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
+      if (command === "chat.newInGroup") {
+        event.preventDefault();
+        event.stopPropagation();
+        const group =
+          activeThread?.groupId != null
+            ? readThreadGroup({
+                environmentId: activeThread.environmentId,
+                groupId: activeThread.groupId,
+              })
+            : null;
+        if (group === null) {
+          toastManager.add(
+            stackedThreadToast({ type: "info", title: "This chat is not in a group" }),
+          );
+          return;
+        }
+        void newChatInGroup(group);
+        return;
+      }
+
       if (command === "chat.newWithoutProject") {
         const environmentId = scratchEnvironmentId(
           newThreadContext.activeThread?.environmentId ??
@@ -240,6 +263,7 @@ function ChatRouteGlobalShortcuts() {
     canOperatePreview,
     environmentScopeId,
     keybindings,
+    newChatInGroup,
     newThreadContext,
     previewOpen,
     primaryEnvironmentId,

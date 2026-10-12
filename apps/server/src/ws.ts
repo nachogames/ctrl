@@ -193,6 +193,7 @@ import { attachmentRelativePath, createDeterministicAttachmentId } from "./attac
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import * as GroupResourceScanner from "./threadGroups/GroupResourceScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
@@ -1286,6 +1287,7 @@ const layerWsRpc = (
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
+      const groupResources = yield* GroupResourceScanner.GroupResourceScanner;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const providerLatestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
@@ -1974,8 +1976,15 @@ const layerWsRpc = (
                 ),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) =>
-          Effect.annotateCurrentSpan({
+        [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) => {
+          const groupLaunchError = (cause: ThreadGroupService.ThreadGroupServiceError) =>
+            new OrchestrationV2ThreadLaunchError({
+              commandId: input.commandId,
+              projectId: input.projectId,
+              message: cause.message,
+              cause,
+            });
+          return Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": input.commandId,
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
@@ -2014,7 +2023,19 @@ const layerWsRpc = (
                         }),
                     createdBy: "user",
                     creationSource: input.creationSource ?? "web",
-                  }).pipe(Effect.provide(intakeContext)),
+                  }).pipe(Effect.provide(intakeContext), (launch) =>
+                    // Joining a group commits under the group's lock, so an
+                    // ungroup or prune cannot delete it mid-launch.
+                    input.groupId === undefined
+                      ? launch
+                      : threadGroupService.withGroupLaunch(
+                          input.groupId,
+                          launch,
+                          input.reuseExistingThread === true && input.threadId !== undefined
+                            ? { reusedThreadId: input.threadId }
+                            : undefined,
+                        ),
+                  ),
                 )
                 .pipe(
                   Effect.tap(() =>
@@ -2055,10 +2076,20 @@ const layerWsRpc = (
                         message: "Failed to launch thread",
                         cause,
                       }),
+                    ThreadGroupNotFoundError: groupLaunchError,
+                    ThreadGroupThreadNotFoundError: groupLaunchError,
+                    ThreadGroupProjectMismatchError: groupLaunchError,
+                    ThreadGroupSubagentError: groupLaunchError,
+                    ThreadGroupWorkspaceMismatchError: groupLaunchError,
+                    ThreadGroupThreadBusyError: groupLaunchError,
+                    ThreadGroupWorkspaceDirtyError: groupLaunchError,
+                    ThreadGroupWorktreeMissingError: groupLaunchError,
+                    ThreadGroupOperationError: groupLaunchError,
                   }),
                 ),
             ),
-          ),
+          );
+        },
         [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: (_input) =>
           Stream.unwrap(subscribeOrchestrationV2ArchivedShell()),
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
@@ -2717,20 +2748,25 @@ const layerWsRpc = (
           startup
             .enqueueCommand(ThreadGroupService.mutateThreadGroup(threadGroupService, mutation))
             .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ThreadGroupMutationError({
+              Effect.mapError((cause) => {
+                if (cause._tag === "ServerRuntimeStartupError") {
+                  return new ThreadGroupMutationError({
                     commandId: mutation.commandId,
-                    message:
-                      cause._tag === "ThreadGroupNotFoundError" ||
-                      cause._tag === "ThreadGroupThreadNotFoundError" ||
-                      cause._tag === "ThreadGroupProjectMismatchError"
-                        ? cause.message
-                        : "Failed to change the thread group.",
+                    message: "Failed to change the thread group.",
                     cause,
-                  }),
-              ),
+                  });
+                }
+                const reason = ThreadGroupService.threadGroupMutationFailureReason(cause);
+                return new ThreadGroupMutationError({
+                  commandId: mutation.commandId,
+                  message: ThreadGroupService.threadGroupMutationErrorMessage(mutation, cause),
+                  ...(reason === undefined ? {} : { reason }),
+                  cause,
+                });
+              }),
             ),
+        [WS_METHODS.threadGroupsSubscribeResources]: (input) =>
+          groupResources.changes(input.groupId).pipe(Stream.map((resources) => ({ resources }))),
         [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(

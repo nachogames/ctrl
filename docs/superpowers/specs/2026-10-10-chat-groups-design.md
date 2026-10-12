@@ -51,11 +51,19 @@ Groups are only created on purpose:
 | Action                                                                                                                                          | Result                                                                                                                                                                                                 |
 | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Hand off a chat (UI or AI)                                                                                                                      | If the chat has no group, create one from its branch/worktree/PR and put both chats in it. Otherwise the new chat joins the existing group.                                                            |
-| Fork a chat                                                                                                                                     | Same rule as handoff.                                                                                                                                                                                  |
+| Fork a chat                                                                                                                                     | Joins the source's group if it has one; never creates a group (decided 2026-10-10). Handoff links are not copied.                                                                                      |
 | "New chat in group" (sidebar row, group menu, panel, new `chat.newInGroup` keybinding command, unbound by default since ⌘⇧N is `chat.newLocal`) | New draft chat with the group's branch, worktree, env mode `worktree`. Joins the group on first send.                                                                                                  |
 | Drag a chat onto another chat or group row                                                                                                      | Join that group (creating one if the target is a lone chat). Allowed only when both are in the same project; if workspaces differ, the moved chat switches to the group's worktree after confirmation. |
 | "Move to group…" / "Remove from group" (chat menu)                                                                                              | Move or detach. Detaching keeps the chat's current branch/worktree.                                                                                                                                    |
 | "Ungroup" (group menu)                                                                                                                          | Deletes the group; chats keep their workspace and become ungrouped.                                                                                                                                    |
+
+**Deviation (decided 2026-10-10, final review):** explicit grouping may mix workspaces. A create
+(`t3_group_create`, "New group with this chat") takes the first listed chat's workspace as the
+group's; other chats keep their own unless the agent passes `adoptGroupWorkspace: true`, which moves
+each of them onto the group's worktree with the same busy/dirty/missing checks as a move. This keeps
+the common flow working: a planning chat on the main checkout groups itself with the build chat it
+launched in a worktree. Moves and drags still confirm before adopting, and a launch into a group
+(new chat in group, handoff, `launchThread` with a `groupId`) must start on the group's workspace.
 
 The title defaults to the PR title if there is a PR, else the branch name humanized
 (`feat/auth-refactor` → "Auth refactor"). Rename anytime.
@@ -77,7 +85,7 @@ the existing Settled section collapsed. Pin and snooze apply to the whole group.
   count shows on hover of a collapsed group, not inline.
 - The group containing the open chat auto-expands; others remember their own expanded state
   (per group, persisted like project expansion is today).
-- "+ New chat in group" appears as the last child of an expanded group on hover.
+- "+ New chat in group" is the last child of an expanded group: a muted row that brightens on hover or focus (a hover-only row read as a blank gap and shifted the list).
 - Pinned and Settled sections keep working: a pinned group shows as a group row in Pinned; a
   settled group appears collapsed in Settled. Snoozed works the same way.
 - The existing project-scope filter still applies.

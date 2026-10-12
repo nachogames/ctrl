@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
+import { CommandId } from "./baseSchemas.ts";
 import { ScopedThreadGroupRef } from "./environment.ts";
 import {
   OrchestrationV2AppThreadJson,
@@ -12,12 +13,15 @@ import {
 import {
   OrchestrationThreadGroupShell,
   ThreadGroupMutation,
+  ThreadGroupMutationError,
+  ThreadGroupRunningResource,
   ThreadGroupUpdatePayload,
 } from "./threadGroup.ts";
 
 const decodeShell = Schema.decodeUnknownSync(OrchestrationThreadGroupShell);
 const decodeMutation = Schema.decodeUnknownSync(ThreadGroupMutation);
 const decodePatch = Schema.decodeUnknownSync(ThreadGroupUpdatePayload);
+const decodeResource = Schema.decodeUnknownSync(ThreadGroupRunningResource);
 const at = "2026-10-10T00:00:00.000Z";
 
 const shellInput = {
@@ -38,6 +42,13 @@ const shellInput = {
 };
 
 describe("thread group contracts", () => {
+  it("decodes a group shell from before links as having none, and decodes links", () => {
+    expect(decodeShell(shellInput).links).toEqual([]);
+    const link = { id: "link:1", url: "https://linear.app/acme/issue/ENG-1", label: "ENG-1" };
+    expect(decodeShell({ ...shellInput, links: [link] }).links).toEqual([link]);
+    expect(decodePatch({ links: [link] }).links).toEqual([link]);
+  });
+
   it("decodes a group shell with a registered resource and a handoff", () => {
     const shell = decodeShell({
       ...shellInput,
@@ -62,6 +73,34 @@ describe("thread group contracts", () => {
         manualResources: [{ id: "db", name: "Database", url: null, kind: "database" }],
       }),
     ).toThrow();
+  });
+
+  it("decodes running resources and rejects an unknown source", () => {
+    const server = {
+      id: "server:5733",
+      kind: "server",
+      name: "node",
+      detail: ":5733",
+      url: "http://localhost:5733",
+      source: "cwd",
+      tier: "found",
+      terminal: null,
+      startedByThreadId: null,
+      scriptId: null,
+      port: 5733,
+    };
+    expect(decodeResource(server)).toEqual(server);
+    expect(
+      decodeResource({
+        ...server,
+        id: "manual:api",
+        kind: "manual",
+        url: null,
+        source: "registered",
+      }).url,
+    ).toBeNull();
+    expect(() => decodeResource({ ...server, source: "guess" })).toThrow();
+    expect(() => decodeResource({ ...server, tier: "maybe" })).toThrow();
   });
 
   it("keeps absent and null apart in an update patch", () => {
@@ -100,6 +139,57 @@ describe("thread group contracts", () => {
         groupId: null,
       }),
     ).toMatchObject({ type: "thread-group.move-thread", groupId: null });
+  });
+
+  it("asks to adopt the group's workspace only when the caller says so", () => {
+    const move = {
+      type: "thread-group.move-thread",
+      commandId: "command-3",
+      threadId: "thread-1",
+      groupId: "group-1",
+    };
+    expect("adoptGroupWorkspace" in decodeMutation(move)).toBe(false);
+    expect(decodeMutation({ ...move, adoptGroupWorkspace: true })).toMatchObject({
+      adoptGroupWorkspace: true,
+    });
+  });
+
+  it("carries a mutation failure's reason across the wire, and decodes errors without one", () => {
+    const codec = Schema.toCodecJson(ThreadGroupMutationError);
+    const encoded = Schema.encodeSync(codec)(
+      new ThreadGroupMutationError({
+        commandId: CommandId.make("command-4"),
+        message: "Different workspace.",
+        reason: "workspace-mismatch",
+      }),
+    );
+    expect(Schema.decodeUnknownSync(codec)(encoded)).toMatchObject({
+      reason: "workspace-mismatch",
+    });
+    expect(
+      Schema.decodeUnknownSync(codec)({
+        _tag: "ThreadGroupMutationError",
+        commandId: "command-5",
+        message: "Failed.",
+      }).reason,
+    ).toBeUndefined();
+  });
+
+  it("recreates a group's worktree by group id", () => {
+    expect(
+      decodeMutation({
+        type: "thread-group.recreate-worktree",
+        commandId: "command-4",
+        groupId: "group-1",
+      }),
+    ).toEqual({
+      type: "thread-group.recreate-worktree",
+      commandId: "command-4",
+      groupId: "group-1",
+    });
+    expect(() =>
+      decodeMutation({ type: "thread-group.recreate-worktree", commandId: "command-4" }),
+    ).toThrow();
   });
 });
 

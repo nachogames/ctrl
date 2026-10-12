@@ -86,3 +86,18 @@ export function projectScriptMenuLabel(script: ProjectScript): string {
 export function settleProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnSettle === true) ?? null;
 }
+
+/** The terminal a script runs in when the Group panel starts it. */
+export function projectScriptTerminalId(scriptId: string): string {
+  return `script-${scriptId}`;
+}
+
+/** The script behind a `script-`, `setup-` or `settle-<id>-<8 hex>` terminal, else null. */
+export function scriptIdFromTerminalId(terminalId: string): string | null {
+  for (const prefix of ["script-", "setup-"]) {
+    if (terminalId.startsWith(prefix) && terminalId.length > prefix.length) {
+      return terminalId.slice(prefix.length);
+    }
+  }
+  return /^settle-(.+)-[0-9a-f]{8}$/.exec(terminalId)?.[1] ?? null;
+}

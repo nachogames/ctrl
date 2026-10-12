@@ -28,6 +28,36 @@ describe("summarizeT3ToolCalls", () => {
     ).toBe("Created 1 thread");
   });
 
+  it("names the group and the chat a group tool started", () => {
+    const group = { id: "group-1", title: "Auth refactor" };
+    expect(
+      summarizeT3ToolCalls("group-new-thread", [
+        completed(
+          { prompt: "Write auth tests" },
+          { group, threadId: "t-2", title: "Write auth tests" },
+        ),
+      ]).label,
+    ).toBe('Auth refactor → "Write auth tests"');
+    expect(
+      summarizeT3ToolCalls("group-handoff", [
+        completed({ summary: "Done" }, { group, threadId: "t-3", title: "Continue: Plan" }),
+      ]).label,
+    ).toBe('Handed off to Auth refactor → "Continue: Plan"');
+    expect(summarizeT3ToolCalls("group-read", [completed({}, { group })]).label).toBe(
+      "Read group Auth refactor",
+    );
+    expect(
+      summarizeT3ToolCalls("group-move-thread", [
+        completed({ groupId: null }, { group: null, threadId: "t-1" }),
+      ]).label,
+    ).toBe("Took 1 chat out of its group");
+    expect(
+      summarizeT3ToolCalls("group-resource", [
+        completed({ action: "add", name: "Dev server" }, { group, resources: [] }),
+      ]).label,
+    ).toBe("Added 1 resource to group Auth refactor");
+  });
+
   it.each([
     ["queue-read", "Read 1 queued message"],
     ["queue-edit", "Edited 1 queued message"],

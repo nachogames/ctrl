@@ -286,4 +286,36 @@ describe.each([
       );
     },
   );
+  it("puts a group's new chat in the group and a plain new chat outside any group", async () => {
+    const projectRef = {
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never;
+    const groupOptions = {
+      branch: "feature/groups",
+      worktreePath: "/remote/worktrees/groups",
+      envMode: "worktree" as const,
+      startFromOrigin: false,
+      groupId: "group-1" as never,
+    };
+    testState.reset(draft);
+    const grouped = await useNewThreadHandler()(projectRef, groupOptions);
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      grouped!.draftId,
+      expect.objectContaining({ ...groupOptions, groupId: "group-1" }),
+    );
+
+    testState.reset(draft);
+    const pendingPlain = useNewThreadHandler()(projectRef);
+    testState.completeProjectFileRead(null);
+    const plain = await pendingPlain;
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      plain!.draftId,
+      expect.objectContaining({ groupId: null }),
+    );
+  });
 });

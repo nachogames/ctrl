@@ -137,6 +137,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
+  /** Server runs chat groups: threadGroups.mutate, grouped launches and the
+      t3_group_* agent tools. Same version-skew contract as threadSettlement:
+      clients hide group actions without it. */
+  threadGroups: Schema.optionalKey(Schema.Boolean),
   /** Server streams themes an environment publishes. Absent on servers from
       before environment themes shipped, which never emit the events -- so a
       client reconnecting to one must drop published themes rather than keep

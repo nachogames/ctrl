@@ -32,6 +32,7 @@ import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadGroupStore from "./ThreadGroupStore.ts";
 import * as ThreadGroupService from "./ThreadGroupService.ts";
+import * as ThreadGroupLaunchService from "./ThreadGroupLaunchService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
@@ -250,6 +251,7 @@ export const layerThreadGroupService = ThreadGroupService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       ThreadGroupStore.layer,
+      ProjectStore.layer,
       layerEventSinkProvided,
       IdAllocator.layer,
       layerThreadManagementProvided,
@@ -272,6 +274,16 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
       layerCommandReceiptStoreProvided,
       ThreadGroupStore.layer,
       IdAllocator.layer,
+    ),
+  ),
+);
+export const layerThreadGroupLaunchService = ThreadGroupLaunchService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerThreadGroupService,
+      layerThreadLaunchProvided,
+      layerThreadManagementProvided,
+      ThreadGroupStore.layer,
     ),
   ),
 );
@@ -365,6 +377,7 @@ export const layerProduction = Layer.mergeAll(
   ),
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
+  layerThreadGroupLaunchService,
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
   layerSecretRequestsProvided,

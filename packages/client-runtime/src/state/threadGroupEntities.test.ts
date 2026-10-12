@@ -70,6 +70,44 @@ describe("thread group atoms", () => {
     dispose();
   });
 
+  it("updates a group when a member links its pull request", () => {
+    const { registry, groups, snapshotAtom } = makeHarness();
+    const member = { ...v2ThreadShell, groupId: v2ThreadGroup.id };
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [member],
+      groups: [v2ThreadGroup],
+    });
+    const atom = groups.threadGroupAtom({ environmentId, groupId: v2ThreadGroup.id });
+    const dispose = registry.mount(atom);
+    expect(registry.get(atom)?.pullRequest).toBeNull();
+    const link = {
+      host: "github.com",
+      repository: "t3tools/t3code",
+      number: 7,
+      url: "https://github.com/t3tools/t3code/pull/7",
+      source: "manual" as const,
+      linkedAt: "2026-06-20T01:00:00.000Z",
+      snapshot: null,
+      stack: null,
+    };
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...member, pullRequests: [link] }],
+      groups: [v2ThreadGroup],
+    });
+    const linked = registry.get(atom);
+    expect(linked?.pullRequest?.number).toBe(7);
+    // The same link rebuilt by the next batch keeps the group object.
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...member, pullRequests: [{ ...link }] }],
+      groups: [v2ThreadGroup],
+    });
+    expect(registry.get(atom)).toBe(linked);
+    dispose();
+  });
+
   it("lists groups across enabled environments", () => {
     const { registry, groups, snapshotAtom } = makeHarness();
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, groups: [v2ThreadGroup] });

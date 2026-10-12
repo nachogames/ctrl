@@ -1,6 +1,20 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
+import {
+  buildMoveToGroupMenuItems,
+  type MoveToGroupCandidate,
+  type MoveToGroupMenuId,
+} from "./moveToGroupMenu.logic";
+import { groupSnoozeChildren } from "./threadGroupMenu.logic";
+
+/** Sent to the open chat by "Hand off to new chat"; its agent writes the summary. */
+export const THREAD_HANDOFF_PROMPT =
+  "Hand this chat off to a new chat in its group. Call the t3_group_handoff tool with a summary covering: the current state, the next steps, and anything the next chat must not touch. Then stop.";
+
+/** Context menus cannot show tooltips, so a disabled handoff says why in its label. */
+export const THREAD_HANDOFF_BUSY_HINT = "Wait for the turn to finish";
+
 /**
  * Ids for the per-thread action menu. Snooze presets are dispatched as
  * `snooze:<presetId>` so the union stays closed while the preset list
@@ -8,6 +22,8 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
  */
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
+  | "handoff"
+  | MoveToGroupMenuId
   | "filter-by-project"
   | "project-settings"
   | "pin"
@@ -20,6 +36,12 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "pin-group"
+  | "unpin-group"
+  | "snooze-group"
+  | `snooze-group:${string}`
+  | "unsnooze-group"
+  | "open-group-panel"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -90,6 +112,8 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
+  /** Subagents belong to their parent thread: no handoff. */
+  readonly isSubagent?: boolean;
   readonly supports: {
     readonly settlement: boolean;
     /** Server understands thread.auto-settle.set. */
@@ -97,8 +121,26 @@ export interface ThreadActionMenuState {
     readonly snooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
+    /** Server runs chat groups; without it no group action shows. */
+    readonly threadGroups: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /**
+   * The chat's known group. Membership places the chat, so Pin and Snooze act
+   * on the group instead; Settle still acts on the chat.
+   */
+  readonly group?: {
+    readonly isPinned: boolean;
+    readonly isSnoozed: boolean;
+  } | null;
+  /**
+   * Groups of the chat's project for "Move to group…", and the chat's current
+   * one. Null hides the move items (subagents, surfaces without groups).
+   */
+  readonly moveToGroup?: {
+    readonly groups: ReadonlyArray<MoveToGroupCandidate>;
+    readonly currentGroupId: MoveToGroupCandidate["id"] | null;
+  } | null;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -106,6 +148,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
   return ![
     "new-thread-on-branch",
     "project-settings",
+    "open-group-panel",
     "mark-unread",
     "copy",
     "copy-path",
@@ -122,6 +165,8 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
+  // A group only places the chat where the server can act on groups.
+  const group = state.supports.threadGroups ? (state.group ?? null) : null;
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.branch
       ? [
@@ -132,13 +177,32 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    ...(state.supports.pinning
+    // Disabled mid-turn: the prompt would queue behind work the summary must cover.
+    ...(state.isSubagent || !state.supports.threadGroups
+      ? []
+      : [
+          {
+            id: "handoff" as const,
+            label: state.isRunning
+              ? `Hand off to new chat (${THREAD_HANDOFF_BUSY_HINT.toLowerCase()})`
+              : "Hand off to new chat",
+            icon: "message-square-plus",
+            disabled: state.isRunning,
+          },
+        ]),
+    ...(group
       ? [
-          state.isPinned
-            ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
-            : { id: "pin" as const, label: "Pin thread", icon: "pin" },
+          group.isPinned
+            ? { id: "unpin-group" as const, label: "Unpin group", icon: "pin-off" }
+            : { id: "pin-group" as const, label: "Pin group", icon: "pin" },
         ]
-      : []),
+      : state.supports.pinning
+        ? [
+            state.isPinned
+              ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
+              : { id: "pin" as const, label: "Pin thread", icon: "pin" },
+          ]
+        : []),
     // Both lifecycle actions stay available on pinned threads: settling
     // clears the pin ("done" beats "keep on top"), and snoozing hides the
     // card until wake with the pin intact.
@@ -149,7 +213,23 @@ export function buildThreadActionMenuItems(
             : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
         ]
       : []),
-    ...(state.supports.snooze
+    ...(state.supports.snooze && group
+      ? [
+          group.isSnoozed
+            ? { id: "unsnooze-group" as const, label: "Wake group", icon: "clock" }
+            : {
+                id: "snooze-group" as const,
+                label: "Snooze group",
+                icon: "clock",
+                children: groupSnoozeChildren(state.snoozePresets),
+              },
+        ]
+      : []),
+    // A chat snoozed before it joined keeps its own snooze; let it be cancelled.
+    ...(state.supports.snooze && group && state.isSnoozed
+      ? [{ id: "unsnooze" as const, label: "Wake chat", icon: "clock" }]
+      : []),
+    ...(state.supports.snooze && !group
       ? [
           state.isSnoozed
             ? { id: "unsnooze" as const, label: "Wake thread", icon: "clock" }
@@ -167,6 +247,10 @@ export function buildThreadActionMenuItems(
                 ],
               },
         ]
+      : []),
+    ...(group ? [{ id: "open-group-panel" as const, label: "Open group panel" }] : []),
+    ...(state.moveToGroup && state.supports.threadGroups
+      ? buildMoveToGroupMenuItems(state.moveToGroup)
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration

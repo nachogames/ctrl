@@ -172,7 +172,7 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
   }),
 );
 
-it.effect("keeps the source's group but not its handoff links", () =>
+it.effect("joins the source's group without copying its handoff links", () =>
   Effect.gen(function* () {
     const groupId = ThreadGroupId.make("group:fork-source");
     const result = yield* planFork(makeSourceRun("completed"), {
@@ -184,6 +184,22 @@ it.effect("keeps the source's group but not its handoff links", () =>
     assert.equal(result.targetThread.groupId, groupId);
     assert.isNull(result.targetThread.handedOffFrom);
     assert.isNull(result.targetThread.handedOffTo);
+    // The plan is only a thread and a transfer, so a fork can't write group events.
+    assert.sameMembers(Object.keys(result), ["targetThread", "transfer"]);
+  }),
+);
+
+it.effect("leaves a fork of an ungrouped chat ungrouped and creates no group", () =>
+  Effect.gen(function* () {
+    const result = yield* planFork(makeSourceRun("completed"), {
+      ...makeSourceThread(),
+      groupId: null,
+      handedOffFrom: ThreadId.make("thread:fork-source-predecessor"),
+    });
+    assert.isNull(result.targetThread.groupId ?? null);
+    assert.isNull(result.targetThread.handedOffFrom);
+    assert.isNull(result.targetThread.handedOffTo);
+    assert.sameMembers(Object.keys(result), ["targetThread", "transfer"]);
   }),
 );
 

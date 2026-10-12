@@ -56,6 +56,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  LayersIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -63,6 +64,7 @@ import {
   MoonIcon,
   PaletteIcon,
   RotateCcwIcon,
+  SendIcon,
   SettingsIcon,
   SquarePenIcon,
   SunIcon,
@@ -87,6 +89,11 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import {
+  canHandOffThread,
+  offersHandOff,
+  useThreadGroupActions,
+} from "../hooks/useThreadGroupActions";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
@@ -116,6 +123,7 @@ import { useNewProject } from "../hooks/useNewProject";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
+import { useThreadGroup } from "../state/threadGroups";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
@@ -181,6 +189,7 @@ import {
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
+import { THREAD_HANDOFF_BUSY_HINT } from "./threadActionMenu.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import {
@@ -761,6 +770,17 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
+  const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
+  const activeThreadGroupId = activeThread?.groupId ?? null;
+  const activeGroupRef = useMemo(
+    () =>
+      activeThreadEnvironmentId === null || activeThreadGroupId === null
+        ? null
+        : { environmentId: activeThreadEnvironmentId, groupId: activeThreadGroupId },
+    [activeThreadEnvironmentId, activeThreadGroupId],
+  );
+  const activeGroup = useThreadGroup(activeGroupRef);
+  const { newChatInGroup, handOffThread } = useThreadGroupActions();
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -775,6 +795,9 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
+  // The active group is the active chat's, so it shares the chat's server.
+  const activeThreadSupportsGroups =
+    activeThreadServerConfig?.environment.capabilities.threadGroups === true;
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -1925,6 +1948,37 @@ function OpenCommandPaletteDialog(props: {
       });
     }
 
+    if (activeGroup !== null && activeThreadSupportsGroups) {
+      const group = activeGroup;
+      actionItems.push({
+        kind: "action",
+        value: "action:new-chat-in-group",
+        searchTerms: ["new chat", "new thread", "group", "chat", "create"],
+        title: (
+          <>
+            New chat in <span className="font-semibold">{group.title}</span>
+          </>
+        ),
+        icon: <LayersIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "chat.newInGroup",
+        run: () => newChatInGroup(group),
+      });
+    }
+
+    if (activeThread && offersHandOff(activeThread) && activeThreadSupportsGroups) {
+      const thread = activeThread;
+      const canHandOff = canHandOffThread(thread);
+      actionItems.push({
+        kind: "action",
+        value: "action:hand-off-thread",
+        searchTerms: ["hand off", "handoff", "continue", "new chat", "group", "summary"],
+        title: "Hand off to new chat",
+        ...(canHandOff ? {} : { description: THREAD_HANDOFF_BUSY_HINT, disabled: true }),
+        icon: <SendIcon className={ITEM_ICON_CLASS} />,
+        run: () => handOffThread(thread),
+      });
+    }
+
     actionItems.push({
       kind: "submenu",
       value: "action:new-thread-in",
@@ -2004,6 +2058,21 @@ function OpenCommandPaletteDialog(props: {
         },
       });
     }
+  }
+
+  if (activeThread !== null && activeGroup !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:open-group-panel",
+      searchTerms: ["group", "panel", "workspace", "handoff", "chats"],
+      title: "Open group panel",
+      description: activeGroup.title,
+      icon: <LayersIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore.getState().openGroup(threadRef);
+      },
+    });
   }
 
   if (activeThread !== null) {

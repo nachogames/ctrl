@@ -5,7 +5,10 @@ import {
   type OrchestrationV2ThreadShell,
   ProjectId,
   ThreadGroupId,
+  type ThreadGroupLink,
+  type ThreadGroupManualResource,
   type ThreadGroupMutation,
+  type ThreadGroupMutationFailureReason,
   type ThreadGroupUpdatePayload,
   ThreadId,
 } from "@t3tools/contracts";
@@ -15,13 +18,16 @@ import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullR
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import type * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import {
   decodeThreadGroupCommandRejection,
   defaultThreadGroupTitle,
@@ -59,6 +65,52 @@ export class ThreadGroupProjectMismatchError extends Schema.TaggedError<ThreadGr
   }
 }
 
+export class ThreadGroupSubagentError extends Schema.TaggedError<ThreadGroupSubagentError>()(
+  "ThreadGroupSubagentError",
+  { threadId: ThreadId },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} is a subagent; subagents belong to their parent thread, not to a group.`;
+  }
+}
+
+/** The UI turns this into a confirm that retries with `adoptGroupWorkspace`. */
+export class ThreadGroupWorkspaceMismatchError extends Schema.TaggedError<ThreadGroupWorkspaceMismatchError>()(
+  "ThreadGroupWorkspaceMismatchError",
+  { threadId: ThreadId, groupId: ThreadGroupId },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} works in a different workspace than group ${this.groupId}; move it into the group's workspace to join.`;
+  }
+}
+
+export class ThreadGroupThreadBusyError extends Schema.TaggedError<ThreadGroupThreadBusyError>()(
+  "ThreadGroupThreadBusyError",
+  { threadId: ThreadId },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} is running. Stop the chat first, then move it into the group's workspace.`;
+  }
+}
+
+export class ThreadGroupWorkspaceDirtyError extends Schema.TaggedError<ThreadGroupWorkspaceDirtyError>()(
+  "ThreadGroupWorkspaceDirtyError",
+  { threadId: ThreadId, worktreePath: Schema.String },
+) {
+  override get message(): string {
+    return `“${this.worktreePath}” has uncommitted changes. Commit or stash them before moving this chat to the group's workspace.`;
+  }
+}
+
+export class ThreadGroupWorktreeMissingError extends Schema.TaggedError<ThreadGroupWorktreeMissingError>()(
+  "ThreadGroupWorktreeMissingError",
+  { groupId: ThreadGroupId, worktreePath: Schema.String },
+) {
+  override get message(): string {
+    return `The group's worktree ${this.worktreePath} no longer exists. Recreate it first.`;
+  }
+}
+
 export class ThreadGroupOperationError extends Schema.TaggedError<ThreadGroupOperationError>()(
   "ThreadGroupOperationError",
   {
@@ -67,6 +119,8 @@ export class ThreadGroupOperationError extends Schema.TaggedError<ThreadGroupOpe
       "read-threads",
       "commit-group-command",
       "update-thread",
+      "recreate-worktree",
+      "read-worktree-status",
     ]),
     groupId: Schema.optional(ThreadGroupId),
     threadId: Schema.optional(ThreadId),
@@ -82,6 +136,11 @@ export type ThreadGroupServiceError =
   | ThreadGroupNotFoundError
   | ThreadGroupThreadNotFoundError
   | ThreadGroupProjectMismatchError
+  | ThreadGroupSubagentError
+  | ThreadGroupWorkspaceMismatchError
+  | ThreadGroupThreadBusyError
+  | ThreadGroupWorkspaceDirtyError
+  | ThreadGroupWorktreeMissingError
   | ThreadGroupOperationError;
 
 export interface ThreadGroupCreateInput {
@@ -92,6 +151,12 @@ export interface ThreadGroupCreateInput {
   readonly threadIds: ReadonlyArray<ThreadId>;
   readonly title?: string;
   readonly goal?: string | null;
+  /**
+   * Explicit grouping may mix workspaces: by default each chat keeps its own.
+   * When true, every other chat moves onto the first chat's worktree and branch,
+   * with the same checks as `moveThread`.
+   */
+  readonly adoptGroupWorkspace?: boolean;
 }
 
 export interface ThreadGroupUpdateInput {
@@ -110,6 +175,15 @@ export interface ThreadGroupMoveThreadInput {
   readonly threadId: ThreadId;
   /** Null detaches the thread; it keeps its branch and worktree. */
   readonly groupId: ThreadGroupId | null;
+  /** Switch the thread to the group's branch and worktree when its own differ. */
+  readonly adoptGroupWorkspace?: boolean;
+}
+
+export interface ThreadGroupSetHandoffLinksInput {
+  /** Each link commits under an id derived from this one, so a retry replays. */
+  readonly commandId: CommandId;
+  readonly fromThreadId: ThreadId;
+  readonly toThreadId: ThreadId;
 }
 
 export class ThreadGroupService extends Context.Service<
@@ -129,10 +203,54 @@ export class ThreadGroupService extends Context.Service<
     readonly moveThread: (
       input: ThreadGroupMoveThreadInput,
     ) => Effect.Effect<OrchestrationThreadGroupShell | null, ThreadGroupServiceError>;
+    /**
+     * Recreate the group's worktree at its path on its branch when the
+     * directory is gone. A no-op when it exists or the group has no worktree,
+     * so a retry needs no command receipt.
+     */
+    readonly recreateWorktree: (
+      groupId: ThreadGroupId,
+    ) => Effect.Effect<OrchestrationThreadGroupShell, ThreadGroupServiceError>;
+    /** Links a handoff: `handedOffFrom` on the new chat, `handedOffTo` on the source. */
+    readonly setHandoffLinks: (
+      input: ThreadGroupSetHandoffLinksInput,
+    ) => Effect.Effect<void, ThreadGroupOperationError>;
     /** Delete the group when no live thread is left in it. */
     readonly pruneIfEmpty: (groupId: ThreadGroupId) => Effect.Effect<void, ThreadGroupServiceError>;
     /** Prune every live group; a restart uses it to catch deletes it missed. */
     readonly pruneEmptyGroups: Effect.Effect<void, ThreadGroupServiceError>;
+    /**
+     * Run a launch that puts a thread into the group while holding the group's
+     * lock, so an ungroup or prune cannot delete the group under it. A reused
+     * thread's previous group is pruned afterwards when the launch emptied it.
+     * It does not check the group: `launch` does, so a retry can replay.
+     * `launch` must not call a locked method of this service for the same group.
+     */
+    readonly withGroupLaunch: <A, E, R>(
+      groupId: ThreadGroupId,
+      launch: Effect.Effect<A, E, R>,
+      options?: { readonly reusedThreadId?: ThreadId },
+    ) => Effect.Effect<A, E | ThreadGroupServiceError, R>;
+    /**
+     * Read-modify-write of the group's registered resources under its lock,
+     * so two concurrent changes cannot lose one. `change` returns the new list,
+     * or null to leave it as it is.
+     */
+    readonly updateManualResources: <E>(
+      groupId: ThreadGroupId,
+      commandId: CommandId,
+      change: (
+        current: ReadonlyArray<ThreadGroupManualResource>,
+      ) => Effect.Effect<ReadonlyArray<ThreadGroupManualResource> | null, E>,
+    ) => Effect.Effect<OrchestrationThreadGroupShell, E | ThreadGroupServiceError>;
+    /** Read-modify-write of the group's links under its lock, like `updateManualResources`. */
+    readonly updateLinks: <E>(
+      groupId: ThreadGroupId,
+      commandId: CommandId,
+      change: (
+        current: ReadonlyArray<ThreadGroupLink>,
+      ) => Effect.Effect<ReadonlyArray<ThreadGroupLink> | null, E>,
+    ) => Effect.Effect<OrchestrationThreadGroupShell, E | ThreadGroupServiceError>;
   }
 >()("t3/orchestration-v2/ThreadGroupService") {}
 
@@ -141,6 +259,9 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const projects = yield* ProjectStore.ProjectStoreV2;
+  const git = yield* GitWorkflow.GitWorkflowService;
+  const fileSystem = yield* FileSystem.FileSystem;
   // Commands for one group run in order. Membership changes that must see the
   // group's current members (join, prune, ungroup) hold the same lock.
   const groupLocks = yield* KeyedLock.make<ThreadGroupId>();
@@ -237,6 +358,20 @@ export const make = Effect.gen(function* () {
     return [...byId.values()];
   });
 
+  // An unreadable path counts as missing: neither a move nor a recreate should
+  // trust a workspace it cannot see. (Turn start assumes present instead, so it
+  // never recreates over a worktree it merely failed to stat.)
+  const pathExists = (path: string) =>
+    fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
+
+  // Same set as the client's threadRuntimeIsActive.
+  const isBusy = (thread: OrchestrationV2ThreadShell) =>
+    thread.status === "preparing" ||
+    thread.status === "queued" ||
+    thread.status === "starting" ||
+    thread.status === "running" ||
+    thread.status === "waiting";
+
   const setThreadGroup = (
     commandId: CommandId,
     threadId: ThreadId,
@@ -248,6 +383,74 @@ export const make = Effect.gen(function* () {
         (cause) => new ThreadGroupOperationError({ operation: "update-thread", threadId, cause }),
       ),
     );
+
+  /**
+   * The checks before a chat switches to a group's workspace: it is idle, the
+   * group's worktree exists, and its own worktree has no uncommitted work.
+   */
+  const checkAdoptable = Effect.fn("ThreadGroupService.checkAdoptable")(function* (
+    thread: OrchestrationV2ThreadShell,
+    groupId: ThreadGroupId,
+    worktreePath: string | null,
+  ) {
+    if (isBusy(thread)) return yield* new ThreadGroupThreadBusyError({ threadId: thread.id });
+    if (worktreePath !== null && !(yield* pathExists(worktreePath))) {
+      return yield* new ThreadGroupWorktreeMissingError({ groupId, worktreePath });
+    }
+    // Re-pointing leaves the old worktree behind, so uncommitted work there
+    // would drop out of the chat's sight.
+    const current = thread.worktreePath;
+    if (current !== null && (yield* pathExists(current))) {
+      const status = yield* git.localStatus({ cwd: current }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadGroupOperationError({
+              operation: "read-worktree-status",
+              threadId: thread.id,
+              cause,
+            }),
+        ),
+      );
+      if (status.hasWorkingTreeChanges) {
+        return yield* new ThreadGroupWorkspaceDirtyError({
+          threadId: thread.id,
+          worktreePath: current,
+        });
+      }
+    }
+  });
+
+  /**
+   * Join the group and switch to its workspace in one update, so a failed check
+   * or a raced worktree change leaves the chat where it was. Run `checkAdoptable` first.
+   */
+  const adoptWorkspace = (
+    commandId: CommandId,
+    thread: OrchestrationV2ThreadShell,
+    groupId: ThreadGroupId,
+    workspace: { readonly branch: string | null; readonly worktreePath: string | null },
+  ) =>
+    threads
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId,
+        threadId: thread.id,
+        groupId,
+        branch: workspace.branch,
+        worktreePath: workspace.worktreePath,
+        expectedWorktreePath: thread.worktreePath,
+      })
+      .pipe(
+        Effect.asVoid,
+        Effect.mapError(
+          (cause) =>
+            new ThreadGroupOperationError({
+              operation: "update-thread",
+              threadId: thread.id,
+              cause,
+            }),
+        ),
+      );
 
   /** Plan and commit one group command. The caller holds the group's lock. */
   const commitLocked = Effect.fn("ThreadGroupService.commitLocked")(function* (
@@ -313,7 +516,7 @@ export const make = Effect.gen(function* () {
       // A group is deleted at most once, so one id per group replays on retry.
       commandId: CommandId.make(`server:thread-group-prune:${groupId}`),
       groupId,
-    }).pipe(Effect.catchTag("ThreadGroupNotFoundError", () => Effect.void));
+    }).pipe(Effect.catchTags({ ThreadGroupNotFoundError: () => Effect.void }));
   });
 
   const pruneIfEmpty: ThreadGroupService["Service"]["pruneIfEmpty"] = (groupId) =>
@@ -333,6 +536,7 @@ export const make = Effect.gen(function* () {
         });
       }
       for (const member of members) {
+        if (isSubagent(member)) return yield* new ThreadGroupSubagentError({ threadId: member.id });
         if (member.projectId !== input.projectId) {
           return yield* new ThreadGroupProjectMismatchError({
             threadId: member.id,
@@ -341,6 +545,21 @@ export const make = Effect.gen(function* () {
           });
         }
       }
+      const workspace = { branch: first.branch, worktreePath: first.worktreePath };
+      const adopters =
+        input.adoptGroupWorkspace === true
+          ? members.filter(
+              (member) =>
+                member.groupId !== input.groupId && member.worktreePath !== workspace.worktreePath,
+            )
+          : [];
+      // Check every chat before the group exists, so one busy or dirty chat fails the whole create.
+      yield* Effect.forEach(
+        adopters,
+        (member) => checkAdoptable(member, input.groupId, workspace.worktreePath),
+        { concurrency: 1, discard: true },
+      );
+      const adopting = new Set(adopters.map((member) => member.id));
       const pullRequest = resolveThreadCurrentPullRequestLink(first.pullRequests ?? []);
       const previousGroups = new Set<ThreadGroupId>();
       // Commit and join under one lock, so a prune cannot delete the group between them.
@@ -356,8 +575,7 @@ export const make = Effect.gen(function* () {
               input.title ??
               defaultThreadGroupTitle({ pullRequest, branch: first.branch, fallback: first.title }),
             goal: input.goal ?? null,
-            branch: first.branch,
-            worktreePath: first.worktreePath,
+            ...workspace,
             pullRequest,
           });
           // A retried create replays as accepted even after the group was pruned or deleted.
@@ -370,11 +588,10 @@ export const make = Effect.gen(function* () {
             (member) => {
               if (member.groupId === input.groupId) return Effect.void;
               if (member.groupId != null) previousGroups.add(member.groupId);
-              return setThreadGroup(
-                CommandId.make(`${input.commandId}:join:${member.id}`),
-                member.id,
-                input.groupId,
-              );
+              const joinCommandId = CommandId.make(`${input.commandId}:join:${member.id}`);
+              return adopting.has(member.id)
+                ? adoptWorkspace(joinCommandId, member, input.groupId, workspace)
+                : setThreadGroup(joinCommandId, member.id, input.groupId);
             },
             { concurrency: 1, discard: true },
           );
@@ -396,6 +613,53 @@ export const make = Effect.gen(function* () {
       return yield* readShell(input.groupId);
     },
   );
+
+  /** Change one list field of a group under its lock; `change` returns null to leave it. */
+  const updateListLocked = <T, E>(
+    groupId: ThreadGroupId,
+    commandId: CommandId,
+    read: (group: OrchestrationThreadGroupShell) => ReadonlyArray<T>,
+    toPatch: (next: ReadonlyArray<T>) => ThreadGroupUpdatePayload,
+    change: (current: ReadonlyArray<T>) => Effect.Effect<ReadonlyArray<T> | null, E>,
+  ) =>
+    Effect.gen(function* () {
+      yield* groupLocks.withLock(
+        groupId,
+        Effect.gen(function* () {
+          const next = yield* change(read(yield* readShell(groupId)));
+          if (next === null) return;
+          yield* commitLocked({
+            type: "thread-group.meta.update",
+            commandId,
+            groupId,
+            patch: toPatch(next),
+          });
+        }),
+      );
+      return yield* readShell(groupId);
+    });
+
+  const updateManualResources: ThreadGroupService["Service"]["updateManualResources"] = (
+    groupId,
+    commandId,
+    change,
+  ) =>
+    updateListLocked(
+      groupId,
+      commandId,
+      (group) => group.manualResources,
+      (manualResources) => ({ manualResources }),
+      change,
+    ).pipe(Effect.withSpan("ThreadGroupService.updateManualResources"));
+
+  const updateLinks: ThreadGroupService["Service"]["updateLinks"] = (groupId, commandId, change) =>
+    updateListLocked(
+      groupId,
+      commandId,
+      (group) => group.links,
+      (links) => ({ links }),
+      change,
+    ).pipe(Effect.withSpan("ThreadGroupService.updateLinks"));
 
   const deleteGroup: ThreadGroupService["Service"]["delete"] = Effect.fn(
     "ThreadGroupService.delete",
@@ -433,6 +697,7 @@ export const make = Effect.gen(function* () {
     "ThreadGroupService.moveThread",
   )(function* (input) {
     const thread = yield* readThread(input.threadId);
+    if (isSubagent(thread)) return yield* new ThreadGroupSubagentError({ threadId: thread.id });
     const previous = thread.groupId ?? null;
     if (previous === input.groupId) {
       return input.groupId === null ? null : yield* readShell(input.groupId);
@@ -454,7 +719,20 @@ export const make = Effect.gen(function* () {
               groupProjectId: group.value.projectId,
             });
           }
-          yield* setThreadGroup(setCommandId, thread.id, target);
+          // The workspace is the worktree path; a branch label alone does not
+          // move the chat anywhere.
+          const { branch, worktreePath } = group.value;
+          if (thread.worktreePath === worktreePath) {
+            return yield* setThreadGroup(setCommandId, thread.id, target);
+          }
+          if (input.adoptGroupWorkspace !== true) {
+            return yield* new ThreadGroupWorkspaceMismatchError({
+              threadId: thread.id,
+              groupId: target,
+            });
+          }
+          yield* checkAdoptable(thread, target, worktreePath);
+          yield* adoptWorkspace(setCommandId, thread, target, { branch, worktreePath });
         }),
       );
     }
@@ -496,13 +774,115 @@ export const make = Effect.gen(function* () {
     },
   ).pipe(Effect.withSpan("ThreadGroupService.pruneEmptyGroups"));
 
+  const recreateWorktree: ThreadGroupService["Service"]["recreateWorktree"] = Effect.fn(
+    "ThreadGroupService.recreateWorktree",
+  )(function* (groupId) {
+    // Under the group's lock, so two clicks cannot both run `git worktree add`.
+    yield* groupLocks.withLock(
+      groupId,
+      Effect.gen(function* () {
+        const group = yield* readShell(groupId);
+        const { branch, worktreePath } = group;
+        if (worktreePath === null || (yield* pathExists(worktreePath))) return;
+        const recreateError = (cause: unknown) =>
+          new ThreadGroupOperationError({ operation: "recreate-worktree", groupId, cause });
+        if (branch === null) {
+          return yield* recreateError("The group has no branch to recreate its worktree on.");
+        }
+        const project = yield* projects.get(group.projectId).pipe(Effect.mapError(recreateError));
+        if (Option.isNone(project)) {
+          return yield* recreateError(`Project ${group.projectId} was not found.`);
+        }
+        const cwd = project.value.workspaceRoot;
+        // A folder deleted outside T3 stays registered in git, and
+        // `git worktree add` refuses a registered path until it is pruned.
+        yield* git
+          .pruneWorktrees({ cwd })
+          .pipe(
+            Effect.andThen(git.createWorktree({ cwd, refName: branch, path: worktreePath })),
+            Effect.mapError(recreateError),
+          );
+      }),
+    );
+    return yield* readShell(groupId);
+  });
+
+  const setHandoffLinks: ThreadGroupService["Service"]["setHandoffLinks"] = (input) =>
+    Effect.forEach(
+      [
+        {
+          commandId: CommandId.make(`${input.commandId}:link-from`),
+          threadId: input.toThreadId,
+          handedOffFrom: input.fromThreadId,
+        },
+        {
+          commandId: CommandId.make(`${input.commandId}:link-to`),
+          threadId: input.fromThreadId,
+          handedOffTo: input.toThreadId,
+        },
+      ],
+      (link) =>
+        threads.dispatch({ type: "thread.metadata.update", ...link }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ThreadGroupOperationError({
+                operation: "update-thread",
+                threadId: link.threadId,
+                cause,
+              }),
+          ),
+        ),
+      { concurrency: 1, discard: true },
+    ).pipe(Effect.withSpan("ThreadGroupService.setHandoffLinks"));
+
+  const withGroupLaunch: ThreadGroupService["Service"]["withGroupLaunch"] = (
+    groupId,
+    launch,
+    options,
+  ) =>
+    Effect.gen(function* () {
+      const reusedThreadId = options?.reusedThreadId;
+      // A missing reused thread is the launch's error to report, not the group's.
+      const previous =
+        reusedThreadId === undefined
+          ? null
+          : yield* readThread(reusedThreadId).pipe(
+              Effect.map((thread) => thread.groupId ?? null),
+              Effect.catchTags({ ThreadGroupThreadNotFoundError: () => Effect.succeed(null) }),
+            );
+      // The launch checks the group itself, after its receipt, so a retried
+      // launch replays even when the group has gone since.
+      const launchLocked = groupLocks.withLock(groupId, launch);
+      if (previous === null || previous === groupId) return yield* launchLocked;
+      // A reuse launch can move the thread and then fail, so prune on every
+      // exit. A prune failure must not fail a launch that already committed;
+      // the restart sweep catches what it misses.
+      return yield* launchLocked.pipe(
+        Effect.ensuring(
+          pruneIfEmpty(previous).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestration-v2.thread-group.launch-prune-failed", {
+                groupId: previous,
+                cause,
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.withSpan("ThreadGroupService.withGroupLaunch"));
+
   return ThreadGroupService.of({
     create,
     update,
     delete: deleteGroup,
     moveThread,
+    recreateWorktree,
+    setHandoffLinks,
     pruneIfEmpty,
     pruneEmptyGroups,
+    withGroupLaunch,
+    updateManualResources,
+    updateLinks,
   });
 });
 
@@ -542,10 +922,104 @@ export const mutateThreadGroup = Effect.fn("mutateThreadGroup")(function* (
           commandId: mutation.commandId,
           threadId: mutation.threadId,
           groupId: mutation.groupId,
+          ...(mutation.adoptGroupWorkspace === undefined
+            ? {}
+            : { adoptGroupWorkspace: mutation.adoptGroupWorkspace }),
         }),
       };
+    case "thread-group.remove-resource": {
+      const { resourceId } = mutation;
+      return {
+        group: yield* service.updateManualResources(
+          mutation.groupId,
+          mutation.commandId,
+          (current) =>
+            Effect.succeed(
+              current.some((resource) => resource.id === resourceId)
+                ? current.filter((resource) => resource.id !== resourceId)
+                : null,
+            ),
+        ),
+      };
+    }
+    case "thread-group.recreate-worktree":
+      return { group: yield* service.recreateWorktree(mutation.groupId) };
   }
 });
+
+const mutationVerb = (type: ThreadGroupMutation["type"]): string => {
+  switch (type) {
+    case "thread-group.create":
+      return "create the thread group";
+    case "thread-group.update":
+      return "update the thread group";
+    case "thread-group.delete":
+      return "ungroup the thread group";
+    case "thread-group.move-thread":
+      return "move the thread";
+    case "thread-group.remove-resource":
+      return "remove the resource";
+    case "thread-group.recreate-worktree":
+      return "recreate the group's worktree";
+  }
+};
+
+const causeMessage = (cause: unknown): string | undefined =>
+  cause instanceof Error ? cause.message : typeof cause === "string" ? cause : undefined;
+
+/**
+ * The message a client sees when a group mutation fails. Errors a user can act
+ * on pass their own message; operation failures name what was being attempted.
+ */
+export function threadGroupMutationErrorMessage(
+  mutation: Pick<ThreadGroupMutation, "type">,
+  error: ThreadGroupServiceError,
+): string {
+  switch (error._tag) {
+    case "ThreadGroupNotFoundError":
+    case "ThreadGroupThreadNotFoundError":
+    case "ThreadGroupProjectMismatchError":
+    case "ThreadGroupSubagentError":
+    case "ThreadGroupWorkspaceMismatchError":
+    case "ThreadGroupThreadBusyError":
+    case "ThreadGroupWorkspaceDirtyError":
+    case "ThreadGroupWorktreeMissingError":
+      return error.message;
+    case "ThreadGroupOperationError": {
+      const detail = causeMessage(error.cause);
+      const verb = mutationVerb(mutation.type);
+      return detail === undefined || detail === ""
+        ? `Failed to ${verb}.`
+        : `Failed to ${verb}: ${detail}`;
+    }
+  }
+}
+
+/** The machine-readable reason a client sees next to the message; none for operation failures. */
+export function threadGroupMutationFailureReason(
+  error: ThreadGroupServiceError,
+): ThreadGroupMutationFailureReason | undefined {
+  switch (error._tag) {
+    case "ThreadGroupNotFoundError":
+      return "group-not-found";
+    case "ThreadGroupThreadNotFoundError":
+      return "thread-not-found";
+    case "ThreadGroupProjectMismatchError":
+      return "project-mismatch";
+    case "ThreadGroupSubagentError":
+      return "subagent";
+    case "ThreadGroupWorkspaceMismatchError":
+      return "workspace-mismatch";
+    case "ThreadGroupThreadBusyError":
+      return "thread-busy";
+    case "ThreadGroupWorkspaceDirtyError":
+      return "workspace-dirty";
+    case "ThreadGroupWorktreeMissingError":
+      return "worktree-missing";
+    case "ThreadGroupOperationError":
+      return undefined;
+  }
+}
 
 /**
  * Group membership and handoff links change only through ThreadGroupService,

@@ -9,7 +9,9 @@ import {
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
+  LayersIcon,
   ScaleIcon,
+  XIcon,
 } from "lucide-react";
 import {
   type Ref,
@@ -27,6 +29,8 @@ import {
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject, useThreadShell, useThreadShellsForProjectRefs } from "../state/entities";
+import { useLiveDraftGroup } from "../state/threadGroups";
+import type { EnvironmentThreadGroup } from "@t3tools/client-runtime/state/models";
 import {
   type EnvMode,
   type EnvironmentOption,
@@ -592,6 +596,63 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   return overflows;
 }
 
+/**
+ * Stands in for the branch picker on a draft from "New chat in group": the
+ * draft follows the group's branch and worktree until it leaves the group.
+ */
+function DraftGroupWorkspace(props: {
+  group: EnvironmentThreadGroup;
+  displayMode?: "toolbar" | "panel";
+  className?: string;
+  onLeave: () => void;
+}) {
+  const { group } = props;
+  const isPanel = props.displayMode === "panel";
+  return (
+    <span
+      data-composer-context-control
+      className={cn(
+        "inline-flex items-center gap-0.5",
+        isPanel ? THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS : "h-7 sm:h-6",
+        props.className,
+      )}
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={<span className="inline-flex min-w-0 items-center gap-1 px-1.75" />}
+        >
+          <LayersIcon
+            aria-hidden
+            className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
+          />
+          <ComposerContextLabel displayMode={props.displayMode ?? "toolbar"}>
+            in {group.title}
+            {group.branch !== null ? ` · ${group.branch}` : ""}
+          </ComposerContextLabel>
+        </TooltipTrigger>
+        <TooltipPopup>
+          Joins “{group.title}” when you send, on the group&apos;s branch and worktree
+        </TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label="Leave group"
+              onClick={props.onLeave}
+              className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            />
+          }
+        >
+          <XIcon aria-hidden className="size-3" />
+        </TooltipTrigger>
+        <TooltipPopup>Leave group</TooltipPopup>
+      </Tooltip>
+    </span>
+  );
+}
+
 export const BranchToolbar = memo(function BranchToolbar({
   layout = "composer",
   panelSection = "all",
@@ -626,6 +687,8 @@ export const BranchToolbar = memo(function BranchToolbar({
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
   const serverThread = useThreadShell(threadRef);
+  // "New chat in group": the draft joins this group on its first send.
+  const draftGroup = useLiveDraftGroup(serverThread === null ? draftThread : null);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const activeProjectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
@@ -674,6 +737,12 @@ export const BranchToolbar = memo(function BranchToolbar({
       projectRef: activeProjectRef,
     });
   }, [activeProjectRef, draftId, previousWorktreeSeed, setDraftThreadContext, threadRef]);
+
+  // The reverse of "New chat in group": the draft keeps its workspace and
+  // its controls unlock.
+  const onLeaveGroup = useCallback(() => {
+    setDraftThreadContext(draftId ?? threadRef, { groupId: null });
+  }, [draftId, setDraftThreadContext, threadRef]);
 
   useImperativeHandle(
     ref,
@@ -733,7 +802,9 @@ export const BranchToolbar = memo(function BranchToolbar({
             onUsePreviousWorktree={onUsePreviousWorktree}
           />
         ) : null}
-        {panelSection !== "workspace" ? (
+        {panelSection !== "workspace" && draftGroup !== null ? (
+          <DraftGroupWorkspace group={draftGroup} displayMode="panel" onLeave={onLeaveGroup} />
+        ) : panelSection !== "workspace" ? (
           <BranchToolbarBranchSelector
             displayMode="panel"
             className="w-full"
@@ -842,7 +913,13 @@ export const BranchToolbar = memo(function BranchToolbar({
         />
       ) : null}
 
-      {showGitControls ? (
+      {draftGroup !== null ? (
+        <DraftGroupWorkspace
+          group={draftGroup}
+          className="min-w-0 flex-initial justify-end @3xl/composer-surface:ml-auto"
+          onLeave={onLeaveGroup}
+        />
+      ) : showGitControls ? (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
           ref={branchSelectorRef}
