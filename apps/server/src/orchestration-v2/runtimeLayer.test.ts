@@ -562,6 +562,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       yield* create(ungroupedThreadId, undefined);
 
       const before = yield* orchestrator.getThreadProjection(threadId);
+      yield* TestClock.adjust("30 seconds");
       yield* orchestrator.dispatch({
         type: "thread.group.reorder",
         commandId: CommandId.make("runtime-layer-group-order-reorder"),
@@ -571,8 +572,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       const reordered = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(reordered.thread.groupOrderKey, "a0");
       assert.equal((yield* orchestrator.getThreadShell(threadId))?.groupOrderKey, "a0");
-      // Arranging a group is not thread activity.
+      // Arranging a group is not thread activity, in memory or in the persisted shell.
       assert.deepEqual(reordered.thread.updatedAt, before.thread.updatedAt);
+      const persisted = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (candidate) => candidate.id === threadId,
+      );
+      assert.deepEqual(persisted?.updatedAt, before.thread.updatedAt);
 
       const ungrouped = yield* orchestrator
         .dispatch({
