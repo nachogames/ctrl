@@ -1,12 +1,7 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  groupChatSubtitle,
-  groupStatusPill,
-  groupWorkspaceLabel,
-  splitInlineCode,
-} from "./GroupPanel.logic";
+import { groupChatSubtitle, groupStatusPill, splitInlineCode } from "./GroupPanel.logic";
 
 const NOW = Date.parse("2026-10-10T12:00:00.000Z");
 const current = ThreadId.make("current");
@@ -62,24 +57,6 @@ describe("groupChatSubtitle", () => {
   it("reads activity from the last user message, not the creation time", () => {
     expect(subtitle({ latestUserMessageAt: null })).toBe("idle 1d");
     expect(subtitle({ latestUserMessageAt: "2026-10-10T11:59:59.000Z" })).toBe("idle");
-  });
-});
-
-describe("groupWorkspaceLabel", () => {
-  it("joins branch, base and ahead count", () => {
-    expect(
-      groupWorkspaceLabel({ branch: "feat/auth", baseRef: "main", aheadOfDefaultCount: 7 }),
-    ).toBe("feat/auth → main · 7 ahead");
-  });
-
-  it("leaves out what the status did not report", () => {
-    expect(
-      groupWorkspaceLabel({ branch: "feat/auth", baseRef: null, aheadOfDefaultCount: null }),
-    ).toBe("feat/auth");
-    expect(
-      groupWorkspaceLabel({ branch: "feat/auth", baseRef: "main", aheadOfDefaultCount: null }),
-    ).toBe("feat/auth → main");
-    expect(groupWorkspaceLabel({ branch: null, baseRef: null, aheadOfDefaultCount: 3 })).toBeNull();
   });
 });
 

@@ -8,6 +8,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { useNavigate } from "@tanstack/react-router";
 import { LayersIcon, PencilIcon, PlusIcon, SendIcon } from "lucide-react";
 import {
@@ -19,6 +20,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { canHandOffThread, useThreadGroupActions } from "~/hooks/useThreadGroupActions";
 import { cn } from "~/lib/utils";
 import {
@@ -26,7 +28,8 @@ import {
   type RightPanelSurface,
   useRightPanelStore,
 } from "~/rightPanelStore";
-import { useThreadShell, useThreadShellsForProjectRefs } from "~/state/entities";
+import { useProject, useThreadShell, useThreadShellsForProjectRefs } from "~/state/entities";
+import { useEnvironmentQuery } from "~/state/query";
 import { threadGroupCommands, useThreadGroup } from "~/state/threadGroups";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
@@ -36,6 +39,7 @@ import { THREAD_HANDOFF_BUSY_HINT } from "../threadActionMenu.logic";
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { GroupGlanceCards } from "./GroupGlanceCards";
 import {
   groupChatSubtitle,
   groupStatusPill,
@@ -43,13 +47,14 @@ import {
   type GroupStatusPill,
 } from "./GroupPanel.logic";
 import { GroupRunningSection } from "./GroupRunningSection";
-import { GroupWorkspaceSection } from "./GroupWorkspaceSection";
+import { useGroupScriptRunner } from "./useGroupScriptRunner";
 
 type GroupSurface = Extract<RightPanelSurface, { kind: "group" }>;
 
 /**
- * The Group surface: the routed chat's group header, workspace, chats and
- * last handoff. Renders an explanation when the chat is not in a known group.
+ * The Group surface: the routed chat's group header, glance cards, running
+ * servers, chats and last handoff. Renders an explanation when the chat is
+ * not in a known group.
  */
 export function GroupPanel(props: { threadRef: ScopedThreadRef; surface: GroupSurface }) {
   const thread = useThreadShell(props.threadRef);
@@ -101,6 +106,23 @@ function GroupPanelContent(props: {
     [group.threadIds, threadsById],
   );
 
+  // One subscription feeds the Frontend card and the Running section; the server scans while
+  // it is read, so it lives exactly as long as the panel shows.
+  const resourcesQuery = useEnvironmentQuery(
+    useMemo(
+      () =>
+        threadGroupCommands.resources({ environmentId: group.environmentId, groupId: group.id }),
+      [group.environmentId, group.id],
+    ),
+  );
+  const project = useProject(projectRefs[0]!);
+  const settings = useEnvironmentSettings(group.environmentId);
+  const scripts = useMemo(
+    () => (project === null ? [] : resolveProjectScripts(settings, project)),
+    [project, settings],
+  );
+  const runner = useGroupScriptRunner(group, project?.workspaceRoot ?? null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   // Each `openGroup` writes a fresh descriptor, so this runs once per request.
   useEffect(() => {
@@ -123,12 +145,25 @@ function GroupPanelContent(props: {
 
   const handoff = group.lastHandoff;
   return (
-    <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <div
+      ref={scrollRef}
+      className="@container/group-panel flex min-h-0 flex-1 flex-col overflow-y-auto"
+    >
       <section data-group-section="header" className="border-border border-b px-4 py-3">
         <GroupHeader group={group} status={groupStatusPill(resolveThreadGroupStatus(members))} />
       </section>
-      <GroupSection section="workspace" title="Workspace">
-        <GroupWorkspaceSection group={group} threadRef={props.threadRef} />
+      <section data-group-section="workspace" className="border-border border-b px-2.5 py-3">
+        <GroupGlanceCards
+          group={group}
+          threadRef={props.threadRef}
+          members={members}
+          resources={resourcesQuery.data?.resources ?? null}
+          scripts={scripts}
+          runner={runner}
+        />
+      </section>
+      <GroupSection section="running" title="Running">
+        <GroupRunningSection group={group} threadRef={props.threadRef} />
       </GroupSection>
       <GroupSection section="chats" title={`Chats · ${members.length}`}>
         <ul className="flex flex-col gap-0.5">
@@ -165,9 +200,6 @@ function GroupPanelContent(props: {
             </Tooltip>
           ) : null}
         </div>
-      </GroupSection>
-      <GroupSection section="running" title="Running">
-        <GroupRunningSection group={group} threadRef={props.threadRef} />
       </GroupSection>
       {handoff !== null ? (
         <GroupSection section="handoff" title="Last handoff">

@@ -38,20 +38,6 @@ export function groupChatSubtitle(input: {
   return since === null ? "idle" : `idle ${since}`;
 }
 
-/** `feat/auth → main · 7 ahead`, leaving out whatever the status did not report. */
-export function groupWorkspaceLabel(input: {
-  branch: string | null;
-  baseRef: string | null;
-  aheadOfDefaultCount: number | null;
-}): string | null {
-  const refs = [input.branch, input.baseRef].filter((ref): ref is string => ref !== null);
-  if (refs.length === 0) return null;
-  const label = refs.join(" → ");
-  return input.aheadOfDefaultCount === null
-    ? label
-    : `${label} · ${input.aheadOfDefaultCount} ahead`;
-}
-
 export interface GroupStatusPill {
   label: string;
   colorClass: string;
