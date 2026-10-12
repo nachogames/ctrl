@@ -154,12 +154,16 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
-        // Only a group the environment knows, in the chat's own project, places the chat.
+        // Only a visible group the environment knows, in the chat's own project,
+        // places the chat; a hidden group's lone chat keeps its own pin and snooze.
         const candidateGroup =
           thread.groupId === null
             ? null
             : readThreadGroup({ environmentId: threadRef.environmentId, groupId: thread.groupId });
-        const group = candidateGroup?.projectId === thread.projectId ? candidateGroup : null;
+        const group =
+          candidateGroup?.projectId === thread.projectId && candidateGroup.visible
+            ? candidateGroup
+            : null;
         const items = buildThreadActionMenuItems({
           canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
           branch: thread.branch ?? null,
@@ -294,9 +298,6 @@ export function useThreadActionMenu(input: {
             return;
           case "handoff":
             await groupActions.handOffThread(thread);
-            return;
-          case "move-to-new-group":
-            await groupActions.moveThreadToNewGroup(thread);
             return;
           case "remove-from-group":
             await groupActions.removeThreadFromGroup(thread);

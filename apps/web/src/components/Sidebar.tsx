@@ -24,7 +24,7 @@ import {
   type DragStartEvent,
   type Modifier,
 } from "@dnd-kit/core";
-import { SortableContext, useSortable } from "@dnd-kit/sortable";
+import { arrayMove, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -228,6 +228,8 @@ import {
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
   resolveSidebarGroupDropTarget,
+  resolveSidebarGroupReorder,
+  planGroupMemberReorder,
   type SidebarGroupDropTarget,
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
@@ -2532,6 +2534,9 @@ export default function Sidebar() {
     deleteThread,
   } = useThreadActions();
   const groupActions = useThreadGroupActions();
+  const reorderGroupThread = useOrchestrationCommand(threadEnvironment.reorderGroup, {
+    reportFailure: false,
+  });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -2887,6 +2892,13 @@ export default function Sidebar() {
     [openProjectSettings],
   );
 
+  // Keep a group's chats in their dropped order while the order-key writes land.
+  const [optimisticGroupOrder, setOptimisticGroupOrder] = useState<{
+    readonly groupKey: string;
+    /** Member thread keys in the dropped order. */
+    readonly order: readonly string[];
+    readonly assignedKeys: ReadonlyMap<string, string>;
+  } | null>(null);
   // Keep a dropped row at its destination while its server applies the
   // lifecycle command and any order-key writes. The next pickup waits for
   // this hold so a second drop cannot replace an unconfirmed placement.
@@ -3005,8 +3017,16 @@ export default function Sidebar() {
     };
     const groupedThreads: EnvironmentThreadShell[] = [];
     const groupKeyByThreadKey = new Map<string, string>();
-    for (const [key, members] of byGroup) {
+    for (const [key, canonicalMembers] of byGroup) {
       const group = threadGroupByKey.get(key)!;
+      const members =
+        optimisticGroupOrder?.groupKey === key
+          ? orderItemsByPreferredIds({
+              items: canonicalMembers,
+              preferredIds: optimisticGroupOrder.order,
+              getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            })
+          : canonicalMembers;
       const section = resolveSidebarGroupSection({ group, members, now: preciseNow });
       sectionGroups[section].push({ key, group, members, section });
       for (const member of members) {
@@ -3082,6 +3102,7 @@ export default function Sidebar() {
     allThreads,
     nowMinute,
     optimisticDrop,
+    optimisticGroupOrder,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
@@ -4053,6 +4074,28 @@ export default function Sidebar() {
       setOptimisticDrop(null);
     }
   }, [activeKeys, optimisticDrop, pinnedKeys, threads]);
+  useEffect(() => {
+    if (optimisticGroupOrder === null) return;
+    const members = groupEntryByKey.get(optimisticGroupOrder.groupKey)?.members;
+    const memberKeys = new Set(
+      (members ?? []).map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    );
+    const membershipChanged =
+      memberKeys.size !== optimisticGroupOrder.order.length ||
+      optimisticGroupOrder.order.some((key) => !memberKeys.has(key));
+    const groupOrderKeyByThread = new Map(
+      threads.map((thread) => [
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        thread.groupOrderKey ?? null,
+      ]),
+    );
+    const allAssignmentsLanded = [...optimisticGroupOrder.assignedKeys].every(
+      ([threadKey, orderKey]) => groupOrderKeyByThread.get(threadKey) === orderKey,
+    );
+    if (membershipChanged || allAssignmentsLanded) setOptimisticGroupOrder(null);
+  }, [groupEntryByKey, optimisticGroupOrder, threads]);
   const attemptPin = useCallback(
     (threadRef: ScopedThreadRef) => {
       void (async () => {
@@ -4220,6 +4263,21 @@ export default function Sidebar() {
     },
     [serverConfigs, sidebarListItemById, threadByKey, threadGroupByKey],
   );
+  // A drop onto another chat of the dragged chat's own expanded group reorders it.
+  const resolveGroupReorder = useCallback(
+    (activeKey: string, overId: string): string | null => {
+      const thread = threadByKey.get(activeKey);
+      if (thread === undefined) return null;
+      return resolveSidebarGroupReorder({
+        activeItem: sidebarListItemById.get(activeKey),
+        overItem: sidebarListItemById.get(overId),
+        supportsReorder:
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadGroupReorder ===
+          true,
+      });
+    },
+    [serverConfigs, sidebarListItemById, threadByKey],
+  );
   useEffect(() => {
     if (
       dragState !== null &&
@@ -4323,14 +4381,17 @@ export default function Sidebar() {
         settledVisibleCount,
         routeThreadKey,
         snoozedThreadCount: snoozedThreads.length + snoozedGroups.length,
-        // Group drops, and every hover of a grouped chat, leave the list in place.
+        // Group drops, and every hover of a grouped chat, leave the list in
+        // place, except a reorder inside the chat's own group.
         holdsLayout: (activeId, overId) =>
           groupKeyByThreadKey.has(activeId) || resolveGroupDrop(activeId, overId) !== null,
+        reordersInPlace: (activeId, overId) => resolveGroupReorder(activeId, overId) !== null,
       }),
     [
       draggedActiveOrder,
       groupKeyByThreadKey,
       resolveGroupDrop,
+      resolveGroupReorder,
       draggedSettledOrder,
       isContextDrag,
       routeThreadKey,
@@ -4371,6 +4432,7 @@ export default function Sidebar() {
     return createSidebarCollisionDetection(
       (id) => {
         if (resolveGroupDrop(draggedThreadKey, id) !== null) return true;
+        if (resolveGroupReorder(draggedThreadKey, id) !== null) return true;
         // A grouped chat's own pin and settle state no longer place it.
         if (groupKeyByThreadKey.has(draggedThreadKey)) return false;
         const target = resolveSidebarDropTarget(sidebarListItems, draggedThreadKey, id);
@@ -4413,6 +4475,7 @@ export default function Sidebar() {
     groupKeyByThreadKey,
     pinnedKeys,
     resolveGroupDrop,
+    resolveGroupReorder,
     sidebarListItems,
     threadByKey,
   ]);
@@ -4425,7 +4488,8 @@ export default function Sidebar() {
         const moved = threadByKey.get(activeKey);
         if (moved === undefined) return;
         if (groupTarget.kind === "join") {
-          const group = groupEntryByKey.get(groupTarget.groupKey)?.group;
+          // A hidden group has no entry of its own: its lone chat is the target row.
+          const group = threadGroupByKey.get(groupTarget.groupKey);
           if (group === undefined || !checkThreadOperations([moved])) return;
           void groupActions.moveThreadIntoGroup(moved, group);
           return;
@@ -4435,7 +4499,57 @@ export default function Sidebar() {
         void groupActions.groupThreadWith(target, moved);
         return;
       }
-      // Grouped chats move only between groups.
+      const reorderGroupKey =
+        event.over === null ? null : resolveGroupReorder(activeKey, String(event.over.id));
+      if (reorderGroupKey !== null) {
+        const members = groupEntryByKey.get(reorderGroupKey)?.members ?? [];
+        const memberKey = (thread: EnvironmentThreadShell) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+        const currentOrder = members.map(memberKey);
+        const fromIndex = currentOrder.indexOf(activeKey);
+        const toIndex = currentOrder.indexOf(String(event.over!.id));
+        if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
+        const order = arrayMove(currentOrder, fromIndex, toIndex);
+        const assignments = planGroupMemberReorder({
+          orderedIds: order,
+          keysById: new Map(members.map((thread) => [memberKey(thread), thread.groupOrderKey])),
+          movedId: activeKey,
+        });
+        if (assignments.length === 0 || !checkThreadOperations(members)) return;
+        const drop = {
+          groupKey: reorderGroupKey,
+          order,
+          assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
+        };
+        setOptimisticGroupOrder(drop);
+        void (async () => {
+          // Stop on failure; each successful key write remains a valid placement.
+          for (const assignment of assignments) {
+            const thread = threadByKey.get(assignment.id);
+            if (thread === undefined) continue;
+            const result = await reorderGroupThread({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, orderKey: assignment.orderKey },
+            });
+            if (result._tag === "Success") continue;
+            // A late failure must not cancel a newer drag's preview.
+            setOptimisticGroupOrder((current) => (current === drop ? null : current));
+            if (!isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to reorder chats",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+            return;
+          }
+        })();
+        return;
+      }
+      // Grouped chats otherwise move only between groups.
       if (groupKeyByThreadKey.has(activeKey)) return;
       const activeSection = sectionByThreadKey.get(activeKey);
       const target =
@@ -4600,7 +4714,10 @@ export default function Sidebar() {
       pinThread,
       pinnedKeys,
       planForwardNavigation,
+      reorderGroupThread,
       resolveGroupDrop,
+      resolveGroupReorder,
+      threadGroupByKey,
       reorderPinnedThread,
       reorderActiveThread,
       sectionByThreadKey,
@@ -5196,9 +5313,6 @@ export default function Sidebar() {
             return;
           case "handoff":
             await groupActions.handOffThread(thread);
-            return;
-          case "move-to-new-group":
-            await groupActions.moveThreadToNewGroup(thread);
             return;
           case "remove-from-group":
             await groupActions.removeThreadFromGroup(thread);

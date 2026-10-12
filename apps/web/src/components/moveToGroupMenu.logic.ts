@@ -5,52 +5,45 @@ import type { ContextMenuItem, ThreadGroupId } from "@t3tools/contracts";
  * group dispatches as `move-to-group:<groupId>`; group ids are unique within
  * the chat's environment, which is the only one the submenu lists.
  */
-export type MoveToGroupMenuId =
-  | "move-to-group"
-  | `move-to-group:${string}`
-  | "move-to-new-group"
-  | "remove-from-group";
+export type MoveToGroupMenuId = "move-to-group" | `move-to-group:${string}` | "remove-from-group";
 
 export interface MoveToGroupCandidate {
   readonly id: ThreadGroupId;
   readonly title: string;
   /** Newest member activity; the submenu lists the most active group first. */
   readonly activityMs: number;
+  /** Only groups of two or more chats show; a hidden group is its lone chat. */
+  readonly visible: boolean;
 }
 
 /**
- * "Move to group…" lists the chat's project groups (the current one checked
- * and disabled), then "New group with this chat". "Remove from group" follows
- * for a grouped chat only.
+ * "Move to group…" lists the chat's project's visible groups (the current one
+ * checked and disabled), and is left out when there are none. "Remove from
+ * group" follows for a chat in a visible group only.
  */
 export function buildMoveToGroupMenuItems(input: {
   readonly groups: ReadonlyArray<MoveToGroupCandidate>;
   readonly currentGroupId: ThreadGroupId | null;
 }): ReadonlyArray<ContextMenuItem<MoveToGroupMenuId>> {
-  const groups = input.groups.toSorted((left, right) => right.activityMs - left.activityMs);
+  const groups = input.groups
+    .filter((group) => group.visible)
+    .toSorted((left, right) => right.activityMs - left.activityMs);
+  const inVisibleGroup = groups.some((group) => group.id === input.currentGroupId);
   return [
-    {
-      id: "move-to-group",
-      label: "Move to group…",
-      children: [
-        ...groups.map((group) => {
-          const current = group.id === input.currentGroupId;
-          return {
-            id: `move-to-group:${group.id}` as const,
-            label: group.title,
-            ...(current ? { checked: true, disabled: true } : {}),
-          };
-        }),
-        {
-          id: "move-to-new-group" as const,
-          label: "New group with this chat",
-          ...(groups.length > 0 ? { separatorBefore: true } : {}),
-        },
-      ],
-    },
-    ...(input.currentGroupId !== null
-      ? [{ id: "remove-from-group" as const, label: "Remove from group" }]
+    ...(groups.length > 0
+      ? [
+          {
+            id: "move-to-group" as const,
+            label: "Move to group…",
+            children: groups.map((group) => ({
+              id: `move-to-group:${group.id}` as const,
+              label: group.title,
+              ...(group.id === input.currentGroupId ? { checked: true, disabled: true } : {}),
+            })),
+          },
+        ]
       : []),
+    ...(inVisibleGroup ? [{ id: "remove-from-group" as const, label: "Remove from group" }] : []),
   ];
 }
 

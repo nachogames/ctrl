@@ -108,6 +108,7 @@ export function readMoveToGroupState(thread: EnvironmentThreadShell): {
     groups: groups.map((group) => ({
       id: group.id,
       title: group.title,
+      visible: group.visible,
       activityMs: Math.max(
         Number.NEGATIVE_INFINITY,
         ...readGroupMembers(group).map(sidebarActivityMs),
@@ -360,7 +361,6 @@ export function useThreadGroupActions() {
         }
         await moveThreadIntoGroup(thread, group);
       },
-      moveThreadToNewGroup: (thread: EnvironmentThreadShell) => createGroupWith([thread]),
       /**
        * Drag onto a lone chat: group the target first (it keeps its
        * workspace), then move the dragged chat in.
