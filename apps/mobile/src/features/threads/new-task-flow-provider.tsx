@@ -95,7 +95,10 @@ import {
   useRemoteConnectionStatus,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import {
+  availableScratchWorkspaceRoot,
+  scratchUnavailableReason,
+} from "@t3tools/client-runtime/operations/projects";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -193,6 +196,8 @@ type NewTaskFlowContextValue = {
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly environmentLabel: string;
+    /** Set when the machine is listed but cannot take this draft, saying why. */
+    readonly unavailableReason?: string;
   }>;
   readonly selectedProject: EnvironmentProject | null;
   /** True when the draft is a thread without a project (its machine's Scratch project). */
@@ -379,19 +384,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     isScratchProject(selectedProject, selectedEnvironmentServerConfig?.scratchWorkspaceRoot);
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
-  // A thread without a project can move to any connected machine that offers
-  // one; its Scratch project there is created on the switch if it is missing.
-  const scratchEnvironments = useMemo(
-    () =>
-      connectedEnvironments.filter(
-        (environment) =>
-          availableScratchWorkspaceRoot(
-            environment.connectionState,
-            serverConfigs.get(environment.environmentId),
-          ) !== null,
-      ),
-    [connectedEnvironments, serverConfigs],
-  );
 
   // Only offer machines that actually host the currently selected repository, so
   // switching computers moves the same repo across machines instead of jumping to
@@ -407,10 +399,32 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectedProjectTitle = selectedProject?.title ?? null;
   const environments = useMemo(() => {
     if (isScratchDraft) {
-      return scratchEnvironments.map((environment) => ({
-        environmentId: environment.environmentId,
-        environmentLabel: environment.environmentLabel,
-      }));
+      // A connected machine that says why it offers no "No project" folder is
+      // listed, disabled, so the choice of machine is never a mystery.
+      return connectedEnvironments.flatMap((environment) => {
+        const serverConfig = serverConfigs.get(environment.environmentId);
+        if (availableScratchWorkspaceRoot(environment.connectionState, serverConfig) !== null) {
+          return [
+            {
+              environmentId: environment.environmentId,
+              environmentLabel: environment.environmentLabel,
+            },
+          ];
+        }
+        const unavailableReason = scratchUnavailableReason(
+          environment.connectionState,
+          serverConfig,
+        );
+        return unavailableReason === null
+          ? []
+          : [
+              {
+                environmentId: environment.environmentId,
+                environmentLabel: environment.environmentLabel,
+                unavailableReason,
+              },
+            ];
+      });
     }
     const seen = new Set<EnvironmentId>();
     const result: Array<{
@@ -451,10 +465,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     }
     return result;
   }, [
+    connectedEnvironments,
     isScratchDraft,
     projects,
     savedConnectionsById,
-    scratchEnvironments,
+    serverConfigs,
     selectedRepositoryKey,
     selectedWorkspaceBasename,
     selectedProjectTitle,

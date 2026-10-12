@@ -53,6 +53,31 @@ function harness() {
 }
 
 describe("environment summary subscriptions", () => {
+  it("shows the display name set on the server over the saved label, live", () => {
+    const h = harness();
+    h.registry.get(h.identitiesAtom);
+    let labels = 0;
+    const stop = h.registry.subscribe(h.identitiesAtom, () => labels++);
+    try {
+      expect(h.registry.get(h.identitiesAtom)[0]?.label).toBe("first");
+      h.registry.set(h.configs(FIRST), {
+        ...config(),
+        settings: { environmentLabel: "Work Mac" },
+      } as ServerConfig);
+      expect(h.registry.get(h.identitiesAtom)[0]?.label).toBe("Work Mac");
+      expect(h.registry.get(h.environmentsAtom)[0]?.environmentLabel).toBe("Work Mac");
+      expect(labels).toBe(1);
+      h.registry.set(h.configs(FIRST), {
+        ...config(),
+        settings: { environmentLabel: null },
+      } as ServerConfig);
+      expect(h.registry.get(h.identitiesAtom)[0]?.label).toBe("first");
+    } finally {
+      stop();
+      h.registry.dispose();
+    }
+  });
+
   it("publishes full config updates without notifying membership, labels, connections or capability consumers", () => {
     const h = harness();
     h.registry.get(h.full.presentationsAtom);

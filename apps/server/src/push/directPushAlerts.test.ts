@@ -3,7 +3,13 @@ import type { AgentAwarenessState } from "@t3tools/shared/agentAwareness";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
-import { alertKind, alertMessage, answeredKind, deviceWantsAlert } from "./directPushAlerts.ts";
+import {
+  alertKind,
+  alertMessage,
+  answeredKind,
+  deviceWantsAlert,
+  otherAlertStillWaiting,
+} from "./directPushAlerts.ts";
 
 const NOW = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-10T12:00:00.000Z"));
 const isoAt = (epochMillis: number) => DateTime.formatIso(DateTime.makeUnsafe(epochMillis));
@@ -100,5 +106,43 @@ describe("alertMessage", () => {
       projectTitle: "Ctrl",
       updatedAt: isoAt(NOW - 5_000),
     });
+  });
+});
+
+describe("otherAlertStillWaiting", () => {
+  const tracked = [
+    ["child-a", { alertThreadId: "parent", phase: null }],
+    ["child-b", { alertThreadId: "parent", phase: "waiting_for_input" }],
+    ["other", { alertThreadId: "other", phase: "waiting_for_approval" }],
+  ] as const;
+
+  it("keeps the alert while a sibling still waits with the same kind", () => {
+    expect(
+      otherAlertStillWaiting({
+        threadId: "child-a",
+        alertThreadId: "parent",
+        kind: "input",
+        tracked,
+      }),
+    ).toBe(true);
+  });
+
+  it("clears when nothing else on that thread waits with that kind", () => {
+    expect(
+      otherAlertStillWaiting({
+        threadId: "child-a",
+        alertThreadId: "parent",
+        kind: "approval",
+        tracked,
+      }),
+    ).toBe(false);
+    expect(
+      otherAlertStillWaiting({
+        threadId: "child-b",
+        alertThreadId: "parent",
+        kind: "input",
+        tracked,
+      }),
+    ).toBe(false);
   });
 });

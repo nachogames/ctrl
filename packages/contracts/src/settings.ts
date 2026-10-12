@@ -1103,6 +1103,9 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+/** A display name for an environment: trimmed, 1-64 characters. */
+export const EnvironmentLabel = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
+
 export const ServerSettings = Schema.Struct({
   // Null means no client has migrated this preference yet; an empty value is
   // authoritative so another device cannot resurrect cleared preferences.
@@ -1240,6 +1243,16 @@ export const ServerSettings = Schema.Struct({
    * here rather than failing the whole settings snapshot for an older client.
    */
   environmentIcon: ForwardCompatibleNullable(EnvironmentMachineKind).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /**
+   * The name clients show for this environment, such as "Work Mac". Null means
+   * the name the server detected (the computer's name). Lives on the server so
+   * every device that connects to it shows the same name.
+   */
+  // Forward compatible: a value this build rejects (a hand-edited file, a
+  // newer server's longer name) reads as unset rather than failing the snapshot.
+  environmentLabel: ForwardCompatibleNullable(EnvironmentLabel).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /**
@@ -1593,6 +1606,7 @@ export const ServerSettingsPatch = Schema.Struct({
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
+  environmentLabel: Schema.optionalKey(Schema.NullOr(EnvironmentLabel)),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),

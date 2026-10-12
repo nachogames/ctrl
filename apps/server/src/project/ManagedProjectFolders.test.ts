@@ -129,6 +129,8 @@ it.effect("offers a Scratch folder under the data dir when it is outside a check
     Effect.gen(function* () {
       const path = yield* Path.Path;
       assert.equal(yield* requireRoot, path.resolve(baseDir, "scratch"));
+      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      assert.isTrue(Option.isNone(yield* scratch.scratchUnavailable));
     }),
   ),
 );
@@ -144,6 +146,14 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
     yield* Effect.gen(function* () {
       const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
       assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+      // Clients show why, naming the checkout (macOS temp dirs resolve through /private).
+      assert.deepEqual(
+        yield* scratch.scratchUnavailable,
+        Option.some({
+          reason: "inside-git-repo" as const,
+          repositoryRoot: yield* fileSystem.realPath(checkout),
+        }),
+      );
       const failure = yield* Effect.flip(scratch.ensureScratchProject);
       assert.equal(failure._tag, "ScratchUnavailableError");
     }).pipe(Effect.provide(layer(baseDir)));

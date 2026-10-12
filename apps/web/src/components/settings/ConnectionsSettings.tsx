@@ -81,6 +81,7 @@ import {
 } from "./settingsLayout";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
+import { EnvironmentDisplayNameSetting } from "./EnvironmentDisplayNameSetting";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import { usePreparedConnection } from "~/state/session";
@@ -3652,6 +3653,10 @@ export function ConnectionsSettings() {
             }
           >
             <LocalEnvironmentSetting />
+            <EnvironmentDisplayNameSetting
+              environmentId={primaryEnvironmentId}
+              serverConfig={primaryServerConfig}
+            />
             {canManageLocalBackend ? (
               <SettingsRow
                 title="Version"

@@ -4,6 +4,7 @@ import type {
   InteractionUpdate,
   McpServerConfig,
   RunResult,
+  SDKCustomTool,
   SDKUserMessage,
   SettingSource,
   ToolCall,
@@ -24,15 +25,18 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type ProviderInstanceId,
+  type ProviderUserInputAnswers,
   type ThreadId,
 } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -74,6 +78,16 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import {
+  ASK_USER_INPUT_SCHEMA,
+  ASK_USER_INSTRUCTIONS,
+  ASK_USER_TOOL_DESCRIPTION,
+  ASK_USER_TOOL_NAME,
+  askUserError,
+  askUserQuestions,
+  askUserResult,
+  isAskUserToolCall,
+} from "./askUserTool.ts";
 export { cursorSdkModelSelection } from "./sdkModel.ts";
 
 export const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
@@ -135,7 +149,7 @@ export const CursorProviderCapabilitiesV2 = {
     emitsPlanUpdated: true,
     emitsTodoList: true,
     emitsProposedPlan: true,
-    supportsStructuredQuestions: false,
+    supportsStructuredQuestions: true,
     planDeltasHaveItemIds: true,
   },
   subagents: {
@@ -880,6 +894,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const liveAgent = yield* Ref.make<CursorLiveAgent | null>(null);
         const activeTurn = yield* Ref.make<ActiveCursorTurn | null>(null);
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
+        // `ask_user` calls waiting on the user, by runtime request id. A null
+        // answer means the question was dropped (the turn ended or stopped).
+        const pendingUserInputs = new Map<
+          string,
+          {
+            readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+            readonly answers: Deferred.Deferred<ProviderUserInputAnswers | null, never>;
+          }
+        >();
+        const services = yield* Effect.context();
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
@@ -1746,6 +1770,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             for (const [index, nestedTool] of toolCallsFromConversationSteps(
               result?.conversationSteps ?? [],
             ).entries()) {
+              // A subagent's question was its card, as in a live turn.
+              if (isAskUserToolCall(nestedTool.toolCall)) continue;
               const callId = `${nativeItemId}:child-tool:${nestedTool.callId || index + 1}`;
               const startedAt = task.startedAt ?? now;
               const active: ActiveCursorToolCall = {
@@ -1847,6 +1873,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               });
               return;
             default: {
+              // Shown as the question card the call raised, not as a tool row.
+              if (isAskUserToolCall(toolCall)) {
+                return;
+              }
               const active = yield* ensureToolStarted(context, update.callId, toolCall);
               active.toolCall = toolCall;
               if (update.type !== "tool-call-started") {
@@ -1964,6 +1994,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             return;
           }
           input.context.finalized = true;
+          yield* dropPendingUserInputs(input.context.providerTurnId);
           const completedAt = yield* DateTime.now;
           // Tools still here never got a tool-call-completed. A stopped or
           // failed turn cut them short, so they end with the turn's status.
@@ -2176,7 +2207,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}\n\n${ASK_USER_INSTRUCTIONS}`;
           return images.length === 0
             ? text
             : ({
@@ -2184,6 +2215,155 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 images,
               } satisfies SDKUserMessage);
         });
+
+        const dropPendingUserInputs = (providerTurnId: OrchestrationV2ProviderTurn["id"] | null) =>
+          Effect.forEach(
+            [...pendingUserInputs.entries()].filter(
+              ([, pending]) => providerTurnId === null || pending.providerTurnId === providerTurnId,
+            ),
+            ([requestId, pending]) => {
+              pendingUserInputs.delete(requestId);
+              return Deferred.succeed(pending.answers, null);
+            },
+            { discard: true },
+          );
+
+        // The SDK can call a host tool before `send` has returned. startTurn
+        // hands the turn over here once it has announced it running, or null
+        // when it never starts, so a question never precedes its turn.
+        const startingTurn = yield* Ref.make<Deferred.Deferred<ActiveCursorTurn | null> | null>(
+          null,
+        );
+        const awaitActiveTurn = Effect.gen(function* () {
+          const starting = yield* Ref.get(startingTurn);
+          return starting === null ? yield* Ref.get(activeTurn) : yield* Deferred.await(starting);
+        });
+
+        const askUser = Effect.fnUntraced(function* (
+          args: unknown,
+          toolCallId: string | undefined,
+        ) {
+          const questions = askUserQuestions(args);
+          if (questions.length === 0) {
+            return askUserError(
+              "ask_user needs at least one question with a non-empty `question`.",
+            );
+          }
+          const context = yield* awaitActiveTurn;
+          if (context === null || context.finalized || context.interrupted) {
+            return askUserError("There is no active turn to ask the user from.");
+          }
+          const providerSessionId = context.input.providerThread.providerSessionId ?? session.id;
+          const createdAt = yield* DateTime.now;
+          const requestId = yield* idAllocator.allocate.runtimeRequest({
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            providerTurnId: context.providerTurnId,
+            ...(toolCallId === undefined ? {} : { nativeRequestId: toolCallId }),
+          });
+          const nodeId = idAllocator.derive.approvalNode({ requestId });
+          const nativeItemRef =
+            toolCallId === undefined
+              ? null
+              : {
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  nativeId: toolCallId,
+                  strength: "weak" as const,
+                };
+          const ordinal = yield* resolveItemOrdinal(context, `ask-user:${requestId}`);
+          const node: OrchestrationV2ExecutionNode = {
+            id: nodeId,
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            parentNodeId: context.input.rootNodeId,
+            rootNodeId: context.input.rootNodeId,
+            kind: "user_input_request",
+            status: "waiting",
+            countsForRun: false,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeItemRef,
+            runtimeRequestId: requestId,
+            checkpointScopeId: null,
+            startedAt: createdAt,
+            completedAt: null,
+          };
+          const request: OrchestrationV2RuntimeRequest = {
+            id: requestId,
+            nodeId,
+            providerTurnId: context.providerTurnId,
+            nativeRequestRef: nativeItemRef,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "live", providerSessionId },
+            createdAt,
+            resolvedAt: null,
+          };
+          const turnItem: OrchestrationV2TurnItem = {
+            id: idAllocator.derive.approvalTurnItem({ requestId }),
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            nodeId,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeItemRef,
+            parentItemId: null,
+            ordinal,
+            status: "waiting",
+            title: null,
+            startedAt: createdAt,
+            completedAt: null,
+            updatedAt: createdAt,
+            type: "user_input_request",
+            requestId,
+            questions: [...questions],
+          };
+          const answers = yield* Deferred.make<ProviderUserInputAnswers | null, never>();
+          // Stop or the turn's end may have dropped pending questions while
+          // this one was being built; it must not outlive the turn.
+          if (context.finalized || context.interrupted) {
+            return askUserError("The turn ended before the question could be asked.");
+          }
+          pendingUserInputs.set(String(requestId), {
+            providerTurnId: context.providerTurnId,
+            answers,
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            node,
+          });
+          yield* emitProviderEvent({
+            type: "runtime_request.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            runtimeRequest: request,
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            turnItem,
+          });
+          const resolved = yield* Deferred.await(answers).pipe(
+            Effect.ensuring(Effect.sync(() => pendingUserInputs.delete(String(requestId)))),
+          );
+          return resolved === null
+            ? askUserError("The user did not answer; the question was dismissed.")
+            : askUserResult(questions, resolved);
+        });
+
+        const askUserTool: SDKCustomTool = {
+          description: ASK_USER_TOOL_DESCRIPTION,
+          inputSchema: ASK_USER_INPUT_SCHEMA,
+          execute: (args, toolContext) =>
+            Effect.runPromiseWith(services)(
+              askUser(args, toolContext.toolCallId).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("orchestration-v2.cursor-ask-user-failed", { cause }).pipe(
+                    Effect.as(askUserError("Could not ask the user.")),
+                  ),
+                ),
+              ),
+            ),
+        };
 
         const startTurn = Effect.fn("CursorAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
@@ -2207,11 +2387,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
             // MCP send overrides replace the ambient servers loaded when the agent opens.
+            const turnStarted = yield* Deferred.make<ActiveCursorTurn | null>();
+            yield* Ref.set(startingTurn, turnStarted);
             const sdkRun = yield* agent.session.send({
               message,
               options: {
                 model: cursorSdkModelSelection(turnInput.modelSelection),
                 mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
+                local: { customTools: { [ASK_USER_TOOL_NAME]: askUserTool } },
               },
               onDelta: (update) => {
                 if (context === null) {
@@ -2272,6 +2455,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             for (const update of pendingUpdates) {
               yield* handleInteractionUpdate(context, update);
             }
+            yield* Deferred.succeed(turnStarted, context);
+            yield* Ref.set(startingTurn, null);
 
             yield* sdkRun.wait.pipe(
               Effect.flatMap((result) =>
@@ -2349,10 +2534,19 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     cause,
                   }),
               ),
+              // A turn that failed to start releases any host tool waiting on it.
+              Effect.ensuring(
+                Ref.getAndSet(startingTurn, null).pipe(
+                  Effect.flatMap((starting) =>
+                    starting === null ? Effect.void : Deferred.succeed(starting, null),
+                  ),
+                ),
+              ),
             ),
         );
 
         const closeSession = Effect.fnUntraced(function* () {
+          yield* dropPendingUserInputs(null);
           const existing = yield* Ref.get(liveAgent);
           if (existing !== null) {
             yield* existing.session.close.pipe(Effect.ignore);
@@ -2462,7 +2656,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 });
               }
               context.interrupted = true;
-              yield* context.run.cancel;
+              // Send the cancel before releasing a run that waits on the user's
+              // answer, so the agent cannot act on "dismissed" first. A cancel
+              // that waits for that run to stop gets two seconds, then the
+              // question is released so the run can stop.
+              const cancelling = yield* Effect.forkChild(context.run.cancel);
+              yield* Fiber.await(cancelling).pipe(Effect.timeoutOption("2 seconds"));
+              yield* dropPendingUserInputs(context.providerTurnId);
+              yield* Fiber.join(cancelling);
               const stopped = yield* Deferred.await(context.completed).pipe(
                 Effect.timeoutOption("10 seconds"),
               );
@@ -2490,16 +2691,30 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               ),
           ),
           respondToRuntimeRequest: (requestInput) =>
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
-                driver: CursorAgentSdk.CURSOR_PROVIDER,
-                requestId: requestInput.requestId,
-                cause: new ProviderAdapter.ProviderAdapterProtocolError({
-                  driver: CursorAgentSdk.CURSOR_PROVIDER,
-                  detail: "Cursor Agent SDK does not expose interactive approval requests.",
-                }),
-              }),
-            ),
+            Effect.suspend(() => {
+              const pending = pendingUserInputs.get(String(requestInput.requestId));
+              if (pending === undefined) {
+                return Effect.fail(
+                  new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
+                    driver: CursorAgentSdk.CURSOR_PROVIDER,
+                    requestId: requestInput.requestId,
+                    cause: new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      detail:
+                        "Cursor only answers its own pending questions; it has no approval requests.",
+                    }),
+                  }),
+                );
+              }
+              pendingUserInputs.delete(String(requestInput.requestId));
+              // A dismissed card arrives as a decline or cancel, not as empty answers.
+              const dismissed =
+                requestInput.decision === "cancel" || requestInput.decision === "decline";
+              return Deferred.succeed(
+                pending.answers,
+                dismissed ? null : (requestInput.answers ?? {}),
+              ).pipe(Effect.asVoid);
+            }),
           readThreadSnapshot: Effect.fn("CursorAdapterV2.readThreadSnapshot")(
             function* (snapshotInput) {
               const requestedAgentId = nativeThreadId(snapshotInput.providerThread);

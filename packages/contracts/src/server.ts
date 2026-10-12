@@ -40,6 +40,18 @@ const KeybindingsInvalidEntryIssue = Schema.Struct({
   index: Schema.Number,
 });
 
+export const ScratchUnavailability = Schema.Struct({
+  /**
+   * `inside-git-repo`: the data dir sits in a Git checkout. `detection-failed`:
+   * Git could not tell. A plain string, not a closed set, so a reason added by
+   * a newer server cannot fail an older client's whole config.
+   */
+  reason: TrimmedNonEmptyString,
+  /** The checkout the data dir sits in, for `inside-git-repo`. */
+  repositoryRoot: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ScratchUnavailability = typeof ScratchUnavailability.Type;
+
 export const ServerConfigIssue = Schema.Union([
   KeybindingsMalformedConfigIssue,
   KeybindingsInvalidEntryIssue,
@@ -730,6 +742,12 @@ export const ServerConfig = Schema.Struct({
    */
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
+   * Why this environment offers no Scratch folder, so clients can show the
+   * machine as unavailable instead of hiding it. Absent when it offers one,
+   * and on older servers.
+   */
+  scratchUnavailable: Schema.optionalKey(ScratchUnavailability),
+  /**
    * Folder that holds projects started from just a name. Present only on
    * servers that answer projects.createNew.
    */
@@ -766,6 +784,19 @@ export function resolveEnvironmentMachineKind(
   } | null,
 ): EnvironmentMachineKind {
   return config?.settings?.environmentIcon ?? config?.environment.platform.machine ?? "server";
+}
+
+/**
+ * The name clients show for an environment: the display name set on its
+ * server, else `fallback`, the label saved with the client's connection.
+ */
+export function resolveEnvironmentLabel(
+  config: {
+    readonly settings?: { readonly environmentLabel?: string | null } | undefined;
+  } | null,
+  fallback: string,
+): string {
+  return config?.settings?.environmentLabel ?? fallback;
 }
 
 const ServerUpsertKeybindingReplaceTarget = Schema.Struct({

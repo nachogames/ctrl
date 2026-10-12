@@ -92,6 +92,7 @@ import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
 import { useTerminalGridSync } from "./useTerminalGridSync";
 import { useTerminalLifecycle } from "./useTerminalLifecycle";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/presentation";
 
 function TerminalHeader(props: {
   readonly subtitle: string;
@@ -1215,7 +1216,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           {!isEnvironmentReady ? (
             <EnvironmentConnectionNotice
               environmentLabel={
-                environment.presentation?.entry.target.label ??
+                (environment.presentation
+                  ? environmentDisplayLabel(environment.presentation)
+                  : null) ??
                 selectedEnvironmentConnection?.environmentLabel ??
                 "Environment"
               }

@@ -22,6 +22,7 @@ import {
   getNewProjectPublishTargets,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
+  scratchUnavailableReason,
   sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
@@ -312,5 +313,38 @@ describe("new project publish targets", () => {
     expect(
       getNewProjectPublishTarget(targets, SourceControlProviderKind.make("gitlab"))?.owner,
     ).toBe("group");
+  });
+});
+
+describe("scratchUnavailableReason", () => {
+  it("explains why a connected machine offers no threads without a project", () => {
+    expect(
+      scratchUnavailableReason("connected", {
+        scratchUnavailable: { reason: "inside-git-repo", repositoryRoot: "/Users/me" },
+      }),
+    ).toBe("Unavailable: Ctrl's data folder is inside the Git repository at /Users/me");
+    expect(
+      scratchUnavailableReason("connected", { scratchUnavailable: { reason: "inside-git-repo" } }),
+    ).toBe("Unavailable: Ctrl's data folder is inside a Git repository");
+    expect(
+      scratchUnavailableReason("connected", { scratchUnavailable: { reason: "detection-failed" } }),
+    ).toBe("Unavailable: Ctrl couldn't check its data folder with Git");
+    // A reason from a newer server still reads as unavailable.
+    expect(
+      scratchUnavailableReason("connected", {
+        scratchUnavailable: { reason: "readonly-data-dir" },
+      }),
+    ).toBe("Unavailable on this machine");
+  });
+
+  it("says nothing when it offers them, is offline, or does not say", () => {
+    expect(
+      scratchUnavailableReason("connected", { scratchWorkspaceRoot: "/data/scratch" }),
+    ).toBeNull();
+    expect(
+      scratchUnavailableReason("offline", { scratchUnavailable: { reason: "detection-failed" } }),
+    ).toBeNull();
+    expect(scratchUnavailableReason("connected", {})).toBeNull();
+    expect(scratchUnavailableReason("connected", null)).toBeNull();
   });
 });

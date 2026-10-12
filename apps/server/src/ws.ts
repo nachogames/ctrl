@@ -1716,6 +1716,7 @@ const layerWsRpc = (
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
+          const scratchUnavailable = yield* managedFolders.scratchUnavailable;
           const editorConfig = yield* resolveEditorConfig(
             yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
             resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
@@ -1759,6 +1760,10 @@ const layerWsRpc = (
             ...Option.match(scratchWorkspaceRoot, {
               onNone: () => ({}),
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
+            }),
+            ...Option.match(scratchUnavailable, {
+              onNone: () => ({}),
+              onSome: (unavailable) => ({ scratchUnavailable: unavailable }),
             }),
             newProjectsRoot: managedFolders.namedProjectsRoot,
           };

@@ -18,6 +18,8 @@ import {
   type AgentAwarenessPhase,
   type AgentAwarenessState,
   projectThreadAwarenessV2,
+  threadAwarenessInPhaseV2,
+  threadQuestionPhaseV2,
 } from "@t3tools/shared/agentAwareness";
 import * as NodeOS from "node:os";
 
@@ -49,7 +51,13 @@ import {
   fcmAlertData,
   fcmClearData,
 } from "@t3tools/shared/pushPayloads";
-import { alertKind, alertMessage, answeredKind, deviceWantsAlert } from "./directPushAlerts.ts";
+import {
+  alertKind,
+  alertMessage,
+  answeredKind,
+  deviceWantsAlert,
+  otherAlertStillWaiting,
+} from "./directPushAlerts.ts";
 import {
   type ApnsCredentials,
   FcmServiceAccount,
@@ -131,7 +139,12 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
   const devicesPath = pathService.join(pushDir, "devices.json");
   const startedAt = yield* Clock.currentTimeMillis;
   const devices = new Map<string, StoredDevice>();
-  const phases = new Map<ThreadId, AgentAwarenessPhase | null>();
+  // Each thread's last phase and the thread its alerts name: itself, or for
+  // a subagent, its top-level thread.
+  const phases = new Map<
+    ThreadId,
+    { readonly alertThreadId: ThreadId; readonly phase: AgentAwarenessPhase | null }
+  >();
 
   // Config paths may start with `~/`; other relative paths resolve against the push dir.
   const resolveConfigPath = (filePath: string) =>
@@ -296,25 +309,89 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     sendScope: Scope.Scope,
   ) {
     const shell = yield* threads.getThreadShell(threadId);
-    // Subagents never project activity; their parent thread carries it.
-    if (shell?.lineage.relationshipToParent === "subagent") return;
-    const project =
-      shell === null || shell.archivedAt !== null
-        ? Option.none()
-        : yield* projects.getById(shell.projectId);
     const environmentId = yield* serverEnvironment.getEnvironmentId;
-    const state =
-      shell !== null && Option.isSome(project)
-        ? projectThreadAwarenessV2({ environmentId, project: project.value, thread: shell })
-        : null;
-    const previousPhase = phases.get(threadId);
-    phases.set(threadId, state?.phase ?? null);
+    // The thread with its project, or null when it is gone or archived.
+    const withProject = Effect.fnUntraced(function* (thread: typeof shell) {
+      if (thread === null || thread.archivedAt !== null) return null;
+      const project = yield* projects.getById(thread.projectId);
+      return Option.isSome(project) ? { thread, project: project.value } : null;
+    });
+    // A subagent's own run is its parent's business, but nothing answers its
+    // question unless the user hears about it. That alert names the top-level
+    // thread, the one phones can open and that shows the child's question.
+    const tracked = phases.get(threadId);
+    const isSubagent = shell?.lineage.relationshipToParent === "subagent";
+    // A deleted thread keeps the alert target it had, so its clear lands where
+    // its alert did.
+    const alertThreadId =
+      shell === null
+        ? (tracked?.alertThreadId ?? threadId)
+        : isSubagent
+          ? shell.lineage.rootThreadId
+          : threadId;
+    if (isSubagent && alertThreadId === threadId) return;
+    const previousPhase = tracked?.phase;
+    let state: AgentAwarenessState | null;
+    if (shell !== null && isSubagent) {
+      const question = threadQuestionPhaseV2(shell);
+      // Most subagent updates are its own work; only a question, or the end
+      // of one, needs the parent.
+      if (
+        question === null &&
+        previousPhase !== "waiting_for_input" &&
+        previousPhase !== "waiting_for_approval"
+      ) {
+        return;
+      }
+      const parent =
+        question === null ? null : yield* withProject(yield* threads.getThreadShell(alertThreadId));
+      // In the child's phase whatever the parent's own run is doing: an idle
+      // or stopped parent must not swallow, or clear, the child's question.
+      state =
+        parent === null || question === null
+          ? null
+          : threadAwarenessInPhaseV2({
+              environmentId,
+              ...parent,
+              phase: question,
+              updatedAt: shell.updatedAt,
+            });
+    } else {
+      const own = yield* withProject(shell);
+      state = own === null ? null : projectThreadAwarenessV2({ environmentId, ...own });
+    }
+    // Subagents and deleted threads only matter while a question is open, so
+    // the map does not grow with every thread that ever ran.
+    if (state === null && (isSubagent || shell === null)) {
+      phases.delete(threadId);
+    } else {
+      phases.set(threadId, { alertThreadId, phase: state?.phase ?? null });
+    }
     const finishedSinceStart =
+      !isSubagent &&
       shell?.latestRunCompletedAt != null &&
       DateTime.toEpochMillis(shell.latestRunCompletedAt) > startedAt;
     const nowMs = yield* Clock.currentTimeMillis;
     const kind = alertKind({ state, previousPhase, finishedSinceStart, nowMs });
-    const answered = answeredKind(previousPhase, state?.phase ?? null);
+    const answeredHere = answeredKind(previousPhase, state?.phase ?? null);
+    let answered =
+      answeredHere !== null &&
+      otherAlertStillWaiting({ threadId, alertThreadId, kind: answeredHere, tracked: phases })
+        ? null
+        : answeredHere;
+    // The map starts empty after a restart, so the parent's own open question
+    // is read from the parent itself before a child's answer clears its alert.
+    if (answered !== null && alertThreadId !== threadId) {
+      const parent = yield* threads.getThreadShell(alertThreadId);
+      const parentQuestion = parent === null ? null : threadQuestionPhaseV2(parent);
+      const parentKind =
+        parentQuestion === "waiting_for_input"
+          ? "input"
+          : parentQuestion === "waiting_for_approval"
+            ? "approval"
+            : null;
+      if (parentKind === answered) answered = null;
+    }
     const alert = state !== null && kind !== null ? { state, kind } : null;
     if (answered === null && alert === null) return;
     if (answered !== null) {
@@ -327,7 +404,7 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     // miss phases of, the events behind this one. The clear goes first so it
     // cannot remove a finished-run alert sent for the same change.
     yield* Effect.gen(function* () {
-      if (answered !== null) yield* clear({ environmentId, threadId }, answered);
+      if (answered !== null) yield* clear({ environmentId, threadId: alertThreadId }, answered);
       if (alert !== null) yield* notify(alert.state, alert.kind);
     }).pipe(Effect.forkIn(sendScope));
   });
