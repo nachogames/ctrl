@@ -14,6 +14,24 @@ function batteryFillColor(percent: number, theme: MobileThemeVariables, dark: bo
   return dark ? "#34d399" : "#059669";
 }
 
+/** The symbol and tint for a battery in a menu row, colored by level. */
+export function batteryMenuIcon(
+  battery: HostBattery,
+  theme: MobileThemeVariables,
+  dark: boolean,
+): { readonly image: string; readonly imageColor: string } {
+  const image = battery.pluggedIn
+    ? "battery.100percent.bolt"
+    : battery.percent <= 25
+      ? "battery.25percent"
+      : battery.percent <= 50
+        ? "battery.50percent"
+        : battery.percent <= 80
+          ? "battery.75percent"
+          : "battery.100percent";
+  return { image, imageColor: batteryFillColor(battery.percent, theme, dark) };
+}
+
 /**
  * A machine's battery drawn as a battery: the fill shows the level, colored
  * green, yellow, or red, with a bolt over it while on power. Phones have no
@@ -23,6 +41,8 @@ export function EnvironmentBattery(props: {
   readonly battery: HostBattery;
   /** Always show the percent, as a plain view. Use inside a row that is itself pressable. */
   readonly percentShown?: boolean;
+  /** What it is drawn on, so the bolt's outline matches. Defaults to a grouped card row. */
+  readonly surface?: "card" | "header";
 }) {
   const { battery } = props;
   const [tappedPercent, setShowPercent] = useState(false);
@@ -81,11 +101,15 @@ export function EnvironmentBattery(props: {
             viewBox="0 0 24 24"
             style={{ position: "absolute", left: 4, top: -1 }}
           >
-            {/* Outline in the row color first, so the bolt reads over any fill. */}
+            {/* Outline in the surface color first, so the bolt reads over any fill. */}
             <Path
               d="M13 2 4 14h7l-1 8 9-12h-7z"
               fill="none"
-              stroke={themeVariables["--color-grouped-card"]}
+              stroke={
+                themeVariables[
+                  props.surface === "header" ? "--color-header" : "--color-grouped-card"
+                ]
+              }
               strokeWidth={3}
               strokeLinejoin="round"
             />

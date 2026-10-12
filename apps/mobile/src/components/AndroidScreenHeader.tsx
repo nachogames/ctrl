@@ -32,6 +32,8 @@ export function AndroidScreenHeader(props: {
   readonly title: string;
   readonly titleContent?: ReactNode;
   readonly subtitle?: string | null;
+  /** Drawn after the subtitle, on the same line. */
+  readonly subtitleAccessory?: ReactNode;
   readonly actions?: ReadonlyArray<AndroidHeaderAction>;
   readonly leading?: ReactNode;
   readonly trailing?: ReactNode;
@@ -77,14 +79,19 @@ export function AndroidScreenHeader(props: {
               {props.title}
             </Text>
           )}
-          {props.subtitle ? (
-            <Text
-              numberOfLines={1}
-              style={subtitleTypography}
-              className="mt-px text-[13px] font-t3-medium text-foreground-muted"
-            >
-              {props.subtitle}
-            </Text>
+          {props.subtitle || props.subtitleAccessory ? (
+            <View className="mt-px flex-row items-center gap-1.5">
+              {props.subtitle ? (
+                <Text
+                  numberOfLines={1}
+                  style={subtitleTypography}
+                  className="flex-shrink text-[13px] font-t3-medium text-foreground-muted"
+                >
+                  {props.subtitle}
+                </Text>
+              ) : null}
+              {props.subtitleAccessory}
+            </View>
           ) : null}
         </View>
 

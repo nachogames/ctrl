@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { ScreenHeaderButton } from "../../components/ScreenHeaderButton";
 import type { ScreenHeaderAction } from "../../components/ScreenHeader.types";
@@ -16,6 +16,8 @@ export function ThreadHeader(
     readonly onToggleInspector: () => void;
     readonly onOpenGitInspector: () => void;
     readonly onOpenFilesInspector: () => void;
+    /** Drawn after the subtitle on Android. */
+    readonly subtitleAccessory?: ReactNode;
   },
 ) {
   const returnToList = useWorkspaceListNavigation("threads");
@@ -79,6 +81,7 @@ export function ThreadHeader(
       <ScreenHeader
         title={props.title}
         subtitle={props.subtitle}
+        subtitleAccessory={props.subtitleAccessory}
         sidebar={native.sidebar}
         options={native.options}
         optionsVersion={native.optionsVersion}

@@ -30,6 +30,7 @@ import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useConnectionsReady } from "../../state/workspace";
 import { useHostBattery } from "../../state/environments";
+import { EnvironmentBattery } from "../connection/EnvironmentBattery";
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
 import { clearPendingThreadCreationOutcome } from "../../state/pending-thread-creation";
@@ -442,11 +443,12 @@ function ThreadRouteContent(
 
   /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
-  // The native header takes plain text, so the battery is written out here.
+  // iOS's native header takes plain text, so the battery is written out there;
+  // Android draws it after the subtitle.
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
-    hostBattery === null
+    hostBattery === null || Platform.OS === "android"
       ? null
       : `${hostBattery.percent}%${hostBattery.pluggedIn ? " plugged in" : ""}`,
   ]
@@ -1092,6 +1094,11 @@ function ThreadRouteContent(
       <ThreadHeader
         title={selectedThread.title}
         subtitle={headerSubtitle}
+        subtitleAccessory={
+          hostBattery === null ? undefined : (
+            <EnvironmentBattery battery={hostBattery} percentShown surface="header" />
+          )
+        }
         headerColor={headerColor}
         usesNativeHeaderGlass={usesNativeHeaderGlass}
         gitControls={threadGitControlProps}
