@@ -2,7 +2,6 @@ import { Spinner } from "~/components/ui/spinner";
 import type {
   EnvironmentId,
   ProjectId,
-  PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
   SourceControlProviderKind,
@@ -22,6 +21,7 @@ import {
 } from "lucide-react";
 import { type ElementType, useState } from "react";
 
+import type { PullRequestListInvolvement } from "./pullRequestListPreferences";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -419,9 +419,9 @@ export function PullRequestFiltersMenu({
   state: PullRequestListState;
   stateOptions: ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
   onState: (state: PullRequestListState) => void;
-  involvement: PullRequestInvolvement;
-  involvementOptions: ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>>;
-  onInvolvement: (involvement: PullRequestInvolvement) => void;
+  involvement: PullRequestListInvolvement;
+  involvementOptions: ReadonlyArray<PullRequestFilterOption<PullRequestListInvolvement>>;
+  onInvolvement: (involvement: PullRequestListInvolvement) => void;
   /** The narrowings beyond state and involvement; an absent field is that group unfiltered. */
   filters: PullRequestListFilters;
   onFilters: (filters: PullRequestListFilters) => void;
