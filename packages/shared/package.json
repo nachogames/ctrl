@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./orderKeys": {
+      "types": "./src/orderKeys.ts",
+      "import": "./src/orderKeys.ts"
+    },
     "./appHome": {
       "types": "./src/appHome.ts",
       "import": "./src/appHome.ts"
