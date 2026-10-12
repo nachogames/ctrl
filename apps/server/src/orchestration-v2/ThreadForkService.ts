@@ -92,7 +92,9 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           id: input.targetThreadId,
           title: input.title ?? `${input.sourceProjection.thread.title} fork`,
           activeProviderThreadId: null,
-          // A fork joins the source's group but is not part of its handoff chain.
+          // A fork joins the source's group but is not part of its handoff chain,
+          // and lands keyless like any joiner so it shows first, not beside its source.
+          groupOrderKey: null,
           handedOffFrom: null,
           handedOffTo: null,
           lineage: {
