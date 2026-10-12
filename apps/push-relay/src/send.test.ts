@@ -37,6 +37,7 @@ const android: DeviceRecord = {
   deviceId: "device-1",
   androidUserId: "direct",
   lastSeenAt: NOW - 1_000,
+  manageHash: "manage",
 };
 const iphone: DeviceRecord = {
   platform: "ios",
@@ -45,6 +46,7 @@ const iphone: DeviceRecord = {
   apsEnvironment: "sandbox",
   deviceId: "device-2",
   lastSeenAt: NOW - 1_000,
+  manageHash: "manage",
 };
 
 /** Fakes Google OAuth, FCM and APNs; `pushStatus`/`pushBody` answer the push itself. */

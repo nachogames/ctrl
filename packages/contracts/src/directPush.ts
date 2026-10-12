@@ -72,7 +72,17 @@ export type PushClearMessage = typeof PushClearMessage.Type;
 export const PushRelayMessage = Schema.Union([PushAlertMessage, PushClearMessage]);
 export type PushRelayMessage = typeof PushRelayMessage.Type;
 
-/** Phone → relay sign-up. Send the current send token as a Bearer header to keep it. */
+/**
+ * The phone's relay credentials. Computers only ever get `sendToken`;
+ * `manageToken` stays on the phone and is required to change or reset the record.
+ */
+export const PushRelayTokens = Schema.Struct({
+  sendToken: TrimmedNonEmptyString,
+  manageToken: TrimmedNonEmptyString,
+});
+export type PushRelayTokens = typeof PushRelayTokens.Type;
+
+/** Phone → relay sign-up. Pass `current` to keep (or, with `reset`, replace) existing tokens. */
 export const PushRelayRegisterRequest = Schema.Struct({
   deviceId: TrimmedNonEmptyString,
   platform: Schema.Literals(["ios", "android"]),
@@ -82,10 +92,11 @@ export const PushRelayRegisterRequest = Schema.Struct({
   androidUserId: Schema.optionalKey(Schema.String),
   /** Issue a new send token and kill the old one. */
   reset: Schema.optionalKey(Schema.Boolean),
+  current: Schema.optionalKey(PushRelayTokens),
 });
 export type PushRelayRegisterRequest = typeof PushRelayRegisterRequest.Type;
 
-export const PushRelayRegisterResponse = Schema.Struct({ sendToken: TrimmedNonEmptyString });
+export const PushRelayRegisterResponse = PushRelayTokens;
 export type PushRelayRegisterResponse = typeof PushRelayRegisterResponse.Type;
 
 /** Computer → relay. */

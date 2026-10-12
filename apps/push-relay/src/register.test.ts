@@ -15,30 +15,34 @@ const phone = {
   androidUserId: "direct",
 };
 
-const register = (env: ReturnType<typeof testEnv>, body: unknown, token?: string) =>
+interface Tokens {
+  readonly sendToken: string;
+  readonly manageToken: string;
+}
+
+const register = (env: ReturnType<typeof testEnv>, body: unknown) =>
   handle(
-    new Request("https://relay.test/register", {
-      method: "POST",
-      headers: token ? { authorization: `Bearer ${token}` } : {},
-      body: JSON.stringify(body),
-    }),
+    new Request("https://relay.test/register", { method: "POST", body: JSON.stringify(body) }),
     env,
     deps,
   );
 
-const tokenOf = async (response: Response) =>
-  ((await response.json()) as { sendToken: string }).sendToken;
+const tokensOf = async (response: Response) => (await response.json()) as Tokens;
 
 describe("POST /register", () => {
-  it("signs up a new phone and stores only the token hash", async () => {
+  it("signs up a new phone and stores only token hashes", async () => {
     const kv = memoryStore();
     const env = testEnv({ DEVICES: kv.store });
     const response = await register(env, phone);
     expect(response.status).toBe(200);
-    const sendToken = await tokenOf(response);
+    const { sendToken, manageToken } = await tokensOf(response);
     expect(sendToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(manageToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(manageToken).not.toBe(sendToken);
     expect([...kv.entries.keys()]).toEqual([await hashSendToken(sendToken)]);
-    expect(JSON.stringify([...kv.entries.values()])).not.toContain(sendToken);
+    const stored = JSON.stringify([...kv.entries.values()]);
+    expect(stored).not.toContain(sendToken);
+    expect(stored).not.toContain(manageToken);
     expect(await readDevice(kv.store, await hashSendToken(sendToken))).toMatchObject({
       pushToken: "fcm-1",
       deviceId: "device-1",
@@ -46,28 +50,49 @@ describe("POST /register", () => {
     });
   });
 
-  it("keeps the same token when the phone re-registers with it, updating a rotated push token", async () => {
+  it("keeps the same tokens when the phone re-registers with them, updating a rotated push token", async () => {
     const kv = memoryStore();
     const env = testEnv({ DEVICES: kv.store });
-    const sendToken = await tokenOf(await register(env, phone));
-    const again = await register(env, { ...phone, pushToken: "fcm-2" }, sendToken);
-    expect(await again.json()).toEqual({ sendToken });
-    expect((await readDevice(kv.store, await hashSendToken(sendToken)))?.pushToken).toBe("fcm-2");
+    const current = await tokensOf(await register(env, phone));
+    const again = await register(env, { ...phone, pushToken: "fcm-2", current });
+    expect(await again.json()).toEqual(current);
+    expect((await readDevice(kv.store, await hashSendToken(current.sendToken)))?.pushToken).toBe(
+      "fcm-2",
+    );
   });
 
-  it("reset issues a new token and kills the old one", async () => {
+  it("does not rewrite an unchanged record when the phone re-registers", async () => {
     const kv = memoryStore();
     const env = testEnv({ DEVICES: kv.store });
-    const old = await tokenOf(await register(env, phone));
-    const fresh = await tokenOf(await register(env, { ...phone, reset: true }, old));
-    expect(fresh).not.toBe(old);
-    expect(await readDevice(kv.store, await hashSendToken(old))).toBeNull();
-    expect(await readDevice(kv.store, await hashSendToken(fresh))).not.toBeNull();
+    const current = await tokensOf(await register(env, phone));
+    const writes = kv.writes();
+    await register(env, { ...phone, current });
+    expect(kv.writes()).toBe(writes);
   });
 
-  it("treats an unknown bearer token as a new sign-up, so nobody can adopt another phone's record", async () => {
-    const sendToken = await tokenOf(await register(testEnv(), phone, "not-a-real-token"));
-    expect(sendToken).not.toBe("not-a-real-token");
+  it("reset issues new tokens and kills the old send token", async () => {
+    const kv = memoryStore();
+    const env = testEnv({ DEVICES: kv.store });
+    const old = await tokensOf(await register(env, phone));
+    const fresh = await tokensOf(await register(env, { ...phone, reset: true, current: old }));
+    expect(fresh.sendToken).not.toBe(old.sendToken);
+    expect(await readDevice(kv.store, await hashSendToken(old.sendToken))).toBeNull();
+    expect(await readDevice(kv.store, await hashSendToken(fresh.sendToken))).not.toBeNull();
+  });
+
+  it("a computer holding only the send token cannot redirect or reset the phone's record", async () => {
+    const kv = memoryStore();
+    const env = testEnv({ DEVICES: kv.store });
+    const victim = await tokensOf(await register(env, phone));
+    const forged = { sendToken: victim.sendToken, manageToken: victim.sendToken };
+    const takeover = await tokensOf(
+      await register(env, { ...phone, pushToken: "attacker", current: forged }),
+    );
+    await register(env, { ...phone, reset: true, current: forged });
+    expect(takeover.sendToken).not.toBe(victim.sendToken);
+    expect((await readDevice(kv.store, await hashSendToken(victim.sendToken)))?.pushToken).toBe(
+      "fcm-1",
+    );
   });
 
   it("rejects apps the keys cannot push to, bad bodies, and floods", async () => {

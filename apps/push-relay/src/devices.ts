@@ -15,6 +15,8 @@ export const DeviceRecord = Schema.Struct({
   deviceId: Schema.String,
   androidUserId: Schema.optionalKey(Schema.String),
   lastSeenAt: Schema.Number,
+  /** sha256 of the phone-only manage token, required to change or reset this record. */
+  manageHash: Schema.String,
 });
 export type DeviceRecord = typeof DeviceRecord.Type;
 

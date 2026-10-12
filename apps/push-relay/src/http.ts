@@ -5,12 +5,6 @@ export function json(status: number, body: unknown): Response {
   });
 }
 
-export function bearerToken(request: Request): string | null {
-  const header = request.headers.get("authorization") ?? "";
-  const match = /^Bearer\s+(\S+)$/i.exec(header);
-  return match?.[1] ?? null;
-}
-
 /** Parses a JSON body, or null when it is not JSON. */
 export async function readJson(request: Request): Promise<unknown> {
   try {
