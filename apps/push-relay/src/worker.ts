@@ -5,11 +5,15 @@
 import type { Deps, Env } from "./env.ts";
 import { json } from "./http.ts";
 import { handleRegister } from "./register.ts";
+import { handleSend } from "./send.ts";
 
 export async function handle(request: Request, env: Env, deps: Deps): Promise<Response> {
   const { pathname } = new URL(request.url);
   if (request.method === "POST" && pathname === "/register") {
     return handleRegister(request, env, deps);
+  }
+  if (request.method === "POST" && pathname === "/send") {
+    return handleSend(request, env, deps);
   }
   return json(404, { error: "not_found" });
 }
