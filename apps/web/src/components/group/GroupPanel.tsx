@@ -4,10 +4,11 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { ScopedThreadRef, ThreadGroupId, ThreadId } from "@t3tools/contracts";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { useNavigate } from "@tanstack/react-router";
 import { LayersIcon, PencilIcon, PlusIcon, SendIcon } from "lucide-react";
@@ -15,18 +16,25 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { canHandOffThread, useThreadGroupActions } from "~/hooks/useThreadGroupActions";
-import { cn } from "~/lib/utils";
+import { cn, newThreadGroupId } from "~/lib/utils";
 import {
   type GroupPanelSection,
   type RightPanelSurface,
   useRightPanelStore,
 } from "~/rightPanelStore";
-import { useProject, useThreadShell, useThreadShellsForProjectRefs } from "~/state/entities";
+import {
+  useProject,
+  useServerConfigs,
+  useThreadShell,
+  useThreadShellsForProjectRefs,
+} from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
-import { threadGroupCommands, useThreadGroup } from "~/state/threadGroups";
+import { threadGroupCommands, useThreadGroup, useThreadGroups } from "~/state/threadGroups";
+import { threadEnvironment } from "~/state/threads";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
 
+import { resolveRenameCommit } from "../chat/ChatHeader";
 import { resolveSidebarThreadStatus, resolveThreadGroupStatus } from "../Sidebar.logic";
 import { THREAD_HANDOFF_BUSY_HINT } from "../threadActionMenu.logic";
 import { Button } from "../ui/button";
@@ -37,14 +45,15 @@ import { GroupHandoffSection } from "./GroupHandoffSection";
 import { GroupInlineEdit } from "./GroupInlineEdit";
 import { groupChatSubtitle, groupStatusPill, type GroupStatusPill } from "./GroupPanel.logic";
 import { GroupRunningSection } from "./GroupRunningSection";
+import { soloGroupView } from "./soloGroupView";
 import { useGroupScriptRunner } from "./useGroupScriptRunner";
+import { worktreeGroupSuggestion } from "./worktreeGroupSuggestion";
 
 type GroupSurface = Extract<RightPanelSurface, { kind: "group" }>;
 
 /**
- * The Group surface: the routed chat's group header, glance cards, running
- * servers, chats and last handoff. Renders an explanation when the chat is
- * not in a known group.
+ * The Group surface for the routed chat: its visible group, or the chat on its
+ * own (with its hidden group's goal, tickets and handoff when it has one).
  */
 export function GroupPanel(props: { threadRef: ScopedThreadRef; surface: GroupSurface }) {
   const thread = useThreadShell(props.threadRef);
@@ -55,24 +64,92 @@ export function GroupPanel(props: { threadRef: ScopedThreadRef; surface: GroupSu
     [environmentId, groupId],
   );
   const group = useThreadGroup(groupRef);
-  // Shells load before groups are known; stay blank rather than flash the hint.
   if (thread === null) return null;
-  if (group === null) {
+  // Keyed so per-panel transient state (script runner, stopped rows, drafts)
+  // resets when the panel switches groups or chats instead of leaking across.
+  if (group !== null && group.visible) {
     return (
-      <div className="flex flex-1 items-center justify-center p-6 text-center text-muted-foreground text-sm">
-        Only chats in a group have a Group panel.
-      </div>
+      <GroupPanelContent
+        key={`${group.environmentId}:${group.id}`}
+        group={group}
+        threadRef={props.threadRef}
+        surface={props.surface}
+      />
     );
   }
-  // Keyed so per-group transient state (script runner, stopped rows, drafts)
-  // resets when the panel switches groups instead of leaking into the next one.
   return (
-    <GroupPanelContent
-      key={`${group.environmentId}:${group.id}`}
-      group={group}
+    <SoloPanelContent
+      key={`${thread.environmentId}:${thread.id}`}
+      thread={thread}
+      hiddenGroup={group}
       threadRef={props.threadRef}
       surface={props.surface}
     />
+  );
+}
+
+/** The project's chats on this environment, by id. */
+function useProjectThreadsById(
+  environmentId: EnvironmentThreadShell["environmentId"],
+  projectId: EnvironmentThreadShell["projectId"],
+) {
+  const projectRefs = useMemo(() => [{ environmentId, projectId }], [environmentId, projectId]);
+  const shells = useThreadShellsForProjectRefs(projectRefs);
+  return useMemo(() => {
+    const byId = new Map<ThreadId, EnvironmentThreadShell>();
+    for (const shell of shells) {
+      if (shell.environmentId === environmentId) byId.set(shell.id, shell);
+    }
+    return byId;
+  }, [environmentId, shells]);
+}
+
+function useProjectScripts(
+  environmentId: EnvironmentThreadShell["environmentId"],
+  projectId: EnvironmentThreadShell["projectId"],
+) {
+  const project = useProject(
+    useMemo(() => ({ environmentId, projectId }), [environmentId, projectId]),
+  );
+  const settings = useEnvironmentSettings(environmentId);
+  const scripts = useMemo(
+    () => (project === null ? [] : resolveProjectScripts(settings, project)),
+    [project, settings],
+  );
+  return { project, scripts };
+}
+
+/** Scrolls to the section an `openGroup` asked for; each call writes a fresh descriptor. */
+function useScrollToSection(surface: GroupSurface) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (surface.section === null) return;
+    scrollRef.current
+      ?.querySelector(`[data-group-section="${surface.section}"]`)
+      ?.scrollIntoView({ block: "start" });
+  }, [surface]);
+  return scrollRef;
+}
+
+/** Opens one of the panel's chats with the Group surface kept in view. */
+function useOpenPanelChat(environmentId: EnvironmentThreadShell["environmentId"]) {
+  const navigate = useNavigate();
+  return (threadId: ThreadId) => {
+    const ref = scopeThreadRef(environmentId, threadId);
+    useRightPanelStore.getState().openGroup(ref);
+    void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
+  };
+}
+
+function failureToast(title: string, result: AtomCommandResult<unknown, unknown>) {
+  if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+  const error = squashAtomCommandFailure(result);
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title,
+      description: error instanceof Error ? error.message : "An error occurred.",
+    }),
   );
 }
 
@@ -84,18 +161,7 @@ function GroupPanelContent(props: {
   const { group } = props;
   // Members and handoff sources share the group's project, so only that project's
   // chats can change what this panel shows.
-  const projectRefs = useMemo(
-    () => [{ environmentId: group.environmentId, projectId: group.projectId }],
-    [group.environmentId, group.projectId],
-  );
-  const shells = useThreadShellsForProjectRefs(projectRefs);
-  const threadsById = useMemo(() => {
-    const byId = new Map<ThreadId, EnvironmentThreadShell>();
-    for (const shell of shells) {
-      if (shell.environmentId === group.environmentId) byId.set(shell.id, shell);
-    }
-    return byId;
-  }, [group.environmentId, shells]);
+  const threadsById = useProjectThreadsById(group.environmentId, group.projectId);
   const members = useMemo(
     () =>
       group.threadIds.flatMap((threadId) => {
@@ -114,37 +180,29 @@ function GroupPanelContent(props: {
       [group.environmentId, group.id],
     ),
   );
-  const project = useProject(projectRefs[0]!);
-  const settings = useEnvironmentSettings(group.environmentId);
-  const scripts = useMemo(
-    () => (project === null ? [] : resolveProjectScripts(settings, project)),
-    [project, settings],
-  );
+  const { project, scripts } = useProjectScripts(group.environmentId, group.projectId);
   const resources = resourcesQuery.data?.resources ?? null;
   const runner = useGroupScriptRunner(group, project?.workspaceRoot ?? null, scripts, resources);
   const chatTitles = useMemo(
     () => new Map([...threadsById].map(([id, shell]) => [id, shell.title])),
     [threadsById],
   );
-
-  const scrollRef = useRef<HTMLDivElement>(null);
-  // Each `openGroup` writes a fresh descriptor, so this runs once per request.
-  useEffect(() => {
-    if (props.surface.section === null) return;
-    scrollRef.current
-      ?.querySelector(`[data-group-section="${props.surface.section}"]`)
-      ?.scrollIntoView({ block: "start" });
-  }, [props.surface]);
-
-  const navigate = useNavigate();
-  const { newChatInGroup, handOffThread } = useThreadGroupActions();
+  const scrollRef = useScrollToSection(props.surface);
+  const openChat = useOpenPanelChat(group.environmentId);
+  const { newChatInGroup, renameGroup } = useThreadGroupActions();
+  const updateGroup = useOrchestrationCommand(threadGroupCommands.update, {
+    reportFailure: false,
+  });
   const currentThread = threadsById.get(props.threadRef.threadId);
-  const canHandOffCurrent = currentThread !== undefined && canHandOffThread(currentThread);
-  const openChat = (threadId: ThreadId) => {
-    const ref = scopeThreadRef(group.environmentId, threadId);
-    // Moving between a group's chats keeps the group in view.
-    useRightPanelStore.getState().openGroup(ref);
-    void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
+  const ensureGroup = async () => group.id;
+
+  const saveGoal = async (goal: string | null) => {
+    if (goal === group.goal) return;
+    const result = await updateGroup({
+      environmentId: group.environmentId,
+      input: { groupId: group.id, patch: { goal } },
+    });
+    failureToast("Failed to update the group goal", result);
   };
 
   const handoff = group.lastHandoff;
@@ -154,11 +212,21 @@ function GroupPanelContent(props: {
       className="@container/group-panel flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       <section data-group-section="header" className="border-border border-b px-4 py-3">
-        <GroupHeader group={group} status={groupStatusPill(resolveThreadGroupStatus(members))} />
+        <PanelHeader
+          title={group.title}
+          titleLabel="Group title"
+          renameLabel="Rename group"
+          status={groupStatusPill(resolveThreadGroupStatus(members))}
+          goal={group.goal}
+          goalPlaceholder="What is this group working towards?"
+          onRename={(draft) => void renameGroup(group, draft)}
+          onSaveGoal={(goal) => void saveGoal(goal)}
+        />
       </section>
       <section data-group-section="workspace" className="border-border border-b px-2.5 py-3">
         <GroupGlanceCards
           group={group}
+          ensureGroup={ensureGroup}
           threadRef={props.threadRef}
           members={members}
           resources={resources}
@@ -169,6 +237,7 @@ function GroupPanelContent(props: {
       <GroupSection section="running" title="Running">
         <GroupRunningSection
           group={group}
+          ensureGroup={ensureGroup}
           threadRef={props.threadRef}
           resources={resources}
           error={resourcesQuery.error}
@@ -200,25 +269,7 @@ function GroupPanelContent(props: {
             <span className="@max-[440px]/group-panel:hidden">New chat in group</span>
             <span className="hidden @max-[440px]/group-panel:inline">New chat</span>
           </Button>
-          {currentThread !== undefined ? (
-            <Tooltip disabled={canHandOffCurrent}>
-              {/* A disabled button takes no pointer events, so the wrapper carries the tooltip. */}
-              <TooltipTrigger render={<span className="inline-flex" />}>
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  aria-label="Hand off to new chat"
-                  disabled={!canHandOffCurrent}
-                  onClick={() => void handOffThread(currentThread)}
-                >
-                  <SendIcon aria-hidden />
-                  <span className="@max-[440px]/group-panel:hidden">Hand off to new chat</span>
-                  <span className="hidden @max-[440px]/group-panel:inline">Hand off</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipPopup>{THREAD_HANDOFF_BUSY_HINT}</TooltipPopup>
-            </Tooltip>
-          ) : null}
+          {currentThread !== undefined ? <HandOffButton thread={currentThread} /> : null}
         </div>
       </GroupSection>
       {handoff !== null ? (
@@ -227,6 +278,265 @@ function GroupPanelContent(props: {
         </GroupSection>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A chat with no visible group, as a group of one: its own title, the hidden
+ * group's goal, tickets and handoff when it has one, and a nudge to group the
+ * other chats on its worktree. Writes that need a group create the hidden one.
+ */
+function SoloPanelContent(props: {
+  thread: EnvironmentThreadShell;
+  hiddenGroup: EnvironmentThreadGroup | null;
+  threadRef: ScopedThreadRef;
+  surface: GroupSurface;
+}) {
+  const { thread, hiddenGroup } = props;
+  const threadsById = useProjectThreadsById(thread.environmentId, thread.projectId);
+  const { project, scripts } = useProjectScripts(thread.environmentId, thread.projectId);
+  const workspace = useMemo(
+    () => soloGroupView(thread, hiddenGroup, project),
+    [hiddenGroup, project, thread],
+  );
+  const members = useMemo(() => [thread], [thread]);
+
+  // A server before thread-scoped scans only scans groups, so a chat without one shows no Running.
+  const scansThreads =
+    useServerConfigs().get(thread.environmentId)?.environment.capabilities.threadGroupReorder ===
+    true;
+  const resourcesAtom = useMemo(
+    () =>
+      hiddenGroup !== null
+        ? threadGroupCommands.resources({
+            environmentId: hiddenGroup.environmentId,
+            groupId: hiddenGroup.id,
+          })
+        : scansThreads
+          ? threadGroupCommands.resources({
+              environmentId: thread.environmentId,
+              threadId: thread.id,
+            })
+          : null,
+    [hiddenGroup, scansThreads, thread.environmentId, thread.id],
+  );
+  const resourcesQuery = useEnvironmentQuery(resourcesAtom);
+  const resources = resourcesQuery.data?.resources ?? null;
+  const runner = useGroupScriptRunner(
+    workspace,
+    project?.workspaceRoot ?? null,
+    scripts,
+    resources,
+  );
+  const chatTitles = useMemo(() => new Map([[thread.id, thread.title]]), [thread.id, thread.title]);
+  const scrollRef = useScrollToSection(props.surface);
+  const openChat = useOpenPanelChat(thread.environmentId);
+
+  const createGroup = useOrchestrationCommand(threadGroupCommands.create, {
+    reportFailure: false,
+  });
+  const updateGroup = useOrchestrationCommand(threadGroupCommands.update, {
+    reportFailure: false,
+  });
+  const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const { moveThreadIntoGroup } = useThreadGroupActions();
+
+  /** Creates the group with this chat first, so it keeps this chat's workspace and title. */
+  const create = async (
+    input: { readonly threadIds?: ReadonlyArray<ThreadId>; readonly goal?: string },
+    failure: string,
+  ) => {
+    const groupId = newThreadGroupId();
+    const result = await createGroup({
+      environmentId: thread.environmentId,
+      input: {
+        groupId,
+        projectId: thread.projectId,
+        threadIds: [thread.id, ...(input.threadIds ?? [])],
+        ...(input.goal === undefined ? {} : { goal: input.goal }),
+      },
+    });
+    failureToast(failure, result);
+    return result._tag === "Success" ? groupId : null;
+  };
+  // A second write while the first create is in flight joins it instead of making another group.
+  const pendingCreate = useRef<Promise<ThreadGroupId | null> | null>(null);
+  const ensureGroup = () => {
+    if (hiddenGroup !== null) return Promise.resolve(hiddenGroup.id);
+    pendingCreate.current ??= create({}, "Failed to create the group").then((groupId) => {
+      if (groupId === null) pendingCreate.current = null;
+      return groupId;
+    });
+    return pendingCreate.current;
+  };
+
+  const rename = async (draft: string) => {
+    const resolution = resolveRenameCommit({ title: draft, originalTitle: thread.title });
+    if (resolution.action === "reject-empty") {
+      toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
+      return;
+    }
+    if (resolution.action === "noop") return;
+    const result = await updateThreadMetadata({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id, title: resolution.title },
+    });
+    failureToast("Failed to rename thread", result);
+  };
+
+  const saveGoal = async (goal: string | null) => {
+    if (hiddenGroup === null) {
+      // The server names the new group from this chat, then from the goal.
+      if (goal !== null) await create({ goal }, "Failed to set the goal");
+      return;
+    }
+    if (goal === hiddenGroup.goal) return;
+    const result = await updateGroup({
+      environmentId: hiddenGroup.environmentId,
+      input: { groupId: hiddenGroup.id, patch: { goal } },
+    });
+    failureToast("Failed to update the goal", result);
+  };
+
+  const groupsById = useThreadGroupsById(thread.environmentId);
+  const suggestedIds = useMemo(
+    () =>
+      worktreeGroupSuggestion(
+        thread,
+        [...threadsById.values()],
+        groupsById,
+        project?.workspaceRoot ?? null,
+      ),
+    [groupsById, project?.workspaceRoot, thread, threadsById],
+  );
+  const groupSuggested = async () => {
+    if (hiddenGroup === null) {
+      await create({ threadIds: suggestedIds }, "Failed to create group");
+      return;
+    }
+    for (const threadId of suggestedIds) {
+      const other = threadsById.get(threadId);
+      if (other !== undefined) await moveThreadIntoGroup(other, hiddenGroup);
+    }
+  };
+
+  const handoff = hiddenGroup?.lastHandoff ?? null;
+  return (
+    <div
+      ref={scrollRef}
+      className="@container/group-panel flex min-h-0 flex-1 flex-col overflow-y-auto"
+    >
+      <section data-group-section="header" className="border-border border-b px-4 py-3">
+        <PanelHeader
+          title={thread.title}
+          titleLabel="Chat title"
+          renameLabel="Rename chat"
+          status={groupStatusPill(resolveThreadGroupStatus(members))}
+          goal={hiddenGroup?.goal ?? null}
+          goalPlaceholder="What is this chat working towards?"
+          onRename={(draft) => void rename(draft)}
+          onSaveGoal={(goal) => void saveGoal(goal)}
+        />
+      </section>
+      <section data-group-section="workspace" className="border-border border-b px-2.5 py-3">
+        <GroupGlanceCards
+          group={workspace}
+          ensureGroup={ensureGroup}
+          threadRef={props.threadRef}
+          members={members}
+          resources={resources}
+          scripts={scripts}
+          runner={runner}
+        />
+      </section>
+      {resourcesAtom !== null ? (
+        <GroupSection section="running" title="Running">
+          <GroupRunningSection
+            group={{
+              id: workspace.id,
+              environmentId: thread.environmentId,
+              manualResources: hiddenGroup?.manualResources ?? [],
+            }}
+            ensureGroup={ensureGroup}
+            threadRef={props.threadRef}
+            resources={resources}
+            error={resourcesQuery.error}
+            scripts={scripts}
+            runner={runner}
+            chatTitles={chatTitles}
+          />
+        </GroupSection>
+      ) : null}
+      <GroupSection section="chats" title="Chats · 1">
+        <ul className="flex flex-col gap-0.5">
+          <GroupChatRow
+            member={thread}
+            currentThreadId={thread.id}
+            threadsById={threadsById}
+            onOpen={openChat}
+          />
+        </ul>
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          <HandOffButton thread={thread} />
+        </div>
+        {suggestedIds.length > 0 ? (
+          <p className="mt-1.5 flex flex-wrap items-center gap-1 px-1.5 text-muted-foreground text-xs">
+            {suggestedIds.length === 1
+              ? "1 other chat uses this worktree"
+              : `${suggestedIds.length} other chats use this worktree`}
+            <span aria-hidden>·</span>
+            <Button size="xs" variant="link" onClick={() => void groupSuggested()}>
+              Group them
+            </Button>
+          </p>
+        ) : null}
+      </GroupSection>
+      {handoff !== null && hiddenGroup !== null ? (
+        <GroupSection section="handoff" title="Last handoff">
+          <GroupHandoffSection handoff={handoff} group={hiddenGroup} onOpen={openChat} />
+        </GroupSection>
+      ) : null}
+    </div>
+  );
+}
+
+/** The environment's groups by id, for telling visible groups from hidden ones. */
+function useThreadGroupsById(environmentId: EnvironmentThreadShell["environmentId"]) {
+  const groups = useThreadGroups();
+  return useMemo(
+    () =>
+      new Map(
+        groups.flatMap((group) =>
+          group.environmentId === environmentId ? [[group.id, group] as const] : [],
+        ),
+      ),
+    [environmentId, groups],
+  );
+}
+
+function HandOffButton(props: { thread: EnvironmentThreadShell }) {
+  const { handOffThread } = useThreadGroupActions();
+  const canHandOff = canHandOffThread(props.thread);
+  return (
+    <Tooltip disabled={canHandOff}>
+      {/* A disabled button takes no pointer events, so the wrapper carries the tooltip. */}
+      <TooltipTrigger render={<span className="inline-flex" />}>
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          aria-label="Hand off to new chat"
+          disabled={!canHandOff}
+          onClick={() => void handOffThread(props.thread)}
+        >
+          <SendIcon aria-hidden />
+          <span className="@max-[440px]/group-panel:hidden">Hand off to new chat</span>
+          <span className="hidden @max-[440px]/group-panel:inline">Hand off</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipPopup>{THREAD_HANDOFF_BUSY_HINT}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -257,46 +567,30 @@ function StatusPill(props: { pill: GroupStatusPill }) {
   );
 }
 
-function GroupHeader(props: { group: EnvironmentThreadGroup; status: GroupStatusPill | null }) {
-  const { group } = props;
-  const { renameGroup } = useThreadGroupActions();
-  const updateGroup = useOrchestrationCommand(threadGroupCommands.update, {
-    reportFailure: false,
-  });
+/** Title and goal; edits commit through the callbacks, which own their failures. */
+function PanelHeader(props: {
+  title: string;
+  titleLabel: string;
+  renameLabel: string;
+  status: GroupStatusPill | null;
+  goal: string | null;
+  goalPlaceholder: string;
+  onRename: (draft: string) => void;
+  onSaveGoal: (goal: string | null) => void;
+}) {
   const [editing, setEditing] = useState<"title" | "goal" | null>(null);
-
-  const saveGoal = async (draft: string) => {
-    setEditing(null);
-    const goal = draft.trim() === "" ? null : draft.trim();
-    if (goal === group.goal) return;
-    const result = await updateGroup({
-      environmentId: group.environmentId,
-      input: { groupId: group.id, patch: { goal } },
-    });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to update the group goal",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    }
-  };
-
   return (
     <div className="flex flex-col gap-1">
       <div className="flex min-w-0 items-center gap-2">
         <LayersIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         {editing === "title" ? (
           <GroupInlineEdit
-            label="Group title"
-            initial={group.title}
+            label={props.titleLabel}
+            initial={props.title}
             className="font-semibold text-base"
             onCommit={(draft) => {
               setEditing(null);
-              void renameGroup(group, draft);
+              props.onRename(draft);
             }}
             onCancel={() => setEditing(null)}
           />
@@ -305,7 +599,7 @@ function GroupHeader(props: { group: EnvironmentThreadGroup; status: GroupStatus
             className="min-w-0 flex-1 truncate font-semibold text-base text-foreground"
             onDoubleClick={() => setEditing("title")}
           >
-            {group.title}
+            {props.title}
           </h2>
         )}
         {props.status !== null ? <StatusPill pill={props.status} /> : null}
@@ -313,7 +607,7 @@ function GroupHeader(props: { group: EnvironmentThreadGroup; status: GroupStatus
           <Button
             size="icon-xs"
             variant="ghost-muted"
-            aria-label="Rename group"
+            aria-label={props.renameLabel}
             onClick={() => setEditing("title")}
           >
             <PencilIcon />
@@ -322,11 +616,14 @@ function GroupHeader(props: { group: EnvironmentThreadGroup; status: GroupStatus
       </div>
       {editing === "goal" ? (
         <GroupInlineEdit
-          label="Group goal"
-          initial={group.goal ?? ""}
-          placeholder="What is this group working towards?"
+          label="Goal"
+          initial={props.goal ?? ""}
+          placeholder={props.goalPlaceholder}
           className="text-sm"
-          onCommit={(draft) => void saveGoal(draft)}
+          onCommit={(draft) => {
+            setEditing(null);
+            props.onSaveGoal(draft.trim() === "" ? null : draft.trim());
+          }}
           onCancel={() => setEditing(null)}
         />
       ) : (
@@ -334,11 +631,11 @@ function GroupHeader(props: { group: EnvironmentThreadGroup; status: GroupStatus
           type="button"
           className={cn(
             "cursor-text rounded-sm text-left text-sm",
-            group.goal === null ? "text-muted-foreground/70" : "text-muted-foreground",
+            props.goal === null ? "text-muted-foreground/70" : "text-muted-foreground",
           )}
           onClick={() => setEditing("goal")}
         >
-          {group.goal ?? "Add a goal"}
+          {props.goal ?? "Add a goal"}
         </button>
       )}
     </div>

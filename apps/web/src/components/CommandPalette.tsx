@@ -1948,7 +1948,8 @@ function OpenCommandPaletteDialog(props: {
       });
     }
 
-    if (activeGroup !== null && activeThreadSupportsGroups) {
+    // A hidden group (one live chat) is the chat alone, so it offers no group actions.
+    if (activeGroup?.visible === true && activeThreadSupportsGroups) {
       const group = activeGroup;
       actionItems.push({
         kind: "action",
@@ -2060,14 +2061,19 @@ function OpenCommandPaletteDialog(props: {
     }
   }
 
-  if (activeThread !== null && activeGroup !== null) {
+  // Every project chat has a Group panel; a subagent belongs to its parent instead.
+  if (
+    activeThread !== null &&
+    activeThreadSupportsGroups &&
+    activeThread.lineage.relationshipToParent !== "subagent"
+  ) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
     actionItems.push({
       kind: "action",
       value: "action:open-group-panel",
       searchTerms: ["group", "panel", "workspace", "handoff", "chats"],
       title: "Open group panel",
-      description: activeGroup.title,
+      ...(activeGroup?.visible === true ? { description: activeGroup.title } : {}),
       icon: <LayersIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         useRightPanelStore.getState().openGroup(threadRef);

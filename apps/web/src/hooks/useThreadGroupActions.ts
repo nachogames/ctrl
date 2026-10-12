@@ -447,7 +447,7 @@ export function useThreadGroupActions() {
         });
         toastCommandFailure("Could not hand off", result);
       },
-      recreateWorktree: async (group: EnvironmentThreadGroup) => {
+      recreateWorktree: async (group: Pick<EnvironmentThreadGroup, "environmentId" | "id">) => {
         const result = await recreateWorktreeCommand({
           environmentId: group.environmentId,
           input: { groupId: group.id },

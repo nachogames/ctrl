@@ -171,7 +171,8 @@ function ChatRouteGlobalShortcuts() {
                 groupId: activeThread.groupId,
               })
             : null;
-        if (group === null) {
+        // A hidden group (one live chat) is not a group the chat is shown in.
+        if (group === null || !group.visible) {
           toastManager.add(
             stackedThreadToast({ type: "info", title: "This chat is not in a group" }),
           );
