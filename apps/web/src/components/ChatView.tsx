@@ -5518,7 +5518,15 @@ export default function ChatView(props: ChatViewProps) {
     [activeShellEnvironmentId, activeShellGroupId],
   );
   const activeGroup = useThreadGroup(activeGroupRef);
-  const groupSurfaceAvailable = activeGroup !== null;
+  // A hidden group (one live chat) reads as the chat alone everywhere outside its panel.
+  const activeVisibleGroup = activeGroup?.visible === true ? activeGroup : null;
+  // Every project chat has a Group panel; a subagent belongs to its parent instead.
+  const groupSurfaceAvailable =
+    isServerThread &&
+    activeProject !== null &&
+    activeThreadShell !== null &&
+    activeThreadShell.lineage.relationshipToParent !== "subagent" &&
+    serverConfig?.environment.capabilities.threadGroups === true;
   const addGroupSurface = useCallback(() => {
     if (!activeThreadRef || !groupSurfaceAvailable) return;
     useRightPanelStore.getState().openGroup(activeThreadRef);
@@ -11507,7 +11515,7 @@ export default function ChatView(props: ChatViewProps) {
             parentThreadLink={parentThreadLink}
             onOpenThread={onOpenRelatedThread}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
-            group={activeGroup}
+            group={activeVisibleGroup}
             groupPanelVisible={rightPanelOpen && activeRightPanelSurface?.kind === "group"}
             onNewThreadInProject={handleNewThreadInActiveProject}
             {...(activeDraftLogicalProjectKey
@@ -12145,7 +12153,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddDevice={addDeviceSurface}
           onAddGroup={addGroupSurface}
           groupAvailable={groupSurfaceAvailable}
-          groupTitle={activeGroup?.title ?? null}
+          groupTitle={activeVisibleGroup?.title ?? null}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}
@@ -12207,7 +12215,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddDevice={addDeviceSurface}
             onAddGroup={addGroupSurface}
             groupAvailable={groupSurfaceAvailable}
-            groupTitle={activeGroup?.title ?? null}
+            groupTitle={activeVisibleGroup?.title ?? null}
             browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
             diffAvailable={isServerThread && isGitRepo}

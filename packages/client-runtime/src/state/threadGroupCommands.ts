@@ -1,4 +1,4 @@
-import { type ScopedThreadGroupRef, WS_METHODS } from "@t3tools/contracts";
+import { type ScopedThreadGroupRef, type ScopedThreadRef, WS_METHODS } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/reactivity";
 
@@ -49,9 +49,12 @@ export function createThreadGroupEnvironmentAtoms<R, E>(
     idleTtlMs: 0,
   });
   return {
-    /** A group's running resources, live while a component reads it. */
-    resources: (ref: ScopedThreadGroupRef) =>
-      resources({ environmentId: ref.environmentId, input: { groupId: ref.groupId } }),
+    /** A group's, or a lone chat's, running resources, live while a component reads it. */
+    resources: (ref: ScopedThreadGroupRef | ScopedThreadRef) =>
+      resources({
+        environmentId: ref.environmentId,
+        input: "groupId" in ref ? { groupId: ref.groupId } : { threadId: ref.threadId },
+      }),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread-group:create",
       execute: (input: CreateThreadGroupInput) => createThreadGroup(input),

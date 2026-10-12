@@ -680,6 +680,45 @@ describe("sidebar drag projection", () => {
     ).toBe(true);
   });
 
+  it("moves a group's chats around a member reordered inside the group", () => {
+    const member = (key: string): SidebarListItem => ({
+      kind: "thread",
+      key,
+      section: "active",
+      groupKey: "g",
+    });
+    const items: SidebarListItem[] = [
+      pinnedHeader,
+      divider,
+      { kind: "project-heading", key: "one" },
+      { kind: "group", key: "g", section: "active" },
+      member("m1"),
+      member("m2"),
+      member("m3"),
+      thread("a1", "active"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const result = preview(
+      {
+        items,
+        settledOrder: [],
+        settledExpanded: true,
+        holdsLayout: () => true,
+        reordersInPlace: (active, over) => active === "m3" && over === "m1",
+      },
+      "m3",
+      "m1",
+      1,
+      36,
+    );
+    expect(result.get("sidebar-group-g")).toEqual(stationary);
+    expect(result.get("m1")?.y).toBe(37);
+    expect(result.get("m2")?.y).toBe(37);
+    expect(result.get("m3")).toEqual(stationary);
+    expect(result.get("a1")).toEqual(stationary);
+  });
+
   it("keeps the boundary labels' space while the layout is held", () => {
     const items: SidebarListItem[] = [
       pinnedHeader,

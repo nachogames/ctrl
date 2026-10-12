@@ -55,6 +55,13 @@ export const ThreadGroupRunningResource = Schema.Struct({
 });
 export type ThreadGroupRunningResource = typeof ThreadGroupRunningResource.Type;
 
+/** What `threadGroups.subscribeResources` watches: a group, or one chat outside any group. */
+export const ThreadGroupResourcesTarget = Schema.Union([
+  Schema.Struct({ groupId: ThreadGroupId }),
+  Schema.Struct({ threadId: ThreadId }),
+]);
+export type ThreadGroupResourcesTarget = typeof ThreadGroupResourcesTarget.Type;
+
 /** One emission of `threadGroups.subscribeResources`: the group's resources right now. */
 export const ThreadGroupRunningResources = Schema.Struct({
   resources: Schema.Array(ThreadGroupRunningResource),

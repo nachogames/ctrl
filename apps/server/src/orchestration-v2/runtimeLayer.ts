@@ -262,6 +262,7 @@ export const layerThreadGroupService = ThreadGroupService.layer.pipe(
       layerEventSinkProvided,
       IdAllocator.layer,
       layerThreadManagementProvided,
+      TextGeneration.layer,
     ),
   ),
 );

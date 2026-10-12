@@ -1,8 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentThreadGroup,
-  EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/models";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -11,6 +8,8 @@ import {
   AuthOrchestrationOperateScope,
   type ProjectScript,
   type ScopedThreadRef,
+  type ThreadGroupId,
+  type ThreadGroupLink,
   type ThreadGroupRunningResource,
 } from "@t3tools/contracts";
 import { groupLinkLabel } from "@t3tools/shared/threadGroups";
@@ -66,6 +65,7 @@ import {
   type GlanceTone,
   type TicketChip,
 } from "./GroupGlanceCards.logic";
+import type { GroupWorkspaceSource } from "./soloGroupView";
 import { useGroupPullRequestStatus } from "./useGroupPullRequestStatus";
 import type { GroupScriptRunner } from "./useGroupScriptRunner";
 import { useOpenServerUrl } from "./useOpenServerUrl";
@@ -100,10 +100,12 @@ function errorToast(title: string, error: unknown) {
 /**
  * The group at a glance: branch, pull request, tickets, frontend, worktree and
  * activity. Two columns of cards at 440px and wider, one six-row card below,
- * switched by the `group-panel` container query.
+ * switched by the `group-panel` container query. A solo chat passes its
+ * `soloGroupView`; `ensureGroup` creates its hidden group when a link needs one.
  */
 export function GroupGlanceCards(props: {
-  group: EnvironmentThreadGroup;
+  group: GroupWorkspaceSource;
+  ensureGroup: () => Promise<ThreadGroupId | null>;
   threadRef: ScopedThreadRef;
   members: ReadonlyArray<EnvironmentThreadShell>;
   resources: ReadonlyArray<ThreadGroupRunningResource> | null;
@@ -135,10 +137,10 @@ export function GroupGlanceCards(props: {
   const { recreateWorktree } = useThreadGroupActions();
   const canOrchestrate = useEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope);
   const [recreating, setRecreating] = useState(false);
-  const recreate = async () => {
+  const recreate = async (groupId: ThreadGroupId) => {
     setRecreating(true);
     try {
-      await recreateWorktree(group);
+      await recreateWorktree({ environmentId: group.environmentId, id: groupId });
     } finally {
       setRecreating(false);
     }
@@ -176,10 +178,12 @@ export function GroupGlanceCards(props: {
   const updateGroup = useOrchestrationCommand(threadGroupCommands.update, {
     reportFailure: false,
   });
-  const saveLinks = async (links: EnvironmentThreadGroup["links"], failureTitle: string) => {
+  const saveLinks = async (links: ReadonlyArray<ThreadGroupLink>, failureTitle: string) => {
+    const groupId = group.id ?? (await props.ensureGroup());
+    if (groupId === null) return;
     const result = await updateGroup({
       environmentId: group.environmentId,
-      input: { groupId: group.id, patch: { links } },
+      input: { groupId, patch: { links } },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       errorToast(failureTitle, squashAtomCommandFailure(result));
@@ -376,7 +380,14 @@ export function GroupGlanceCards(props: {
           />
         );
       }
-      case "worktree":
+      case "worktree": {
+        // Only the group that owns the worktree can recreate it; a solo chat's own
+        // worktree has no group to recreate it from.
+        const recreateGroupId = missing
+          ? group.worktreeGroupId === undefined
+            ? group.id
+            : group.worktreeGroupId
+          : null;
         return (
           <GlanceCardView
             key={card.id}
@@ -384,12 +395,12 @@ export function GroupGlanceCards(props: {
             card={missing ? { ...card, secondary: "Workspace missing", compact: null } : card}
             secondaryTone={missing ? "warning" : undefined}
             action={
-              missing ? (
+              recreateGroupId !== null ? (
                 <Button
                   size="xs"
                   variant="outline"
                   disabled={!canOrchestrate || recreating}
-                  onClick={() => void recreate()}
+                  onClick={() => void recreate(recreateGroupId)}
                 >
                   {recreating ? "Recreating…" : "Recreate worktree"}
                 </Button>
@@ -421,6 +432,7 @@ export function GroupGlanceCards(props: {
             )}
           </GlanceCardView>
         );
+      }
       case "activity":
         return <GlanceCardView key={card.id} card={card} action={null} />;
     }

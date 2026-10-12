@@ -18,7 +18,7 @@ import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation"
  * request with checks. A null `link` reads nothing and reports nothing.
  */
 export function useGroupPullRequestStatus(
-  group: EnvironmentThreadGroup,
+  group: Pick<EnvironmentThreadGroup, "environmentId" | "projectId">,
   link: ThreadPullRequestLink | null,
 ) {
   const capabilities = useServerConfigs().get(group.environmentId)?.environment.capabilities;

@@ -535,6 +535,82 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  it.effect("orders a chat inside its group and drops the slot when it changes groups", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-group-order");
+      const ungroupedThreadId = ThreadId.make("runtime-layer-group-order-ungrouped");
+      const projectId = ProjectId.make("runtime-layer-group-order-project");
+      const groupId = ThreadGroupId.make("group:runtime-layer-order");
+      const otherGroupId = ThreadGroupId.make("group:runtime-layer-order-other");
+      const create = (id: ThreadId, group: ThreadGroupId | undefined) =>
+        orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${id}-create`),
+          threadId: id,
+          projectId,
+          title: "Ordered",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          ...(group === undefined ? {} : { groupId: group }),
+        });
+      yield* create(threadId, groupId);
+      yield* create(ungroupedThreadId, undefined);
+
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      yield* TestClock.adjust("30 seconds");
+      yield* orchestrator.dispatch({
+        type: "thread.group.reorder",
+        commandId: CommandId.make("runtime-layer-group-order-reorder"),
+        threadId,
+        orderKey: "a0",
+      });
+      const reordered = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(reordered.thread.groupOrderKey, "a0");
+      assert.equal((yield* orchestrator.getThreadShell(threadId))?.groupOrderKey, "a0");
+      // Arranging a group is not thread activity, in memory or in the persisted shell.
+      assert.deepEqual(reordered.thread.updatedAt, before.thread.updatedAt);
+      const persisted = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (candidate) => candidate.id === threadId,
+      );
+      assert.deepEqual(persisted?.updatedAt, before.thread.updatedAt);
+
+      const ungrouped = yield* orchestrator
+        .dispatch({
+          type: "thread.group.reorder",
+          commandId: CommandId.make("runtime-layer-group-order-reorder-ungrouped"),
+          threadId: ungroupedThreadId,
+          orderKey: "a0",
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(ungrouped, Orchestrator.OrchestratorDispatchError);
+
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-group-order-move"),
+        threadId,
+        groupId: otherGroupId,
+      });
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.groupOrderKey);
+
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-group-order-join"),
+        threadId,
+        groupId,
+        groupOrderKey: "Zz",
+      });
+      const joined = yield* orchestrator.getThreadShell(threadId);
+      assert.equal(joined?.groupId, groupId);
+      assert.equal(joined?.groupOrderKey, "Zz");
+    }),
+  );
+
   it.effect("emits model updates separately from provider switches", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

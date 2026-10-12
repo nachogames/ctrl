@@ -189,6 +189,18 @@ it.effect("joins the source's group without copying its handoff links", () =>
   }),
 );
 
+it.effect("drops the source's group order key so the fork lands on top", () =>
+  Effect.gen(function* () {
+    const result = yield* planFork(makeSourceRun("completed"), {
+      ...makeSourceThread(),
+      groupId: ThreadGroupId.make("group:fork-source"),
+      groupOrderKey: "a0",
+    });
+    // A keyless chat sorts first, so the fork shows as the group's newest chat.
+    assert.isNull(result.targetThread.groupOrderKey ?? null);
+  }),
+);
+
 it.effect("leaves a fork of an ungrouped chat ungrouped and creates no group", () =>
   Effect.gen(function* () {
     const result = yield* planFork(makeSourceRun("completed"), {

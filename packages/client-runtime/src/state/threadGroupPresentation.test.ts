@@ -31,19 +31,44 @@ describe("thread group presentation", () => {
     expect(presentThreadShell(environmentId, v2ThreadShell).groupId).toBeNull();
   });
 
-  it("orders each handoff chain before later unrelated chats", () => {
+  it("orders an unordered group newest first, a successor directly above its source", () => {
     const a = member("a", "2026-06-20T01:00:00.000Z");
     const c = member("c", "2026-06-20T02:00:00.000Z");
     const b = member("b", "2026-06-20T03:00:00.000Z", { handedOffFrom: a.id });
     const d = member("d", "2026-06-20T04:00:00.000Z", { handedOffFrom: b.id });
-    expect(orderThreadGroupMembers([d, c, b, a])).toEqual(["a", "b", "d", "c"]);
+    const e = member("e", "2026-06-20T03:30:00.000Z");
+    expect(orderThreadGroupMembers([d, c, b, a, e])).toEqual(["d", "b", "a", "e", "c"]);
+  });
+
+  it("lists keyed members after keyless ones", () => {
+    const keyed = member("keyed", "2026-06-20T09:00:00.000Z", { groupOrderKey: "a" });
+    const other = member("other", "2026-06-20T08:00:00.000Z", { groupOrderKey: "b" });
+    const old = member("old", "2026-06-20T01:00:00.000Z");
+    expect(orderThreadGroupMembers([other, keyed, old])).toEqual(["old", "keyed", "other"]);
   });
 
   it("keeps every member when handoff links loop or leave the group", () => {
     const x = member("x", "2026-06-20T01:00:00.000Z", { handedOffFrom: ThreadId.make("y") });
     const y = member("y", "2026-06-20T02:00:00.000Z", { handedOffFrom: ThreadId.make("x") });
     const z = member("z", "2026-06-20T03:00:00.000Z", { handedOffFrom: ThreadId.make("outside") });
-    expect(orderThreadGroupMembers([x, y, z])).toEqual(["z", "x", "y"]);
+    expect([...orderThreadGroupMembers([x, y, z])].toSorted()).toEqual(["x", "y", "z"]);
+  });
+
+  it("leaves archived chats out of the members and the visibility count", () => {
+    const live = member("live", "2026-06-20T01:00:00.000Z");
+    const archived = member("archived", "2026-06-20T02:00:00.000Z", {
+      archivedAt: DateTime.makeUnsafe("2026-06-20T03:00:00.000Z"),
+    });
+    const group = presentThreadGroup(environmentId, v2ThreadGroup, [live, archived]);
+    expect(group.threadIds).toEqual(["live"]);
+    expect(group.visible).toBe(false);
+  });
+
+  it("shows a group only from two members", () => {
+    const one = member("one", "2026-06-20T01:00:00.000Z");
+    const two = member("two", "2026-06-20T02:00:00.000Z");
+    expect(presentThreadGroup(environmentId, v2ThreadGroup, [one]).visible).toBe(false);
+    expect(presentThreadGroup(environmentId, v2ThreadGroup, [one, two]).visible).toBe(true);
   });
 
   it("presents only live threads of the group's project", () => {

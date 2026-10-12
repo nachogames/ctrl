@@ -21,6 +21,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ThreadGroupLaunchService from "./ThreadGroupLaunchService.ts";
@@ -53,6 +54,7 @@ const shell = (id: ThreadId, overrides: Partial<OrchestrationV2ThreadShell> = {}
     lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
     archivedAt: null,
     deletedAt: null,
+    createdAt: DateTime.makeUnsafe("2026-10-10T00:00:00.000Z"),
     ...overrides,
   }) as OrchestrationV2ThreadShell;
 
@@ -205,6 +207,7 @@ function makeLayer(
         ProjectStore.layer,
         IdAllocator.layer,
         management,
+        Layer.mock(TextGeneration.TextGeneration)({}),
         ServerSettings.layerTest({
           sidebarAutoSettleAfterDays:
             options.autoSettleAfterDays === undefined ? 3 : options.autoSettleAfterDays,
@@ -344,6 +347,18 @@ it.effect("handoff from an ungrouped chat creates a group and links the two chat
       toThreadId: result.threadId,
     });
     assert.isTrue(Option.isSome(DateTime.make(result.group.lastHandoff?.at ?? "")));
+  }).pipe(Effect.provide(makeLayer(harness)));
+});
+
+it.effect("handoff names the new group after the source chat", () => {
+  const harness = newHarness([shell(source, { title: "Fix passkey login" })]);
+  return Effect.gen(function* () {
+    yield* seedProject;
+    const service = yield* ThreadGroupLaunchService.ThreadGroupLaunchService;
+
+    const result = yield* service.handoff(handoffInput);
+
+    assert.equal(result.group.title, "Fix passkey login");
   }).pipe(Effect.provide(makeLayer(harness)));
 });
 

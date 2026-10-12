@@ -447,6 +447,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.unpin":
     case "thread.pin.reorder":
     case "thread.active.reorder":
+    case "thread.group.reorder":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -2421,6 +2422,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unpin"
           | "thread.pin.reorder"
           | "thread.active.reorder"
+          | "thread.group.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
           | "thread.pull-request.link"
@@ -2559,6 +2561,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "thread.unpin" ||
         command.type === "thread.pin.reorder" ||
         command.type === "thread.active.reorder" ||
+        command.type === "thread.group.reorder" ||
         command.type === "thread.pull-request.sync") &&
       thread.archivedAt !== null
     ) {
@@ -2586,6 +2589,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} is not active and cannot be reordered.`,
+      });
+    }
+    if (command.type === "thread.group.reorder" && thread.groupId == null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is not in a group and cannot be reordered within one.`,
       });
     }
     if (command.type === "thread.pull-request.sync") {
@@ -2948,6 +2958,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: thread.updatedAt,
           };
         }
+        case "thread.group.reorder":
+          // Arranging a group is not thread activity.
+          return { ...thread, groupOrderKey: command.orderKey };
         case "thread.mark-unread":
           return { ...thread, lastVisitedAt: markUnreadVisitedAt };
         case "thread.metadata.update": {
@@ -2990,6 +3003,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.groupId === undefined ? {} : { groupId: command.groupId }),
+            // A slot belongs to one group: moving without a new slot drops it.
+            ...(command.groupOrderKey !== undefined
+              ? { groupOrderKey: command.groupOrderKey }
+              : command.groupId !== undefined && command.groupId !== (thread.groupId ?? null)
+                ? { groupOrderKey: null }
+                : {}),
             ...(command.handedOffFrom === undefined
               ? {}
               : { handedOffFrom: command.handedOffFrom }),
@@ -3261,6 +3280,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.pin-reordered" as const;
         case "thread.active.reorder":
           return "thread.active-reordered" as const;
+        case "thread.group.reorder":
+          return "thread.group-reordered" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
@@ -10696,6 +10717,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.unpin":
       case "thread.pin.reorder":
       case "thread.active.reorder":
+      case "thread.group.reorder":
       case "thread.mark-unread":
       case "thread.metadata.update":
       case "thread.pull-request.link":

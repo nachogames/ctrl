@@ -14,7 +14,10 @@ import {
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import type { GroupOrderItem } from "@t3tools/shared/groupOrder";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -25,6 +28,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -35,6 +40,7 @@ import {
   planThreadGroupCommand,
   type ThreadGroupCommand,
 } from "./ThreadGroupCommands.ts";
+import { planGroupInsertAbove, planGroupJoin } from "./threadGroupOrder.ts";
 import * as ThreadGroupStore from "./ThreadGroupStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -147,7 +153,10 @@ export interface ThreadGroupCreateInput {
   readonly commandId: CommandId;
   readonly groupId: ThreadGroupId;
   readonly projectId: ProjectId;
-  /** The first thread supplies the default branch, worktree, pull request and title. */
+  /**
+   * The first thread supplies the default branch, worktree, pull request and
+   * title. With a goal and no title, the title is generated from the goal later.
+   */
   readonly threadIds: ReadonlyArray<ThreadId>;
   readonly title?: string;
   readonly goal?: string | null;
@@ -215,8 +224,16 @@ export class ThreadGroupService extends Context.Service<
     readonly setHandoffLinks: (
       input: ThreadGroupSetHandoffLinksInput,
     ) => Effect.Effect<void, ThreadGroupOperationError>;
-    /** Delete the group when no live thread is left in it. */
-    readonly pruneIfEmpty: (groupId: ThreadGroupId) => Effect.Effect<void, ThreadGroupServiceError>;
+    /**
+     * Delete the group when no live thread is left in it, and clear the pin,
+     * snooze and settle of a group down to one live chat. With `unarchived`, a
+     * chat just came back from the archive: a group it grew from one live chat
+     * to two starts Active, dropping state set while it was hidden.
+     */
+    readonly pruneIfEmpty: (
+      groupId: ThreadGroupId,
+      options?: { readonly unarchived?: boolean },
+    ) => Effect.Effect<void, ThreadGroupServiceError>;
     /** Prune every live group; a restart uses it to catch deletes it missed. */
     readonly pruneEmptyGroups: Effect.Effect<void, ThreadGroupServiceError>;
     /**
@@ -262,6 +279,10 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const git = yield* GitWorkflow.GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const textGeneration = yield* TextGeneration.TextGeneration;
+  // Best-effort background work (goal titles) ends with the service.
+  const backgroundScope = yield* Effect.scope;
   // Commands for one group run in order. Membership changes that must see the
   // group's current members (join, prune, ungroup) hold the same lock.
   const groupLocks = yield* KeyedLock.make<ThreadGroupId>();
@@ -331,16 +352,11 @@ export const make = Effect.gen(function* () {
       Effect.mapError(readThreadsError(groupId)),
     );
 
-  /** Archived threads keep their group; only deleting or moving them empties it. */
-  const hasMembers = Effect.fn("ThreadGroupService.hasMembers")(function* (
-    projectId: ProjectId,
-    groupId: ThreadGroupId,
-  ) {
-    const active = yield* listActive(projectId, groupId);
-    if (active.some((thread) => thread.groupId === groupId)) return true;
-    const archived = yield* listArchived(projectId, groupId);
-    return archived.some((thread) => thread.groupId === groupId);
-  });
+  /** The group's live (not archived) members. */
+  const liveMembers = (projectId: ProjectId, groupId: ThreadGroupId) =>
+    listActive(projectId, groupId).pipe(
+      Effect.map((list) => list.filter((thread) => thread.groupId === groupId)),
+    );
 
   /** Every non-deleted thread in the group, archived or not. */
   const members = Effect.fn("ThreadGroupService.members")(function* (
@@ -372,17 +388,98 @@ export const make = Effect.gen(function* () {
     thread.status === "running" ||
     thread.status === "waiting";
 
+  const toOrderItem = (thread: OrchestrationV2ThreadShell) => ({
+    id: thread.id,
+    createdAtMs: DateTime.toEpochMillis(thread.createdAt),
+    handedOffFrom: thread.handedOffFrom,
+    groupOrderKey: thread.groupOrderKey,
+  });
+
+  /** Sent with a join; a keyless join needs no field, since changing groups clears the key. */
+  const orderKeyField = (groupOrderKey: string | null) =>
+    groupOrderKey === null ? {} : { groupOrderKey };
+
   const setThreadGroup = (
     commandId: CommandId,
     threadId: ThreadId,
     groupId: ThreadGroupId | null,
+    groupOrderKey: string | null = null,
   ) =>
-    threads.dispatch({ type: "thread.metadata.update", commandId, threadId, groupId }).pipe(
+    threads
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId,
+        threadId,
+        groupId,
+        ...orderKeyField(groupOrderKey),
+      })
+      .pipe(
+        Effect.asVoid,
+        Effect.mapError(
+          (cause) => new ThreadGroupOperationError({ operation: "update-thread", threadId, cause }),
+        ),
+      );
+
+  const dispatchThreadUpdate = (
+    update: { readonly commandId: CommandId; readonly threadId: ThreadId } & Partial<{
+      readonly handedOffFrom: ThreadId;
+      readonly handedOffTo: ThreadId;
+      readonly groupOrderKey: string;
+    }>,
+  ) =>
+    threads.dispatch({ type: "thread.metadata.update", ...update }).pipe(
+      Effect.asVoid,
+      Effect.mapError(
+        (cause) =>
+          new ThreadGroupOperationError({
+            operation: "update-thread",
+            threadId: update.threadId,
+            cause,
+          }),
+      ),
+    );
+
+  /** Re-key a chat already in the group; arranging a group is not activity on the chat. */
+  const reorderMember = (commandId: CommandId, threadId: ThreadId, orderKey: string) =>
+    threads.dispatch({ type: "thread.group.reorder", commandId, threadId, orderKey }).pipe(
       Effect.asVoid,
       Effect.mapError(
         (cause) => new ThreadGroupOperationError({ operation: "update-thread", threadId, cause }),
       ),
     );
+
+  /**
+   * Plan a chat's join so it shows first in the group. Returns the writes that
+   * re-key other members bottom-up (run them before the join) and the joiner's
+   * own key. Each re-key's command id names its key: a retry after a partial
+   * write re-plans from the keys that landed, and must not replay a receipt
+   * holding a key from the earlier plan.
+   * `seated` is the group's order and is updated, so the next joiner sees it.
+   */
+  const placeJoiner = (
+    commandId: CommandId,
+    seated: Array<GroupOrderItem<ThreadId>>,
+    joiner: OrchestrationV2ThreadShell,
+  ) => {
+    const keys = new Map(
+      planGroupJoin(seated, toOrderItem(joiner)).map((entry) => [entry.threadId, entry.key]),
+    );
+    seated.forEach((item, index) => {
+      const key = keys.get(item.id);
+      if (key !== undefined) seated[index] = { ...item, groupOrderKey: key };
+    });
+    seated.push({ ...toOrderItem(joiner), groupOrderKey: keys.get(joiner.id) ?? null });
+    const others = [...keys].filter(([threadId]) => threadId !== joiner.id);
+    return {
+      reorder: Effect.forEach(
+        others,
+        ([threadId, key]) =>
+          reorderMember(CommandId.make(`${commandId}:order:${threadId}:${key}`), threadId, key),
+        { concurrency: 1, discard: true },
+      ),
+      key: keys.get(joiner.id) ?? null,
+    };
+  };
 
   /**
    * The checks before a chat switches to a group's workspace: it is idle, the
@@ -429,6 +526,7 @@ export const make = Effect.gen(function* () {
     thread: OrchestrationV2ThreadShell,
     groupId: ThreadGroupId,
     workspace: { readonly branch: string | null; readonly worktreePath: string | null },
+    groupOrderKey: string | null,
   ) =>
     threads
       .dispatch({
@@ -436,6 +534,7 @@ export const make = Effect.gen(function* () {
         commandId,
         threadId: thread.id,
         groupId,
+        ...orderKeyField(groupOrderKey),
         branch: workspace.branch,
         worktreePath: workspace.worktreePath,
         expectedWorktreePath: thread.worktreePath,
@@ -505,12 +604,112 @@ export const make = Effect.gen(function* () {
   const commit = (command: ThreadGroupCommand) =>
     groupLocks.withLock(command.groupId, commitLocked(command));
 
+  /**
+   * Clear a group's pin, snooze and settle. The id is derived from the group's
+   * `updatedAt`, so a retry replays and a later change gets a fresh one.
+   */
+  const clearStateLocked = (
+    groupId: ThreadGroupId,
+    group: Pick<
+      OrchestrationThreadGroupShell,
+      "pinnedAt" | "snoozedUntil" | "settledAt" | "updatedAt"
+    >,
+    reason: "solo" | "active",
+  ) =>
+    group.pinnedAt === null && group.snoozedUntil === null && group.settledAt === null
+      ? Effect.void
+      : commitLocked({
+          type: "thread-group.meta.update",
+          commandId: CommandId.make(`server:thread-group-${reason}:${groupId}:${group.updatedAt}`),
+          groupId,
+          patch: { pinnedAt: null, snoozedUntil: null, settledAt: null },
+        });
+
+  /**
+   * A group that grows from one live chat to two starts Active, dropping a
+   * state it held while hidden (an agent's pin, or a one-member group from
+   * before). The caller holds the lock and passes the live count before the join.
+   */
+  const startActiveIfGrownLocked = Effect.fn("ThreadGroupService.startActiveIfGrownLocked")(
+    function* (groupId: ThreadGroupId, liveBefore: number) {
+      if (liveBefore >= 2) return;
+      const found = yield* readGroup(groupId);
+      if (Option.isNone(found)) return;
+      if ((yield* liveMembers(found.value.projectId, groupId)).length < 2) return;
+      yield* clearStateLocked(groupId, found.value, "active");
+    },
+  );
+
+  /**
+   * The groups that `movers` leave without a live chat, in the movers' order.
+   * The prune after the join deletes them, so their data is carried first.
+   */
+  const groupsEmptiedBy = Effect.fn("ThreadGroupService.groupsEmptiedBy")(function* (
+    movers: ReadonlyArray<OrchestrationV2ThreadShell>,
+    destination: ThreadGroupId,
+  ) {
+    const leaving = new Set(movers.map((mover) => mover.id));
+    const previous = new Set(
+      movers.flatMap((mover) =>
+        mover.groupId == null || mover.groupId === destination ? [] : [mover.groupId],
+      ),
+    );
+    const emptied = yield* Effect.forEach(
+      previous,
+      (groupId) =>
+        Effect.gen(function* () {
+          const found = yield* groups
+            .getShell(groupId)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ThreadGroupOperationError({ operation: "read-group", groupId, cause }),
+              ),
+            );
+          if (Option.isNone(found)) return [];
+          const live = yield* liveMembers(found.value.projectId, groupId);
+          return live.every((thread) => leaving.has(thread.id)) ? [found.value] : [];
+        }),
+      { concurrency: 1 },
+    );
+    return emptied.flat();
+  });
+
+  /** Merge the data of groups a join empties into the destination. The caller holds its lock. */
+  const carryLocked = Effect.fn("ThreadGroupService.carryLocked")(function* (
+    commandId: CommandId,
+    destination: ThreadGroupId,
+    sources: ReadonlyArray<OrchestrationThreadGroupShell>,
+  ) {
+    if (sources.length === 0) return;
+    const patch = carriedGroupData(yield* readShell(destination), sources);
+    if (patch === null) return;
+    yield* commitLocked({
+      type: "thread-group.meta.update",
+      commandId: CommandId.make(`${commandId}:carry`),
+      groupId: destination,
+      patch,
+    });
+  });
+
   const pruneLocked = Effect.fn("ThreadGroupService.pruneLocked")(function* (
     groupId: ThreadGroupId,
+    unarchived = false,
   ) {
-    const group = yield* readGroup(groupId);
-    if (Option.isNone(group)) return;
-    if (yield* hasMembers(group.value.projectId, groupId)) return;
+    const found = yield* readGroup(groupId);
+    if (Option.isNone(found)) return;
+    const group = found.value;
+    const live = yield* liveMembers(group.projectId, groupId);
+    // A group of one is hidden; its state must not come back when it grows.
+    if (live.length === 1) return yield* clearStateLocked(groupId, group, "solo");
+    // Two live chats right after an unarchive means it grew from a hidden group of one.
+    if (unarchived && live.length === 2) {
+      return yield* clearStateLocked(groupId, group, "active");
+    }
+    if (live.length > 0) return;
+    // Archived threads keep their group; only deleting or moving them empties it.
+    const archived = yield* listArchived(group.projectId, groupId);
+    if (archived.some((thread) => thread.groupId === groupId)) return;
     yield* commitLocked({
       type: "thread-group.delete",
       // A group is deleted at most once, so one id per group replays on retry.
@@ -519,8 +718,57 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.catchTags({ ThreadGroupNotFoundError: () => Effect.void }));
   });
 
-  const pruneIfEmpty: ThreadGroupService["Service"]["pruneIfEmpty"] = (groupId) =>
-    groupLocks.withLock(groupId, pruneLocked(groupId));
+  const pruneIfEmpty: ThreadGroupService["Service"]["pruneIfEmpty"] = (groupId, options) =>
+    groupLocks.withLock(groupId, pruneLocked(groupId, options?.unarchived === true));
+
+  /**
+   * Name a group created for a goal from that goal, with the project's text
+   * generation model. Best effort: the title changes only while it is still
+   * the chat title the group started with, and a failure keeps that title.
+   */
+  const titleFromGoal = (input: ThreadGroupCreateInput, fallback: string) =>
+    Effect.gen(function* () {
+      const goal = input.goal?.trim();
+      if (!goal) return;
+      const project = yield* projects.get(input.projectId);
+      if (Option.isNone(project)) return;
+      const group = yield* readGroup(input.groupId);
+      if (Option.isNone(group)) return;
+      const settings = resolveProjectSettings(
+        yield* serverSettings.getSettings,
+        input.projectId,
+      ).settings;
+      const generated = yield* textGeneration.generateThreadTitle({
+        cwd: group.value.worktreePath ?? project.value.workspaceRoot,
+        message: goal,
+        modelSelection: settings.textGenerationModelSelection,
+      });
+      const title = generated.title.trim();
+      if (title.length === 0 || title === "New thread" || title === fallback) return;
+      yield* groupLocks.withLock(
+        input.groupId,
+        Effect.gen(function* () {
+          const current = yield* readGroup(input.groupId);
+          if (Option.isNone(current) || current.value.title !== fallback) return;
+          yield* commitLocked({
+            type: "thread-group.meta.update",
+            commandId: CommandId.make(`${input.commandId}:goal-title`),
+            groupId: input.groupId,
+            patch: { title },
+          });
+        }),
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("orchestration-v2.thread-group.goal-title-failed", {
+              groupId: input.groupId,
+              cause,
+            }),
+      ),
+      Effect.withSpan("ThreadGroupService.titleFromGoal"),
+    );
 
   const create: ThreadGroupService["Service"]["create"] = Effect.fn("ThreadGroupService.create")(
     function* (input) {
@@ -561,7 +809,10 @@ export const make = Effect.gen(function* () {
       );
       const adopting = new Set(adopters.map((member) => member.id));
       const pullRequest = resolveThreadCurrentPullRequestLink(first.pullRequests ?? []);
+      const title =
+        input.title ?? defaultThreadGroupTitle({ branch: first.branch, fallback: first.title });
       const previousGroups = new Set<ThreadGroupId>();
+      const emptied = yield* groupsEmptiedBy(members, input.groupId);
       // Commit and join under one lock, so a prune cannot delete the group between them.
       yield* groupLocks.withLock(
         input.groupId,
@@ -571,9 +822,7 @@ export const make = Effect.gen(function* () {
             commandId: input.commandId,
             groupId: input.groupId,
             projectId: input.projectId,
-            title:
-              input.title ??
-              defaultThreadGroupTitle({ pullRequest, branch: first.branch, fallback: first.title }),
+            title,
             goal: input.goal ?? null,
             ...workspace,
             pullRequest,
@@ -583,21 +832,42 @@ export const make = Effect.gen(function* () {
           if (Option.isNone(group) || group.value.deletedAt !== null) {
             return yield* new ThreadGroupNotFoundError({ groupId: input.groupId });
           }
+          // Chats leaving groups of one bring their goal, tickets and resources.
+          yield* carryLocked(input.commandId, input.groupId, emptied);
+          const seated = (yield* liveMembers(input.projectId, input.groupId)).map(toOrderItem);
+          const liveBefore = seated.length;
+          // The chats of a new group keep their natural order; only chats
+          // joining members already seated (a retried create) are placed on top.
+          const placing = seated.length > 0;
           yield* Effect.forEach(
             members,
             (member) => {
               if (member.groupId === input.groupId) return Effect.void;
               if (member.groupId != null) previousGroups.add(member.groupId);
               const joinCommandId = CommandId.make(`${input.commandId}:join:${member.id}`);
-              return adopting.has(member.id)
-                ? adoptWorkspace(joinCommandId, member, input.groupId, workspace)
-                : setThreadGroup(joinCommandId, member.id, input.groupId);
+              const { reorder, key } = placing
+                ? placeJoiner(joinCommandId, seated, member)
+                : { reorder: Effect.void, key: null };
+              return reorder.pipe(
+                Effect.andThen(
+                  adopting.has(member.id)
+                    ? adoptWorkspace(joinCommandId, member, input.groupId, workspace, key)
+                    : setThreadGroup(joinCommandId, member.id, input.groupId, key),
+                ),
+              );
             },
             { concurrency: 1, discard: true },
           );
+          yield* startActiveIfGrownLocked(input.groupId, liveBefore);
         }),
       );
-      yield* Effect.forEach(previousGroups, pruneIfEmpty, { concurrency: 1, discard: true });
+      yield* Effect.forEach(previousGroups, (previous) => pruneIfEmpty(previous), {
+        concurrency: 1,
+        discard: true,
+      });
+      if (input.title === undefined && input.goal != null) {
+        yield* titleFromGoal(input, title).pipe(Effect.forkIn(backgroundScope));
+      }
       return yield* readShell(input.groupId);
     },
   );
@@ -722,17 +992,26 @@ export const make = Effect.gen(function* () {
           // The workspace is the worktree path; a branch label alone does not
           // move the chat anywhere.
           const { branch, worktreePath } = group.value;
-          if (thread.worktreePath === worktreePath) {
-            return yield* setThreadGroup(setCommandId, thread.id, target);
+          const adopting = thread.worktreePath !== worktreePath;
+          if (adopting) {
+            if (input.adoptGroupWorkspace !== true) {
+              return yield* new ThreadGroupWorkspaceMismatchError({
+                threadId: thread.id,
+                groupId: target,
+              });
+            }
+            yield* checkAdoptable(thread, target, worktreePath);
           }
-          if (input.adoptGroupWorkspace !== true) {
-            return yield* new ThreadGroupWorkspaceMismatchError({
-              threadId: thread.id,
-              groupId: target,
-            });
-          }
-          yield* checkAdoptable(thread, target, worktreePath);
-          yield* adoptWorkspace(setCommandId, thread, target, { branch, worktreePath });
+          // A chat leaving its group of one brings that group's goal, tickets and resources.
+          yield* carryLocked(setCommandId, target, yield* groupsEmptiedBy([thread], target));
+          const seated = (yield* liveMembers(thread.projectId, target)).map(toOrderItem);
+          const liveBefore = seated.length;
+          const { reorder, key } = placeJoiner(setCommandId, seated, thread);
+          yield* reorder;
+          yield* adopting
+            ? adoptWorkspace(setCommandId, thread, target, { branch, worktreePath }, key)
+            : setThreadGroup(setCommandId, thread.id, target, key);
+          yield* startActiveIfGrownLocked(target, liveBefore);
         }),
       );
     }
@@ -807,8 +1086,10 @@ export const make = Effect.gen(function* () {
     return yield* readShell(groupId);
   });
 
-  const setHandoffLinks: ThreadGroupService["Service"]["setHandoffLinks"] = (input) =>
-    Effect.forEach(
+  const setHandoffLinks: ThreadGroupService["Service"]["setHandoffLinks"] = Effect.fn(
+    "ThreadGroupService.setHandoffLinks",
+  )(function* (input) {
+    yield* Effect.forEach(
       [
         {
           commandId: CommandId.make(`${input.commandId}:link-from`),
@@ -821,19 +1102,46 @@ export const make = Effect.gen(function* () {
           handedOffTo: input.toThreadId,
         },
       ],
-      (link) =>
-        threads.dispatch({ type: "thread.metadata.update", ...link }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ThreadGroupOperationError({
-                operation: "update-thread",
-                threadId: link.threadId,
-                cause,
-              }),
-          ),
-        ),
+      dispatchThreadUpdate,
       { concurrency: 1, discard: true },
-    ).pipe(Effect.withSpan("ThreadGroupService.setHandoffLinks"));
+    );
+    // In an ordered group the new chat needs a key to sit directly above its source.
+    const launched = yield* threads
+      .getThreadShell(input.toThreadId)
+      .pipe(Effect.mapError(readThreadsError()));
+    const groupId = launched?.groupId;
+    if (launched == null || groupId == null) return;
+    yield* groupLocks.withLock(
+      groupId,
+      Effect.gen(function* () {
+        const members = yield* liveMembers(launched.projectId, groupId);
+        const plan = planGroupInsertAbove(
+          members.map(toOrderItem),
+          input.fromThreadId,
+          input.toThreadId,
+        );
+        // The plan runs bottom-up and ends with the new chat's key. A retry after
+        // a partial write re-plans from what landed; ids name the key so it never
+        // replays a receipt from the earlier plan.
+        yield* Effect.forEach(
+          plan,
+          (entry) => {
+            const commandId = CommandId.make(
+              `${input.commandId}:order:${entry.threadId}:${entry.key}`,
+            );
+            return entry.threadId === input.toThreadId
+              ? dispatchThreadUpdate({
+                  commandId,
+                  threadId: entry.threadId,
+                  groupOrderKey: entry.key,
+                })
+              : reorderMember(commandId, entry.threadId, entry.key);
+          },
+          { concurrency: 1, discard: true },
+        );
+      }),
+    );
+  });
 
   const withGroupLaunch: ThreadGroupService["Service"]["withGroupLaunch"] = (
     groupId,
@@ -852,7 +1160,18 @@ export const make = Effect.gen(function* () {
             );
       // The launch checks the group itself, after its receipt, so a retried
       // launch replays even when the group has gone since.
-      const launchLocked = groupLocks.withLock(groupId, launch);
+      const launchLocked = groupLocks.withLock(
+        groupId,
+        Effect.gen(function* () {
+          const found = yield* readGroup(groupId);
+          const liveBefore = Option.isNone(found)
+            ? 0
+            : (yield* liveMembers(found.value.projectId, groupId)).length;
+          const launched = yield* launch;
+          yield* startActiveIfGrownLocked(groupId, liveBefore);
+          return launched;
+        }),
+      );
       if (previous === null || previous === groupId) return yield* launchLocked;
       // A reuse launch can move the thread and then fail, so prune on every
       // exit. A prune failure must not fail a launch that already committed;
@@ -885,6 +1204,40 @@ export const make = Effect.gen(function* () {
     updateLinks,
   });
 });
+
+/**
+ * What a group takes from the groups its joiners leave empty: the first goal
+ * when it has none, and the tickets and resources it lacks. Null when nothing changes.
+ */
+function carriedGroupData(
+  destination: Pick<OrchestrationThreadGroupShell, "goal" | "links" | "manualResources">,
+  sources: ReadonlyArray<Pick<OrchestrationThreadGroupShell, "goal" | "links" | "manualResources">>,
+): ThreadGroupUpdatePayload | null {
+  const goal = destination.goal ?? sources.find((source) => source.goal !== null)?.goal ?? null;
+  const links = [...destination.links];
+  const linked = new Set(links.flatMap((entry) => [entry.id, entry.url]));
+  for (const entry of sources.flatMap((source) => source.links)) {
+    if (linked.has(entry.id) || linked.has(entry.url)) continue;
+    linked.add(entry.id).add(entry.url);
+    links.push(entry);
+  }
+  const manualResources = [...destination.manualResources];
+  const registered = new Set(
+    manualResources.flatMap((entry) => (entry.url === null ? [entry.id] : [entry.id, entry.url])),
+  );
+  for (const entry of sources.flatMap((source) => source.manualResources)) {
+    if (registered.has(entry.id) || (entry.url !== null && registered.has(entry.url))) continue;
+    registered.add(entry.id);
+    if (entry.url !== null) registered.add(entry.url);
+    manualResources.push(entry);
+  }
+  const patch: ThreadGroupUpdatePayload = {
+    ...(goal === destination.goal ? {} : { goal }),
+    ...(links.length === destination.links.length ? {} : { links }),
+    ...(manualResources.length === destination.manualResources.length ? {} : { manualResources }),
+  };
+  return Object.keys(patch).length === 0 ? null : patch;
+}
 
 export const layer = Layer.effect(ThreadGroupService, make);
 
@@ -1032,6 +1385,7 @@ export function clientCommandChangesGroupMembership(command: OrchestrationV2Comm
     case "thread.metadata.update":
       return (
         command.groupId !== undefined ||
+        command.groupOrderKey !== undefined ||
         command.handedOffFrom !== undefined ||
         command.handedOffTo !== undefined
       );

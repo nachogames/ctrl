@@ -416,6 +416,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Fractional-index slot in the user-arranged active order. */
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Fractional-index slot among the chats of the thread's group. */
+  groupOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Chat group the thread works in; absent on threads persisted before groups. */
   groupId: Schema.optional(Schema.NullOr(ThreadGroupId)),
   /** Thread this one was handed off from. */
@@ -1762,6 +1764,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.unpinned",
       "thread.pin-reordered",
       "thread.active-reordered",
+      "thread.group-reordered",
       "thread.visited",
       "thread.marked-unread",
       "thread.metadata-updated",
@@ -2009,6 +2012,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Slot in the user-arranged active order; omitted by pre-reorder servers. */
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Slot among the chats of the thread's group; omitted by older servers. */
+  groupOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Chat group the thread works in; omitted by servers that predate groups. */
   groupId: Schema.optional(Schema.NullOr(ThreadGroupId)),
   handedOffFrom: Schema.optional(Schema.NullOr(ThreadId)),
@@ -2598,6 +2603,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.unpinned",
       "thread.pin-reordered",
       "thread.active-reordered",
+      "thread.group-reordered",
       "thread.visited",
       "thread.marked-unread",
       "thread.pull-request-synced",
@@ -2839,6 +2845,12 @@ export const OrchestrationV2Command = Schema.Union([
     orderKey: TrimmedNonEmptyString,
   }),
   Schema.Struct({
+    type: Schema.Literal("thread.group.reorder"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    orderKey: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread.visit"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -2871,6 +2883,8 @@ export const OrchestrationV2Command = Schema.Union([
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
     /** Server-only group membership and handoff links; absent leaves them unchanged. */
     groupId: Schema.optional(Schema.NullOr(ThreadGroupId)),
+    /** Slot in the new group; a groupId change without one clears the slot. */
+    groupOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     handedOffFrom: Schema.optional(Schema.NullOr(ThreadId)),
     handedOffTo: Schema.optional(Schema.NullOr(ThreadId)),
   }),

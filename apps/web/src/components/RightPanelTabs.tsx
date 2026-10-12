@@ -153,9 +153,9 @@ interface RightPanelTabsProps {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
-  /** True when the routed chat is in a known group. */
+  /** True when the routed chat can show the Group panel: any project chat. */
   groupAvailable?: boolean;
-  /** The routed chat's group title, used as the Group tab's label. */
+  /** The routed chat's visible group title, used as the Group tab's label. */
   groupTitle?: string | null;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
@@ -185,7 +185,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
-  group: "Only chats in a group have a Group panel.",
+  group: "The Group panel is only available from a project chat.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -209,7 +209,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
-  group: "Only chats in a group have a Group panel.",
+  group: "Available from a project chat.",
 } as const;
 
 type TabContextMenuAction =
@@ -616,7 +616,7 @@ function RightPanelEmptyState(props: {
 
 function noop() {}
 
-/** The Group launcher row only exists for chats in a group; other rows show why they are off. */
+/** The Group launcher row only exists where the panel does; other rows show why they are off. */
 function isListedSurfaceAction(action: { label: string; available: boolean }): boolean {
   return action.label !== "Group" || action.available;
 }

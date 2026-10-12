@@ -731,6 +731,7 @@ export function applyToProjection(
     case "thread.unpinned":
     case "thread.pin-reordered":
     case "thread.active-reordered":
+    case "thread.group-reordered":
     case "thread.metadata-updated":
     case "thread.pull-request-synced":
     case "thread.runtime-mode-updated":
@@ -1480,6 +1481,9 @@ export function threadShellFromProjection(
     ...(projection.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: projection.thread.activeOrderKey }),
+    ...(projection.thread.groupOrderKey === undefined
+      ? {}
+      : { groupOrderKey: projection.thread.groupOrderKey }),
     ...(projection.thread.groupId === undefined ? {} : { groupId: projection.thread.groupId }),
     ...(projection.thread.handedOffFrom === undefined
       ? {}
@@ -1755,6 +1759,9 @@ function shellFromState(input: {
     ...(input.state.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: input.state.thread.activeOrderKey }),
+    ...(input.state.thread.groupOrderKey === undefined
+      ? {}
+      : { groupOrderKey: input.state.thread.groupOrderKey }),
     ...(input.state.thread.groupId === undefined ? {} : { groupId: input.state.thread.groupId }),
     ...(input.state.thread.handedOffFrom === undefined
       ? {}
@@ -1850,6 +1857,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "thread.unpinned":
           case "thread.pin-reordered":
           case "thread.active-reordered":
+          case "thread.group-reordered":
           case "thread.visited":
           case "thread.marked-unread":
           case "thread.metadata-updated":
@@ -2681,6 +2689,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           event.type !== "thread.pinned" &&
           event.type !== "thread.unpinned" &&
           event.type !== "thread.pin-reordered" &&
+          event.type !== "thread.group-reordered" &&
           event.type !== "thread.visited" &&
           event.type !== "thread.marked-unread" &&
           event.type !== "thread.metadata-updated" &&

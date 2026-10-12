@@ -273,7 +273,7 @@ describe("buildThreadActionMenuItems", () => {
       ...baseState,
       group: { isPinned: false, isSnoozed: false },
       moveToGroup: {
-        groups: [{ id: groupId, title: "Auth", activityMs: 1 }],
+        groups: [{ id: groupId, title: "Auth", activityMs: 1, visible: true }],
         currentGroupId: groupId,
       },
     });
@@ -302,7 +302,7 @@ describe("buildThreadActionMenuItems", () => {
       ...baseState,
       group: { isPinned: false, isSnoozed: false },
       moveToGroup: {
-        groups: [{ id: groupId, title: "Auth", activityMs: 1 }],
+        groups: [{ id: groupId, title: "Auth", activityMs: 1, visible: true }],
         currentGroupId: groupId,
       },
     };

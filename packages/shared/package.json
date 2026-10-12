@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./groupOrder": {
+      "types": "./src/groupOrder.ts",
+      "import": "./src/groupOrder.ts"
+    },
+    "./orderKeys": {
+      "types": "./src/orderKeys.ts",
+      "import": "./src/orderKeys.ts"
+    },
     "./appHome": {
       "types": "./src/appHome.ts",
       "import": "./src/appHome.ts"

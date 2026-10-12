@@ -269,16 +269,16 @@ it.effect("reads what is running for the group from the scanner", () =>
         port: 5173,
       },
     ];
-    const scanned: Array<ThreadGroupId> = [];
+    const scanned: Array<GroupResourceScanner.GroupResourceTarget> = [];
     const { handle } = yield* makeHarness({
       callerGroupId: groupId,
-      scan: (id) => {
-        scanned.push(id);
+      scan: (target) => {
+        scanned.push(target);
         return Effect.succeed(running);
       },
     });
     expect(yield* handle("t3_group_read", {})).toMatchObject({ running: { resources: running } });
-    expect(scanned).toEqual([groupId]);
+    expect(scanned).toEqual([{ groupId }]);
   }),
 );
 
@@ -314,10 +314,61 @@ it.effect("falls back to the registered resources when the scan fails", () =>
   }),
 );
 
-it.effect("asks for a group when the caller has none", () =>
+it.effect("reads a chat outside any group as a group of one", () =>
   Effect.gen(function* () {
     const { handle } = yield* makeHarness({ callerGroupId: null });
-    expect(yield* handle("t3_group_read", {})).toMatchObject({ code: "target_required" });
+    expect(yield* handle("t3_group_read", {})).toEqual({ group: null, threadIds: [callerId] });
+  }),
+);
+
+it.effect("setting a goal on a chat outside any group creates its group", () =>
+  Effect.gen(function* () {
+    const { handle, recorded } = yield* makeHarness({ callerGroupId: null });
+    const result = yield* handle("t3_group_update", { goal: "Ship the auth refactor" });
+    expect(recorded.created).toMatchObject([
+      { projectId, threadIds: [callerId], goal: "Ship the auth refactor" },
+    ]);
+    expect(recorded.created[0]?.title).toBeUndefined();
+    expect(recorded.created[0]?.groupId).toMatch(/^group:/);
+    // The goal is set by the create itself.
+    expect(recorded.updates).toEqual([]);
+    expect(result).toMatchObject({ group: { id: recorded.created[0]?.groupId } });
+  }),
+);
+
+it.effect("linking a ticket from a chat outside any group creates its group first", () =>
+  Effect.gen(function* () {
+    const { handle, recorded } = yield* makeHarness({ callerGroupId: null });
+    const result = yield* handle("t3_group_update", {
+      links: { add: [{ url: "https://github.com/t3tools/t3code/issues/88" }] },
+      pinned: true,
+    });
+    expect(recorded.created).toMatchObject([{ threadIds: [callerId] }]);
+    expect(recorded.created[0]?.goal).toBeUndefined();
+    expect(recorded.updates).toMatchObject([
+      { groupId: recorded.created[0]?.groupId, patch: { pinnedAt: expect.any(String) } },
+    ]);
+    expect(result).toMatchObject({ group: { title: "Auth refactor" } });
+    expect(
+      yield* handle("t3_group_update", { links: { add: [{ url: "not a url" }] } }),
+    ).toMatchObject({ code: "invalid_request" });
+    expect(recorded.created).toHaveLength(1);
+  }),
+);
+
+it.effect("pinning or settling a chat outside any group still asks for a group", () =>
+  Effect.gen(function* () {
+    const { handle, recorded } = yield* makeHarness({ callerGroupId: null });
+    expect(yield* handle("t3_group_update", { settled: true })).toMatchObject({
+      code: "target_required",
+    });
+    expect(yield* handle("t3_group_update", { pinned: true, title: "Auth" })).toMatchObject({
+      code: "target_required",
+    });
+    expect(yield* handle("t3_group_update", { goal: null })).toMatchObject({
+      code: "target_required",
+    });
+    expect(recorded.created).toEqual([]);
   }),
 );
 

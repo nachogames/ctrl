@@ -10,8 +10,11 @@
  * rest only run in the worktree and are "found".
  * Scanner failures degrade to fewer results, never an error.
  *
- * `changes` streams a group's resources while someone watches it. Every
- * watcher of one group shares a single scan loop, so open panels never
+ * A chat outside any group is scanned as a group of one: its own terminals and
+ * its own worktree, with nothing registered.
+ *
+ * `changes` streams a target's resources while someone watches it. Every
+ * watcher of one target shares a single scan loop, so open panels never
  * multiply `lsof` or `docker` runs.
  */
 import type {
@@ -21,6 +24,7 @@ import type {
   TerminalSummary,
   ThreadGroupId,
   ThreadGroupManualResource,
+  ThreadGroupResourcesTarget,
   ThreadGroupRunningResource,
   ThreadId,
 } from "@t3tools/contracts";
@@ -49,6 +53,9 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as DockerScanner from "./DockerScanner.ts";
 import * as ProcessCwd from "./processCwd.ts";
+
+/** A group, or one chat outside any group. */
+export type GroupResourceTarget = ThreadGroupResourcesTarget;
 
 /** What a scan matches against: the group's chats and its resolved worktree. */
 export interface GroupAttributionScope {
@@ -284,7 +291,7 @@ const resourcesEqual = (
 };
 
 /**
- * One scan loop per watched group, shared by all of its watchers and stopped
+ * One scan loop per watched target, shared by all of its watchers and stopped
  * when the last one leaves. The loop scans, then waits for `interval` or a
  * wake from `watch`, whichever comes first. A watcher sees the current list,
  * then each changed list. A scan that returns null or dies keeps the previous list,
@@ -293,24 +300,25 @@ const resourcesEqual = (
 export const makeResourceFeed = Effect.fn("GroupResourceScanner.makeResourceFeed")(
   function* (options: {
     readonly scan: (
-      groupId: ThreadGroupId,
+      target: GroupResourceTarget,
     ) => Effect.Effect<ReadonlyArray<ThreadGroupRunningResource> | null>;
-    /** Held while a group is watched; runs `wake` to rescan before the next tick. */
+    /** Held while a target is watched; runs `wake` to rescan before the next tick. */
     readonly watch: (wake: Effect.Effect<void>) => Effect.Effect<void, never, Scope.Scope>;
     readonly interval: Duration.Input;
   }) {
+    // Targets are plain objects, which RcMap matches structurally.
     const feeds = yield* RcMap.make({
-      lookup: (groupId: ThreadGroupId) =>
+      lookup: (target: GroupResourceTarget) =>
         Effect.gen(function* () {
           const latest =
             yield* SubscriptionRef.make<ReadonlyArray<ThreadGroupRunningResource> | null>(null);
           const wake = yield* Queue.sliding<void>(1);
           const rescan = Effect.gen(function* () {
             // A defect must not end the loop every watcher of this group shares.
-            const next = yield* options.scan(groupId).pipe(
+            const next = yield* options.scan(target).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("group resource scan died; keeping the last list", {
-                  groupId,
+                  target,
                   cause: Cause.pretty(cause),
                 }).pipe(Effect.as(null)),
               ),
@@ -329,9 +337,9 @@ export const makeResourceFeed = Effect.fn("GroupResourceScanner.makeResourceFeed
           return latest;
         }),
     });
-    const changes = (groupId: ThreadGroupId) =>
+    const changes = (target: GroupResourceTarget) =>
       Stream.unwrap(
-        RcMap.get(feeds, groupId).pipe(
+        RcMap.get(feeds, target).pipe(
           Effect.map((latest) =>
             SubscriptionRef.changes(latest).pipe(
               Stream.filter(
@@ -348,22 +356,23 @@ export const makeResourceFeed = Effect.fn("GroupResourceScanner.makeResourceFeed
 
 export type GroupResourceScanError =
   | ThreadGroupService.ThreadGroupNotFoundError
+  | ThreadGroupService.ThreadGroupThreadNotFoundError
   | ThreadGroupService.ThreadGroupOperationError;
 
 export class GroupResourceScanner extends Context.Service<
   GroupResourceScanner,
   {
-    /** The group's running resources right now. */
+    /** The target's running resources right now. */
     readonly scan: (
-      groupId: ThreadGroupId,
+      target: GroupResourceTarget,
     ) => Effect.Effect<ReadonlyArray<ThreadGroupRunningResource>, GroupResourceScanError>;
     /**
-     * The group's resources now, then each time they change, rescanning every
+     * The target's resources now, then each time they change, rescanning every
      * few seconds and whenever the preview scanner sees new servers. A deleted
-     * group streams an empty list; a failed scan keeps the last list.
+     * group or chat streams an empty list; a failed scan keeps the last list.
      */
     readonly changes: (
-      groupId: ThreadGroupId,
+      target: GroupResourceTarget,
     ) => Stream.Stream<ReadonlyArray<ThreadGroupRunningResource>>;
   }
 >()("t3/threadGroups/GroupResourceScanner") {}
@@ -441,7 +450,49 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  const scan = Effect.fn("GroupResourceScanner.scan")(function* (groupId: ThreadGroupId) {
+  const resolveWorktree = (worktreePath: string | null) =>
+    worktreePath === null
+      ? Effect.succeed(null)
+      : ProcessCwd.resolveRealPath(fileSystem, worktreePath);
+
+  const scanScope = Effect.fn("GroupResourceScanner.scanScope")(function* (
+    projectId: ProjectId,
+    scope: GroupAttributionScope,
+    manual: ReadonlyArray<ThreadGroupManualResource>,
+  ) {
+    const [servers, containers] = yield* Effect.all(
+      [scanServers(scope), scanContainers(scope.worktreeRoot)],
+      { concurrency: "unbounded" },
+    );
+    const named = yield* describeTerminals(projectId, servers);
+    return mergeGroupResources({ servers, containers, manual, ...named });
+  });
+
+  const scanThread = Effect.fn("GroupResourceScanner.scanThread")(function* (threadId: ThreadId) {
+    const thread = yield* threads.getThreadShell(threadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThreadGroupService.ThreadGroupOperationError({
+            operation: "read-threads",
+            threadId,
+            cause,
+          }),
+      ),
+    );
+    if (thread === null || thread.deletedAt != null) {
+      return yield* new ThreadGroupService.ThreadGroupThreadNotFoundError({ threadId });
+    }
+    return yield* scanScope(
+      thread.projectId,
+      {
+        memberThreadIds: new Set([threadId]),
+        worktreeRoot: yield* resolveWorktree(thread.worktreePath),
+      },
+      [],
+    );
+  });
+
+  const scanGroup = Effect.fn("GroupResourceScanner.scanGroup")(function* (groupId: ThreadGroupId) {
     const shell = yield* groups.getShell(groupId).pipe(
       Effect.mapError(
         (cause) =>
@@ -473,28 +524,27 @@ export const make = Effect.gen(function* () {
       memberThreadIds: new Set(
         projectThreads.flatMap((thread) => (thread.groupId === groupId ? [thread.id] : [])),
       ),
-      worktreeRoot:
-        group.worktreePath === null
-          ? null
-          : yield* ProcessCwd.resolveRealPath(fileSystem, group.worktreePath),
+      worktreeRoot: yield* resolveWorktree(group.worktreePath),
     };
-    const [servers, containers] = yield* Effect.all(
-      [scanServers(scope), scanContainers(scope.worktreeRoot)],
-      { concurrency: "unbounded" },
-    );
-    const named = yield* describeTerminals(group.projectId, servers);
-    return mergeGroupResources({ servers, containers, manual: group.manualResources, ...named });
+    return yield* scanScope(group.projectId, scope, group.manualResources);
+  });
+
+  const scan = Effect.fn("GroupResourceScanner.scan")(function* (target: GroupResourceTarget) {
+    return "groupId" in target
+      ? yield* scanGroup(target.groupId)
+      : yield* scanThread(target.threadId);
   });
 
   const feed = yield* makeResourceFeed({
-    scan: (groupId) =>
-      scan(groupId).pipe(
+    scan: (target) =>
+      scan(target).pipe(
         Effect.catchTags({
           ThreadGroupNotFoundError: () => Effect.succeed([]),
+          ThreadGroupThreadNotFoundError: () => Effect.succeed([]),
           ThreadGroupOperationError: (error) =>
             Effect.logDebug("group resource scan failed; keeping the last list", {
               cause: error,
-              groupId,
+              target,
             }).pipe(Effect.as(null)),
         }),
       ),
