@@ -1,0 +1,15 @@
+diff --git a/build/ExpoConfigLoader.js b/build/ExpoConfigLoader.js
+index 5145383f91383b4e0f29896136ec609836b89269..df5598f4efb3b136d49661f39ec77ecb92505d38 100644
+--- a/build/ExpoConfigLoader.js
++++ b/build/ExpoConfigLoader.js
+@@ -163,7 +163,9 @@ function installModuleCaptureHook() {
+             filename,
+             content
+         });
+-        return originalCompile.call(this, content, filename);
++        // Forward every argument: Node passes the module format third, and
++        // dropping it makes .ts configs compile as plain JS and fail to load.
++        return originalCompile.apply(this, arguments);
+     };
+     return {
+         getCapturedModules: ()=>capturedModules,
