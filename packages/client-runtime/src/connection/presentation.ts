@@ -1,4 +1,4 @@
-import type { ServerConfig } from "@t3tools/contracts";
+import type { HostBattery, ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
@@ -24,6 +24,20 @@ export interface EnvironmentPresentation {
   readonly entry: ConnectionCatalogEntry;
   readonly connection: EnvironmentConnectionPresentation;
   readonly serverConfig: ServerConfig | null;
+}
+
+/**
+ * The machine's battery while it is connected. A disconnected machine shows
+ * none rather than a cached level that may be long out of date.
+ */
+export function connectedHostBattery(
+  input: {
+    readonly connectionPhase: EnvironmentConnectionPhase;
+    readonly serverConfig: Pick<ServerConfig, "hostBattery"> | null | undefined;
+  } | null,
+): HostBattery | null {
+  if (input === null || input.connectionPhase !== "connected") return null;
+  return input.serverConfig?.hostBattery ?? null;
 }
 
 export function presentConnectionState(

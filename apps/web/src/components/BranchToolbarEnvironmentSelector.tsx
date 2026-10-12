@@ -6,6 +6,7 @@ import { ScaleIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
+import { batteryLabel, EnvironmentBattery } from "./EnvironmentBattery";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
@@ -39,6 +40,9 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     return availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
   }, [availableEnvironments, environmentId]);
 
+  const activeBattery = activeEnvironment?.battery ?? null;
+  const activeBatteryNote = activeBattery === null ? "" : ` · ${batteryLabel(activeBattery)}`;
+
   const environmentItems = useMemo(
     () => [
       ...(onAutoEnvironment
@@ -68,12 +72,16 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           className="size-3 shrink-0"
         />
         <ComposerContextLabel>{activeEnvironment?.label ?? "Run on"}</ComposerContextLabel>
+        <EnvironmentBattery battery={activeBattery} tooltip={false} />
       </span>
     );
     return (
       <Tooltip>
         <TooltipTrigger render={lockedRow} />
-        <TooltipPopup>{activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>
+          {activeEnvironment?.label ?? "Run on"}
+          {activeBatteryNote}
+        </TooltipPopup>
       </Tooltip>
     );
   }
@@ -110,8 +118,13 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           <ComposerContextLabel>
             <SelectValue />
           </ComposerContextLabel>
+          {autoEnvironmentLabel ? null : (
+            <EnvironmentBattery battery={activeBattery} tooltip={false} />
+          )}
         </TooltipTrigger>
-        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>
+          {autoEnvironmentLabel ?? `${activeEnvironment?.label ?? "Run on"}${activeBatteryNote}`}
+        </TooltipPopup>
       </Tooltip>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
@@ -139,6 +152,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
                 <span className="inline-flex items-center gap-1.5">
                   <EnvironmentMachineIcon kind={env.machine} className="size-3" />
                   {env.label}
+                  <EnvironmentBattery battery={env.battery} className="ml-1" />
                 </span>
                 {env.disabledReason !== undefined && (
                   <span className="text-muted-foreground text-xs">{env.disabledReason}</span>

@@ -62,6 +62,7 @@ import * as Option from "effect/Option";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
+import { EnvironmentBattery } from "../EnvironmentBattery";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
@@ -1622,6 +1623,14 @@ function SavedBackendListRow({
       dimmed={!enabled}
       subtitle={
         <span className="flex min-w-0 items-center gap-1">
+          {enabled && isConnected && environment.serverConfig?.hostBattery ? (
+            <>
+              <EnvironmentBattery battery={environment.serverConfig.hostBattery} />
+              <span aria-hidden className="shrink-0">
+                ·
+              </span>
+            </>
+          ) : null}
           <Tooltip>
             {/* The status can change while the tooltip is open, and base-ui only
                 re-measures the popup when the trigger's payload changes. */}

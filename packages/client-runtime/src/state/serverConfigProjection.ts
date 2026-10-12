@@ -95,5 +95,11 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    case "hostBatteryUpdated":
+      return Option.map(current, (projection) => ({
+        config: { ...projection.config, hostBattery: event.payload.battery ?? undefined },
+        latestEvent: event,
+        source: "live",
+      }));
   }
 }

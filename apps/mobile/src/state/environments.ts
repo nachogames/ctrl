@@ -1,11 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  connectedHostBattery,
   connectionCatalogDisplayUrl,
   hasRelayRoute,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { environmentDisplayLabel } from "@t3tools/client-runtime/state/presentation";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, HostBattery } from "@t3tools/contracts";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
@@ -55,4 +56,15 @@ export function useEnvironments() {
 
 export function useEnvironmentConnectionState(environmentId: EnvironmentId) {
   return useEnvironmentQuery(environmentCatalog.stateAtom(environmentId));
+}
+
+/** The machine's battery while it is connected; null without one. */
+export function useHostBattery(environmentId: EnvironmentId | null): HostBattery | null {
+  const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentation = environmentId === null ? undefined : presentationById.get(environmentId);
+  return connectedHostBattery(
+    presentation === undefined
+      ? null
+      : { connectionPhase: presentation.connection.phase, serverConfig: presentation.serverConfig },
+  );
 }

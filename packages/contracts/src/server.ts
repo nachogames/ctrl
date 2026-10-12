@@ -690,6 +690,12 @@ export const ServerDirectEndpoint = Schema.Struct({
 });
 export type ServerDirectEndpoint = typeof ServerDirectEndpoint.Type;
 
+export const HostBattery = Schema.Struct({
+  percent: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  pluggedIn: Schema.Boolean,
+});
+export type HostBattery = typeof HostBattery.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -766,6 +772,12 @@ export const ServerConfig = Schema.Struct({
    * stays absent for subscribers that did not opt in.
    */
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
+  /**
+   * The machine's battery, so other devices can see it. Absent on machines
+   * without one and on older servers. Subscribers that opt in with
+   * `hostBattery` get `hostBatteryUpdated` events as it changes.
+   */
+  hostBattery: Schema.optional(HostBattery),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
@@ -910,6 +922,15 @@ export const ServerConfigStreamUsageLimitSourcesUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamUsageLimitSourcesUpdatedEvent =
   typeof ServerConfigStreamUsageLimitSourcesUpdatedEvent.Type;
 
+export const ServerConfigStreamHostBatteryUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("hostBatteryUpdated"),
+  /** Null once the machine stops reporting a battery. */
+  payload: Schema.Struct({ battery: Schema.NullOr(HostBattery) }),
+});
+export type ServerConfigStreamHostBatteryUpdatedEvent =
+  typeof ServerConfigStreamHostBatteryUpdatedEvent.Type;
+
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
@@ -917,6 +938,7 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSettingsUpdatedEvent,
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
+  ServerConfigStreamHostBatteryUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 

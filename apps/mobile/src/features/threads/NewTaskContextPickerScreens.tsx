@@ -3,7 +3,11 @@ import { MaterialListRow } from "../../components/MaterialListRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
-import { AuthSourceControlWriteScope, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  AuthSourceControlWriteScope,
+  type EnvironmentId,
+  resolveEnvironmentMachineKind,
+} from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
@@ -24,6 +28,8 @@ import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useServerConfigs } from "../../state/entities";
+import { useHostBattery } from "../../state/environments";
+import { EnvironmentBattery } from "../connection/EnvironmentBattery";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
@@ -43,6 +49,8 @@ function SelectionRow(props: {
   readonly isLast?: boolean;
   readonly subtitle?: string;
   readonly title: string;
+  /** Shown before the checkmark. */
+  readonly accessory?: ReactNode;
 }) {
   if (Platform.OS === "android") {
     return (
@@ -62,8 +70,13 @@ function SelectionRow(props: {
           )
         }
         trailing={
-          props.selected ? (
-            <SymbolView name="checkmark" size={20} tintColorClassName="accent-focus" />
+          props.accessory || props.selected ? (
+            <View className="flex-row items-center gap-3">
+              {props.accessory}
+              {props.selected ? (
+                <SymbolView name="checkmark" size={20} tintColorClassName="accent-focus" />
+              ) : null}
+            </View>
           ) : null
         }
         accessibilityRole="radio"
@@ -106,6 +119,7 @@ function SelectionRow(props: {
           </Text>
         ) : null}
       </View>
+      {props.accessory}
       {props.selected ? (
         <SymbolView
           name="checkmark"
@@ -181,6 +195,11 @@ function BranchSelectionRow(props: {
   );
 }
 
+function EnvironmentPickerBattery(props: { readonly environmentId: EnvironmentId }) {
+  const battery = useHostBattery(props.environmentId);
+  return battery === null ? null : <EnvironmentBattery battery={battery} percentShown />;
+}
+
 function PickerSurface(props: { readonly children: ReactNode }) {
   return (
     <View
@@ -251,6 +270,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                 }}
                 selected={flow.selectedEnvironmentId === environment.environmentId}
                 title={environment.environmentLabel}
+                accessory={<EnvironmentPickerBattery environmentId={environment.environmentId} />}
                 {...(environment.unavailableReason === undefined
                   ? {}
                   : { subtitle: environment.unavailableReason })}

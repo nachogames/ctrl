@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   EnvironmentMachineKind,
+  HostBattery,
   VcsRef,
   ProjectId,
   WorktreeSubmodules,
@@ -21,6 +22,8 @@ export interface EnvironmentOption {
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
+  /** Null when the machine has no battery or is not connected. */
+  battery?: HostBattery | null;
   /** Set when the machine is listed but cannot be picked, saying why. */
   disabledReason?: string;
 }

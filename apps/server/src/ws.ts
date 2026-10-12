@@ -115,6 +115,7 @@ import { RpcSerialization, RpcServer } from "effect/rpc";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
+import * as HostBattery from "./environment/HostBattery.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
@@ -1281,6 +1282,7 @@ const layerWsRpc = (
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
+      const hostBattery = yield* HostBattery.HostBatteryService;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
@@ -1716,6 +1718,7 @@ const layerWsRpc = (
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
+          const battery = yield* hostBattery.current;
           const scratchUnavailable = yield* managedFolders.scratchUnavailable;
           const editorConfig = yield* resolveEditorConfig(
             yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
@@ -1766,6 +1769,7 @@ const layerWsRpc = (
               onSome: (unavailable) => ({ scratchUnavailable: unavailable }),
             }),
             newProjectsRoot: managedFolders.namedProjectsRoot,
+            ...(battery === null ? {} : { hostBattery: battery }),
           };
         });
 
@@ -3135,6 +3139,27 @@ const layerWsRpc = (
                       })),
                     )
                   : Stream.empty;
+              // The snapshot already carries the current reading, so only
+              // later changes go out. Gated like themes: older clients die on
+              // an unknown event.
+              const hostBatteryUpdates =
+                input.hostBattery === true
+                  ? hostBattery.streamChanges.pipe(
+                      (updates) =>
+                        Stream.concat(rpcInitialItems([config.hostBattery ?? null]), updates),
+                      Stream.changesWith(
+                        (previous, next) =>
+                          previous?.percent === next?.percent &&
+                          previous?.pluggedIn === next?.pluggedIn,
+                      ),
+                      Stream.drop(1),
+                      Stream.map((battery) => ({
+                        version: 1 as const,
+                        type: "hostBatteryUpdated" as const,
+                        payload: { battery },
+                      })),
+                    )
+                  : Stream.empty;
               const settingsUpdates = serverSettings.streamChanges.pipe(
                 Stream.map((settings) => ServerSettings.redactServerSettingsForClient(settings)),
                 Stream.map((settings) => ({
@@ -3150,7 +3175,10 @@ const layerWsRpc = (
                   providerStatuses,
                   Stream.merge(
                     settingsUpdates,
-                    Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
+                    Stream.merge(
+                      Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
+                      hostBatteryUpdates,
+                    ),
                   ),
                 ),
               );
