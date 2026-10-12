@@ -40,7 +40,16 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import { shouldPublishAgentAwarenessEvent } from "../relay/AgentAwarenessRelay.ts";
 import { forkParked } from "../serverActivation.ts";
-import { alertKind, apnsAlertPayload, deviceWantsAlert, fcmAlertData } from "./directPushAlerts.ts";
+import {
+  alertKind,
+  type AlertThread,
+  answeredKind,
+  apnsAlertPayload,
+  apnsClearPayload,
+  deviceWantsAlert,
+  fcmAlertData,
+  fcmClearData,
+} from "./directPushAlerts.ts";
 import {
   type ApnsCredentials,
   FcmServiceAccount,
@@ -58,6 +67,8 @@ export class DirectPush extends Context.Service<
     readonly unregisterDevice: (deviceId: string) => Effect.Effect<void>;
     /** Alerts every registered device about this state; exposed for tests. */
     readonly notify: (state: AgentAwarenessState, kind: DirectPushAlertKind) => Effect.Effect<void>;
+    /** Removes a thread's alerts from phones that got its `kind` alert. */
+    readonly clear: (thread: AlertThread, kind: DirectPushAlertKind) => Effect.Effect<void>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/push/DirectPush") {}
@@ -85,6 +96,13 @@ const encodeStoredDevices = Schema.encodeEffect(StoredDevicesJson);
 interface PushCredentials {
   readonly apns: ApnsCredentials | null;
   readonly fcm: FcmServiceAccount | null;
+}
+
+/** One push, in the shape each platform's service takes. */
+interface DeviceMessage {
+  readonly apnsPayload: unknown;
+  readonly apnsPushType: "alert" | "background";
+  readonly fcmData: (device: StoredDevice, nowMs: number) => Record<string, string>;
 }
 
 function sameRegistration(a: DirectPushDeviceRegistration, b: DirectPushDeviceRegistration) {
@@ -170,7 +188,7 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
 
   const sendToDevice = (
     device: StoredDevice,
-    state: AgentAwarenessState,
+    message: DeviceMessage,
     credentials: PushCredentials,
   ) =>
     Effect.gen(function* () {
@@ -185,7 +203,8 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
           environment: device.apsEnvironment ?? "production",
           deviceToken: device.token,
           topic: device.bundleId,
-          payload: apnsAlertPayload(state),
+          payload: message.apnsPayload,
+          pushType: message.apnsPushType,
           nowMs,
         });
       } else {
@@ -196,12 +215,7 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
           account: credentials.fcm,
           registrationToken: device.token,
           packageName: device.bundleId,
-          data: fcmAlertData({
-            state,
-            deviceId: device.deviceId,
-            userId: device.androidUserId ?? "",
-            nowMs,
-          }),
+          data: message.fcmData(device, nowMs),
           nowMs,
         });
       }
@@ -220,20 +234,46 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
       ),
     );
 
-  const notify = Effect.fn("DirectPush.notify")(function* (
-    state: AgentAwarenessState,
+  const sendToDevices = Effect.fn("DirectPush.sendToDevices")(function* (
     kind: DirectPushAlertKind,
+    message: DeviceMessage,
   ) {
     const targets = [...devices.values()].filter(
       (device) => device.notificationsEnabled && deviceWantsAlert(device.alertOn, kind),
     );
     if (targets.length === 0) return;
     const credentials = yield* readCredentials;
-    yield* Effect.forEach(targets, (device) => sendToDevice(device, state, credentials), {
+    yield* Effect.forEach(targets, (device) => sendToDevice(device, message, credentials), {
       concurrency: "unbounded",
       discard: true,
     });
   });
+
+  const notify = (state: AgentAwarenessState, kind: DirectPushAlertKind) =>
+    sendToDevices(kind, {
+      apnsPayload: apnsAlertPayload(state),
+      apnsPushType: "alert",
+      fcmData: (device, nowMs) =>
+        fcmAlertData({
+          state,
+          deviceId: device.deviceId,
+          userId: device.androidUserId ?? "",
+          nowMs,
+        }),
+    });
+
+  const clear = (thread: AlertThread, kind: DirectPushAlertKind) =>
+    sendToDevices(kind, {
+      apnsPayload: apnsClearPayload(thread),
+      apnsPushType: "background",
+      fcmData: (device, nowMs) =>
+        fcmClearData({
+          thread,
+          deviceId: device.deviceId,
+          userId: device.androidUserId ?? "",
+          nowMs,
+        }),
+    });
 
   const handleThread = Effect.fn("DirectPush.handleThread")(function* (
     threadId: ThreadId,
@@ -246,13 +286,10 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
       shell === null || shell.archivedAt !== null
         ? Option.none()
         : yield* projects.getById(shell.projectId);
+    const environmentId = yield* serverEnvironment.getEnvironmentId;
     const state =
       shell !== null && Option.isSome(project)
-        ? projectThreadAwarenessV2({
-            environmentId: yield* serverEnvironment.getEnvironmentId,
-            project: project.value,
-            thread: shell,
-          })
+        ? projectThreadAwarenessV2({ environmentId, project: project.value, thread: shell })
         : null;
     const previousPhase = phases.get(threadId);
     phases.set(threadId, state?.phase ?? null);
@@ -261,12 +298,22 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
       DateTime.toEpochMillis(shell.latestRunCompletedAt) > startedAt;
     const nowMs = yield* Clock.currentTimeMillis;
     const kind = alertKind({ state, previousPhase, finishedSinceStart, nowMs });
-    if (state !== null && kind !== null) {
-      yield* Effect.logInfo("Sending direct push alert", { threadId, kind });
-      // Sends run in the background so a slow push service cannot delay, and
-      // miss phases of, the events behind this one.
-      yield* notify(state, kind).pipe(Effect.forkIn(sendScope));
+    const answered = answeredKind(previousPhase, state?.phase ?? null);
+    const alert = state !== null && kind !== null ? { state, kind } : null;
+    if (answered === null && alert === null) return;
+    if (answered !== null) {
+      yield* Effect.logInfo("Clearing answered direct push alert", { threadId, kind: answered });
     }
+    if (alert !== null) {
+      yield* Effect.logInfo("Sending direct push alert", { threadId, kind: alert.kind });
+    }
+    // Sends run in the background so a slow push service cannot delay, and
+    // miss phases of, the events behind this one. The clear goes first so it
+    // cannot remove a finished-run alert sent for the same change.
+    yield* Effect.gen(function* () {
+      if (answered !== null) yield* clear({ environmentId, threadId }, answered);
+      if (alert !== null) yield* notify(alert.state, alert.kind);
+    }).pipe(Effect.forkIn(sendScope));
   });
 
   const registerDevice = Effect.fn("DirectPush.registerDevice")(function* (
@@ -311,7 +358,7 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     );
   });
 
-  return DirectPush.of({ registerDevice, unregisterDevice, notify, start });
+  return DirectPush.of({ registerDevice, unregisterDevice, notify, clear, start });
 });
 
 export const layer = Layer.effect(DirectPush, make());

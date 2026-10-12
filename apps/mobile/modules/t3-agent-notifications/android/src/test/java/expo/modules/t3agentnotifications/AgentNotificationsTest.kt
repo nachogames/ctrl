@@ -176,6 +176,22 @@ class AgentNotificationsTest {
   }
 
   @Test
+  fun answeringClearsOnlyThatThreadsAlerts() {
+    AgentNotifications.setThreadOnScreen(null)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", false)
+    AgentNotifications.receive(context, update("first", false) + ("alert_group" to "answered"))
+    AgentNotifications.receive(context, update("second", false) + ("alert_group" to "answered"))
+    AgentNotifications.receive(context, update("other", false) + ("alert_group" to "waiting"))
+    val clear = mapOf("device_id" to "device", "user_id" to "user", "alert_group" to "answered")
+
+    AgentNotifications.clearAlerts(context, clear + ("user_id" to "someone-else"))
+    assertEquals(4, manager.activeNotifications.size)
+
+    AgentNotifications.clearAlerts(context, clear)
+    assertEquals("waiting", manager.activeNotifications.single().notification.group)
+  }
+
+  @Test
   fun groupedAlertDisplaysEveryThreadAndRetriesStaySilent() {
     val titles = (1..5).map { "Thread $it " + "x".repeat(111) }.joinToString(", ")
     val grouped = update("group-completion", false) + mapOf(

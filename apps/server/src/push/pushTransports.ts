@@ -105,8 +105,11 @@ export const sendApns = Effect.fn("DirectPush.sendApns")(function* (input: {
   readonly deviceToken: string;
   readonly topic: string;
   readonly payload: unknown;
+  /** Background pushes wake the app silently; Apple requires priority 5 for them. */
+  readonly pushType?: "alert" | "background";
   readonly nowMs: number;
 }) {
+  const pushType = input.pushType ?? "alert";
   const providerToken = yield* apnsProviderToken(input.credentials, input.nowMs);
   const response = yield* http2Post({
     origin:
@@ -116,9 +119,9 @@ export const sendApns = Effect.fn("DirectPush.sendApns")(function* (input: {
     headers: {
       ":path": `/3/device/${input.deviceToken}`,
       authorization: `bearer ${providerToken}`,
-      "apns-push-type": "alert",
+      "apns-push-type": pushType,
       "apns-topic": input.topic,
-      "apns-priority": "10",
+      "apns-priority": pushType === "alert" ? "10" : "5",
       "content-type": "application/json",
     },
     body: encodeJson(input.payload),
