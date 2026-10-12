@@ -12,6 +12,7 @@ import {
   type DirectPushStatus,
   type OrchestrationV2DomainEvent,
   type ThreadId,
+  type PushRelayMessage,
 } from "@t3tools/contracts";
 import {
   type AgentAwarenessPhase,
@@ -33,6 +34,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -41,21 +43,20 @@ import * as ProjectService from "../project/ProjectService.ts";
 import { shouldPublishAgentAwarenessEvent } from "../relay/AgentAwarenessRelay.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
-  alertKind,
-  type AlertThread,
-  answeredKind,
   apnsAlertPayload,
   apnsClearPayload,
-  deviceWantsAlert,
+  apnsPushType,
   fcmAlertData,
   fcmClearData,
-} from "./directPushAlerts.ts";
+} from "@t3tools/shared/pushPayloads";
+import { alertKind, alertMessage, answeredKind, deviceWantsAlert } from "./directPushAlerts.ts";
 import {
   type ApnsCredentials,
   FcmServiceAccount,
   type PushSendResult,
   sendApns,
   sendFcm,
+  sendRelay,
 } from "./pushTransports.ts";
 
 export class DirectPush extends Context.Service<
@@ -68,7 +69,10 @@ export class DirectPush extends Context.Service<
     /** Alerts every registered device about this state; exposed for tests. */
     readonly notify: (state: AgentAwarenessState, kind: DirectPushAlertKind) => Effect.Effect<void>;
     /** Removes a thread's alerts from phones that got its `kind` alert. */
-    readonly clear: (thread: AlertThread, kind: DirectPushAlertKind) => Effect.Effect<void>;
+    readonly clear: (
+      thread: { readonly environmentId: string; readonly threadId: string },
+      kind: DirectPushAlertKind,
+    ) => Effect.Effect<void>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/push/DirectPush") {}
@@ -98,11 +102,11 @@ interface PushCredentials {
   readonly fcm: FcmServiceAccount | null;
 }
 
-/** One push, in the shape each platform's service takes. */
-interface DeviceMessage {
-  readonly apnsPayload: unknown;
-  readonly apnsPushType: "alert" | "background";
-  readonly fcmData: (device: StoredDevice, nowMs: number) => Record<string, string>;
+/** Whether alerts for this device go through the push relay rather than local keys. */
+function usesRelay(
+  device: Pick<DirectPushDeviceRegistration, "relayUrl" | "relayToken">,
+): device is { readonly relayUrl: string; readonly relayToken: string } {
+  return device.relayUrl !== undefined && device.relayToken !== undefined;
 }
 
 function sameRegistration(a: DirectPushDeviceRegistration, b: DirectPushDeviceRegistration) {
@@ -113,7 +117,9 @@ function sameRegistration(a: DirectPushDeviceRegistration, b: DirectPushDeviceRe
 
 export const make = Effect.fn("DirectPush.make")(function* (options?: {
   readonly pushDir?: string;
+  readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
 }) {
+  const httpClientLayer = options?.httpClientLayer ?? FetchHttpClient.layer;
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -188,13 +194,21 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
 
   const sendToDevice = (
     device: StoredDevice,
-    message: DeviceMessage,
+    message: PushRelayMessage,
     credentials: PushCredentials,
   ) =>
     Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
       let result: PushSendResult;
-      if (device.platform === "ios") {
+      if (usesRelay(device)) {
+        result = yield* sendRelay({
+          relayUrl: device.relayUrl,
+          relayToken: device.relayToken,
+          message,
+        });
+      } else if (device.token === undefined) {
+        return yield* Effect.logWarning("Direct push skipped: device has no push token");
+      } else if (device.platform === "ios") {
         if (credentials.apns === null) {
           return yield* Effect.logWarning("Direct push skipped: APNs is not configured");
         }
@@ -203,32 +217,44 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
           environment: device.apsEnvironment ?? "production",
           deviceToken: device.token,
           topic: device.bundleId,
-          payload: message.apnsPayload,
-          pushType: message.apnsPushType,
+          payload: message.type === "alert" ? apnsAlertPayload(message) : apnsClearPayload(message),
+          pushType: apnsPushType(message),
           nowMs,
         });
       } else {
         if (credentials.fcm === null) {
           return yield* Effect.logWarning("Direct push skipped: FCM is not configured");
         }
+        const identity = { deviceId: device.deviceId, userId: device.androidUserId ?? "", nowMs };
         result = yield* sendFcm({
           account: credentials.fcm,
           registrationToken: device.token,
           packageName: device.bundleId,
-          data: message.fcmData(device, nowMs),
+          data:
+            message.type === "alert"
+              ? fcmAlertData({ alert: message, ...identity })
+              : fcmClearData({ clear: message, ...identity }),
           nowMs,
         });
       }
       // The phone may have re-registered with a new token while this send was in flight.
-      if (result === "unregistered" && devices.get(device.deviceId)?.token === device.token) {
+      const current = devices.get(device.deviceId);
+      if (
+        result === "unregistered" &&
+        current?.token === device.token &&
+        current?.relayToken === device.relayToken
+      ) {
         devices.delete(device.deviceId);
         yield* saveDevices;
-        yield* Effect.logInfo("Removed direct push device the push service no longer accepts", {
-          label: device.label,
-        });
+        yield* Effect.logInfo(
+          "Removed direct push device the push service or relay no longer accepts",
+          {
+            label: device.label,
+          },
+        );
       }
     }).pipe(
-      Effect.provide(FetchHttpClient.layer),
+      Effect.provide(httpClientLayer),
       Effect.catchCause((cause) =>
         Effect.logWarning("Direct push delivery failed", { label: device.label, cause }),
       ),
@@ -236,13 +262,16 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
 
   const sendToDevices = Effect.fn("DirectPush.sendToDevices")(function* (
     kind: DirectPushAlertKind,
-    message: DeviceMessage,
+    message: PushRelayMessage,
   ) {
     const targets = [...devices.values()].filter(
       (device) => device.notificationsEnabled && deviceWantsAlert(device.alertOn, kind),
     );
     if (targets.length === 0) return;
-    const credentials = yield* readCredentials;
+    // Relay devices need no local keys, so only read them for direct devices.
+    const credentials = targets.some((device) => !usesRelay(device))
+      ? yield* readCredentials
+      : ({ apns: null, fcm: null } satisfies PushCredentials);
     yield* Effect.forEach(targets, (device) => sendToDevice(device, message, credentials), {
       concurrency: "unbounded",
       discard: true,
@@ -250,29 +279,16 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
   });
 
   const notify = (state: AgentAwarenessState, kind: DirectPushAlertKind) =>
-    sendToDevices(kind, {
-      apnsPayload: apnsAlertPayload(state),
-      apnsPushType: "alert",
-      fcmData: (device, nowMs) =>
-        fcmAlertData({
-          state,
-          deviceId: device.deviceId,
-          userId: device.androidUserId ?? "",
-          nowMs,
-        }),
-    });
+    sendToDevices(kind, alertMessage(state, kind));
 
-  const clear = (thread: AlertThread, kind: DirectPushAlertKind) =>
+  const clear = (
+    thread: { readonly environmentId: string; readonly threadId: string },
+    kind: DirectPushAlertKind,
+  ) =>
     sendToDevices(kind, {
-      apnsPayload: apnsClearPayload(thread),
-      apnsPushType: "background",
-      fcmData: (device, nowMs) =>
-        fcmClearData({
-          thread,
-          deviceId: device.deviceId,
-          userId: device.androidUserId ?? "",
-          nowMs,
-        }),
+      type: "clear",
+      environmentId: thread.environmentId,
+      threadId: thread.threadId,
     });
 
   const handleThread = Effect.fn("DirectPush.handleThread")(function* (
@@ -332,8 +348,9 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
         notificationsEnabled: registration.notificationsEnabled,
       });
     }
+    const relay = usesRelay(registration);
     const credentials = yield* readCredentials;
-    return { ios: credentials.apns !== null, android: credentials.fcm !== null };
+    return { ios: relay || credentials.apns !== null, android: relay || credentials.fcm !== null };
   });
 
   const unregisterDevice = Effect.fn("DirectPush.unregisterDevice")(function* (deviceId: string) {

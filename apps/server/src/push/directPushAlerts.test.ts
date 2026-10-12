@@ -3,15 +3,7 @@ import type { AgentAwarenessState } from "@t3tools/shared/agentAwareness";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
-import {
-  alertKind,
-  answeredKind,
-  apnsAlertPayload,
-  apnsClearPayload,
-  deviceWantsAlert,
-  fcmAlertData,
-  fcmClearData,
-} from "./directPushAlerts.ts";
+import { alertKind, alertMessage, answeredKind, deviceWantsAlert } from "./directPushAlerts.ts";
 
 const NOW = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-10T12:00:00.000Z"));
 const isoAt = (epochMillis: number) => DateTime.formatIso(DateTime.makeUnsafe(epochMillis));
@@ -97,46 +89,16 @@ describe("deviceWantsAlert", () => {
   });
 });
 
-describe("payloads", () => {
-  it("carries the thread route the app opens on tap", () => {
-    const apns = apnsAlertPayload(state("waiting_for_input"));
-    expect(apns.aps.alert).toEqual({ title: "Fix the build", body: "Input: Ctrl" });
-    expect(apns.deepLink).toBe("/threads/env-1/thread-1");
-
-    const fcm = fcmAlertData({
-      state: state("waiting_for_approval"),
-      deviceId: "d",
-      userId: "u",
-      nowMs: NOW,
-    });
-    expect(fcm).toMatchObject({
-      t3_kind: "agent_activity",
-      device_id: "d",
-      user_id: "u",
-      updated_at: String(NOW),
-      alert_body: "Approval: Ctrl",
-      alert_path: "/threads/env-1/thread-1",
-    });
-  });
-
-  it("clears by the same thread grouping the alerts use", () => {
-    const thread = { environmentId: "env-1", threadId: "thread-1" };
-    expect(apnsClearPayload(thread)).toEqual({
-      aps: { "content-available": 1 },
-      t3_clear_thread: apnsAlertPayload(state("waiting_for_input")).aps["thread-id"],
-    });
-    const alert = fcmAlertData({
-      state: state("waiting_for_input"),
-      deviceId: "d",
-      userId: "u",
-      nowMs: NOW,
-    });
-    expect(fcmClearData({ thread, deviceId: "d", userId: "u", nowMs: NOW })).toEqual({
-      t3_kind: "agent_alert_clear",
-      updated_at: String(NOW),
-      device_id: "d",
-      user_id: "u",
-      alert_group: alert.alert_group,
+describe("alertMessage", () => {
+  it("carries only the fixed alert fields", () => {
+    expect(alertMessage(state("waiting_for_input"), "input")).toEqual({
+      type: "alert",
+      kind: "input",
+      environmentId: "env-1",
+      threadId: "thread-1",
+      threadTitle: "Fix the build",
+      projectTitle: "Ctrl",
+      updatedAt: isoAt(NOW - 5_000),
     });
   });
 });

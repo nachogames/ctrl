@@ -1,5 +1,6 @@
 import * as NodeHttp2 from "node:http2";
 
+import { type PushRelayMessage, PushRelaySendRequest } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -29,7 +30,7 @@ export type FcmServiceAccount = typeof FcmServiceAccount.Type;
 export type PushSendResult = "sent" | "unregistered";
 
 export class PushSendError extends Schema.TaggedError<PushSendError>()("PushSendError", {
-  service: Schema.Literals(["apns", "fcm"]),
+  service: Schema.Literals(["apns", "fcm", "relay"]),
   status: Schema.NullOr(Schema.Number),
   reason: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect()),
@@ -230,4 +231,28 @@ export const sendFcm = Effect.fn("DirectPush.sendFcm")(function* (input: {
     return "unregistered" as PushSendResult;
   }
   return yield* new PushSendError({ service: "fcm", status: response.status });
+});
+
+const encodeRelaySend = Schema.encodeSync(Schema.fromJsonString(PushRelaySendRequest));
+
+/** Hands an alert or clear to the push relay, which holds the keys. */
+export const sendRelay = Effect.fn("DirectPush.sendRelay")(function* (input: {
+  readonly relayUrl: string;
+  readonly relayToken: string;
+  readonly message: PushRelayMessage;
+}) {
+  const client = yield* HttpClient.HttpClient;
+  const response = yield* HttpClientRequest.post(new URL("/send", input.relayUrl).toString()).pipe(
+    HttpClientRequest.bodyText(
+      encodeRelaySend({ sendToken: input.relayToken, message: input.message }),
+      "application/json",
+    ),
+    client.execute,
+    Effect.timeout(SEND_TIMEOUT),
+    Effect.mapError((cause) => new PushSendError({ service: "relay", status: null, cause })),
+  );
+  if (response.status === 200) return "sent" as PushSendResult;
+  // 410: the phone's push token is dead. 404: the send token was reset or expired.
+  if (response.status === 410 || response.status === 404) return "unregistered" as PushSendResult;
+  return yield* new PushSendError({ service: "relay", status: response.status });
 });

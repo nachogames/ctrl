@@ -3,21 +3,26 @@ import { request } from "@t3tools/client-runtime/rpc";
 import {
   DEFAULT_DIRECT_PUSH_ALERT_KINDS,
   type EnvironmentId,
+  PushRelayTokens,
   WS_METHODS,
 } from "@t3tools/contracts";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AppState, Platform } from "react-native";
 
 import * as MobilePreferences from "../../persistence/mobile-preferences";
+import * as MobileSecureStorage from "../../persistence/mobile-secure-storage";
 import * as MobileStorage from "../../persistence/mobile-storage";
 import { configureAndroidAgentNotifications } from "./androidNotifications";
 import { supportsAgentAwarenessPush } from "./capabilities";
+import { registerWithPushRelay } from "./pushRelayClient";
 import { resolveApsEnvironment } from "./registrationPayload";
 import {
   getAgentAwarenessRelayIdentity,
@@ -59,6 +64,25 @@ export function getDirectPushStatuses(): ReadonlyMap<EnvironmentId, DirectPushEn
   return statuses;
 }
 
+const PUSH_RELAY_TOKENS_KEY = "ctrl.push-relay.tokens";
+const PushRelayTokensJson = Schema.fromJsonString(PushRelayTokens);
+const decodeStoredRelayTokens = Schema.decodeUnknownOption(PushRelayTokensJson);
+const encodeRelayTokens = Schema.encodeSync(PushRelayTokensJson);
+
+/** Ctrl's push relay (apps/push-relay), from the app config. */
+function pushRelayUrl(): string | null {
+  const url = Constants.expoConfig?.extra?.pushRelayUrl;
+  return typeof url === "string" && url.startsWith("https://") ? url : null;
+}
+
+let resetRequested = false;
+
+/** Swaps this phone's relay send token for a new one, cutting off computers it is no longer connected to. */
+export function resetDirectPushRelay(): void {
+  resetRequested = true;
+  requestRegistration();
+}
+
 /** Re-runs registration now, e.g. after the user flips the setting. */
 export function requestDirectPushRegistration(): void {
   requestRegistration();
@@ -80,6 +104,7 @@ export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const storage = yield* MobileStorage.MobileStorage;
+    const secureStorage = yield* MobileSecureStorage.MobileSecureStorage;
     const preferencesStore = yield* MobilePreferences.MobilePreferencesStore;
     const requests = yield* Queue.sliding<void>(1);
     requestRegistration = () => Queue.offerUnsafe(requests, undefined);
@@ -105,6 +130,43 @@ export const layer = Layer.effectDiscard(
           ? Constants.expoConfig?.android?.package
           : Constants.expoConfig?.ios?.bundleIdentifier
         )?.trim() ?? "";
+      const relayUrl = pushRelayUrl();
+      let relayToken: string | null = null;
+      if (token !== null && bundleId && relayUrl !== null) {
+        const stored = yield* secureStorage
+          .getItem(PUSH_RELAY_TOKENS_KEY)
+          .pipe(Effect.orElseSucceed(() => null));
+        const current = stored === null ? null : Option.getOrNull(decodeStoredRelayTokens(stored));
+        const reset = resetRequested;
+        resetRequested = false;
+        const registered = yield* Effect.promise(() =>
+          registerWithPushRelay({
+            relayUrl,
+            current,
+            reset,
+            request: {
+              deviceId,
+              platform: Platform.OS === "android" ? "android" : "ios",
+              pushToken: token,
+              bundleId,
+              ...(Platform.OS === "ios"
+                ? {
+                    apsEnvironment: resolveApsEnvironment(Constants.expoConfig?.extra?.appVariant),
+                  }
+                : { androidUserId }),
+            },
+          }),
+        );
+        // An unreachable or busy relay must not switch computers off the relay:
+        // keep using the saved tokens, and retry a reset on the next sync.
+        if (registered === null && reset) resetRequested = true;
+        relayToken = (registered ?? current)?.sendToken ?? null;
+        if (registered !== null && registered.sendToken !== current?.sendToken) {
+          yield* secureStorage
+            .setItem(PUSH_RELAY_TOKENS_KEY, encodeRelayTokens(registered))
+            .pipe(Effect.ignore);
+        }
+      }
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -123,7 +185,7 @@ export const layer = Layer.effectDiscard(
               );
           }
           const alertOn = preferences.directPushAlertOn ?? DEFAULT_DIRECT_PUSH_ALERT_KINDS;
-          const signature = `${token}|${androidUserId}|${alertOn.join(",")}`;
+          const signature = `${token}|${androidUserId}|${alertOn.join(",")}|${relayToken ?? ""}`;
           if (accepted.get(environmentId) === signature) return Effect.void;
           return registry
             .run(
@@ -134,7 +196,11 @@ export const layer = Layer.effectDiscard(
                   Constants.deviceName?.trim() ||
                   (Platform.OS === "android" ? "Android device" : "iPhone"),
                 platform: Platform.OS === "android" ? "android" : "ios",
-                token,
+                // With the relay, computers get only the send token, so Reset alerts
+                // can cut one off; the raw push token would let it sign up again.
+                ...(relayUrl !== null && relayToken !== null
+                  ? { relayUrl, relayToken }
+                  : { token }),
                 bundleId,
                 ...(Platform.OS === "ios"
                   ? {
