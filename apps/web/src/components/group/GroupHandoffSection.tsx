@@ -72,8 +72,10 @@ export function GroupHandoffSection(props: {
               case "list":
                 return (
                   <ul key={block.key} className="list-disc ps-5 text-sm">
-                    {block.items.map((item) => (
-                      <li key={item}>
+                    {block.items.map((item, index) => (
+                      // Bullets can repeat, so the position keeps keys unique.
+                      // oxlint-disable-next-line react/no-array-index-key -- the list never reorders.
+                      <li key={`${block.key}-${index}`}>
                         <InlineCode text={item} />
                       </li>
                     ))}
