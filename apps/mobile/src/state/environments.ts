@@ -68,3 +68,19 @@ export function useHostBattery(environmentId: EnvironmentId | null): HostBattery
       : { connectionPhase: presentation.connection.phase, serverConfig: presentation.serverConfig },
   );
 }
+
+/** Each connected machine's battery, for lists that show several at once. */
+export function useHostBatteries(): ReadonlyMap<EnvironmentId, HostBattery> {
+  const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
+  return useMemo(() => {
+    const batteries = new Map<EnvironmentId, HostBattery>();
+    for (const [environmentId, presentation] of presentationById) {
+      const battery = connectedHostBattery({
+        connectionPhase: presentation.connection.phase,
+        serverConfig: presentation.serverConfig,
+      });
+      if (battery !== null) batteries.set(environmentId, battery);
+    }
+    return batteries;
+  }, [presentationById]);
+}

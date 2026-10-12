@@ -1,6 +1,9 @@
 import type { MenuAction } from "@react-native-menu/menu";
 import { useCallback, useMemo } from "react";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { useHostBatteries } from "../../state/environments";
+import { batteryMenuIcon } from "../connection/EnvironmentBattery";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { MaterialThreadListToolbar } from "./MaterialThreadListToolbar";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 
@@ -16,6 +19,8 @@ export function HomeHeader(props: HomeHeaderProps) {
   // keys off those alone.
   const hasCustomListOptions =
     props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
+  const batteries = useHostBatteries();
+  const { themeAppearance, themeVariables } = useAppearancePreferences();
   const menuActions = useMemo<MenuAction[]>(
     () => [
       {
@@ -27,11 +32,20 @@ export function HomeHeader(props: HomeHeaderProps) {
             title: "All environments",
             state: checkedMenuState(props.selectedEnvironmentId === null),
           },
-          ...props.environments.map((environment) => ({
-            id: `environment:${environment.environmentId}`,
-            title: environment.label,
-            state: checkedMenuState(props.selectedEnvironmentId === environment.environmentId),
-          })),
+          ...props.environments.map((environment) => {
+            const battery = batteries.get(environment.environmentId);
+            return {
+              id: `environment:${environment.environmentId}`,
+              title:
+                battery === undefined
+                  ? environment.label
+                  : `${environment.label}  ${battery.percent}%`,
+              state: checkedMenuState(props.selectedEnvironmentId === environment.environmentId),
+              ...(battery === undefined
+                ? {}
+                : batteryMenuIcon(battery, themeVariables, themeAppearance === "dark")),
+            };
+          }),
         ],
       },
       ...(props.projects.length === 0
@@ -55,7 +69,15 @@ export function HomeHeader(props: HomeHeaderProps) {
             },
           ] satisfies MenuAction[])),
     ],
-    [props.environments, props.projects, props.selectedEnvironmentId, props.selectedProjectKey],
+    [
+      batteries,
+      props.environments,
+      props.projects,
+      props.selectedEnvironmentId,
+      props.selectedProjectKey,
+      themeAppearance,
+      themeVariables,
+    ],
   );
   const handleMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {

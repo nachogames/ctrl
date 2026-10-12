@@ -57,6 +57,8 @@ export interface ScreenHeaderSearch {
 export interface ScreenHeaderProps {
   readonly title: string;
   readonly subtitle?: string;
+  /** Drawn after the subtitle on Android. iOS's native header takes text only. */
+  readonly subtitleAccessory?: ReactNode;
   readonly actions?: ReadonlyArray<ScreenHeaderAction>;
   readonly menus?: ReadonlyArray<ScreenHeaderMenu>;
   readonly search?: ScreenHeaderSearch;
