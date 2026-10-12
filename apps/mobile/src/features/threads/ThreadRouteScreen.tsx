@@ -1096,7 +1096,7 @@ function ThreadRouteContent(
         subtitle={headerSubtitle}
         subtitleAccessory={
           hostBattery === null ? undefined : (
-            <EnvironmentBattery battery={hostBattery} percentShown surface="header" />
+            <EnvironmentBattery battery={hostBattery} percent="shown" surface="header" />
           )
         }
         headerColor={headerColor}
