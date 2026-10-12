@@ -5,9 +5,10 @@ import {
   DropdownMenuItem,
   Host,
   RNHostView,
+  Row,
   Text,
 } from "@expo/ui/jetpack-compose";
-import { defaultMinSize, padding, size, width } from "@expo/ui/jetpack-compose/modifiers";
+import { defaultMinSize, padding, size, weight, width } from "@expo/ui/jetpack-compose/modifiers";
 import type { MenuAction } from "@react-native-menu/menu";
 import { HostBattery } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -22,17 +23,20 @@ import { EnvironmentBattery } from "../features/connection/EnvironmentBattery";
 
 const isHostBattery = Schema.is(HostBattery);
 
-/** A menu action can carry a machine's battery, drawn as the row's icon. */
+/** A menu action can carry a machine's battery, drawn after its title. */
 function actionBattery(action: MenuAction): HostBattery | null {
   return "battery" in action && isHostBattery(action.battery) ? action.battery : null;
 }
 
-function BatteryMenuIcon(props: { readonly battery: HostBattery }) {
+// The drawn glyph: 20 wide, plus its 2-wide tip and a little air.
+const BATTERY_GLYPH_WIDTH = 26;
+
+function BatteryGlyph(props: { readonly battery: HostBattery }) {
   const { iconSize } = useAndroidControlSizing();
   return (
-    <RNHostView matchContents modifiers={[size(iconSize + 4, iconSize)]}>
+    <RNHostView matchContents modifiers={[size(BATTERY_GLYPH_WIDTH, iconSize)]}>
       <View
-        style={{ width: iconSize + 4, height: iconSize, justifyContent: "center" }}
+        style={{ width: BATTERY_GLYPH_WIDTH, height: iconSize, justifyContent: "center" }}
         importantForAccessibility="no-hide-descendants"
       >
         <EnvironmentBattery battery={props.battery} percent="hidden" surface="menu" />
@@ -111,11 +115,7 @@ export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
             modifiers={itemModifiers}
             onClick={() => props.onPress(action)}
           >
-            {battery !== null ? (
-              <DropdownMenuItem.LeadingIcon>
-                <BatteryMenuIcon battery={battery} />
-              </DropdownMenuItem.LeadingIcon>
-            ) : action.image && isAppSymbolName(action.image) ? (
+            {action.image && isAppSymbolName(action.image) ? (
               <DropdownMenuItem.LeadingIcon>
                 <MenuIcon
                   name={action.image}
@@ -126,18 +126,33 @@ export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
             ) : null}
             <DropdownMenuItem.Text>
               <Column>
-                <Text
-                  style={{ typography: "bodyLarge", ...body }}
-                  color={
-                    action.attributes?.disabled
-                      ? muted
-                      : action.attributes?.destructive
-                        ? colors["--color-danger-foreground"]
-                        : foreground
-                  }
-                >
-                  {action.title}
-                </Text>
+                <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: 8 * scale }}>
+                  <Text
+                    // With a battery after it, the title takes the free width and
+                    // truncates, so a long name never runs under the glyph.
+                    {...(battery === null
+                      ? {}
+                      : { modifiers: [weight(1)], maxLines: 1, overflow: "ellipsis" as const })}
+                    style={{ typography: "bodyLarge", ...body }}
+                    color={
+                      action.attributes?.disabled
+                        ? muted
+                        : action.attributes?.destructive
+                          ? colors["--color-danger-foreground"]
+                          : foreground
+                    }
+                  >
+                    {action.title}
+                  </Text>
+                  {battery !== null ? (
+                    <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: 4 * scale }}>
+                      <BatteryGlyph battery={battery} />
+                      <Text color={muted} style={{ typography: "bodySmall", ...caption }}>
+                        {`${battery.percent}%`}
+                      </Text>
+                    </Row>
+                  ) : null}
+                </Row>
                 {action.subtitle ? (
                   <Text color={muted} style={{ typography: "bodySmall", ...caption }}>
                     {action.subtitle}
