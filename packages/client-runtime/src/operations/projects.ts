@@ -74,6 +74,8 @@ export function scratchUnavailableReason(
         : `Unavailable: Ctrl's data folder is inside the Git repository at ${unavailable.repositoryRoot}`;
     case "detection-failed":
       return "Unavailable: Ctrl couldn't check its data folder with Git";
+    default:
+      return "Unavailable on this machine";
   }
 }
 

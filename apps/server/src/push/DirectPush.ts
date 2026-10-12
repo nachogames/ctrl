@@ -55,6 +55,7 @@ import {
   alertMessage,
   answeredKind,
   deviceWantsAlert,
+  otherAlertStillWaiting,
   subagentQuestionState,
 } from "./directPushAlerts.ts";
 import {
@@ -138,7 +139,12 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
   const devicesPath = pathService.join(pushDir, "devices.json");
   const startedAt = yield* Clock.currentTimeMillis;
   const devices = new Map<string, StoredDevice>();
-  const phases = new Map<ThreadId, AgentAwarenessPhase | null>();
+  // Each thread's last phase and the thread its alerts name: itself, or for
+  // a subagent, its top-level thread.
+  const phases = new Map<
+    ThreadId,
+    { readonly alertThreadId: ThreadId; readonly phase: AgentAwarenessPhase | null }
+  >();
 
   // Config paths may start with `~/`; other relative paths resolve against the push dir.
   const resolveConfigPath = (filePath: string) =>
@@ -333,15 +339,20 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     } else {
       state = yield* awarenessOf(shell);
     }
-    const previousPhase = phases.get(threadId);
-    phases.set(threadId, state?.phase ?? null);
+    const previousPhase = phases.get(threadId)?.phase;
+    phases.set(threadId, { alertThreadId, phase: state?.phase ?? null });
     const finishedSinceStart =
       !isSubagent &&
       shell?.latestRunCompletedAt != null &&
       DateTime.toEpochMillis(shell.latestRunCompletedAt) > startedAt;
     const nowMs = yield* Clock.currentTimeMillis;
     const kind = alertKind({ state, previousPhase, finishedSinceStart, nowMs });
-    const answered = answeredKind(previousPhase, state?.phase ?? null);
+    const answeredHere = answeredKind(previousPhase, state?.phase ?? null);
+    const answered =
+      answeredHere !== null &&
+      otherAlertStillWaiting({ threadId, alertThreadId, kind: answeredHere, tracked: phases })
+        ? null
+        : answeredHere;
     const alert = state !== null && kind !== null ? { state, kind } : null;
     if (answered === null && alert === null) return;
     if (answered !== null) {

@@ -290,6 +290,12 @@ describe("scratchUnavailableReason", () => {
     expect(
       scratchUnavailableReason("connected", { scratchUnavailable: { reason: "detection-failed" } }),
     ).toBe("Unavailable: Ctrl couldn't check its data folder with Git");
+    // A reason from a newer server still reads as unavailable.
+    expect(
+      scratchUnavailableReason("connected", {
+        scratchUnavailable: { reason: "readonly-data-dir" },
+      }),
+    ).toBe("Unavailable on this machine");
   });
 
   it("says nothing when it offers them, is offline, or does not say", () => {

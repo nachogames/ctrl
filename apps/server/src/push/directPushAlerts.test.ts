@@ -8,6 +8,7 @@ import {
   alertMessage,
   answeredKind,
   deviceWantsAlert,
+  otherAlertStillWaiting,
   subagentQuestionState,
 } from "./directPushAlerts.ts";
 
@@ -129,5 +130,43 @@ describe("subagentQuestionState", () => {
     expect(subagentQuestionState(state("running"), null, isoAt(NOW))).toBeNull();
     // Its answered question still clears the parent's alert.
     expect(answeredKind("waiting_for_input", null)).toBe("input");
+  });
+});
+
+describe("otherAlertStillWaiting", () => {
+  const tracked = [
+    ["child-a", { alertThreadId: "parent", phase: null }],
+    ["child-b", { alertThreadId: "parent", phase: "waiting_for_input" }],
+    ["other", { alertThreadId: "other", phase: "waiting_for_approval" }],
+  ] as const;
+
+  it("keeps the alert while a sibling still waits with the same kind", () => {
+    expect(
+      otherAlertStillWaiting({
+        threadId: "child-a",
+        alertThreadId: "parent",
+        kind: "input",
+        tracked,
+      }),
+    ).toBe(true);
+  });
+
+  it("clears when nothing else on that thread waits with that kind", () => {
+    expect(
+      otherAlertStillWaiting({
+        threadId: "child-a",
+        alertThreadId: "parent",
+        kind: "approval",
+        tracked,
+      }),
+    ).toBe(false);
+    expect(
+      otherAlertStillWaiting({
+        threadId: "child-b",
+        alertThreadId: "parent",
+        kind: "input",
+        tracked,
+      }),
+    ).toBe(false);
   });
 });

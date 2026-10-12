@@ -20,9 +20,9 @@ export function EnvironmentDisplayNameSetting({
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const edited = useRef(false);
-  // Older servers drop the key from their settings, so they cannot keep a name.
-  const current = serverConfig?.settings.environmentLabel;
-  if (serverConfig === null || current === undefined) return null;
+  // Older servers drop the key on write, so they cannot keep a name.
+  if (serverConfig?.environment.capabilities.environmentLabel !== true) return null;
+  const current = serverConfig.settings.environmentLabel;
   const detected = serverConfig.environment.label;
 
   return (

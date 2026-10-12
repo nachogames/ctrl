@@ -114,13 +114,14 @@ export function askUserResult(
   questions: ReadonlyArray<OrchestrationV2UserInputQuestion>,
   answers: ProviderUserInputAnswers,
 ): SDKCustomToolResult {
+  // Keyed by id, which is the question text unless two questions share it.
   const byQuestion: Record<string, string> = {};
   for (const question of questions) {
-    byQuestion[question.question] = answerText(answers[question.id]);
+    byQuestion[question.id] = answerText(answers[question.id]);
   }
   const text = questions
     .map((question) => {
-      const answer = byQuestion[question.question];
+      const answer = byQuestion[question.id];
       return `${question.question}\nAnswer: ${answer === "" ? "(no answer)" : answer}`;
     })
     .join("\n\n");

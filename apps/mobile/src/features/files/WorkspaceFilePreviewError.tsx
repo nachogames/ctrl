@@ -8,6 +8,7 @@ import type { AssetUrlFailureReason } from "../../state/asset-url-state";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/presentation";
 
 /**
  * Terminal state for a preview whose signed asset URL will not arrive. A dead
@@ -31,7 +32,11 @@ export function WorkspaceFilePreviewError(props: {
     return (
       <View className="flex-1 bg-sheet">
         <EnvironmentConnectionNotice
-          environmentLabel={environment.presentation?.entry.target.label ?? "Environment"}
+          environmentLabel={
+            environment.presentation
+              ? environmentDisplayLabel(environment.presentation)
+              : "Environment"
+          }
           connection={
             environment.presentation?.connection ?? {
               phase: "available",

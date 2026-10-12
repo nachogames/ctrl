@@ -227,6 +227,19 @@ describe("CursorAdapterV2 ask_user", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("tells the agent when the user dismisses the question", () =>
+    Effect.gen(function* () {
+      const { runtime, finish, answer, request } = yield* openAskUserSession("ask-dismiss");
+      if (request.type !== "runtime_request.updated") return assert.fail("no request");
+      yield* runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        decision: "cancel",
+      });
+      assert.deepInclude((yield* Fiber.join(answer)) as object, { isError: true });
+      yield* Deferred.succeed(finish, "finished");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("dismisses a pending question when the turn is stopped", () =>
     Effect.gen(function* () {
       const { runtime, providerThread, answer, request } = yield* openAskUserSession("ask-stop");

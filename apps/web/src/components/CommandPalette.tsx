@@ -1999,26 +1999,19 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (scratchTargetEnvironmentId !== null) {
+  if (scratchTargetEnvironmentId !== null || scratchUnavailable !== null) {
     actionItems.push({
       kind: "action",
       value: "action:new-thread-without-project",
       searchTerms: ["new thread", "no project", "without project", "none", "chat"],
       title: "New thread without a project",
       icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
-      shortcutCommand: "chat.newWithoutProject",
-      run: () => startScratchThread(scratchTargetEnvironmentId),
-    });
-  } else if (scratchUnavailable !== null) {
-    actionItems.push({
-      kind: "action",
-      value: "action:new-thread-without-project",
-      searchTerms: ["new thread", "no project", "without project", "none", "chat"],
-      title: "New thread without a project",
-      description: scratchUnavailable,
-      disabled: true,
-      icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
-      run: async () => {},
+      ...(scratchTargetEnvironmentId !== null
+        ? {
+            shortcutCommand: "chat.newWithoutProject" as const,
+            run: () => startScratchThread(scratchTargetEnvironmentId),
+          }
+        : { description: scratchUnavailable, disabled: true, run: async () => {} }),
     });
   }
 

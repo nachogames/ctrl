@@ -41,8 +41,12 @@ const KeybindingsInvalidEntryIssue = Schema.Struct({
 });
 
 export const ScratchUnavailability = Schema.Struct({
-  /** `inside-git-repo`: the data dir sits in a Git checkout. `detection-failed`: Git could not tell. */
-  reason: Schema.Literals(["inside-git-repo", "detection-failed"]),
+  /**
+   * `inside-git-repo`: the data dir sits in a Git checkout. `detection-failed`:
+   * Git could not tell. A plain string, not a closed set, so a reason added by
+   * a newer server cannot fail an older client's whole config.
+   */
+  reason: TrimmedNonEmptyString,
   /** The checkout the data dir sits in, for `inside-git-repo`. */
   repositoryRoot: Schema.optionalKey(TrimmedNonEmptyString),
 });

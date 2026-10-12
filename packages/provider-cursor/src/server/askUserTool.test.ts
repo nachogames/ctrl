@@ -54,6 +54,19 @@ describe("askUserTool", () => {
     });
   });
 
+  it("keeps the answers to two identical questions apart", () => {
+    const questions = askUserQuestions({
+      questions: [{ question: "Which file?" }, { question: "Which file?" }],
+    });
+    assert.deepEqual(
+      askUserResult(questions, { "Which file?": "a.ts", "Which file? (2)": "b.ts" }),
+      {
+        content: [{ type: "text", text: "Which file?\nAnswer: a.ts\n\nWhich file?\nAnswer: b.ts" }],
+        structuredContent: { answers: { "Which file?": "a.ts", "Which file? (2)": "b.ts" } },
+      },
+    );
+  });
+
   it("recognizes its own MCP tool calls", () => {
     assert.isTrue(
       isAskUserToolCall({

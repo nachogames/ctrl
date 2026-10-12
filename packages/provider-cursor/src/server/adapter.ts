@@ -41,7 +41,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -2226,16 +2225,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             { discard: true },
           );
 
-        // The SDK can call a host tool before `send` has returned, while the
-        // turn is not yet recorded, so give it a moment to appear.
-        const awaitActiveTurn = Ref.get(activeTurn).pipe(
-          Effect.filterOrFail(
-            (context): context is ActiveCursorTurn => context !== null,
-            () => "no-turn" as const,
-          ),
-          Effect.retry({ times: 50, schedule: Schedule.spaced("100 millis") }),
-          Effect.option,
+        // The SDK can call a host tool before `send` has returned. startTurn
+        // hands the turn over here once it has announced it running, or null
+        // when it never starts, so a question never precedes its turn.
+        const startingTurn = yield* Ref.make<Deferred.Deferred<ActiveCursorTurn | null> | null>(
+          null,
         );
+        const awaitActiveTurn = Effect.gen(function* () {
+          const starting = yield* Ref.get(startingTurn);
+          return starting === null ? yield* Ref.get(activeTurn) : yield* Deferred.await(starting);
+        });
 
         const askUser = Effect.fnUntraced(function* (
           args: unknown,
@@ -2247,7 +2246,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               "ask_user needs at least one question with a non-empty `question`.",
             );
           }
-          const context = Option.getOrNull(yield* awaitActiveTurn);
+          const context = yield* awaitActiveTurn;
           if (context === null || context.finalized) {
             return askUserError("There is no active turn to ask the user from.");
           }
@@ -2379,6 +2378,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const message = yield* resolveUserMessage(turnInput, mcpServers);
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
+            const turnStarted = yield* Deferred.make<ActiveCursorTurn | null>();
+            yield* Ref.set(startingTurn, turnStarted);
             const sdkRun = yield* agent.session.send({
               message,
               options: {
@@ -2446,6 +2447,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             for (const update of pendingUpdates) {
               yield* handleInteractionUpdate(context, update);
             }
+            yield* Deferred.succeed(turnStarted, context);
+            yield* Ref.set(startingTurn, null);
 
             yield* sdkRun.wait.pipe(
               Effect.flatMap((result) =>
@@ -2522,6 +2525,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     runId: turnInput.runId,
                     cause,
                   }),
+              ),
+              // A turn that failed to start releases any host tool waiting on it.
+              Effect.ensuring(
+                Ref.getAndSet(startingTurn, null).pipe(
+                  Effect.flatMap((starting) =>
+                    starting === null ? Effect.void : Deferred.succeed(starting, null),
+                  ),
+                ),
               ),
             ),
         );
@@ -2683,9 +2694,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 );
               }
               pendingUserInputs.delete(String(requestInput.requestId));
-              return Deferred.succeed(pending.answers, requestInput.answers ?? {}).pipe(
-                Effect.asVoid,
-              );
+              // A dismissed card arrives as a decline or cancel, not as empty answers.
+              const dismissed =
+                requestInput.decision === "cancel" || requestInput.decision === "decline";
+              return Deferred.succeed(
+                pending.answers,
+                dismissed ? null : (requestInput.answers ?? {}),
+              ).pipe(Effect.asVoid);
             }),
           readThreadSnapshot: Effect.fn("CursorAdapterV2.readThreadSnapshot")(
             function* (snapshotInput) {
