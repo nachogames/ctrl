@@ -20,6 +20,7 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import { serverEnvironment } from "../../state/server";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { EnvironmentBattery } from "./EnvironmentBattery";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
@@ -104,6 +105,11 @@ export function ConnectionEnvironmentRow(props: {
             >
               {props.environment.environmentLabel}
             </Text>
+            {enabled &&
+            props.environment.connectionState === "connected" &&
+            serverConfig?.hostBattery ? (
+              <EnvironmentBattery battery={serverConfig.hostBattery} />
+            ) : null}
           </View>
           {!props.environment.isRelayManaged && props.environment.displayUrl.trim() ? (
             <Text className="text-xs text-foreground-muted" numberOfLines={1}>

@@ -85,7 +85,10 @@ import {
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
-import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import {
+  connectedHostBattery,
+  type EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   wasBootstrapThreadDeleted,
@@ -2765,6 +2768,14 @@ export default function ChatView(props: ChatViewProps) {
         label: environment?.label ?? environmentId,
         isPrimary: environmentId === primaryEnvironmentId,
         machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
+        battery: connectedHostBattery(
+          environment === null
+            ? null
+            : {
+                connectionPhase: environment.connection.phase,
+                serverConfig: environment.serverConfig,
+              },
+        ),
       });
     };
     if (activeProjectIsScratch && draftId) {
