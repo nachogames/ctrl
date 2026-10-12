@@ -23,6 +23,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKey: null,
+    sidebarEnvironmentScopeId: null,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -202,6 +203,7 @@ describe("parsePersistedState", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      sidebarEnvironmentScopeId: null,
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -324,6 +326,7 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      sidebarEnvironmentScopeId: null,
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -336,6 +339,16 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
     });
+  });
+
+  it("restores the sidebar machine scope across reloads", () => {
+    persistState(makeUiState({ sidebarEnvironmentScopeId: "environment-work" }));
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(parsePersistedState(persisted).sidebarEnvironmentScopeId).toBe("environment-work");
   });
 
   it("restores the sidebar project scope across reloads", () => {

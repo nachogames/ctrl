@@ -68,6 +68,27 @@ export function hasExplicitComposerModelSelection(
   );
 }
 
+/**
+ * Keeps a new thread on the machine the sidebar is filtered to: a viewed
+ * thread or draft from another machine is ignored, and the default project
+ * comes from the filtered machine. A null machine leaves the context as is.
+ */
+export function scopeThreadActionContext(
+  context: ChatThreadActionContext,
+  environmentId: EnvironmentId | null,
+  scopedDefaultProjectRef: ScopedProjectRef | null,
+): ChatThreadActionContext {
+  if (environmentId === null) return context;
+  return {
+    ...context,
+    activeDraftThread:
+      context.activeDraftThread?.environmentId === environmentId ? context.activeDraftThread : null,
+    activeThread:
+      context.activeThread?.environmentId === environmentId ? context.activeThread : undefined,
+    defaultProjectRef: scopedDefaultProjectRef,
+  };
+}
+
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
 ): ScopedProjectRef | null {
