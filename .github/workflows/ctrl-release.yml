@@ -12,13 +12,19 @@ name: Ctrl release
 # Release: git tag ctrl-v0.1.1 && git push origin ctrl-v0.1.1
 # The tag's version must be higher than every earlier release.
 #
+# Phone only: git tag ctrl-android-v0.1.2 && git push origin ctrl-android-v0.1.2
+# runs just the android job. It creates a GitHub release only when it builds an
+# APK, and that release is a prerelease so the desktop updater, which reads the
+# latest release, never lands on it.
+#
 # Signing secrets live in the `release` environment, which only accepts
-# ctrl-v* tags. Pull requests and branch pushes never see them.
+# ctrl-v* and ctrl-android-v* tags. Pull requests and branch pushes never see them.
 
 on:
   push:
     tags:
       - "ctrl-v*"
+      - "ctrl-android-v*"
 
 concurrency:
   group: ctrl-release
@@ -30,6 +36,7 @@ permissions:
 jobs:
   release:
     name: Build and publish macOS arm64
+    if: startsWith(github.ref_name, 'ctrl-v')
     runs-on: macos-15
     environment: release
     timeout-minutes: 60
@@ -135,6 +142,9 @@ jobs:
   android:
     name: Publish Android OTA and APK
     needs: release
+    # A ctrl-android-v* tag skips the desktop job; a ctrl-v* tag waits for it,
+    # since the APK attaches to the release that job creates.
+    if: ${{ !cancelled() && (needs.release.result == 'success' || (needs.release.result == 'skipped' && startsWith(github.ref_name, 'ctrl-android-v'))) }}
     runs-on: ubuntu-latest
     environment: release
     timeout-minutes: 90
@@ -144,7 +154,14 @@ jobs:
     steps:
       - name: Resolve version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#ctrl-v}" >> "$GITHUB_OUTPUT"
+        run: |
+          version="${GITHUB_REF_NAME#ctrl-android-v}"
+          version="${version#ctrl-v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag $GITHUB_REF_NAME must look like ctrl-v1.2.3 or ctrl-android-v1.2.3." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # Same plain checkout as the desktop job.
       - name: Checkout
@@ -244,6 +261,21 @@ jobs:
           apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
           "$apksigner" verify --print-certs "$apk" | grep -q 'CN=Ctrl'
           mv "$apk" "$RUNNER_TEMP/$APK_NAME"
+
+      # A phone-only tag has no desktop release to attach to. Its release holds
+      # just the APK and is a prerelease, never "latest", so desktop apps keep
+      # updating from the newest ctrl-v* release.
+      - name: Create Android-only release
+        if: steps.fingerprint.outputs.build == 'true' && startsWith(github.ref_name, 'ctrl-android-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Ctrl Android ${{ steps.version.outputs.version }}" \
+            --notes "Android app only. Install the APK once; later phone releases arrive over the air." \
+            --prerelease \
+            --latest=false
 
       - name: Attach APK to the release
         if: steps.fingerprint.outputs.build == 'true'

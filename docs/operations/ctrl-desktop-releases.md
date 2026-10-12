@@ -44,7 +44,7 @@ Releases are public because the repository is. Anyone can download the app, and 
 
 ## Android
 
-The same tag publishes the Android app from the `android` job. It publishes an OTA update to the `production` channel of the Expo project `@mceachinm/ctrl`, which hosts updates only; builds happen in the workflow, not EAS Build. When native code changed, it also attaches a signed `Ctrl-<version>-android-<fingerprint>.apk` to the release.
+The same tag publishes the Android app from the `android` job. To ship only the phone app, push a `ctrl-android-vX.Y.Z` tag instead: it skips the desktop build, and creates a GitHub release only when it builds an APK. That release is a prerelease, never "latest", because desktop apps update from the latest release. It publishes an OTA update to the `production` channel of the Expo project `@mceachinm/ctrl`, which hosts updates only; builds happen in the workflow, not EAS Build. When native code changed, it also attaches a signed `Ctrl-<version>-android-<fingerprint>.apk` to the release.
 
 A phone takes an OTA only when its APK has the same native fingerprint, which the workflow computes on the runner that builds and publishes. The job summary says when a release needs the new APK installed. Local builds are signed with a different key and keep `T3CODE_MOBILE_UPDATES_ENABLED=0` in `.env.local`, so install the release APK instead. The APK is arm64 only. Release builds carry no T3 Connect config, so the app offers only Ctrl's own server notifications.
 
