@@ -38,6 +38,7 @@ import {
 import type { AgentActivityProps } from "../../widgets/AgentActivity";
 import { getAgentLiveActivities, startAgentLiveActivity } from "./agentLiveActivity";
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
+import { setAgentAwarenessRelayIdentity } from "./relayIdentity";
 import { supportsAgentAwarenessPush } from "./capabilities";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
 
@@ -196,6 +197,7 @@ export function setAgentAwarenessRelayTokenProvider(
   }
   relayTokenProvider = provider;
   relayTokenProviderIdentity = provider ? (identity ?? null) : null;
+  setAgentAwarenessRelayIdentity(relayTokenProviderIdentity);
   if (!provider) {
     clearAndroidAgentNotifications();
     pushTokenSubscription?.remove();
@@ -243,6 +245,7 @@ export function setAgentAwarenessRelayTokenProvider(
 export function releaseAgentAwarenessRelayTokenProvider(): void {
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
+  setAgentAwarenessRelayIdentity(relayTokenProviderIdentity);
   deviceRegistrationGeneration++;
   activeDeviceRegistration = null;
   pendingDeviceRegistration = null;
@@ -933,6 +936,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   }
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
+  setAgentAwarenessRelayIdentity(relayTokenProviderIdentity);
   deviceRegistrationGeneration++;
   activeDeviceRegistration = null;
   pendingDeviceRegistration = null;

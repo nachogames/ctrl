@@ -11,7 +11,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Alert, AppState, Linking, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
 import {
   isAtomCommandInterrupted,
   reportAtomCommandResult,
@@ -37,6 +36,7 @@ import { MOBILE_APP_BASE_NAME } from "../../lib/mobileBranding";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { DirectPushSettingsSection } from "./DirectPushSettingsSection";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -67,9 +67,7 @@ export function SettingsNotificationsRouteScreen() {
           contentInsetAdjustmentBehavior="automatic"
           contentContainerClassName="px-5 pt-4"
         >
-          <Text className="text-base text-foreground-muted">
-            Notifications require T3 Connect in this app build.
-          </Text>
+          <DirectPushSettingsSection />
         </ScrollView>
       </SettingsScreen>
     );
@@ -433,6 +431,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
       >
+        <DirectPushSettingsSection />
         <SettingsSection title="Agent activity">
           <SettingsSwitchRow
             icon="bell.badge"

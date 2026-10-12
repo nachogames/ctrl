@@ -27,6 +27,8 @@ import {
   ChevronDownIcon,
   ClockIcon,
   EyeIcon,
+  FolderIcon,
+  GroupIcon,
   LayersIcon,
   ListChecksIcon,
   PenLineIcon,
@@ -35,6 +37,7 @@ import {
   Maximize2Icon,
   Minimize2Icon,
   SearchIcon,
+  UserCheckIcon,
   UserLockIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -60,6 +63,7 @@ import {
   narrowPullRequestsToFilters,
   mergePullRequestDiffStats,
   partitionPullRequestsWithPriority,
+  arrangePullRequestGroups,
   pullRequestDiffStatKey,
   pullRequestEntryKey,
   pullRequestEntryViewer,
@@ -90,7 +94,10 @@ import {
   settlePullRequestOverrides,
 } from "../components/pullRequest/pullRequestList.logic";
 import {
+  hostPullRequestInvolvement,
   pullRequestListPreferences,
+  type PullRequestListGroupBy,
+  type PullRequestListInvolvement,
   type PullRequestListPreferencePatch,
   type PullRequestListPreferences,
   type PullRequestListSort,
@@ -218,7 +225,8 @@ function PullRequestGroupHeader({
 }: {
   group: { key: string; label: string; entries: ReadonlyArray<unknown> };
 }) {
-  const Icon = GROUP_ICONS[group.key] ?? LayersIcon;
+  const Icon =
+    GROUP_ICONS[group.key] ?? (group.key.startsWith("project:") ? FolderIcon : LayersIcon);
   return (
     <div className="flex items-center gap-2 px-3 pb-1 text-xs font-medium text-muted-foreground/70">
       <Icon aria-hidden className="size-3.5 shrink-0" />
@@ -232,9 +240,15 @@ function PullRequestGroupHeader({
 // The state filters wear the same glyphs the rows do, so the two read as one vocabulary.
 const INVOLVEMENT_TABS = [
   { value: "all", label: "All", Icon: LayersIcon },
+  { value: "mine", label: "Mine", Icon: UserCheckIcon },
   { value: "reviewing", label: "Reviewing", Icon: EyeIcon },
   { value: "authored", label: "Authored", Icon: PenLineIcon },
-] as const satisfies ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>>;
+] as const satisfies ReadonlyArray<PullRequestFilterOption<PullRequestListInvolvement>>;
+
+const GROUP_BY_OPTIONS = [
+  { value: "involvement", label: "Involvement", Icon: UserCheckIcon },
+  { value: "project", label: "Project", Icon: FolderIcon },
+] as const satisfies ReadonlyArray<PullRequestFilterOption<PullRequestListGroupBy>>;
 
 const STATE_TABS = [
   { value: "all", label: "All", Icon: LayersIcon },
@@ -300,7 +314,12 @@ function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch,
 export const Route = createFileRoute("/_chat/pull-requests")({
   validateSearch: (raw: Record<string, unknown>): PullRequestsSearch => ({
     involvement:
-      raw.involvement === "reviewing" || raw.involvement === "authored" ? raw.involvement : "all",
+      raw.involvement === "mine" ||
+      raw.involvement === "reviewing" ||
+      raw.involvement === "authored"
+        ? raw.involvement
+        : "all",
+    ...(raw.groupBy === "project" ? { groupBy: "project" as const } : {}),
     state:
       raw.state === "closed" || raw.state === "merged" || raw.state === "all" ? raw.state : "open",
     ...(SORT_OPTIONS.some((option) => option.value === raw.sort)
@@ -352,6 +371,8 @@ function PullRequestsRouteView() {
     modifiers.shiftKey && !modifiers.metaKey && !modifiers.ctrlKey && !modifiers.altKey;
   const search = Route.useSearch();
   const sort = search.sort ?? "ready";
+  // "Mine" is answered from the "all" listing, so the hosts and caches only ever see these three.
+  const listInvolvement = hostPullRequestInvolvement(search.involvement);
   const statsPolicy: PullRequestStatsPolicy =
     sort === "ready" || sort === "largest" || sort === "smallest" ? "eager" : "visible";
   const navigate = useNavigate({ from: Route.fullPath });
@@ -534,6 +555,7 @@ function PullRequestsRouteView() {
             involvement: next.involvement ?? previous.involvement,
             state: next.state ?? previous.state,
             ...(next.sort && next.sort !== "ready" ? { sort: next.sort } : {}),
+            ...(next.groupBy === "project" ? { groupBy: next.groupBy } : {}),
             ...(next.repository ? { repository: next.repository } : {}),
             ...(next.number ? { number: next.number } : {}),
             ...(next.projectId ? { projectId: next.projectId } : {}),
@@ -682,7 +704,7 @@ function PullRequestsRouteView() {
     .map(([environmentId, revision]) => `${environmentId}:${revision}`)
     .join("|");
   // Page size is view state, not a URL concern: a shared link should open the first page.
-  const scopeKey = `${environmentKey}:${assignmentKey}:${search.state}:${search.involvement}:${scopedProjectId ?? ""}:${search.host ?? ""}:${search.draft ?? ""}:${search.review ?? ""}:${search.checks ?? ""}:${search.author ?? ""}:${search.labels?.join("\u0000") ?? ""}`;
+  const scopeKey = `${environmentKey}:${assignmentKey}:${search.state}:${listInvolvement}:${scopedProjectId ?? ""}:${search.host ?? ""}:${search.draft ?? ""}:${search.review ?? ""}:${search.checks ?? ""}:${search.author ?? ""}:${search.labels?.join("\u0000") ?? ""}`;
   const filterKey = `${scopeKey}:${sentQuery}`;
   const statsScopeRef = useRef<PullRequestStatsScope>({ key: filterKey, policy: statsPolicy });
   statsScopeRef.current = { key: filterKey, policy: statsPolicy };
@@ -733,7 +755,7 @@ function PullRequestsRouteView() {
               // The hosts narrow by involvement themselves — GitHub by author and review
               // request, and so on — so asking them is the difference between a page of results
               // and a page of everything with the answer somewhere further down it.
-              involvement: search.involvement,
+              involvement: listInvolvement,
               limit: pageSize,
               ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
               ...(projectIds ? { projectIds } : {}),
@@ -752,7 +774,7 @@ function PullRequestsRouteView() {
       environmentQueries,
       scopedProjectId,
       search.host,
-      search.involvement,
+      listInvolvement,
       search.state,
       sentCursors,
       sentRegrown,
@@ -777,7 +799,7 @@ function PullRequestsRouteView() {
         environmentId,
         input: {
           state: search.state,
-          involvement: search.involvement,
+          involvement: listInvolvement,
           limit: PAGE_SIZE,
           ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
           ...(projectIds ? { projectIds } : {}),
@@ -791,7 +813,7 @@ function PullRequestsRouteView() {
       environmentQueries,
       scopedProjectId,
       search.host,
-      search.involvement,
+      listInvolvement,
       search.state,
     ],
   );
@@ -807,14 +829,14 @@ function PullRequestsRouteView() {
       environmentId,
       input: {
         state: "all",
-        involvement: search.involvement,
+        involvement: listInvolvement,
         limit: PAGE_SIZE,
         ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
         ...(projectIds ? { projectIds } : {}),
         ...(search.host ? { host: search.host } : {}),
       } satisfies PullRequestListInput,
     }));
-  }, [environmentQueries, filtersOpen, scopedProjectId, search.host, search.involvement]);
+  }, [environmentQueries, filtersOpen, scopedProjectId, search.host, listInvolvement]);
   const facetQuery = usePullRequestList(facetTargets);
   // The priority groups' own reads. The feed below is paginated by recency, so an older authored
   // or review-requested row can be missing from its first page; partitioned from these
@@ -822,7 +844,7 @@ function PullRequestsRouteView() {
   // only ever append below what is already on screen. A search re-ranks the whole list by match,
   // so no partitions are read for one. These are the same atoms the Authored and Reviewing tabs
   // ask for, so switching to either is answered from cache.
-  const partitionsWanted = search.involvement === "all" && typedQuery.length === 0;
+  const partitionsWanted = listInvolvement === "all" && typedQuery.length === 0;
   // Built together so the two reads share one memo, and in the same field order the feed's own
   // input uses: the atoms are keyed by their input, so the Authored tab then reads this answer.
   const partitionTargets = useMemo(() => {
@@ -862,6 +884,14 @@ function PullRequestsRouteView() {
   ]);
   const authoredQuery = usePullRequestList(partitionTargets.authored);
   const reviewingQuery = usePullRequestList(partitionTargets.reviewing);
+  // Mine reads the "all" feed, so its continuation pages are mostly everyone else's rows. Once
+  // both partitions have answered whole, every own row is already on screen and there is
+  // nothing more worth paging for.
+  const mineComplete =
+    search.involvement === "mine" &&
+    partitionsWanted &&
+    authoredQuery.data?.truncated === false &&
+    reviewingQuery.data?.truncated === false;
   // The header's refresh punches through the server's cache before re-reading; the error and
   // empty states retry plainly, because a failure is never cached.
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
@@ -1289,7 +1319,7 @@ function PullRequestsRouteView() {
 
   const entries = useMemo(() => {
     const known = ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []);
-    const involvementEntries = filterPullRequestsByInvolvement(known, viewers, search.involvement);
+    const involvementEntries = filterPullRequestsByInvolvement(known, viewers, listInvolvement);
     // The hosts search more than the row shows — a body, a review, a commit message — so once
     // their answer is in, narrowing it again here would throw away matches the reader asked for.
     // The local pass stands in for the answer that has not arrived yet, and for the hosts that
@@ -1324,7 +1354,7 @@ function PullRequestsRouteView() {
     listData,
     ordered,
     querySettled,
-    search.involvement,
+    listInvolvement,
     searchingHosts,
     showingCarried,
     typedParsed.text,
@@ -1355,7 +1385,7 @@ function PullRequestsRouteView() {
    * them. Keyed by the rows being shown, so scrolling further asks only about what is new.
    */
   const groups = useMemo(() => {
-    if (search.involvement !== "all") return [{ key: "others" as const, label: "", entries }];
+    if (listInvolvement !== "all") return [{ key: "others" as const, label: "", entries }];
     // An empty whole-list answer also empties the priority groups. Their old snapshot must
     // not restore the last merged rows after the partition reads are no longer mounted.
     if (baselineEmpty) {
@@ -1399,7 +1429,7 @@ function PullRequestsRouteView() {
     partitionsWanted,
     reviewingQuery.data?.entries,
     scopeKey,
-    search.involvement,
+    listInvolvement,
     viewers,
   ]);
 
@@ -1570,20 +1600,27 @@ function PullRequestsRouteView() {
     // Searching keeps its relevance order and priority groups unless the reader explicitly asks
     // for another sort. The readiness queue is the default browse order, not a way to bury a
     // closer text match.
-    return sortPullRequestGroups(
+    const sorted = sortPullRequestGroups(
       enriched,
       sort,
       typedParsed.text,
       (entry) =>
         entry.additions + entry.deletions > 0 || statsByRow.has(pullRequestDiffStatKey(entry)),
-      search.involvement,
+      listInvolvement,
     );
+    return arrangePullRequestGroups(sorted, {
+      mine: search.involvement === "mine",
+      byProject: search.groupBy === "project",
+      viewers,
+    });
   }, [
     groups,
     hasLocalFilters,
     localFilters,
     overrides,
+    listInvolvement,
     search.involvement,
+    search.groupBy,
     search.state,
     sort,
     statsByRow,
@@ -1904,7 +1941,11 @@ function PullRequestsRouteView() {
             search.host !== undefined
           }
           searching={typedQuery.length > 0 && (!querySettled || showingCarried)}
-          canLoadMore={listData?.truncated === true && (canContinue || pageSize < MAX_PAGE_SIZE)}
+          canLoadMore={
+            listData?.truncated === true &&
+            !mineComplete &&
+            (canContinue || pageSize < MAX_PAGE_SIZE)
+          }
           loadingMore={loadingMore}
           onClearQuery={() => updateListScope({ q: undefined })}
           onLoadMore={loadMore}
@@ -1962,7 +2003,7 @@ function PullRequestsRouteView() {
           </Button>
         </div>
       ) : null}
-      {listData?.truncated && entries.length > 0 ? (
+      {listData?.truncated && entries.length > 0 && !mineComplete ? (
         <div className="flex justify-center py-3 text-xs text-muted-foreground">
           {loadingMore ? (
             <span className="flex items-center gap-2">
@@ -2026,6 +2067,17 @@ function PullRequestsRouteView() {
       onChange={(next) => updateListScope({ sort: next })}
     />
   );
+  const groupByMenu = (
+    <CompactFilterMenu
+      label="Group pull requests"
+      triggerIcon={<GroupIcon aria-hidden className="size-4" />}
+      triggerLabel="Group"
+      outlined
+      value={search.groupBy ?? "involvement"}
+      options={GROUP_BY_OPTIONS}
+      onChange={(next) => updateListScope({ groupBy: next === "project" ? next : undefined })}
+    />
+  );
   const filtersMenu = (
     <PullRequestFiltersMenu
       onOpenChange={setFiltersOpen}
@@ -2075,11 +2127,12 @@ function PullRequestsRouteView() {
     state: search.state,
     host: search.host,
     hostMenuOptions,
-    onInvolvement: (involvement: PullRequestInvolvement) => updateListScope({ involvement }),
+    onInvolvement: (involvement: PullRequestListInvolvement) => updateListScope({ involvement }),
     onState: (state: PullRequestListState) => updateListScope({ state }),
     onHost: (host: string | undefined) => updateListScope({ host }),
     searchInput,
     sortMenu,
+    groupByMenu,
     filtersMenu,
     rightPanelControl:
       // Footprint reserve while the panel is closed: the toggle itself stays
@@ -2514,6 +2567,7 @@ function PullRequestsColumn({
   onHost,
   searchInput,
   sortMenu,
+  groupByMenu,
   filtersMenu,
   rightPanelControl,
   titlebarControls,
@@ -2524,15 +2578,16 @@ function PullRequestsColumn({
   refreshing: boolean;
   onRefresh: () => void;
   searchValue: string;
-  involvement: PullRequestInvolvement;
+  involvement: PullRequestListInvolvement;
   state: PullRequestListState;
   host: string | undefined;
   hostMenuOptions: ReadonlyArray<PullRequestFilterOption<string>>;
-  onInvolvement: (involvement: PullRequestInvolvement) => void;
+  onInvolvement: (involvement: PullRequestListInvolvement) => void;
   onState: (state: PullRequestListState) => void;
   onHost: (host: string | undefined) => void;
   searchInput: ReactNode;
   sortMenu: ReactNode;
+  groupByMenu: ReactNode;
   filtersMenu: ReactNode;
   rightPanelControl: ReactNode;
   titlebarControls: ReactNode;
@@ -2684,6 +2739,7 @@ function PullRequestsColumn({
                 {searchInput}
               </div>
               {sortMenu}
+              {groupByMenu}
               {filtersMenu}
               <CompactFilterMenu
                 label="Filter by provider"

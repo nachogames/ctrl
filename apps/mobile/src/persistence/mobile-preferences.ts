@@ -5,7 +5,12 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type { AppIcon, ProviderInstanceId, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  type AppIcon,
+  DirectPushAlertKind,
+  type ProviderInstanceId,
+  type SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import { isAppIcon } from "../lib/appIconPreference";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
@@ -19,6 +24,10 @@ const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 
 export interface Preferences {
   readonly liveActivitiesEnabled?: boolean;
+  /** Agent alerts pushed by the connected servers themselves, without T3 Connect. */
+  readonly directPushEnabled?: boolean;
+  /** Which agent events server notifications cover; unset means the server default. */
+  readonly directPushAlertOn?: ReadonlyArray<DirectPushAlertKind>;
   readonly themeId?: MobileThemeId;
   readonly lightThemeId?: MobileThemeId;
   readonly darkThemeId?: MobileThemeId;
@@ -97,6 +106,8 @@ export class MobilePreferencesStore extends Context.Service<
 export function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     liveActivitiesEnabled?: boolean;
+    directPushEnabled?: boolean;
+    directPushAlertOn?: ReadonlyArray<DirectPushAlertKind>;
     themeId?: MobileThemeId;
     lightThemeId?: MobileThemeId;
     darkThemeId?: MobileThemeId;
@@ -123,6 +134,12 @@ export function sanitizePreferences(parsed: Preferences): Preferences {
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
+  }
+  if (typeof parsed.directPushEnabled === "boolean") {
+    preferences.directPushEnabled = parsed.directPushEnabled;
+  }
+  if (Array.isArray(parsed.directPushAlertOn)) {
+    preferences.directPushAlertOn = parsed.directPushAlertOn.filter(Schema.is(DirectPushAlertKind));
   }
   if (
     typeof parsed.themeId === "string" &&

@@ -1127,6 +1127,80 @@ export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
   );
 }
 
+/** A group as the page draws it: an involvement group, or one project's rows. */
+export interface PullRequestDisplayGroup<
+  Entry extends PullRequestListEntry = PullRequestListEntry,
+> {
+  readonly key: PullRequestGroupKey | `project:${string}`;
+  readonly label: string;
+  readonly entries: ReadonlyArray<Entry>;
+}
+
+/**
+ * "Mine": the authored and review-requested groups, nobody else's rows. The partitions behind those
+ * groups are one page each, so an own row only the feed has read sits in "Others" — it moves to
+ * the end of its group here rather than being dropped with the rest.
+ */
+function keepViewerGroups<Entry extends EnvironmentPullRequestEntry>(
+  groups: ReadonlyArray<PullRequestGroup<Entry>>,
+  viewers: PullRequestViewers,
+): ReadonlyArray<PullRequestGroup<Entry>> {
+  const others = groups.find((group) => group.key === "others")?.entries ?? [];
+  const extra = { authored: [] as Entry[], reviewRequested: [] as Entry[] };
+  for (const entry of others) {
+    if (isAuthoredByViewer(entry, viewers)) extra.authored.push(entry);
+    else if (entry.viewerReviewRequested) extra.reviewRequested.push(entry);
+  }
+  return (["authored", "reviewRequested"] as const).flatMap((key) => {
+    const entries = [...(groups.find((group) => group.key === key)?.entries ?? []), ...extra[key]];
+    return entries.length === 0 ? [] : [{ key, label: GROUP_LABELS[key], entries }];
+  });
+}
+
+/**
+ * The sorted groups shaped for the page. "Mine" keeps only the viewer's own groups; grouping by
+ * project then regroups whatever is left, one group per project in title order, each keeping the
+ * order the involvement groups gave it (authored, then review requested, then the rest).
+ */
+export function arrangePullRequestGroups<Entry extends EnvironmentPullRequestEntry>(
+  groups: ReadonlyArray<PullRequestGroup<Entry>>,
+  options: {
+    readonly mine: boolean;
+    readonly byProject: boolean;
+    readonly viewers: PullRequestViewers;
+  },
+): ReadonlyArray<PullRequestDisplayGroup<Entry>> {
+  const kept = options.mine ? keepViewerGroups(groups, options.viewers) : groups;
+  if (!options.byProject) return kept;
+  const byProject = new Map<string, { title: string; repository: string; entries: Entry[] }>();
+  for (const entry of kept.flatMap((group) => group.entries)) {
+    const key = JSON.stringify([entry.environmentId, entry.projectId]);
+    const group = byProject.get(key);
+    if (group === undefined) {
+      byProject.set(key, {
+        title: entry.projectTitle,
+        repository: entry.repository,
+        entries: [entry],
+      });
+    } else group.entries.push(entry);
+  }
+  const titleCounts = new Map<string, number>();
+  for (const group of byProject.values()) {
+    titleCounts.set(group.title, (titleCounts.get(group.title) ?? 0) + 1);
+  }
+  return [...byProject.entries()]
+    .map(([key, group]) => ({
+      key: `project:${key}` as const,
+      // Two servers can name different projects alike; the repository tells them apart.
+      label:
+        (titleCounts.get(group.title) ?? 0) > 1
+          ? `${group.title} · ${group.repository}`
+          : group.title,
+      entries: group.entries,
+    }))
+    .toSorted((left, right) => left.label.localeCompare(right.label));
+}
+
 /**
  * A row with the line counts that arrived after it did. Only where the host left them out — a
  * listing that carried them is not second-guessed — and only where they have arrived, since a row

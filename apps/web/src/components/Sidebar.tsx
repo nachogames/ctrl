@@ -73,6 +73,7 @@ import {
   EyeIcon,
   FolderIcon,
   GitBranchIcon,
+  LayersIcon,
   ListFilterIcon,
   MessageCircleQuestionIcon,
   PinIcon,
@@ -144,7 +145,7 @@ import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadAc
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { scopeThreadActionContext, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -203,6 +204,7 @@ import {
   filterSidebarV2VisibleThreads,
   partitionThreadsByGroup,
   resolveForcedOpenGroupKey,
+  resolveSidebarEnvironmentScope,
   resolveSidebarGroupExpanded,
   resolveSidebarGroupSection,
   sidebarActivityMs,
@@ -301,7 +303,16 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuShortcut,
+  MenuTrigger,
+} from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import {
@@ -985,6 +996,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
+  environmentScopeId: EnvironmentId | null;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
   onDraftContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
@@ -1030,6 +1042,9 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       ) {
         continue;
       }
+      if (props.environmentScopeId !== null && session.environmentId !== props.environmentScopeId) {
+        continue;
+      }
       if (draftKey === props.routeDraftId) {
         // Open draft: render the frozen entry snapshot, or nothing for a
         // draft that has never been left. Gated on the LIVE session above so
@@ -1051,6 +1066,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     draftThreadsByThreadKey,
     draftsByThreadKey,
     frozenActive,
+    props.environmentScopeId,
     props.routeDraftId,
     props.scopedProjectKeys,
   ]);
@@ -2460,10 +2476,35 @@ interface SidebarGroupEntry {
 }
 
 export default function Sidebar() {
-  const projects = useProjects();
+  const allProjects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threads = useThreadShells();
-  const threadGroups = useThreadGroups();
+  const allThreads = useThreadShells();
+  const allThreadGroups = useThreadGroups();
+  const environments = useEnvironmentIdentities();
+  const storedEnvironmentScopeId = useUiStateStore((store) => store.sidebarEnvironmentScopeId);
+  const setEnvironmentScopeId = useUiStateStore((store) => store.setSidebarEnvironmentScopeId);
+  const environmentScopeId = resolveSidebarEnvironmentScope(environments, storedEnvironmentScopeId);
+  const projects = useMemo(
+    () =>
+      environmentScopeId === null
+        ? allProjects
+        : allProjects.filter((project) => project.environmentId === environmentScopeId),
+    [allProjects, environmentScopeId],
+  );
+  const threads = useMemo(
+    () =>
+      environmentScopeId === null
+        ? allThreads
+        : allThreads.filter((thread) => thread.environmentId === environmentScopeId),
+    [allThreads, environmentScopeId],
+  );
+  const threadGroups = useMemo(
+    () =>
+      environmentScopeId === null
+        ? allThreadGroups
+        : allThreadGroups.filter((group) => group.environmentId === environmentScopeId),
+    [allThreadGroups, environmentScopeId],
+  );
   const threadGroupByKey = useMemo(() => indexThreadGroups(threadGroups), [threadGroups]);
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -2553,7 +2594,6 @@ export default function Sidebar() {
     () => openCommandPalette({ open: "add-project" }),
     [],
   );
-  const environments = useEnvironmentIdentities();
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
@@ -2602,6 +2642,10 @@ export default function Sidebar() {
       }),
     [projectOrder, projects],
   );
+  // Read at click time by New thread, which defaults to the top project of
+  // the filtered machine in the same manual order the shortcut uses.
+  const orderedProjectsRef = useRef(orderedProjects);
+  orderedProjectsRef.current = orderedProjects;
   const unsortedProjectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
@@ -2757,11 +2801,24 @@ export default function Sidebar() {
   // only after every catalog environment has a live project snapshot. Cached
   // or disconnected environments cannot establish that the project is gone.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
+  // Under a machine filter the project may just live on another machine, so
+  // the scope only goes inactive there and is checked again under All.
   useEffect(() => {
-    if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
+    if (
+      projectScopeKey !== null &&
+      environmentScopeId === null &&
+      allProjectSnapshotsReady &&
+      scopedProjectGroup === null
+    ) {
       setProjectScopeKey(null);
     }
-  }, [allProjectSnapshotsReady, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+  }, [
+    allProjectSnapshotsReady,
+    environmentScopeId,
+    projectScopeKey,
+    scopedProjectGroup,
+    setProjectScopeKey,
+  ]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -2784,6 +2841,9 @@ export default function Sidebar() {
       ) {
         continue;
       }
+      if (environmentScopeId !== null && session.environmentId !== environmentScopeId) {
+        continue;
+      }
       count += 1;
     }
     return count;
@@ -2792,7 +2852,7 @@ export default function Sidebar() {
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, environmentScopeId, projectScopeKey]);
 
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot) => {
@@ -2874,7 +2934,9 @@ export default function Sidebar() {
       threads: visible,
       groups: threadGroupByKey,
     });
-    inboxReturns.observe(workingShelfEnabled ? threads : null);
+    // Returns are tracked across every machine so a filter flip does not
+    // read hidden threads as gone.
+    inboxReturns.observe(workingShelfEnabled ? allThreads : null);
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
     const working: EnvironmentThreadShell[] = [];
@@ -3019,6 +3081,7 @@ export default function Sidebar() {
       groupKeyByThreadKey,
     };
   }, [
+    allThreads,
     nowMinute,
     optimisticDrop,
     scopedProjectKeys,
@@ -3052,7 +3115,14 @@ export default function Sidebar() {
     ],
     [activeThreads, groupedThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads],
   );
-  const searchEnvironmentIds = useConnectedEnvironmentIds();
+  const connectedEnvironmentIds = useConnectedEnvironmentIds();
+  const searchEnvironmentIds = useMemo(
+    () =>
+      environmentScopeId === null
+        ? connectedEnvironmentIds
+        : connectedEnvironmentIds.filter((environmentId) => environmentId === environmentScopeId),
+    [connectedEnvironmentIds, environmentScopeId],
+  );
   // useThreadSearch owns the debounce and the two-character floor.
   const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
   const threadSearchMatchByKey = useMemo(
@@ -3108,7 +3178,7 @@ export default function Sidebar() {
   // filter context changes so a scope/search flip never inherits a deep
   // page state.
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
-  const settledResetKey = projectScopeKey ?? "all";
+  const settledResetKey = `${environmentScopeId ?? "all"}|${projectScopeKey ?? "all"}`;
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -5501,18 +5571,29 @@ export default function Sidebar() {
       // the palette picker.
       if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
         if (isMobile) setOpenMobile(false);
-        void startNewThreadFromContext({
-          activeDraftThread: newThreadContext.activeDraftThread,
-          activeThread: newThreadContext.activeThread ?? undefined,
-          defaultProjectRef: newThreadContext.defaultProjectRef,
-          handleNewThread: newThreadContext.handleNewThread,
-        });
+        void startNewThreadFromContext(
+          scopeThreadActionContext(
+            {
+              activeDraftThread: newThreadContext.activeDraftThread,
+              activeThread: newThreadContext.activeThread ?? undefined,
+              defaultProjectRef: newThreadContext.defaultProjectRef,
+              handleNewThread: newThreadContext.handleNewThread,
+            },
+            environmentScopeId,
+            orderedProjectsRef.current[0]
+              ? scopeProjectRef(
+                  orderedProjectsRef.current[0].environmentId,
+                  orderedProjectsRef.current[0].id,
+                )
+              : null,
+          ),
+        );
         return;
       }
       if (isMobile) setOpenMobile(false);
       openCommandPalette({ open: "new-thread-in" });
     },
-    [isMobile, newThreadContext, projectGroups.length, setOpenMobile],
+    [environmentScopeId, isMobile, newThreadContext, projectGroups.length, setOpenMobile],
   );
 
   // The button mirrors chat.new: in multi-project setups both route through
@@ -5540,6 +5621,47 @@ export default function Sidebar() {
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
+              machineScope={
+                environments.length > 1 ? (
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <SidebarHeaderIconButton
+                          label={
+                            environmentScopeId === null
+                              ? "Show threads from: All machines"
+                              : `Show threads from: ${environmentLabelById.get(environmentScopeId) ?? "Machine"}`
+                          }
+                        />
+                      }
+                    >
+                      {environmentScopeId === null ? (
+                        <LayersIcon />
+                      ) : (
+                        <EnvironmentMachineIcon
+                          kind={environmentMachineById.get(environmentScopeId) ?? "server"}
+                        />
+                      )}
+                    </MenuTrigger>
+                    <MenuPopup align="end" side="bottom">
+                      <MenuRadioGroup
+                        value={environmentScopeId ?? ""}
+                        onValueChange={(value) => setEnvironmentScopeId(value || null)}
+                      >
+                        <MenuRadioItem value="">All machines</MenuRadioItem>
+                        {environments.map((environment) => (
+                          <MenuRadioItem
+                            key={environment.environmentId}
+                            value={environment.environmentId}
+                          >
+                            {environment.label}
+                          </MenuRadioItem>
+                        ))}
+                      </MenuRadioGroup>
+                    </MenuPopup>
+                  </Menu>
+                ) : null
+              }
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -5964,6 +6086,7 @@ export default function Sidebar() {
                           projectByKey={projectByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
                           scopedProjectKeys={scopedProjectKeys}
+                          environmentScopeId={environmentScopeId}
                           routeDraftId={routeDraftIdForRows}
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}
@@ -6188,7 +6311,20 @@ export default function Sidebar() {
           ) : null}
           {!isSearchingThreads && visibleDraftSessionCount === 0 && sidebarThreadCount === 0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
+              {projects.length === 0 && environmentScopeId !== null ? (
+                <>
+                  <span>
+                    No projects on {environmentLabelById.get(environmentScopeId) ?? "this machine"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setEnvironmentScopeId(null)}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                  >
+                    Show all machines
+                  </button>
+                </>
+              ) : projects.length === 0 ? (
                 <>
                   <span>No projects yet</span>
                   <button

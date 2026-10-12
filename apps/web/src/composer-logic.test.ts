@@ -289,6 +289,23 @@ describe("detectComposerTrigger", () => {
     expect(trigger).toBeNull();
   });
 
+  it("detects a slash command mid-message", () => {
+    const text = "please use /superpowers:br";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "superpowers:br",
+      rangeStart: "please use ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("closes a mid-message slash command once it looks like a path", () => {
+    const text = "look in /tmp/fo";
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
   it("detects non-model slash commands while typing", () => {
     const text = "/pl";
     const trigger = detectComposerTrigger(text, text.length);
