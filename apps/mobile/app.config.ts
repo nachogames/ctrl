@@ -259,7 +259,7 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
 
 const config: ExpoConfig = {
   name: variant.appName,
-  slug: "t3-code",
+  slug: "ctrl",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
   version: "2.0.0",
@@ -274,9 +274,13 @@ const config: ExpoConfig = {
   userInterfaceStyle: "automatic",
   updates: {
     enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+    url: "https://u.expo.dev/e3c8dcee-1041-430b-9e57-026bd0ad2384",
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
+    // Ctrl builds its APKs outside EAS Build, so the channel is set here, not by an eas.json profile.
+    ...(APP_VARIANT === "production"
+      ? { requestHeaders: { "expo-channel-name": "production" } }
+      : {}),
   },
   ios: {
     icon: variant.assets.iosIcon,
@@ -531,10 +535,11 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      // Ctrl: the fork's own Expo project (OTA updates), not upstream's.
+      projectId: "e3c8dcee-1041-430b-9e57-026bd0ad2384",
     },
   },
-  owner: "pingdotgg",
+  owner: "mceachinm",
 };
 
 export default config;
