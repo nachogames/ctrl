@@ -1,3 +1,4 @@
+import { orderGroupMembers } from "@t3tools/shared/groupOrder";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   resolveNewestCurrentPullRequestLink,
@@ -353,48 +354,32 @@ export function resolveThreadWorkingStartedAt(input: {
 
 export interface EnvironmentThreadGroup extends OrchestrationThreadGroupShell {
   readonly environmentId: EnvironmentId;
-  /** Live members: each handoff chain in order, chains by creation time. */
+  /** Live members in display order: unkeyed chats newest first, then keyed chats. */
   readonly threadIds: ReadonlyArray<ThreadId>;
+  /**
+   * Whether the group shows as a group: two or more members. The shell's
+   * `threads` list holds only unarchived threads (archived ones arrive in
+   * `archivedThreads`), so the member count is the count of active members.
+   */
+  readonly visible: boolean;
   /** The stored group. Its `pullRequest` may be null where the presented one falls back to a member's. */
   readonly source: OrchestrationThreadGroupShell;
 }
 
-/**
- * Members in display order. A chat follows the one it was handed off from;
- * chains start at chats with no source in the group. Links that loop or point
- * outside the group never drop a chat.
- */
+/** Members in display order; the rules live in `@t3tools/shared/groupOrder`. */
 export function orderThreadGroupMembers(
-  threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id" | "createdAt" | "handedOffFrom">>,
+  threads: ReadonlyArray<
+    Pick<OrchestrationV2ThreadShell, "id" | "createdAt" | "handedOffFrom" | "groupOrderKey">
+  >,
 ): ReadonlyArray<ThreadId> {
-  const byCreation = [...threads].sort(
-    (left, right) =>
-      DateTime.toEpochMillis(left.createdAt) - DateTime.toEpochMillis(right.createdAt) ||
-      left.id.localeCompare(right.id),
+  return orderGroupMembers(
+    threads.map((thread) => ({
+      id: thread.id,
+      createdAtMs: DateTime.toEpochMillis(thread.createdAt),
+      handedOffFrom: thread.handedOffFrom,
+      groupOrderKey: thread.groupOrderKey,
+    })),
   );
-  const ids = new Set(byCreation.map((thread) => thread.id));
-  const successors = new Map<ThreadId, Array<(typeof byCreation)[number]>>();
-  for (const thread of byCreation) {
-    const source = thread.handedOffFrom;
-    if (source == null || source === thread.id || !ids.has(source)) continue;
-    const list = successors.get(source) ?? [];
-    list.push(thread);
-    successors.set(source, list);
-  }
-  const ordered: Array<ThreadId> = [];
-  const seen = new Set<ThreadId>();
-  const visit = (thread: (typeof byCreation)[number]) => {
-    if (seen.has(thread.id)) return;
-    seen.add(thread.id);
-    ordered.push(thread.id);
-    for (const next of successors.get(thread.id) ?? []) visit(next);
-  };
-  for (const thread of byCreation) {
-    if (thread.handedOffFrom == null || !ids.has(thread.handedOffFrom)) visit(thread);
-  }
-  // Chats in a handoff loop have no root; keep them by creation time.
-  for (const thread of byCreation) visit(thread);
-  return ordered;
 }
 
 export function presentThreadGroup(
@@ -410,13 +395,15 @@ export function presentThreadGroup(
       // Subagents belong to their parent thread, never to a group.
       thread.lineage.relationshipToParent !== "subagent",
   );
+  const threadIds = orderThreadGroupMembers(members);
   return {
     ...group,
     // A group usually forms before its pull request exists, so until one is
     // stored on it, show the newest one a member has linked since.
     pullRequest: group.pullRequest ?? resolveNewestCurrentPullRequestLink(members),
     environmentId,
-    threadIds: orderThreadGroupMembers(members),
+    threadIds,
+    visible: threadIds.length >= 2,
     source: group,
   };
 }
