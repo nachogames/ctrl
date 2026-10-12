@@ -2386,6 +2386,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const message = yield* resolveUserMessage(turnInput, mcpServers);
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
+            // MCP send overrides replace the ambient servers loaded when the agent opens.
             const turnStarted = yield* Deferred.make<ActiveCursorTurn | null>();
             yield* Ref.set(startingTurn, turnStarted);
             const sdkRun = yield* agent.session.send({
@@ -2393,7 +2394,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               options: {
                 model: cursorSdkModelSelection(turnInput.modelSelection),
                 mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-                ...(mcpServers === undefined ? {} : { mcpServers }),
                 local: { customTools: { [ASK_USER_TOOL_NAME]: askUserTool } },
               },
               onDelta: (update) => {
