@@ -482,6 +482,60 @@ describe("GroupResourceScanner names and tiers", () => {
     ),
   );
 
+  it.effect("keeps a script's name while npm or pnpm runs it under node", () =>
+    scan({
+      listeners: [
+        listener(3000, 100, "node", member, "script-dev"),
+        listener(3001, 101, "node", member, "script-web"),
+        listener(3002, 102, "node", member, "script-api"),
+      ],
+      terminals: new Map([
+        ["script-dev", { label: "node", hasRunningSubprocess: true }],
+        ["script-web", { label: "node", hasRunningSubprocess: true }],
+        ["script-api", { label: "python3", hasRunningSubprocess: true }],
+      ]),
+      scripts: [
+        script("dev", "Dev", "npm run dev"),
+        script("web", "Web", "cd web && pnpm dev"),
+        script("api", "API", "npm run dev"),
+      ],
+    }).pipe(
+      Effect.tap((resources) =>
+        Effect.sync(() =>
+          expect(resources.map((r) => [r.id, r.name, r.scriptId])).toEqual([
+            ["server:3000", "Dev", "dev"],
+            ["server:3001", "Web", "web"],
+            ["server:3002", "python3", null],
+          ]),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("never names a server after its terminal's own label", () =>
+    scan({
+      listeners: [
+        listener(3000, 100, "node", member, "term-2"),
+        listener(3001, 101, "node", member, "script-dev"),
+      ],
+      // A running child with no label: the summary falls back to the terminal's label.
+      terminals: new Map([
+        ["term-2", { label: "Terminal 2", hasRunningSubprocess: true }],
+        ["script-dev", { label: "script-dev", hasRunningSubprocess: true }],
+      ]),
+      scripts: [script("dev", "Dev server", "vp run dev")],
+    }).pipe(
+      Effect.tap((resources) =>
+        Effect.sync(() =>
+          expect(resources.map((r) => [r.id, r.name, r.scriptId])).toEqual([
+            ["server:3000", "node", null],
+            ["server:3001", "Dev server", "dev"],
+          ]),
+        ),
+      ),
+    ),
+  );
+
   it.effect("a registered name promotes a worktree server and never lands on another's port", () =>
     scan({
       manualResources: [

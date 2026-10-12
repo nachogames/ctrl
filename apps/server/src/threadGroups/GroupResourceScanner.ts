@@ -25,6 +25,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveProjectScripts, scriptIdFromTerminalId } from "@t3tools/shared/projectScripts";
+import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { loopbackPort } from "@t3tools/shared/threadGroups";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -147,15 +148,39 @@ export type TerminalCommand = Pick<TerminalSummary, "label" | "hasRunningSubproc
 export const terminalKey = (terminal: { readonly threadId: string; readonly terminalId: string }) =>
   `${terminal.threadId}\u0000${terminal.terminalId}`;
 
+const JS_RUNTIMES = new Set(["node", "bun", "deno"]);
+const JS_LAUNCHERS = new Set(["npm", "pnpm", "yarn", "npx", "bunx", "vp", "bun", "deno", "node"]);
+
 /**
- * Whether a script terminal still runs its script: it is idle or unknown, or its
- * program is one of the command's words. A reused terminal keeps its id after
- * the script stops, so the id alone would name a stranger.
+ * The program a terminal runs, or null when it is idle or unknown. With no
+ * child label the summary falls back to the terminal's own label, which names
+ * no program.
  */
-const stillRunsScript = (command: string, terminal: TerminalCommand | undefined) =>
-  terminal === undefined ||
-  !terminal.hasRunningSubprocess ||
-  command.split(/\s+/).some((word) => word.split("/").at(-1) === terminal.label);
+const terminalProgram = (terminalId: string, terminal: TerminalCommand | undefined) => {
+  if (terminal === undefined || !terminal.hasRunningSubprocess) return null;
+  const label = terminal.label.trim();
+  return label.length === 0 || label === getTerminalLabel(terminalId) ? null : label;
+};
+
+/**
+ * Whether a script terminal still runs its script: its program is unknown, is
+ * one of the command's words, or is a JS runtime under a launcher such as
+ * `npm` or `vp` (they are node scripts, so `ps` shows `node`). A reused
+ * terminal keeps its id after the script stops, so the id alone would name a
+ * stranger.
+ */
+const stillRunsScript = (command: string, program: string | null) => {
+  if (program === null) return true;
+  const programOf = (word: string) => word.split("/").at(-1);
+  if (command.split(/\s+/).some((word) => programOf(word) === program)) return true;
+  return (
+    JS_RUNTIMES.has(program) &&
+    command.split(/&&|\|\||;/).some((segment) => {
+      const first = segment.trim().split(/\s+/)[0];
+      return first !== undefined && JS_LAUNCHERS.has(programOf(first) ?? "");
+    })
+  );
+};
 
 /**
  * Servers, then containers, then registered resources. A server is named by a
@@ -185,14 +210,15 @@ export const mergeGroupResources = (input: {
     const candidate =
       server.terminal === null ? null : scriptIdFromTerminalId(server.terminal.terminalId);
     const candidateScript = candidate === null ? undefined : scripts.get(candidate);
+    const program =
+      server.terminal === null ? null : terminalProgram(server.terminal.terminalId, terminal);
     const script =
-      candidateScript !== undefined && stillRunsScript(candidateScript.command, terminal)
+      candidateScript !== undefined && stillRunsScript(candidateScript.command, program)
         ? candidateScript
         : undefined;
-    const program = terminal?.hasRunningSubprocess === true ? terminal.label.trim() : "";
     return {
       ...server,
-      name: named?.name ?? script?.name ?? (program.length > 0 ? program : server.name),
+      name: named?.name ?? script?.name ?? program ?? server.name,
       scriptId: script?.id ?? null,
       tier: named !== undefined ? "known" : server.tier,
     };
