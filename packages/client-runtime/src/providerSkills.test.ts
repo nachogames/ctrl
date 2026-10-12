@@ -202,6 +202,15 @@ describe("resolveProviderSkillSourceKind", () => {
     ).toBe("app");
   });
 
+  it("labels Claude Code plugin skills as plugins", () => {
+    expect(
+      resolveProviderSkillSourceKind({
+        path: "/Users/julius/.claude/plugins/cache/official/superpowers/6.4.1/skills/brainstorming/SKILL.md",
+        scope: "plugin",
+      }),
+    ).toBe("plugin");
+  });
+
   it("maps standard scopes to source kinds", () => {
     expect(
       resolveProviderSkillSourceKind({

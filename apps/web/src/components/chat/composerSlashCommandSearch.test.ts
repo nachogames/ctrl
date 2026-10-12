@@ -220,4 +220,31 @@ describe("searchSlashCommandItems", () => {
       "skill:claudeAgent:unslop",
     ]);
   });
+
+  it("offers plugin-qualified Claude skills mid-message and matches either half of the name", () => {
+    const items = slashCommandItemsForPromptPosition(
+      [
+        {
+          id: "skill:claudeAgent:superpowers:brainstorming",
+          type: "skill",
+          provider: claudeDriver,
+          skill: {
+            name: "superpowers:brainstorming",
+            path: "/plugins/superpowers/skills/brainstorming/SKILL.md",
+            enabled: true,
+            scope: "plugin",
+          },
+          label: "/skill:superpowers:brainstorming",
+          description: "Explore intent first",
+        },
+      ],
+      false,
+    );
+
+    for (const query of ["brainstorm", "superpowers", "superpowers:brain"]) {
+      expect(searchSlashCommandItems(items, query).map((item) => item.id)).toEqual([
+        "skill:claudeAgent:superpowers:brainstorming",
+      ]);
+    }
+  });
 });

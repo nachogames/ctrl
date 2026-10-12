@@ -5,7 +5,14 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 
-export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
+export type ProviderSkillSourceKind =
+  | "app"
+  | "plugin"
+  | "repo"
+  | "project"
+  | "personal"
+  | "system"
+  | "other";
 
 function normalizePathSeparators(pathValue: string): string {
   return pathValue.replaceAll("\\", "/");
@@ -77,6 +84,9 @@ export function resolveProviderSkillSourceKind(
       return "personal";
     case "system":
       return "system";
+    // Claude Code skills shipped by an installed plugin (`plugin:skill`).
+    case "plugin":
+      return "plugin";
     case undefined:
     case "":
       return "other";

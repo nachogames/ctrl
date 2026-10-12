@@ -19,6 +19,19 @@ describe("planClaudeSkillDispatch", () => {
     });
   });
 
+  it("dispatches a plugin-qualified skill as its namespaced slash command", () => {
+    expect(
+      planClaudeSkillDispatch(
+        "first $superpowers:brainstorming the idea",
+        new Set(["superpowers:brainstorming"]),
+      ),
+    ).toEqual({
+      leadingText: "first",
+      commandText: "/superpowers:brainstorming the idea",
+      skillName: "superpowers:brainstorming",
+    });
+  });
+
   it("keeps a mention that opens the prompt as a single command block", () => {
     expect(planClaudeSkillDispatch("$review\nfocus on auth", SKILLS)).toEqual({
       leadingText: undefined,
