@@ -2,6 +2,7 @@ import type {
   EnvironmentPresentation,
   PreparedConnection,
 } from "@t3tools/client-runtime/connection";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/presentation";
 import { connectionCatalogDisplayUrl } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -61,7 +62,7 @@ export function createRemoteEnvironmentProjectionAtoms(input: {
       previousPrepared = prepared;
       previous = {
         environmentId,
-        environmentLabel: presentation.entry.target.label,
+        environmentLabel: environmentDisplayLabel(presentation),
         pairingUrl: displayUrl,
         displayUrl,
         httpBaseUrl,

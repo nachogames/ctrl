@@ -91,13 +91,24 @@ export interface EnvironmentConnectionSummary {
   readonly connectionErrorTraceId: string | null;
 }
 
+/**
+ * The name to show for an environment: the display name set on its server,
+ * else the label saved with its connection (the machine name, or a label
+ * such as "WSL: Ubuntu" the desktop gave it).
+ */
+export function environmentDisplayLabel(
+  environment: Pick<EnvironmentPresentation, "entry" | "serverConfig">,
+): string {
+  return environment.serverConfig?.settings?.environmentLabel ?? environment.entry.target.label;
+}
+
 export function projectEnvironmentConnectionSummary(
   environmentId: EnvironmentId,
   environment: EnvironmentPresentation,
 ): EnvironmentConnectionSummary {
   return {
     environmentId,
-    environmentLabel: environment.entry.target.label,
+    environmentLabel: environmentDisplayLabel(environment),
     displayUrl: connectionCatalogDisplayUrl(environment.entry) ?? "",
     isRelayManaged: hasRelayRoute(environment.entry),
     isEnabled: environment.entry.enabled,
@@ -124,10 +135,15 @@ export function createEnvironmentSummaryAtoms(input: {
       : next;
   });
   const identitiesAtom = Atom.make((get) => {
-    const next = [...get(input.catalogValueAtom).entries].map(([environmentId, entry]) => ({
-      environmentId,
-      label: entry.target.label,
-    }));
+    // Reads each presentation for its display name; the equality check below
+    // keeps unrelated config refreshes from reaching subscribers.
+    const next = [...get(input.catalogValueAtom).entries].map(([environmentId, entry]) => {
+      const presentation = get(input.presentationAtom(environmentId));
+      return {
+        environmentId,
+        label: presentation === null ? entry.target.label : environmentDisplayLabel(presentation),
+      };
+    });
     const previous = Option.getOrNull(
       get.self<ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>>(),
     );

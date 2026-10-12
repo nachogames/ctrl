@@ -1022,6 +1022,23 @@ describe("ServerSettings environment icon", () => {
   });
 });
 
+describe("ServerSettings environment label", () => {
+  it("defaults to null, meaning the detected machine name", () => {
+    expect(decodeServerSettings({}).environmentLabel).toBeNull();
+  });
+
+  it("keeps a trimmed name and round-trips it", () => {
+    const settings = decodeServerSettings({ environmentLabel: "  Work Mac " });
+    expect(settings.environmentLabel).toBe("Work Mac");
+    expect(encodeServerSettings(settings).environmentLabel).toBe("Work Mac");
+  });
+
+  it("rejects an empty or over-long name", () => {
+    expect(() => decodeServerSettings({ environmentLabel: "   " })).toThrow();
+    expect(() => decodeServerSettings({ environmentLabel: "x".repeat(65) })).toThrow();
+  });
+});
+
 const decodeDeviceHostSettings = Schema.decodeSync(ServerSettings);
 
 it("validates remote device hosts and rejects ambiguous host ids", () => {
