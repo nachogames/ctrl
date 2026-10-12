@@ -276,7 +276,10 @@ const config: ExpoConfig = {
     enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
     url: "https://u.expo.dev/e3c8dcee-1041-430b-9e57-026bd0ad2384",
     checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0,
+    // Cold starts wait briefly for a waiting update, so the launch that finds
+    // one opens on it instead of needing a second launch. The check alone is
+    // ~0.2s; on a stalled network the cached bundle starts after this cap.
+    fallbackToCacheTimeout: 3000,
     // Ctrl builds its APKs outside EAS Build, so the channel is set here, not by an eas.json profile.
     ...(APP_VARIANT === "production"
       ? { requestHeaders: { "expo-channel-name": "production" } }

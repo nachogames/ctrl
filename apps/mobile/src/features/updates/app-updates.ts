@@ -573,10 +573,11 @@ export const checkForAppUpdateOnLaunch = createAppUpdateLaunchCheck();
 
 /**
  * The app can stay resident for days, so a launch-only check misses updates
- * published while it was in memory. Anything shorter reads as noise: brief
- * app switches should not trigger network checks or an install prompt.
+ * published while it was in memory. A minute away is long enough that quick
+ * app switches stay quiet, short enough that coming back to the app soon after
+ * a release picks it up; the check itself is one small manifest request.
  */
-export const FOREGROUND_APP_UPDATE_RECHECK_AFTER_MS = 15 * 60 * 1000;
+export const FOREGROUND_APP_UPDATE_RECHECK_AFTER_MS = 60 * 1000;
 
 export function shouldRecheckAppUpdateOnForeground(
   backgroundedAtMs: number | null,
