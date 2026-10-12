@@ -116,6 +116,8 @@ const makeLayer = (input: {
   /** Keyed by terminal id. */
   readonly terminals?: ReadonlyMap<string, Pick<TerminalSummary, "label" | "hasRunningSubprocess">>;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  /** The worktree of every chat read alone. */
+  readonly threadWorktreePath?: string | null;
 }) =>
   GroupResourceScanner.layer.pipe(
     Layer.provide(
@@ -126,6 +128,15 @@ const makeLayer = (input: {
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           listProjectThreads: () => Effect.succeed([thread(member, true), thread(outsider, false)]),
+          getThreadShell: (threadId) =>
+            Effect.succeed(
+              threadId === member || threadId === outsider
+                ? {
+                    ...thread(threadId, threadId === member),
+                    worktreePath: input.threadWorktreePath ?? null,
+                  }
+                : null,
+            ),
         }),
         Layer.mock(PortScanner.PortDiscovery)({
           listListeners: Effect.succeed(input.listeners ?? listeners),
@@ -158,7 +169,7 @@ const makeLayer = (input: {
   );
 
 const scanServers = GroupResourceScanner.GroupResourceScanner.pipe(
-  Effect.flatMap((scanner) => scanner.scan(groupId)),
+  Effect.flatMap((scanner) => scanner.scan({ groupId })),
   Effect.map((resources) => resources.map((resource) => [resource.detail, resource.source])),
 );
 
@@ -190,7 +201,7 @@ describe("GroupResourceScanner servers", () => {
 
   it.effect("names a server by its process and port and links it", () =>
     GroupResourceScanner.GroupResourceScanner.pipe(
-      Effect.flatMap((scanner) => scanner.scan(groupId)),
+      Effect.flatMap((scanner) => scanner.scan({ groupId })),
       Effect.tap((resources) =>
         Effect.sync(() =>
           expect(resources[0]).toEqual({
@@ -237,7 +248,7 @@ describe("GroupResourceScanner servers", () => {
 
   it.effect("a group without a worktree finds nothing beyond its chats' terminals", () =>
     GroupResourceScanner.GroupResourceScanner.pipe(
-      Effect.flatMap((scanner) => scanner.scan(groupId)),
+      Effect.flatMap((scanner) => scanner.scan({ groupId })),
       Effect.tap((resources) =>
         Effect.sync(() =>
           expect(resources.map((resource) => [resource.id, resource.tier])).toEqual([
@@ -283,8 +294,59 @@ const container = (
 });
 
 const scanAll = GroupResourceScanner.GroupResourceScanner.pipe(
-  Effect.flatMap((scanner) => scanner.scan(groupId)),
+  Effect.flatMap((scanner) => scanner.scan({ groupId })),
 );
+
+describe("GroupResourceScanner for a chat outside any group", () => {
+  it.effect("attributes the chat's own terminal servers and its worktree, nothing registered", () =>
+    GroupResourceScanner.GroupResourceScanner.pipe(
+      Effect.flatMap((scanner) => scanner.scan({ threadId: outsider })),
+      Effect.tap((resources) =>
+        Effect.sync(() =>
+          expect(resources.map((resource) => [resource.id, resource.source])).toEqual([
+            ["server:4000", "terminal"],
+            ["server:6000", "cwd"],
+            ["container:db", "docker"],
+          ]),
+        ),
+      ),
+      Effect.provide(
+        makeLayer({
+          worktreePath: "/a/wt",
+          threadWorktreePath: "/a/wt2",
+          run: () => Effect.succeed(ok(lsofCwdOutput)),
+          listContainers: Effect.succeed([container("db", "/a/wt2"), container("api", "/a/wt")]),
+          manualResources: [{ id: "notes", name: "Notes", url: null, kind: "other" }],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("finds only the chat's terminal servers when it has no worktree", () =>
+    GroupResourceScanner.GroupResourceScanner.pipe(
+      Effect.flatMap((scanner) => scanner.scan({ threadId: member })),
+      Effect.tap((resources) =>
+        Effect.sync(() =>
+          expect(resources.map((resource) => [resource.id, resource.source])).toEqual([
+            ["server:3000", "terminal"],
+          ]),
+        ),
+      ),
+      Effect.provide(makeLayer({ worktreePath: "/a/wt", run: () => Effect.succeed(ok("")) })),
+    ),
+  );
+
+  it.effect("fails with not-found for a chat that does not exist", () =>
+    GroupResourceScanner.GroupResourceScanner.pipe(
+      Effect.flatMap((scanner) => scanner.scan({ threadId: ThreadId.make("missing") })),
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => expect(error._tag).toBe("ThreadGroupThreadNotFoundError")),
+      ),
+      Effect.provide(makeLayer({ worktreePath: "/a/wt", run: () => Effect.succeed(ok("")) })),
+    ),
+  );
+});
 
 describe("GroupResourceScanner containers and registered resources", () => {
   it.effect("attributes containers by their compose working_dir label", () =>
@@ -401,7 +463,7 @@ describe("GroupResourceScanner containers and registered resources", () => {
 describe("GroupResourceScanner names and tiers", () => {
   const scan = (overrides: Partial<Parameters<typeof makeLayer>[0]> = {}) =>
     GroupResourceScanner.GroupResourceScanner.pipe(
-      Effect.flatMap((scanner) => scanner.scan(groupId)),
+      Effect.flatMap((scanner) => scanner.scan({ groupId })),
       Effect.provide(
         makeLayer({
           worktreePath: "/a/wt",
@@ -637,7 +699,7 @@ const makeTestFeed = Effect.gen(function* () {
     const seen: Array<ReadonlyArray<string>> = [];
     const fiber = yield* Effect.forkChild(
       feed
-        .changes(groupId)
+        .changes({ groupId })
         .pipe(
           Stream.runForEach((resources) =>
             Effect.sync(() => seen.push(resources.map((entry) => entry.id))),

@@ -13,9 +13,11 @@ import {
 
 const auth = ThreadGroupId.make("group-auth");
 const docs = ThreadGroupId.make("group-docs");
+const solo = ThreadGroupId.make("group-solo");
 const groups = [
-  { id: docs, title: "Docs", activityMs: 100 },
-  { id: auth, title: "Auth refactor", activityMs: 200 },
+  { id: docs, title: "Docs", activityMs: 100, visible: true },
+  { id: auth, title: "Auth refactor", activityMs: 200, visible: true },
+  { id: solo, title: "Solo", activityMs: 300, visible: false },
 ];
 
 const mutationError = (reason?: "workspace-mismatch" | "thread-busy") =>
@@ -47,28 +49,32 @@ function runMove(results: ReadonlyArray<Result>, confirmed: boolean) {
 }
 
 describe("move to group menu", () => {
-  it("lists the project's groups by activity, the current one checked, then a new group", () => {
+  it("lists the project's visible groups by activity, the current one checked", () => {
     const [move, remove] = buildMoveToGroupMenuItems({ groups, currentGroupId: docs });
     expect(move?.children).toEqual([
       { id: "move-to-group:group-auth", label: "Auth refactor" },
       { id: "move-to-group:group-docs", label: "Docs", checked: true, disabled: true },
-      { id: "move-to-new-group", label: "New group with this chat", separatorBefore: true },
     ]);
     expect(remove).toEqual({ id: "remove-from-group", label: "Remove from group" });
   });
 
-  it("offers only a new group, and no removal, to an ungrouped chat in a project without groups", () => {
-    const items = buildMoveToGroupMenuItems({ groups: [], currentGroupId: null });
-    expect(items).toHaveLength(1);
-    expect(items[0]?.children).toEqual([
-      { id: "move-to-new-group", label: "New group with this chat" },
+  it("offers no new group and no removal to a chat in a hidden group", () => {
+    const items = buildMoveToGroupMenuItems({ groups, currentGroupId: solo });
+    expect(items.map((item) => item.id)).toEqual(["move-to-group"]);
+    expect(items[0]?.children?.map((item) => item.id)).toEqual([
+      "move-to-group:group-auth",
+      "move-to-group:group-docs",
     ]);
+  });
+
+  it("offers nothing to a chat in a project without visible groups", () => {
+    expect(buildMoveToGroupMenuItems({ groups: [groups[2]!], currentGroupId: solo })).toEqual([]);
+    expect(buildMoveToGroupMenuItems({ groups: [], currentGroupId: null })).toEqual([]);
   });
 
   it("reads the target group back from the action id", () => {
     expect(parseMoveToGroupTarget("move-to-group:group-auth")).toBe("group-auth");
     expect(parseMoveToGroupTarget("move-to-group")).toBeNull();
-    expect(parseMoveToGroupTarget("move-to-new-group")).toBeNull();
   });
 
   it("recognises a workspace mismatch by its reason, not its message", () => {

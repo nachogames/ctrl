@@ -55,6 +55,7 @@ import {
   recreateThreadGroupWorktree,
   removeThreadGroupResource,
   reorderActiveThread,
+  reorderGroupThread,
   reorderQueuedRun,
   revertThreadCheckpoint,
   settleThread,
@@ -1067,6 +1068,26 @@ describe("V2 environment commands", () => {
         {
           type: "thread.active.reorder",
           commandId: "reorder-command",
+          threadId: "thread-1",
+          orderKey: "mf",
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("sends a group order key", () =>
+    Effect.gen(function* () {
+      const dispatched: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands: dispatched, projects: [] });
+      yield* reorderGroupThread({
+        commandId: CommandId.make("group-reorder-command"),
+        threadId: ThreadId.make("thread-1"),
+        orderKey: "mf",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      expect(dispatched).toEqual([
+        {
+          type: "thread.group.reorder",
+          commandId: "group-reorder-command",
           threadId: "thread-1",
           orderKey: "mf",
         },

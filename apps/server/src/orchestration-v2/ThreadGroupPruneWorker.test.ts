@@ -9,12 +9,19 @@ import * as EventSink from "./EventSink.ts";
 import * as ThreadGroupPruneWorker from "./ThreadGroupPruneWorker.ts";
 import * as ThreadGroupService from "./ThreadGroupService.ts";
 
-const threadDeleted = (sequence: number, threadId: string, groupId: string | null) =>
+const threadEvent = (
+  type: "thread.deleted" | "thread.archived" | "thread.unarchived",
+  sequence: number,
+  threadId: string,
+  groupId: string | null,
+) =>
   ({
     sequence,
     commandId: null,
-    event: { type: "thread.deleted", threadId, payload: { id: threadId, groupId } },
+    event: { type, threadId, payload: { id: threadId, groupId } },
   }) as unknown as OrchestrationV2StoredEvent;
+const threadDeleted = (sequence: number, threadId: string, groupId: string | null) =>
+  threadEvent("thread.deleted", sequence, threadId, groupId);
 
 it.effect("prunes the group of a deleted thread after the startup sweep", () =>
   Effect.gen(function* () {
@@ -38,10 +45,12 @@ it.effect("prunes the group of a deleted thread after the startup sweep", () =>
             latestSequence: () => Effect.succeed(7),
             stream: (input) => {
               streamedAfter.push(input?.afterSequence);
-              return Stream.make(
-                threadDeleted(8, "thread-a", null),
-                threadDeleted(9, "thread-b", groupId),
-              );
+              return input?.eventType === "thread.deleted"
+                ? Stream.make(
+                    threadDeleted(8, "thread-a", null),
+                    threadDeleted(9, "thread-b", groupId),
+                  )
+                : Stream.empty;
             },
           }),
         ),
@@ -50,6 +59,48 @@ it.effect("prunes the group of a deleted thread after the startup sweep", () =>
 
     yield* Deferred.await(pruned).pipe(Effect.provide(layer));
     assert.deepEqual(calls, ["sweep", groupId]);
-    assert.deepEqual(streamedAfter, [7]);
+    assert.deepEqual(streamedAfter, [7, 7, 7]);
+  }),
+);
+
+it.effect("re-checks the group of an archived or unarchived thread", () =>
+  Effect.gen(function* () {
+    const archivedGroup = ThreadGroupId.make("group:archived");
+    const unarchivedGroup = ThreadGroupId.make("group:unarchived");
+    const calls: Array<string> = [];
+    const both = yield* Deferred.make<void>();
+    const layer = ThreadGroupPruneWorker.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadGroupService.ThreadGroupService)({
+            pruneEmptyGroups: Effect.void,
+            pruneIfEmpty: (id, options) =>
+              Effect.suspend(() => {
+                calls.push(options?.unarchived ? `${id}:unarchived` : id);
+                return calls.length === 2 ? Deferred.succeed(both, undefined) : Effect.void;
+              }).pipe(Effect.asVoid),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            latestSequence: () => Effect.succeed(0),
+            stream: (input) => {
+              switch (input?.eventType) {
+                case "thread.archived":
+                  return Stream.make(threadEvent("thread.archived", 1, "thread-a", archivedGroup));
+                case "thread.unarchived":
+                  return Stream.make(
+                    threadEvent("thread.unarchived", 2, "thread-b", unarchivedGroup),
+                  );
+                default:
+                  return Stream.empty;
+              }
+            },
+          }),
+        ),
+      ),
+    );
+
+    yield* Deferred.await(both).pipe(Effect.provide(layer));
+    // An unarchive can grow a hidden group of one back to two chats.
+    assert.sameMembers(calls, [archivedGroup, `${unarchivedGroup}:unarchived`]);
   }),
 );

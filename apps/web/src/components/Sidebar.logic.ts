@@ -27,7 +27,7 @@ import {
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
-import { cn } from "../lib/utils";
+import { cn, normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 
@@ -265,12 +265,14 @@ interface SidebarGroupDropThread {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
   readonly lineage: { readonly relationshipToParent: "fork" | "subagent" | null };
+  readonly groupId?: ThreadGroupId | null;
 }
 
 /**
  * What dropping `activeThread` on `overItem` does to its group, or null when
  * the drop is not a group drop. A group row in any section takes the chat. An
- * Active-tree chat row takes it into its group, or groups with it when lone.
+ * Active-tree chat row takes it into its group, or groups with it when lone; a
+ * lone chat that is the last member of a hidden group takes it into that group.
  * Pinned, Settled and shelf chat rows keep their pin and settle drops, and so
  * does an ungrouped chat dragged in from a shelf (its drop into Active means
  * unpin, un-settle or wake). Targets in another project, the chat's own group
@@ -309,8 +311,56 @@ export function resolveSidebarGroupDropTarget(input: {
   const target = input.threads.get(overItem.key);
   if (target === undefined || isSubagent(target) || !sameProject(target)) return null;
   const targetGroupKey = overItem.groupKey ?? null;
-  if (targetGroupKey === null) return { kind: "create-with", threadKey: overItem.key };
-  return targetGroupKey === active.groupKey ? null : { kind: "join", groupKey: targetGroupKey };
+  if (targetGroupKey !== null) {
+    return targetGroupKey === active.groupKey ? null : { kind: "join", groupKey: targetGroupKey };
+  }
+  const hiddenGroupKey =
+    target.groupId == null
+      ? null
+      : threadGroupKey({ environmentId: target.environmentId, groupId: target.groupId });
+  const hiddenGroup = hiddenGroupKey === null ? undefined : input.groups.get(hiddenGroupKey);
+  if (hiddenGroupKey === null || hiddenGroup === undefined || !sameProject(hiddenGroup)) {
+    return { kind: "create-with", threadKey: overItem.key };
+  }
+  return hiddenGroupKey === active.groupKey ? null : { kind: "join", groupKey: hiddenGroupKey };
+}
+
+/**
+ * The group whose chats a drop reorders: a member dropped on another member of
+ * its own expanded group. Null for any other drop, or where the chat's server
+ * cannot store the order.
+ */
+export function resolveSidebarGroupReorder(input: {
+  readonly activeItem: SidebarListItem | undefined;
+  readonly overItem: SidebarListItem | undefined;
+  /** The chat's environment advertises `threadGroupReorder`. */
+  readonly supportsReorder: boolean;
+}): string | null {
+  const { activeItem, overItem } = input;
+  if (!input.supportsReorder || activeItem?.kind !== "thread" || overItem?.kind !== "thread") {
+    return null;
+  }
+  const groupKey = activeItem.groupKey ?? null;
+  if (groupKey === null || overItem.key === activeItem.key) return null;
+  return overItem.groupKey === groupKey ? groupKey : null;
+}
+
+/**
+ * Order keys for a reorder inside a group: the Pinned rule, over the group's
+ * chats. Write them in the returned order, which runs bottom-up: keyless chats
+ * sort above keyed ones in a group, so each write lands in its planned place
+ * and a failure partway leaves the asked-for order, not a reshuffle.
+ */
+export function planGroupMemberReorder(input: {
+  /** Member ids in the order after the move. */
+  readonly orderedIds: readonly string[];
+  readonly keysById: ReadonlyMap<string, string | null | undefined>;
+  readonly movedId: string;
+}): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> {
+  const position = new Map(input.orderedIds.map((id, index) => [id, index]));
+  return planPinnedReorder(input).toSorted(
+    (left, right) => (position.get(right.id) ?? -1) - (position.get(left.id) ?? -1),
+  );
 }
 
 export type SidebarThreadDropPlan =
@@ -1104,8 +1154,8 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
 }
 
 // ---------------------------------------------------------------------------
-// Chat groups. A chat in a known group renders under its group, wherever the
-// group is placed; its own pin/snooze/settle no longer place it.
+// Chat groups. A chat in a known visible group renders under its group,
+// wherever the group is placed; its own pin/snooze/settle no longer place it.
 
 function timestampMsOrNull(value: string | null | undefined): number | null {
   if (value == null) return null;
@@ -1226,8 +1276,9 @@ export function partitionThreadsByGroup<
     }
     const key = threadGroupKey({ environmentId: thread.environmentId, groupId: thread.groupId });
     const group = input.groups.get(key);
-    // An unknown group, or one from another project, never hides the chat.
-    if (group === undefined || group.projectId !== thread.projectId) {
+    // An unknown group, one from another project, or a hidden group (one
+    // live chat) never hides the chat: it places itself by its own state.
+    if (group === undefined || !group.visible || group.projectId !== thread.projectId) {
       ungrouped.push(thread);
       continue;
     }
@@ -1460,6 +1511,21 @@ export function searchSidebarThreads<
     }
   }
   return [...titleMatches, ...contentMatches];
+}
+
+/**
+ * Whether a PR's search terms contain every whitespace-separated token of the
+ * query. Search results use this to pick the PR number to show, so it has to
+ * accept the multi-token queries the command palette matches on.
+ */
+export function pullRequestMatchesSearchQuery(
+  pullRequest: Parameters<typeof threadPullRequestSearchTerms>[0],
+  query: string,
+): boolean {
+  const normalizedQuery = normalizeSearchText(query);
+  if (normalizedQuery.length === 0) return false;
+  const haystack = normalizeSearchText(threadPullRequestSearchTerms(pullRequest).join(" "));
+  return normalizedQuery.split(" ").every((token) => haystack.includes(token));
 }
 
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {

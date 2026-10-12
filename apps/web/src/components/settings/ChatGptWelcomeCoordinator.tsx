@@ -13,6 +13,7 @@ import {
   DialogFooter,
 } from "../ui/dialog";
 import { ChatGptUsageButton } from "./ChatGptUsageButton";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/presentation";
 
 const STORAGE_KEY = "t3:chatgpt-sharing-welcome:v1";
 function readAcknowledgedProfiles(): string[] {
@@ -39,7 +40,7 @@ export function ChatGptWelcomeCoordinator() {
             provider.instanceId,
             provider.auth.profileId ?? provider.auth.email ?? "default",
           ]),
-          environmentLabel: presentation.entry.target.label,
+          environmentLabel: environmentDisplayLabel(presentation),
           providerName: provider.displayName ?? "Codex",
         })),
   );

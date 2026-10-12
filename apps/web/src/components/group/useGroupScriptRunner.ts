@@ -1,4 +1,3 @@
-import type { EnvironmentThreadGroup } from "@t3tools/client-runtime/state/models";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -31,6 +30,7 @@ import {
   type PendingStart,
   type ScriptStartState,
 } from "./useGroupScriptRunner.logic";
+import type { GroupWorkspaceSource } from "./soloGroupView";
 
 /** The size the chat's own script runs open their terminals at. */
 const SCRIPT_TERMINAL_SIZE = { cols: 120, rows: 30 } as const;
@@ -53,7 +53,7 @@ export interface GroupScriptRunner {
  * panel's scan, which ends a script's "Starting…" once its server shows up.
  */
 export function useGroupScriptRunner(
-  group: EnvironmentThreadGroup,
+  group: Pick<GroupWorkspaceSource, "environmentId" | "worktreePath" | "threadIds">,
   projectRoot: string | null,
   scripts: ReadonlyArray<ProjectScript>,
   resources: ReadonlyArray<ThreadGroupRunningResource> | null,

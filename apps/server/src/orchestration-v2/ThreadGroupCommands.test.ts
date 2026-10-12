@@ -10,7 +10,6 @@ import {
   type ThreadGroupCommand,
 } from "./ThreadGroupCommands.ts";
 import type { ThreadGroupRow } from "./ThreadGroupStore.ts";
-import { pullRequestLink } from "./testkit/threadGroupFixtures.ts";
 
 const now = DateTime.makeUnsafe("2026-10-10T05:00:00.000Z");
 const groupId = ThreadGroupId.make("group:planner");
@@ -55,23 +54,10 @@ describe("thread group titles", () => {
     assert.equal(humanizeBranchName("main"), "Main");
   });
 
-  it("prefers the pull request title, then the branch, then the fallback", () => {
-    assert.equal(
-      defaultThreadGroupTitle({ pullRequest: pullRequestLink, branch: "feat/x", fallback: "Chat" }),
-      "Chat groups",
-    );
-    assert.equal(
-      defaultThreadGroupTitle({ pullRequest: null, branch: "feat/x-y", fallback: "Chat" }),
-      "X y",
-    );
-    assert.equal(
-      defaultThreadGroupTitle({ pullRequest: null, branch: null, fallback: "Chat" }),
-      "Chat",
-    );
-    assert.equal(
-      defaultThreadGroupTitle({ pullRequest: null, branch: null, fallback: "  " }),
-      "Untitled group",
-    );
+  it("prefers the chat title, then the branch, then a placeholder", () => {
+    assert.equal(defaultThreadGroupTitle({ branch: "feat/x", fallback: "  Chat  " }), "Chat");
+    assert.equal(defaultThreadGroupTitle({ branch: "feat/x-y", fallback: "  " }), "X y");
+    assert.equal(defaultThreadGroupTitle({ branch: null, fallback: "  " }), "Untitled group");
   });
 });
 

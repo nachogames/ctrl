@@ -146,6 +146,11 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
   readonly orderKey: string;
 }
 
+export interface ReorderGroupThreadInput extends ThreadCommandInput {
+  /** Fractional-index key that sorts between the drop position's neighbors in the group. */
+  readonly orderKey: string;
+}
+
 export interface SnoozeThreadInput extends ThreadCommandInput {
   readonly snoozedUntil: string;
 }
@@ -171,6 +176,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly regenerateTitle?: boolean;
   /** Link (object) or unlink (null) a pull request (#8160). */
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
+  /** Apply only while no message or run has landed on the thread. */
+  readonly expectedEmpty?: boolean;
 }
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
@@ -614,6 +621,17 @@ export const reorderActiveThread = Effect.fn("EnvironmentCommands.reorderActiveT
   });
 });
 
+export const reorderGroupThread = Effect.fn("EnvironmentCommands.reorderGroupThread")(function* (
+  input: ReorderGroupThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.group.reorder",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    orderKey: input.orderKey,
+  });
+});
+
 export const unpinThread = Effect.fn("EnvironmentCommands.unpinThread")(function* (
   input: UnpinThreadInput,
 ) {
@@ -694,6 +712,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(input.branch === undefined ? {} : { branch: input.branch }),
         ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+        ...(input.expectedEmpty === true ? { expectedEmpty: true } : {}),
         ...(input.regenerateTitle === undefined ? {} : { regenerateTitle: input.regenerateTitle }),
         ...(input.linkedPullRequest === undefined
           ? {}

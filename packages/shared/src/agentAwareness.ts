@@ -58,12 +58,24 @@ export interface ProjectThreadAwarenessV2Input {
 export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
-  const { environmentId, project, thread } = input;
-  if (thread.lineage.relationshipToParent === "subagent") return null;
-  const phase = resolveThreadAwarenessPhaseV2(thread);
-  if (phase === null) {
-    return null;
-  }
+  if (input.thread.lineage.relationshipToParent === "subagent") return null;
+  const phase = resolveThreadAwarenessPhaseV2(input.thread);
+  return phase === null ? null : threadAwarenessInPhaseV2({ ...input, phase });
+}
+
+/**
+ * A thread's awareness state in a given phase, whatever its own run is doing.
+ * A subagent's question is shown this way on its top-level thread, which may
+ * itself be idle.
+ */
+export function threadAwarenessInPhaseV2(
+  input: ProjectThreadAwarenessV2Input & {
+    readonly phase: AgentAwarenessPhase;
+    /** Defaults to the thread's own last update. */
+    readonly updatedAt?: DateTime.Utc;
+  },
+): AgentAwarenessState {
+  const { environmentId, project, thread, phase } = input;
   const detail =
     phase === "completed"
       ? "Review the completed task."
@@ -79,14 +91,19 @@ export function projectThreadAwarenessV2(
     headline: headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
-    updatedAt: DateTime.formatIso(thread.updatedAt),
+    updatedAt: DateTime.formatIso(input.updatedAt ?? thread.updatedAt),
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
   };
 }
 
-function resolveThreadAwarenessPhaseV2(
-  thread: ProjectThreadAwarenessV2Input["thread"],
-): AgentAwarenessPhase | null {
+/**
+ * The question a thread is stopped on, or null. Unlike the full awareness
+ * phase this also applies to subagent threads, whose questions reach the user
+ * through their parent.
+ */
+export function threadQuestionPhaseV2(
+  thread: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest">,
+): Extract<AgentAwarenessPhase, "waiting_for_input" | "waiting_for_approval"> | null {
   if (thread.pendingRuntimeRequest?.kind === "user_input") {
     return "waiting_for_input";
   }
@@ -95,6 +112,16 @@ function resolveThreadAwarenessPhaseV2(
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
   ) {
     return "waiting_for_approval";
+  }
+  return null;
+}
+
+function resolveThreadAwarenessPhaseV2(
+  thread: ProjectThreadAwarenessV2Input["thread"],
+): AgentAwarenessPhase | null {
+  const question = threadQuestionPhaseV2(thread);
+  if (question !== null) {
+    return question;
   }
   switch (thread.activityRunStatus ?? thread.status) {
     case "preparing":

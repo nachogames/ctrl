@@ -11,6 +11,8 @@ import { Alert, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { environmentCatalog } from "../../connection/catalog";
+import { useEnvironments } from "../../state/environments";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/presentation";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 
@@ -38,6 +40,8 @@ export function GitHubRoutingSettings() {
   const update = useAtomCommand(environmentCatalog.setGitHubRoutingPermission);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Display names, which follow a name set on the machine's server.
+  const { presentationById } = useEnvironments();
   if (catalog.entries.size === 0) return null;
 
   return (
@@ -45,21 +49,22 @@ export function GitHubRoutingSettings() {
       <SettingsSection title="GitHub routing">
         {[...catalog.entries.values()].map((entry) => {
           const environmentId = entry.target.environmentId;
+          const presentation = presentationById.get(environmentId);
+          const label =
+            presentation === undefined ? entry.target.label : environmentDisplayLabel(presentation);
           const selected = gitHubRoutingPermissionFor(entry, permissions);
           const disabled = !catalog.isReady || saving || gitHubRoutingConnectionKey(entry) === null;
           return (
             <View key={environmentId}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`${entry.target.label} GitHub routing`}
+                accessibilityLabel={`${label} GitHub routing`}
                 accessibilityState={{ expanded: expanded === environmentId }}
                 className="flex-row items-center gap-3 p-4"
                 onPress={() => setExpanded(expanded === environmentId ? null : environmentId)}
               >
                 <View className="min-w-0 flex-1 gap-0.5">
-                  <Text className="text-base font-t3-bold text-foreground">
-                    {entry.target.label}
-                  </Text>
+                  <Text className="text-base font-t3-bold text-foreground">{label}</Text>
                   <Text className="text-xs text-foreground-muted" numberOfLines={1}>
                     {connectionCatalogDisplayUrl(entry) ?? "T3 Connect"}
                   </Text>

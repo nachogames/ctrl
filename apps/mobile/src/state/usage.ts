@@ -28,6 +28,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
 import { environmentSession, readEnvironmentScope } from "./session";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/presentation";
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
@@ -63,7 +64,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       if (!access.canReadDiagnostics) {
         statuses.push({
           environmentId,
-          label: presentation.entry.target.label,
+          label: environmentDisplayLabel(presentation),
           isConnected: presentation.connection.phase === "connected",
           ...access,
           summary: null,
@@ -75,7 +76,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       const summary = Option.getOrNull(AsyncResult.value(result));
       statuses.push({
         environmentId,
-        label: presentation.entry.target.label,
+        label: environmentDisplayLabel(presentation),
         isPending: result.waiting,
         isConnected: presentation.connection.phase === "connected",
         canReadDiagnostics: true,

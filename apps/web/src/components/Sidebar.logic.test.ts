@@ -49,6 +49,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
+  pullRequestMatchesSearchQuery,
   searchSidebarThreads,
   shouldClearThreadSelectionOnMouseDown,
   shouldShowSidebarV2Duration,
@@ -57,6 +58,8 @@ import {
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
   resolveSidebarGroupDropTarget,
+  resolveSidebarGroupReorder,
+  planGroupMemberReorder,
   planSidebarThreadDrop,
   sortPinnedThreadsForSidebar,
   sortProjectsForSidebar,
@@ -1014,6 +1017,27 @@ describe("resolveSidebarThreadStatus", () => {
   it("keeps Waiting static while Working shows elapsed duration", () => {
     expect(shouldShowSidebarV2Duration("waiting")).toBe(false);
     expect(shouldShowSidebarV2Duration("working")).toBe(true);
+  });
+});
+
+describe("pullRequestMatchesSearchQuery", () => {
+  const branchPullRequest = {
+    projectId: ProjectId.make("project"),
+    repository: "pingdotgg/t3code",
+    number: 123,
+    url: "https://github.com/pingdotgg/t3code/pull/123",
+  };
+
+  it("matches when every query token appears in the PR's terms", () => {
+    expect(pullRequestMatchesSearchQuery({ branchPullRequest }, "123")).toBe(true);
+    expect(pullRequestMatchesSearchQuery({ branchPullRequest }, "pingdotgg/t3code #123")).toBe(
+      true,
+    );
+  });
+
+  it("rejects queries with a token the PR does not carry, and blank queries", () => {
+    expect(pullRequestMatchesSearchQuery({ branchPullRequest }, "rebase 123")).toBe(false);
+    expect(pullRequestMatchesSearchQuery({ branchPullRequest }, "   ")).toBe(false);
   });
 });
 
@@ -2370,7 +2394,12 @@ function makeGroup(
     readonly threadIds?: ReadonlyArray<ThreadId>;
   } = {},
 ): EnvironmentThreadGroup {
-  const { environmentId = localEnvironmentId, threadIds = [], ...shellOverrides } = overrides;
+  const {
+    environmentId = localEnvironmentId,
+    threadIds = [],
+    visible = threadIds.length >= 2,
+    ...shellOverrides
+  } = overrides;
   const group = presentThreadGroup(
     environmentId,
     {
@@ -2393,7 +2422,7 @@ function makeGroup(
     },
     [],
   );
-  return { ...group, threadIds };
+  return { ...group, threadIds, visible };
 }
 
 describe("sidebarActivityMs", () => {
@@ -2575,12 +2604,33 @@ describe("partitionThreadsByGroup", () => {
     const result = partitionThreadsByGroup({
       threads: [local, remote],
       groups: new Map([
-        [localKey, makeGroup({ threadIds: [local.id] })],
-        [remoteKey, makeGroup({ environmentId: otherEnvironmentId, threadIds: [remote.id] })],
+        [localKey, makeGroup({ threadIds: [local.id], visible: true })],
+        [
+          remoteKey,
+          makeGroup({ environmentId: otherEnvironmentId, threadIds: [remote.id], visible: true }),
+        ],
       ]),
     });
     expect(result.byGroup.get(localKey)).toEqual([local]);
     expect(result.byGroup.get(remoteKey)).toEqual([remote]);
+  });
+
+  it("renders a hidden group's lone chat ungrouped, in the chat's own section", () => {
+    const lone = makeThread({ groupId, pinnedAt: null });
+    const key = threadGroupKey({ environmentId: localEnvironmentId, groupId });
+    // The server clears a hidden group's pin; a stale one still never places the chat.
+    const hidden = makeGroup({ threadIds: [lone.id], pinnedAt: "2026-03-09T10:00:00.000Z" });
+    expect(hidden.visible).toBe(false);
+    const result = partitionThreadsByGroup({ threads: [lone], groups: new Map([[key, hidden]]) });
+    expect(result.ungrouped).toEqual([lone]);
+    expect(result.byGroup.size).toBe(0);
+    expect(
+      resolveSidebarThreadSection({
+        snoozed: false,
+        settled: false,
+        pinned: lone.pinnedAt != null,
+      }),
+    ).toBe("active");
   });
 
   it("leaves a chat whose group belongs to another project ungrouped", () => {
@@ -2751,6 +2801,7 @@ describe("resolveSidebarGroupDropTarget", () => {
     environmentId: localEnvironmentId,
     projectId: "project-a",
     lineage: { relationshipToParent: null },
+    groupId: null as ThreadGroupId | null,
   };
   const groups = new Map([
     ["group:auth", { environmentId: localEnvironmentId, projectId: ProjectId.make("project-a") }],
@@ -2878,11 +2929,132 @@ describe("resolveSidebarGroupDropTarget", () => {
     }
   });
 
+  it("joins the hidden group of a lone chat instead of forming a new one", () => {
+    const soloGroupId = ThreadGroupId.make("group-solo");
+    const soloKey = threadGroupKey({ environmentId: localEnvironmentId, groupId: soloGroupId });
+    const drop = (activeThread = active()) =>
+      resolveSidebarGroupDropTarget({
+        activeThread,
+        overItem: { kind: "thread", key: "env:solo", section: "active", groupKey: null },
+        groups: new Map([
+          ...groups,
+          [soloKey, { environmentId: localEnvironmentId, projectId: ProjectId.make("project-a") }],
+        ]),
+        threads: new Map([...threads, ["env:solo", { ...inProject, groupId: soloGroupId }]]),
+        supportsGroups: true,
+      });
+    expect(drop()).toEqual({ kind: "join", groupKey: soloKey });
+    // A grouped chat dragged out of its visible group joins it too.
+    expect(drop(active({ groupKey: "group:auth" }))).toEqual({ kind: "join", groupKey: soloKey });
+  });
+
+  it("forms a new group with a lone chat whose group is unknown or elsewhere", () => {
+    const strayGroupId = ThreadGroupId.make("group-stray");
+    const strayKey = threadGroupKey({ environmentId: localEnvironmentId, groupId: strayGroupId });
+    const drop = (projectId: string | null) =>
+      resolveSidebarGroupDropTarget({
+        activeThread: active(),
+        overItem: { kind: "thread", key: "env:solo", section: "active", groupKey: null },
+        groups:
+          projectId === null
+            ? groups
+            : new Map([
+                ...groups,
+                [
+                  strayKey,
+                  { environmentId: localEnvironmentId, projectId: ProjectId.make(projectId) },
+                ],
+              ]),
+        threads: new Map([...threads, ["env:solo", { ...inProject, groupId: strayGroupId }]]),
+        supportsGroups: true,
+      });
+    expect(drop(null)).toEqual({ kind: "create-with", threadKey: "env:solo" });
+    expect(drop("project-b")).toEqual({ kind: "create-with", threadKey: "env:solo" });
+  });
+
   it("ignores markers, headings and unknown groups", () => {
     expect(resolve({ kind: "marker", marker: "pinned-divider" })).toBeNull();
     expect(resolve({ kind: "project-heading", key: "project-a" })).toBeNull();
     expect(resolve({ kind: "group", key: "group:gone", section: "active" })).toBeNull();
     expect(resolve(undefined)).toBeNull();
+  });
+});
+
+describe("resolveSidebarGroupReorder", () => {
+  const member = (key: string, groupKey: string | null): SidebarListItem => ({
+    kind: "thread",
+    key,
+    section: "active",
+    groupKey,
+  });
+
+  it("reorders when a member drops on another member of its own group", () => {
+    expect(
+      resolveSidebarGroupReorder({
+        activeItem: member("env:a", "group:auth"),
+        overItem: member("env:b", "group:auth"),
+        supportsReorder: true,
+      }),
+    ).toBe("group:auth");
+  });
+
+  it("is not a reorder across groups, onto itself, onto a group row, or without support", () => {
+    const resolve = (overItem: SidebarListItem | undefined, supportsReorder = true) =>
+      resolveSidebarGroupReorder({
+        activeItem: member("env:a", "group:auth"),
+        overItem,
+        supportsReorder,
+      });
+    expect(resolve(member("env:b", "group:docs"))).toBeNull();
+    expect(resolve(member("env:b", null))).toBeNull();
+    expect(resolve(member("env:a", "group:auth"))).toBeNull();
+    expect(resolve({ kind: "group", key: "group:auth", section: "active" })).toBeNull();
+    expect(resolve(undefined)).toBeNull();
+    expect(resolve(member("env:b", "group:auth"), false)).toBeNull();
+    expect(
+      resolveSidebarGroupReorder({
+        activeItem: member("env:a", null),
+        overItem: member("env:b", null),
+        supportsReorder: true,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("planGroupMemberReorder", () => {
+  it("spreads keys over the whole group in its new order when members are keyless", () => {
+    const assignments = planGroupMemberReorder({
+      orderedIds: ["c", "a", "b"],
+      keysById: new Map([
+        ["a", null],
+        ["b", null],
+        ["c", null],
+      ]),
+      movedId: "c",
+    });
+    // Keyless chats sort above keyed ones, so writes run bottom-up: each one
+    // lands in its planned place and a partial failure keeps the asked-for order.
+    expect(assignments.map(({ id }) => id)).toEqual(["b", "a", "c"]);
+    const keys = assignments.map(({ orderKey }) => orderKey);
+    expect(keys.toSorted().toReversed()).toEqual(keys);
+  });
+
+  it("writes one key between keyed neighbors", () => {
+    const first = pinOrderKeyBetween(null, null)!;
+    const second = pinOrderKeyBetween(first, null)!;
+    const keysById = new Map([
+      ["a", first],
+      ["b", second],
+      ["c", pinOrderKeyBetween(second, null)!],
+    ]);
+    const assignments = planGroupMemberReorder({
+      orderedIds: ["a", "c", "b"],
+      keysById,
+      movedId: "c",
+    });
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]!.id).toBe("c");
+    expect(assignments[0]!.orderKey > first && assignments[0]!.orderKey < second).toBe(true);
   });
 });
 

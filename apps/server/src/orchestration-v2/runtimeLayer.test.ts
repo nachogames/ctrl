@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -170,7 +171,7 @@ const watchedPullRequestDetail = (input: {
   readonly number: number;
   readonly at: string;
 }): PullRequestDetail => ({
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   capabilities: {
     diff: true,
     comment: true,
@@ -531,6 +532,82 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       assert.isNull(listed?.groupId);
       assert.equal(listed?.handedOffFrom, sourceThreadId);
       assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.groupId);
+    }),
+  );
+
+  it.effect("orders a chat inside its group and drops the slot when it changes groups", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-group-order");
+      const ungroupedThreadId = ThreadId.make("runtime-layer-group-order-ungrouped");
+      const projectId = ProjectId.make("runtime-layer-group-order-project");
+      const groupId = ThreadGroupId.make("group:runtime-layer-order");
+      const otherGroupId = ThreadGroupId.make("group:runtime-layer-order-other");
+      const create = (id: ThreadId, group: ThreadGroupId | undefined) =>
+        orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${id}-create`),
+          threadId: id,
+          projectId,
+          title: "Ordered",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          ...(group === undefined ? {} : { groupId: group }),
+        });
+      yield* create(threadId, groupId);
+      yield* create(ungroupedThreadId, undefined);
+
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      yield* TestClock.adjust("30 seconds");
+      yield* orchestrator.dispatch({
+        type: "thread.group.reorder",
+        commandId: CommandId.make("runtime-layer-group-order-reorder"),
+        threadId,
+        orderKey: "a0",
+      });
+      const reordered = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(reordered.thread.groupOrderKey, "a0");
+      assert.equal((yield* orchestrator.getThreadShell(threadId))?.groupOrderKey, "a0");
+      // Arranging a group is not thread activity, in memory or in the persisted shell.
+      assert.deepEqual(reordered.thread.updatedAt, before.thread.updatedAt);
+      const persisted = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (candidate) => candidate.id === threadId,
+      );
+      assert.deepEqual(persisted?.updatedAt, before.thread.updatedAt);
+
+      const ungrouped = yield* orchestrator
+        .dispatch({
+          type: "thread.group.reorder",
+          commandId: CommandId.make("runtime-layer-group-order-reorder-ungrouped"),
+          threadId: ungroupedThreadId,
+          orderKey: "a0",
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(ungrouped, Orchestrator.OrchestratorDispatchError);
+
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-group-order-move"),
+        threadId,
+        groupId: otherGroupId,
+      });
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.groupOrderKey);
+
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-group-order-join"),
+        threadId,
+        groupId,
+        groupOrderKey: "Zz",
+      });
+      const joined = yield* orchestrator.getThreadShell(threadId);
+      assert.equal(joined?.groupId, groupId);
+      assert.equal(joined?.groupOrderKey, "Zz");
     }),
   );
 
@@ -2624,7 +2701,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           operation: "getChangeRequest",
           detail: "github requests are paused until the rate limit resets",
           cause: new PullRequestProviderError({
-            provider: "github",
+            provider: SourceControlProviderKind.make("github"),
             operation: "getChangeRequest",
             reason: "rate-limited",
             detail: "paused",
@@ -2883,7 +2960,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                           operation: "watchFingerprint",
                           detail: "paused",
                           cause: new PullRequestProviderError({
-                            provider: "github",
+                            provider: SourceControlProviderKind.make("github"),
                             operation: "getChangeRequestWatchFingerprint",
                             reason: "rate-limited",
                             detail: "paused",
@@ -5504,3 +5581,133 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     }),
   );
 });
+
+const queueResumeDisabledInstanceProjectId = ProjectId.make(
+  "project:queue-resume-disabled-instance",
+);
+
+const layerQueueResumeDisabledInstanceTest = Layer.mergeAll(
+  RuntimeLayer.layer,
+  RuntimeLayer.layerEventSink,
+  ProjectStore.layer,
+  ProjectionStore.layer,
+  EffectOutbox.layer,
+  ThreadCommandExecutor.layer,
+).pipe(
+  Layer.provide(McpSessionRegistryTestkit.layer),
+  Layer.provide(McpProviderSessions.layer),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStoreTest),
+  Layer.provide(layerServerConfig),
+  Layer.provide(
+    ServerSettings.layerTest({
+      providerInstances: {
+        [alternateInstanceId]: { driver: "codex", enabled: true },
+      },
+      projectSettingsOverrides: {
+        [queueResumeDisabledInstanceProjectId]: {
+          providerInstances: { [alternateInstanceId]: { enabled: false } },
+        },
+      },
+    }),
+  ),
+  Layer.provide(layerTestProviderInstanceRegistry),
+  Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerProjectServiceTest),
+  Layer.provide(layerPlatformTest),
+);
+
+it.layer(layerQueueResumeDisabledInstanceTest)(
+  "queue.resume on a project-disabled instance",
+  (it) => {
+    it.effect(
+      "holds a queued run instead of starting it on an instance the project turned off",
+      () =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const events = yield* EventSink.EventSinkV2;
+          const threadId = ThreadId.make("queue-resume-disabled-instance-thread");
+          const queuedModelSelection = {
+            instanceId: alternateInstanceId,
+            model: "gpt-5.5",
+          } satisfies ModelSelection;
+
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${threadId}:create`),
+            threadId,
+            projectId: queueResumeDisabledInstanceProjectId,
+            title: "Queue resume disabled instance",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${threadId}:message:active`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:message:active`),
+            text: "Active",
+            attachments: [],
+            dispatchMode: { type: "defer_start" },
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${threadId}:message:queued`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:message:queued`),
+            text: "Queued",
+            attachments: [],
+            modelSelection: queuedModelSelection,
+            dispatchMode: { type: "queue_after_active" },
+          });
+
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const activeRun = before.runs.find((run) => run.status !== "queued")!;
+          const queuedRun = before.runs.find((run) => run.status === "queued")!;
+          const now = yield* DateTime.now;
+          // A raw event ends the active run without going through dispatch,
+          // so nothing has yet tried to advance the queue onto the disabled
+          // instance.
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:active-completed`),
+                type: "run.updated",
+                threadId,
+                runId: activeRun.id,
+                occurredAt: now,
+                payload: { ...activeRun, status: "completed", completedAt: now },
+              },
+            ],
+          });
+
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`${threadId}:resume`),
+            threadId,
+          });
+
+          const resumed = yield* orchestrator.getThreadProjection(threadId);
+          const resumedQueuedRun = resumed.runs.find((run) => run.id === queuedRun.id);
+          assert.equal(
+            resumedQueuedRun?.status,
+            "queued",
+            "a disabled instance must not start the queued run",
+          );
+          assert.isTrue(
+            resumedQueuedRun?.queueHeld,
+            "a refused resume re-holds the queue instead of leaving it looking resumable",
+          );
+        }),
+    );
+  },
+);

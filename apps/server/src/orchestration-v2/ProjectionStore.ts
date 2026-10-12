@@ -731,6 +731,7 @@ export function applyToProjection(
     case "thread.unpinned":
     case "thread.pin-reordered":
     case "thread.active-reordered":
+    case "thread.group-reordered":
     case "thread.metadata-updated":
     case "thread.pull-request-synced":
     case "thread.runtime-mode-updated":
@@ -1480,6 +1481,9 @@ export function threadShellFromProjection(
     ...(projection.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: projection.thread.activeOrderKey }),
+    ...(projection.thread.groupOrderKey === undefined
+      ? {}
+      : { groupOrderKey: projection.thread.groupOrderKey }),
     ...(projection.thread.groupId === undefined ? {} : { groupId: projection.thread.groupId }),
     ...(projection.thread.handedOffFrom === undefined
       ? {}
@@ -1755,6 +1759,9 @@ function shellFromState(input: {
     ...(input.state.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: input.state.thread.activeOrderKey }),
+    ...(input.state.thread.groupOrderKey === undefined
+      ? {}
+      : { groupOrderKey: input.state.thread.groupOrderKey }),
     ...(input.state.thread.groupId === undefined ? {} : { groupId: input.state.thread.groupId }),
     ...(input.state.thread.handedOffFrom === undefined
       ? {}
@@ -1850,6 +1857,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "thread.unpinned":
           case "thread.pin-reordered":
           case "thread.active-reordered":
+          case "thread.group-reordered":
           case "thread.visited":
           case "thread.marked-unread":
           case "thread.metadata-updated":
@@ -2681,6 +2689,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           event.type !== "thread.pinned" &&
           event.type !== "thread.unpinned" &&
           event.type !== "thread.pin-reordered" &&
+          event.type !== "thread.group-reordered" &&
           event.type !== "thread.visited" &&
           event.type !== "thread.marked-unread" &&
           event.type !== "thread.metadata-updated" &&
@@ -3493,9 +3502,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             item.payload_json AS failure_payload_json,
             (
               SELECT json_extract(session.payload_json, '$.lastError')
-              FROM orchestration_v2_projection_provider_sessions session
-              INNER JOIN orchestration_v2_projection_provider_session_bindings binding
-                ON binding.provider_session_id = session.provider_session_id
+              -- Keep bindings outermost: one provider instance can hold every session.
+              FROM orchestration_v2_projection_provider_session_bindings binding
+              CROSS JOIN orchestration_v2_projection_provider_sessions session
+                ON session.provider_session_id = binding.provider_session_id
               WHERE binding.thread_id = t.thread_id
                 AND session.provider_instance_id = t.provider_instance_id
               ORDER BY session.updated_at DESC, session.provider_session_id DESC
@@ -5215,9 +5225,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ) AS activity_run_started_at,
               (
                 SELECT json_extract(session.payload_json, '$.lastError')
-                FROM orchestration_v2_projection_provider_sessions session
-                INNER JOIN orchestration_v2_projection_provider_session_bindings binding
-                  ON binding.provider_session_id = session.provider_session_id
+                -- Keep bindings outermost: one provider instance can hold every session.
+                FROM orchestration_v2_projection_provider_session_bindings binding
+                CROSS JOIN orchestration_v2_projection_provider_sessions session
+                  ON session.provider_session_id = binding.provider_session_id
                 WHERE binding.thread_id = t.thread_id
                   AND session.provider_instance_id = t.provider_instance_id
                 ORDER BY session.updated_at DESC, session.provider_session_id DESC

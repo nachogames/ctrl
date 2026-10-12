@@ -6,6 +6,7 @@
  * @module usageLimits
  */
 import {
+  resolveEnvironmentLabel,
   type EnvironmentId,
   type UsageLimitsReport,
   type ProviderInstanceId,
@@ -74,16 +75,20 @@ export function providersWithLimits(
   );
 }
 
-export type LimitPresentations = ReadonlyMap<
-  EnvironmentId,
-  {
-    readonly entry: { readonly target: { readonly label: string } };
-    readonly serverConfig: {
-      readonly providers?: readonly ServerProvider[] | undefined;
-      readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
-    } | null;
-  }
->;
+export interface LimitPresentation {
+  readonly entry: { readonly target: { readonly label: string } };
+  readonly serverConfig: {
+    readonly providers?: readonly ServerProvider[] | undefined;
+    readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
+    readonly settings?: { readonly environmentLabel?: string | null } | undefined;
+  } | null;
+}
+
+export type LimitPresentations = ReadonlyMap<EnvironmentId, LimitPresentation>;
+
+function presentationLabel(presentation: LimitPresentation): string {
+  return resolveEnvironmentLabel(presentation.serverConfig, presentation.entry.target.label);
+}
 
 /** One destination per service, even when several accounts or environments use it. */
 export function collectExternalUsageLinks(presentations: LimitPresentations) {
@@ -100,7 +105,7 @@ export function collectExternalUsageLinks(presentations: LimitPresentations) {
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       const external = provider.usageLimits?.externalUsage;
       if (external && provider.auth.status === "authenticated") {
-        const account = `${provider.displayName ?? provider.instanceId} on ${presentation.entry.target.label}`;
+        const account = `${provider.displayName ?? provider.instanceId} on ${presentationLabel(presentation)}`;
         links.set(external.url, {
           ...external,
           message: provider.usageLimits?.unavailable?.message,
@@ -271,7 +276,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ]),
   );
   for (const [environmentId, presentation] of presentations) {
-    const label = presentation.entry.target.label;
+    const label = presentationLabel(presentation);
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
       merge(resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`, {
@@ -295,7 +300,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   for (const [environmentId, presentation] of presentations) {
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       const sourceLabel = labelEnvironment
-        ? `${presentation.entry.target.label} · ${source.label}`
+        ? `${presentationLabel(presentation)} · ${source.label}`
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
@@ -338,7 +343,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
     presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
   const notices: string[] = [];
   for (const presentation of presentations.values()) {
-    const environmentLabel = presentation.entry.target.label;
+    const environmentLabel = presentationLabel(presentation);
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       // An account that can never report (API key) is left out; one that
       // failed, or reported nothing at all, is worth a line.
@@ -397,6 +402,17 @@ export interface LimitPool {
 
 /** Show Cursor's two usable pools instead of a combined percentage when both are available. */
 export function displayLimitWindows(pool: LimitPool) {
+  if (pool.driver === "antigravity") {
+    // Keep each model group's five-hour and weekly buckets next to one another.
+    return [...pool.windows].sort(
+      (left, right) =>
+        Number(!left.id.startsWith("gemini-")) - Number(!right.id.startsWith("gemini-")) ||
+        left.id
+          .replace(/-(5h|weekly|quota)$/, "")
+          .localeCompare(right.id.replace(/-(5h|weekly|quota)$/, "")) ||
+        WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind],
+    );
+  }
   if (pool.driver !== "cursor") return pool.windows;
   const hasAuto = pool.windows.some((window) => window.id === "autoPercentUsed");
   const hasApi = pool.windows.some((window) => window.id === "apiPercentUsed");
@@ -596,7 +612,9 @@ export function formatDuration(ms: number): string {
 export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;
-  return resetsAt <= now ? "resets now" : `resets in ${formatDuration(resetsAt - now)}`;
+  if (resetsAt <= now) return "resets now";
+  if (resetsAt - now < MINUTE) return "Resets momentarily";
+  return `resets in ${formatDuration(resetsAt - now)}`;
 }
 
 /** Limit commands are served by T3 from the same snapshots as Usage → Limits. */

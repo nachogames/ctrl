@@ -5,6 +5,7 @@ import { useEffect, useMemo } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { ThreadRouteView } from "../components/ThreadRouteView";
+import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -171,7 +172,8 @@ function ChatRouteGlobalShortcuts() {
                 groupId: activeThread.groupId,
               })
             : null;
-        if (group === null) {
+        // A hidden group (one live chat) is not a group the chat is shown in.
+        if (group === null || !group.visible) {
           toastManager.add(
             stackedThreadToast({ type: "info", title: "This chat is not in a group" }),
           );
@@ -289,6 +291,9 @@ function ChatRouteLayout() {
   return (
     <>
       <ChatRouteGlobalShortcuts />
+      {threadTarget?.kind === "server" ? (
+        <ThreadLinkPrompt threadRef={threadTarget.threadRef} />
+      ) : null}
       {threadTarget ? <ThreadRouteView target={threadTarget} /> : <Outlet />}
     </>
   );

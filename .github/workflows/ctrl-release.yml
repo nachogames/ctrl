@@ -4,6 +4,11 @@ name: Ctrl release
 # GitHub release. Installed apps poll this repository's latest release
 # (latest-mac.yml) and update themselves.
 #
+# The android job then publishes the phone app: an OTA update on the Expo
+# project's production channel, plus a signed APK attached to the release
+# whenever native code changed. Phones take the OTA only when their APK has the
+# same native fingerprint, so a release whose APK is new needs one install.
+#
 # Release: git tag ctrl-v0.1.1 && git push origin ctrl-v0.1.1
 # The tag's version must be higher than every earlier release.
 #
@@ -126,3 +131,147 @@ jobs:
             --title "Ctrl ${{ steps.version.outputs.version }}" \
             --generate-notes \
             release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml
+
+  android:
+    name: Publish Android OTA and APK
+    needs: release
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 90
+    env:
+      APP_VARIANT: production
+      EAS_CLI: eas-cli@24.12.1
+    steps:
+      - name: Resolve version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#ctrl-v}" >> "$GITHUB_OUTPUT"
+
+      # Same plain checkout as the desktop job.
+      - name: Checkout
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install mobile dependencies
+        run: vp install --filter=@t3tools/mobile... --filter=@t3tools/scripts...
+
+      - name: Setup Java
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Write signing and Firebase files
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CTRL_ANDROID_KEYSTORE_BASE64 }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.CTRL_ANDROID_GOOGLE_SERVICES_JSON }}
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 GOOGLE_SERVICES_JSON; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing $name; nothing is published." >&2
+              exit 1
+            fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/ctrl-release.keystore"
+          printf '%s' "$GOOGLE_SERVICES_JSON" > "$RUNNER_TEMP/google-services.json"
+          echo "T3CODE_ANDROID_GOOGLE_SERVICES_FILE=$RUNNER_TEMP/google-services.json" >> "$GITHUB_ENV"
+
+      # The fingerprint is the runtime version under the fingerprint policy: an
+      # OTA reaches an APK only when the two match. It is computed here, on the
+      # same machine that builds the APK and publishes the update.
+      - name: Fingerprint native code
+        id: fingerprint
+        working-directory: apps/mobile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          hash="$(npx expo-updates fingerprint:generate --platform android | sed -n '/^{/,$p' | jq -er '.hash')"
+          short="${hash:0:12}"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+          echo "apk=Ctrl-${{ steps.version.outputs.version }}-android-$short.apk" >> "$GITHUB_OUTPUT"
+          existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | .tag_name as $tag | .assets[] | select(.name | endswith("-android-'"$short"'.apk")) | "\($tag) \(.name)"' | head -1)"
+          if [[ -n "$existing" ]]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "existing=$existing" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build signed APK
+        if: steps.fingerprint.outputs.build == 'true'
+        working-directory: apps/mobile
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.CTRL_ANDROID_KEYSTORE_PASSWORD }}
+          EXPECTED_RUNTIME: ${{ steps.fingerprint.outputs.hash }}
+          APK_NAME: ${{ steps.fingerprint.outputs.apk }}
+        run: |
+          set -euo pipefail
+          EXPO_NO_GIT_STATUS=1 npx expo prebuild --clean --platform android
+          cd android
+          ./gradlew :app:assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/ctrl-release.keystore" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias=ctrl \
+            -Pandroid.injected.signing.key.password="$KEYSTORE_PASSWORD"
+          apk=app/build/outputs/apk/release/app-release.apk
+          # The APK must carry the runtime version the OTA will be published under.
+          # Under the fingerprint policy the APK reads it from assets/fingerprint.
+          embedded="$(unzip -p "$apk" assets/fingerprint)"
+          if [[ "$embedded" != "$EXPECTED_RUNTIME" ]]; then
+            echo "APK runtime version '$embedded' does not match fingerprint '$EXPECTED_RUNTIME'." >&2
+            exit 1
+          fi
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          "$apksigner" verify --print-certs "$apk" | grep -q 'CN=Ctrl'
+          mv "$apk" "$RUNNER_TEMP/$APK_NAME"
+
+      - name: Attach APK to the release
+        if: steps.fingerprint.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/${{ steps.fingerprint.outputs.apk }}" --repo "$GITHUB_REPOSITORY"
+
+      - name: Publish OTA update
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPECTED_RUNTIME: ${{ steps.fingerprint.outputs.hash }}
+        run: |
+          set -euo pipefail
+          result="$(npx -y "$EAS_CLI" update \
+            --channel production \
+            --environment production \
+            --platform android \
+            --message "Ctrl ${{ steps.version.outputs.version }}" \
+            --non-interactive --json | sed -n '/^\[/,$p')"
+          runtime="$(jq -er '.[0].runtimeVersion' <<<"$result")"
+          if [[ "$runtime" != "$EXPECTED_RUNTIME" ]]; then
+            echo "OTA runtime version '$runtime' does not match fingerprint '$EXPECTED_RUNTIME'; no APK can take it." >&2
+            exit 1
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "## Android"
+            if [[ "${{ steps.fingerprint.outputs.build }}" == "true" ]]; then
+              echo "Native code changed: install **${{ steps.fingerprint.outputs.apk }}** from this release once. Later JS-only releases arrive over the air."
+            else
+              echo "Native code unchanged (APK from ${{ steps.fingerprint.outputs.existing }}). Phones get this release over the air."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

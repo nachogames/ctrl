@@ -91,17 +91,15 @@ export function humanizeBranchName(branch: string): string {
   return words.length === 0 ? "" : words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-/** A new group is named after its pull request, else its branch, else its first chat. */
+/** A new group is named after the chat that was already there, else its branch. */
 export function defaultThreadGroupTitle(input: {
-  readonly pullRequest: ThreadPullRequestLink | null;
   readonly branch: string | null;
   readonly fallback: string;
 }): string {
-  const pullRequestTitle = input.pullRequest?.snapshot?.title.trim();
-  if (pullRequestTitle) return pullRequestTitle;
+  const chatTitle = input.fallback.trim();
+  if (chatTitle.length > 0) return chatTitle;
   const branchTitle = input.branch === null ? "" : humanizeBranchName(input.branch);
-  if (branchTitle.length > 0) return branchTitle;
-  return input.fallback.trim() || "Untitled group";
+  return branchTitle.length > 0 ? branchTitle : "Untitled group";
 }
 
 /**

@@ -77,6 +77,16 @@ const commandIdFor = (operation: string, clientRequestId: string | undefined) =>
         ),
       );
 
+/** A random id, or one derived from the command so a retried create replays. */
+const newGroupId = (commandId: CommandId, clientRequestId: string | undefined) =>
+  clientRequestId === undefined
+    ? Crypto.Crypto.pipe(
+        Effect.flatMap((crypto) => crypto.randomUUIDv4),
+        Effect.orDie,
+        Effect.map((uuid) => ThreadGroupId.make(`group:${uuid}`)),
+      )
+    : Effect.succeed(ThreadGroupId.make(`group:${commandId}`));
+
 /** The group passed, else the one the calling chat is in. */
 const resolveGroupId = (context: Caller, groupId: ThreadGroupId | undefined) => {
   if (groupId !== undefined) return Effect.succeed(groupId);
@@ -213,6 +223,30 @@ const setMembersSettled = Effect.fn("mcp.group.setMembersSettled")(function* (
   return unchanged;
 });
 
+/** A new group of just the calling chat, for an update that needs one. */
+const createSoloGroup = Effect.fn("mcp.group.createSoloGroup")(function* (
+  caller: OrchestrationV2ThreadShell,
+  input: {
+    readonly title?: string | undefined;
+    readonly goal?: string | null | undefined;
+    readonly clientRequestId?: string | undefined;
+  },
+) {
+  const commandId = yield* commandIdFor("update-create", input.clientRequestId);
+  const groupId = yield* newGroupId(commandId, input.clientRequestId);
+  const service = yield* ThreadGroup.ThreadGroupService;
+  return yield* service
+    .create({
+      commandId,
+      groupId,
+      projectId: caller.projectId,
+      threadIds: [caller.id],
+      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.goal == null ? {} : { goal: input.goal }),
+    })
+    .pipe(Effect.mapError(groupFailure));
+});
+
 const readTitle = (context: Caller, threadId: ThreadId) =>
   context.threads.getThreadShell(threadId).pipe(
     Effect.map((shell) => shell?.title ?? ""),
@@ -236,11 +270,14 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
   t3_group_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const context = yield* readCaller();
+      // A chat outside any group is a group of one.
+      if (input.groupId === undefined && context.caller != null && context.caller.groupId == null)
+        return { group: null, threadIds: [context.caller.id] };
       const group = yield* readGroup(yield* resolveGroupId(context, input.groupId));
       const members = yield* readMembers(context, group);
       const scanner = yield* GroupResourceScanner.GroupResourceScanner;
       // Best effort: when the scan fails, the registered resources still show.
-      const resources = yield* scanner.scan(group.id).pipe(
+      const resources = yield* scanner.scan({ groupId: group.id }).pipe(
         Effect.catch((error) =>
           Effect.logWarning("group resource scan failed; returning registered resources", {
             groupId: group.id,
@@ -300,15 +337,7 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
             message: `Thread ${firstId} was not found.`,
           });
         const commandId = yield* commandIdFor("create", input.clientRequestId);
-        const groupId =
-          input.clientRequestId === undefined
-            ? ThreadGroupId.make(
-                `group:${yield* Crypto.Crypto.pipe(
-                  Effect.flatMap((crypto) => crypto.randomUUIDv4),
-                  Effect.orDie,
-                )}`,
-              )
-            : ThreadGroupId.make(`group:${commandId}`);
+        const groupId = yield* newGroupId(commandId, input.clientRequestId);
         const service = yield* ThreadGroup.ThreadGroupService;
         const group = yield* service
           .create({
@@ -332,25 +361,34 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
     (input) =>
       Effect.gen(function* () {
         const context = yield* readCaller();
-        const groupId = yield* resolveGroupId(context, input.groupId);
+        const adds = yield* Effect.forEach(input.links?.add ?? [], (entry) => {
+          const label = groupLinkLabel(entry.url);
+          return label === null
+            ? Effect.fail(invalid(`${entry.url} is not an http(s) URL.`))
+            : Effect.succeed({ url: entry.url, label: entry.label ?? label });
+        });
+        const remove = new Set(input.links?.remove ?? []);
+        if (input.links !== undefined && adds.length === 0 && remove.size === 0)
+          return yield* invalid("Pass links.add or links.remove.");
+        // A goal or a ticket on a chat outside any group creates its group first.
+        const created =
+          input.groupId === undefined &&
+          context.caller != null &&
+          context.caller.groupId == null &&
+          (typeof input.goal === "string" || adds.length > 0)
+            ? yield* createSoloGroup(context.caller, input)
+            : undefined;
+        const groupId = created?.id ?? (yield* resolveGroupId(context, input.groupId));
         const now = DateTime.formatIso(yield* DateTime.now);
         const patch: ThreadGroupUpdatePayload = {
-          ...(input.title === undefined ? {} : { title: input.title }),
-          ...(input.goal === undefined ? {} : { goal: input.goal }),
+          // The create already set the title and goal of a new group.
+          ...(input.title === undefined || created !== undefined ? {} : { title: input.title }),
+          ...(input.goal === undefined || created !== undefined ? {} : { goal: input.goal }),
           ...(input.pinned === undefined ? {} : { pinnedAt: input.pinned ? now : null }),
           ...(input.settled === undefined ? {} : { settledAt: input.settled ? now : null }),
         };
         let group: OrchestrationThreadGroupShell | undefined;
         if (input.links !== undefined) {
-          const adds = yield* Effect.forEach(input.links.add ?? [], (entry) => {
-            const label = groupLinkLabel(entry.url);
-            return label === null
-              ? Effect.fail(invalid(`${entry.url} is not an http(s) URL.`))
-              : Effect.succeed({ url: entry.url, label: entry.label ?? label });
-          });
-          const remove = new Set(input.links.remove ?? []);
-          if (adds.length === 0 && remove.size === 0)
-            return yield* invalid("Pass links.add or links.remove.");
           const ids = yield* Effect.forEach(adds, () =>
             Crypto.Crypto.pipe(
               Effect.flatMap((crypto) => crypto.randomUUIDv4),
@@ -382,7 +420,8 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
             .pipe(Effect.mapError(groupFailure));
         }
         if (Object.keys(patch).length === 0) {
-          if (group !== undefined) return { group };
+          const changed = group ?? created;
+          if (changed !== undefined) return { group: changed };
           return yield* invalid("Pass at least one of title, goal, pinned, settled, or links.");
         }
         const commandId = yield* commandIdFor("update", input.clientRequestId);

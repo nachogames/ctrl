@@ -7,6 +7,7 @@ import {
   AuthOrchestrationOperateScope,
   type ProjectScript,
   type ScopedThreadRef,
+  type ThreadGroupId,
   type ThreadGroupRunningResource,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -58,10 +59,14 @@ function errorToast(title: string, error: unknown) {
 /**
  * The group's running servers: known rows, the folded worktree processes, and
  * Start rows for scripts that are not running. `resources` comes from the panel's
- * one scan subscription; null until the first scan arrives.
+ * one scan subscription; null until the first scan arrives. A solo chat without
+ * a group passes a null `id`; naming a server then creates its hidden group.
  */
 export function GroupRunningSection(props: {
-  group: EnvironmentThreadGroup;
+  group: Pick<EnvironmentThreadGroup, "environmentId" | "manualResources"> & {
+    readonly id: ThreadGroupId | null;
+  };
+  ensureGroup: () => Promise<ThreadGroupId | null>;
   threadRef: ScopedThreadRef;
   resources: ReadonlyArray<ThreadGroupRunningResource> | null;
   error: string | null;
@@ -132,6 +137,8 @@ export function GroupRunningSection(props: {
   };
 
   const remove = async (manualId: string) => {
+    // Manual resources live on a group, so one without a group has none to remove.
+    if (group.id === null) return;
     // Only the id goes to the server, which removes it under the group's lock.
     const result = await removeResource({
       environmentId: group.environmentId,
@@ -146,10 +153,12 @@ export function GroupRunningSection(props: {
   const rename = async (port: number, current: string, draft: string) => {
     const name = draft.trim();
     if (name === "" || name === current) return;
+    const groupId = group.id ?? (await props.ensureGroup());
+    if (groupId === null) return;
     const result = await updateGroup({
       environmentId: group.environmentId,
       input: {
-        groupId: group.id,
+        groupId,
         patch: { manualResources: renameManualResources(group.manualResources, { port, name }) },
       },
     });

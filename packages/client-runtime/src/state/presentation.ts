@@ -1,4 +1,5 @@
 import {
+  resolveEnvironmentLabel,
   resolveEnvironmentMachineKind,
   type EnvironmentMachineKind,
   type EnvironmentId,
@@ -91,13 +92,24 @@ export interface EnvironmentConnectionSummary {
   readonly connectionErrorTraceId: string | null;
 }
 
+/**
+ * The name to show for an environment: the display name set on its server,
+ * else the label saved with its connection (the machine name, or a label
+ * such as "WSL: Ubuntu" the desktop gave it).
+ */
+export function environmentDisplayLabel(
+  environment: Pick<EnvironmentPresentation, "entry" | "serverConfig">,
+): string {
+  return resolveEnvironmentLabel(environment.serverConfig, environment.entry.target.label);
+}
+
 export function projectEnvironmentConnectionSummary(
   environmentId: EnvironmentId,
   environment: EnvironmentPresentation,
 ): EnvironmentConnectionSummary {
   return {
     environmentId,
-    environmentLabel: environment.entry.target.label,
+    environmentLabel: environmentDisplayLabel(environment),
     displayUrl: connectionCatalogDisplayUrl(environment.entry) ?? "",
     isRelayManaged: hasRelayRoute(environment.entry),
     isEnabled: environment.entry.enabled,
@@ -123,10 +135,18 @@ export function createEnvironmentSummaryAtoms(input: {
       ? previous
       : next;
   });
+  // One derived label per environment, so a config refresh that leaves the
+  // name alone stops here instead of rebuilding every identity.
+  const labelAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const presentation = get(input.presentationAtom(environmentId));
+      return presentation === null ? null : environmentDisplayLabel(presentation);
+    }),
+  );
   const identitiesAtom = Atom.make((get) => {
     const next = [...get(input.catalogValueAtom).entries].map(([environmentId, entry]) => ({
       environmentId,
-      label: entry.target.label,
+      label: get(labelAtom(environmentId)) ?? entry.target.label,
     }));
     const previous = Option.getOrNull(
       get.self<ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>>(),

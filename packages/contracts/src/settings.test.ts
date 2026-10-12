@@ -11,6 +11,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   requiredScopesForProjectMutation,
+  resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -951,13 +952,6 @@ describe("ServerSettingsPatch.providerInstances", () => {
 });
 
 describe("ServerSettingsPatch string normalization", () => {
-  it("lowercases GitHub hosts and defaults them to enabled", () => {
-    const patch = decodeServerSettingsPatch({
-      github: { hosts: { " GitHub.com ": { account: "  work  " } } },
-    });
-    expect(patch.github?.hosts).toEqual({ "github.com": { account: "work", enabled: true } });
-  });
-
   it("trims string settings while decoding patches", () => {
     const patch = decodeServerSettingsPatch({
       addProjectBaseDirectory: "  ~/Development  ",
@@ -1022,6 +1016,23 @@ describe("ServerSettings environment icon", () => {
   });
 });
 
+describe("ServerSettings environment label", () => {
+  it("defaults to null, meaning the detected machine name", () => {
+    expect(decodeServerSettings({}).environmentLabel).toBeNull();
+  });
+
+  it("keeps a trimmed name and round-trips it", () => {
+    const settings = decodeServerSettings({ environmentLabel: "  Work Mac " });
+    expect(settings.environmentLabel).toBe("Work Mac");
+    expect(encodeServerSettings(settings).environmentLabel).toBe("Work Mac");
+  });
+
+  it("reads an empty or over-long name as unset instead of failing the snapshot", () => {
+    expect(decodeServerSettings({ environmentLabel: "   " }).environmentLabel).toBeNull();
+    expect(decodeServerSettings({ environmentLabel: "x".repeat(65) }).environmentLabel).toBeNull();
+  });
+});
+
 const decodeDeviceHostSettings = Schema.decodeSync(ServerSettings);
 
 it("validates remote device hosts and rejects ambiguous host ids", () => {
@@ -1072,6 +1083,78 @@ describe("ServerSettings.removeAgentCreditsOnMerge", () => {
   });
 });
 
+describe("resolveProjectProviderInstanceEnabled", () => {
+  const projectId = "project-a" as ProjectId;
+  const instanceId = ProviderInstanceId.make("codex_work");
+
+  it("inherits the machine value when the project has no override", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
+      },
+    };
+    expect(resolveProjectProviderInstanceEnabled(settings, projectId, instanceId)).toBe(false);
+  });
+
+  it("lets a project enable an instance the machine disabled", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
+      },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+      },
+    };
+    expect(resolveProjectProviderInstanceEnabled(settings, projectId, instanceId)).toBe(true);
+  });
+
+  it("lets a project disable an instance the machine enabled", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+      },
+    };
+    expect(resolveProjectProviderInstanceEnabled(settings, projectId, instanceId)).toBe(false);
+  });
+
+  it("always resolves to the machine value when no project is in scope", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+      },
+    };
+    expect(resolveProjectProviderInstanceEnabled(settings, null, instanceId)).toBe(true);
+  });
+
+  it("falls back to the unconfigured default when the instance has no settings entry", () => {
+    const settings: ServerSettings = { ...DEFAULT_SERVER_SETTINGS, providerInstances: {} };
+    // `codex_work` has no entry in `providerInstances`, so with no project
+    // override either, this is the same unconfigured-default fallback a
+    // machine-wide (no project) lookup would use.
+    expect(resolveProjectProviderInstanceEnabled(settings, projectId, instanceId)).toBe(
+      resolveProjectProviderInstanceEnabled(settings, null, instanceId),
+    );
+
+    const overridden = {
+      ...settings,
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+      },
+    };
+    expect(resolveProjectProviderInstanceEnabled(overridden, projectId, instanceId)).toBe(true);
+  });
+});
+
 describe("requiredScopesForProjectMutation", () => {
   it("adds the settings scope only when a mutation carries scripts", () => {
     const projectId = "project-1" as ProjectId;
@@ -1109,5 +1192,36 @@ describe("ClientSettings appIcon", () => {
   it.each(["round", "", null, 1])("rejects unsupported design %s", (appIcon) => {
     expect(() => decodeClientSettings({ appIcon })).toThrow();
     expect(() => decodeClientSettingsPatch({ appIcon })).toThrow();
+  });
+});
+
+describe("server model preferences", () => {
+  it("decodes a visibility update scoped to a provider instance and model", () => {
+    const patch = { setModelsHidden: [{ provider: "codex_work", model: "sol", hidden: false }] };
+    expect(decodeServerSettingsPatch(patch)).toEqual(patch);
+    expect(() =>
+      decodeServerSettingsPatch({ setModelsHidden: [{ provider: "codex_work", model: "sol" }] }),
+    ).toThrow();
+  });
+  it("distinguishes unmigrated lists from deliberately cleared lists", () => {
+    expect(decodeServerSettings({})).toMatchObject({
+      favorites: null,
+      providerModelPreferences: null,
+    });
+    const input = { favorites: [], providerModelPreferences: {} };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+  });
+
+  it("round trips favorites and hidden models keyed by provider instance", () => {
+    const input = {
+      favorites: [{ provider: "codex_work", model: "sol" }],
+      providerModelPreferences: { codex_work: { hiddenModels: ["astra"], modelOrder: ["sol"] } },
+    };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+    expect(decodeServerSettingsPatch({ migrateModelPreferences: input })).toEqual({
+      migrateModelPreferences: input,
+    });
   });
 });

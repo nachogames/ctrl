@@ -127,6 +127,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
   storageCleanup: Schema.optionalKey(Schema.Boolean),
   storageCleanupRun: Schema.optionalKey(Schema.Boolean),
+  /** Server checks OTLP endpoints for the telemetry export settings. */
+  otlpEndpointCheck: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   /** Server honors the `worktreesDirectory` setting. */
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
@@ -134,6 +136,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
   /** Server resolves `projectSettingsOverrides`; older servers ignore the key. */
   projectSettingsOverrides: Schema.optionalKey(Schema.Boolean),
+  /** Server resolves a project's `providerInstances` override entry. Older
+      servers decode the key away (unknown fields are stripped, not
+      rejected), so the per-project provider switch would silently do
+      nothing; clients hide it instead of sending a patch that goes nowhere. */
+  projectProviderInstanceOverrides: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
@@ -161,6 +168,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadPinReorder: Schema.optionalKey(Schema.Boolean),
   /** Server persists manual Active order through thread.active.reorder. */
   threadActiveReorder: Schema.optionalKey(Schema.Boolean),
+  /** Server persists a chat's order inside its group through thread.group.reorder. */
+  threadGroupReorder: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.auto-settle.set (per-thread auto-settle off).
       Same version-skew contract as threadSettlement. */
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
@@ -209,6 +218,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       setting. Older servers drop the key on write, so clients show the
       picker inert rather than offering a choice that would never stick. */
   environmentIcon: Schema.optionalKey(Schema.Boolean),
+  /** Server keeps the `environmentLabel` display name setting. Older servers
+      drop the key on write, so clients do not offer to set one there. */
+  environmentLabel: Schema.optionalKey(Schema.Boolean),
   /** The desktop app supervising this server can be driven over RPC:
       server.updateServer runs its check -> download -> relaunch. Absent on
       desktop servers whose app predates the remote trigger, where clients

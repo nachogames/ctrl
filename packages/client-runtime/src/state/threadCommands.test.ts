@@ -135,6 +135,7 @@ describe("remote thread lifecycle commands", () => {
     ["setAutoSettle", { enabled: false }, { autoSettleDisabledAt: expect.any(Object) }],
     ["reorderPin", { orderKey: "b" }, { pinOrderKey: "b" }],
     ["reorderActive", { orderKey: "b" }, { activeOrderKey: "b" }],
+    ["reorderGroup", { orderKey: "b" }, { groupOrderKey: "b" }],
   ] as const;
 
   it.effect.each(actions)(

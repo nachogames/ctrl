@@ -24,6 +24,8 @@ export interface EnvironmentOption {
   machine: EnvironmentMachineKind;
   /** Null when the machine has no battery or is not connected. */
   battery?: HostBattery | null;
+  /** Set when the machine is listed but cannot be picked, saying why. */
+  disabledReason?: string;
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);
