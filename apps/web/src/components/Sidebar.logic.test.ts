@@ -3010,9 +3010,11 @@ describe("planGroupMemberReorder", () => {
       ]),
       movedId: "c",
     });
-    expect(assignments.map(({ id }) => id)).toEqual(["c", "a", "b"]);
+    // Keyless chats sort above keyed ones, so writes run bottom-up: each one
+    // lands in its planned place and a partial failure keeps the asked-for order.
+    expect(assignments.map(({ id }) => id)).toEqual(["b", "a", "c"]);
     const keys = assignments.map(({ orderKey }) => orderKey);
-    expect(keys.toSorted()).toEqual(keys);
+    expect(keys.toSorted().toReversed()).toEqual(keys);
   });
 
   it("writes one key between keyed neighbors", () => {

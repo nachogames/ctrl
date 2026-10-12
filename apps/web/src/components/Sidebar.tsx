@@ -4523,7 +4523,8 @@ export default function Sidebar() {
         };
         setOptimisticGroupOrder(drop);
         void (async () => {
-          // Stop on failure; each successful key write remains a valid placement.
+          // Writes run bottom-up (see planGroupMemberReorder); stop on failure so the
+          // keys already written keep their planned order.
           for (const assignment of assignments) {
             const thread = threadByKey.get(assignment.id);
             if (thread === undefined) continue;

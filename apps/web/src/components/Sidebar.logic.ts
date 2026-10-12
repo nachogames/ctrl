@@ -345,14 +345,22 @@ export function resolveSidebarGroupReorder(input: {
   return overItem.groupKey === groupKey ? groupKey : null;
 }
 
-/** Order keys for a reorder inside a group: the Pinned rule, over the group's chats. */
+/**
+ * Order keys for a reorder inside a group: the Pinned rule, over the group's
+ * chats. Write them in the returned order, which runs bottom-up: keyless chats
+ * sort above keyed ones in a group, so each write lands in its planned place
+ * and a failure partway leaves the asked-for order, not a reshuffle.
+ */
 export function planGroupMemberReorder(input: {
   /** Member ids in the order after the move. */
   readonly orderedIds: readonly string[];
   readonly keysById: ReadonlyMap<string, string | null | undefined>;
   readonly movedId: string;
 }): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> {
-  return planPinnedReorder(input);
+  const position = new Map(input.orderedIds.map((id, index) => [id, index]));
+  return planPinnedReorder(input).toSorted(
+    (left, right) => (position.get(right.id) ?? -1) - (position.get(left.id) ?? -1),
+  );
 }
 
 export type SidebarThreadDropPlan =
