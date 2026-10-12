@@ -9,6 +9,7 @@ const request = {
   bundleId: "com.nachogames.ctrl",
   androidUserId: "direct",
 } as const;
+const tokens = { sendToken: "send", manageToken: "manage" };
 
 function fakeFetch(response: Response | Error) {
   const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
@@ -21,36 +22,41 @@ function fakeFetch(response: Response | Error) {
 }
 
 describe("registerWithPushRelay", () => {
-  it("sends the current token as a bearer header and returns the relay's token", async () => {
-    const fetch = fakeFetch(new Response(JSON.stringify({ sendToken: "new" })));
-    const token = await registerWithPushRelay(
-      { relayUrl: "https://relay.test", currentToken: "old", reset: true, request },
+  it("presents the current tokens and returns the relay's", async () => {
+    const fresh = { sendToken: "new-send", manageToken: "new-manage" };
+    const fetch = fakeFetch(new Response(JSON.stringify(fresh)));
+    const result = await registerWithPushRelay(
+      { relayUrl: "https://relay.test", current: tokens, reset: true, request },
       fetch.impl,
     );
-    expect(token).toBe("new");
+    expect(result).toEqual(fresh);
     expect(fetch.calls[0]?.url).toBe("https://relay.test/register");
-    expect(new Headers(fetch.calls[0]?.init?.headers).get("authorization")).toBe("Bearer old");
-    expect(JSON.parse(String(fetch.calls[0]?.init?.body))).toEqual({ ...request, reset: true });
+    expect(JSON.parse(String(fetch.calls[0]?.init?.body))).toEqual({
+      ...request,
+      reset: true,
+      current: tokens,
+    });
   });
 
-  it("omits the header on first sign-up", async () => {
-    const fetch = fakeFetch(new Response(JSON.stringify({ sendToken: "t" })));
+  it("signs up without tokens the first time", async () => {
+    const fetch = fakeFetch(new Response(JSON.stringify(tokens)));
     await registerWithPushRelay(
-      { relayUrl: "https://relay.test", currentToken: null, reset: false, request },
+      { relayUrl: "https://relay.test", current: null, reset: false, request },
       fetch.impl,
     );
-    expect(new Headers(fetch.calls[0]?.init?.headers).has("authorization")).toBe(false);
+    expect(JSON.parse(String(fetch.calls[0]?.init?.body))).toEqual(request);
   });
 
-  it("returns null when the relay is unreachable or refuses, so local keys keep working", async () => {
+  it("returns null when the relay is unreachable or refuses", async () => {
     for (const response of [
       new Error("offline"),
       new Response("{}", { status: 429 }),
       new Response("nope"),
+      new Response(JSON.stringify({ sendToken: "only-send" })),
     ]) {
       expect(
         await registerWithPushRelay(
-          { relayUrl: "https://relay.test", currentToken: null, reset: false, request },
+          { relayUrl: "https://relay.test", current: null, reset: false, request },
           fakeFetch(response).impl,
         ),
       ).toBeNull();

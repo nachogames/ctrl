@@ -1,6 +1,6 @@
 # Ctrl push relay
 
-`apps/push-relay` is a Cloudflare Worker that holds Ctrl's APNs and FCM keys, so any computer a phone is paired with can alert that phone without keys of its own. Each phone gets a send token that reaches only that phone; KV stores only token hashes, and the relay forwards only fixed-format alerts and clears.
+`apps/push-relay` is a Cloudflare Worker that holds Ctrl's APNs and FCM keys, so any computer a phone is paired with can alert that phone without keys of its own. Each phone gets a send token, which it gives to its computers and which reaches only that phone, and a manage token, which never leaves the phone and is required to change or reset its record. Computers never see the phone's raw push token. KV stores only token hashes, and the relay forwards only fixed-format alerts and clears.
 
 It runs at `https://ctrl-push-relay.mceachinm.workers.dev`, in the Cloudflare account wrangler is logged in to.
 

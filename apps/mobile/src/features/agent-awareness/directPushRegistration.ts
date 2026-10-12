@@ -3,13 +3,16 @@ import { request } from "@t3tools/client-runtime/rpc";
 import {
   DEFAULT_DIRECT_PUSH_ALERT_KINDS,
   type EnvironmentId,
+  PushRelayTokens,
   WS_METHODS,
 } from "@t3tools/contracts";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AppState, Platform } from "react-native";
@@ -61,7 +64,10 @@ export function getDirectPushStatuses(): ReadonlyMap<EnvironmentId, DirectPushEn
   return statuses;
 }
 
-const PUSH_RELAY_TOKEN_KEY = "ctrl.push-relay.send-token";
+const PUSH_RELAY_TOKENS_KEY = "ctrl.push-relay.tokens";
+const PushRelayTokensJson = Schema.fromJsonString(PushRelayTokens);
+const decodeStoredRelayTokens = Schema.decodeUnknownOption(PushRelayTokensJson);
+const encodeRelayTokens = Schema.encodeSync(PushRelayTokensJson);
 
 /** Ctrl's push relay (apps/push-relay), from the app config. */
 function pushRelayUrl(): string | null {
@@ -127,16 +133,16 @@ export const layer = Layer.effectDiscard(
       const relayUrl = pushRelayUrl();
       let relayToken: string | null = null;
       if (token !== null && bundleId && relayUrl !== null) {
-        const currentToken = yield* secureStorage
-          .getItem(PUSH_RELAY_TOKEN_KEY)
+        const stored = yield* secureStorage
+          .getItem(PUSH_RELAY_TOKENS_KEY)
           .pipe(Effect.orElseSucceed(() => null));
+        const current = stored === null ? null : Option.getOrNull(decodeStoredRelayTokens(stored));
         const reset = resetRequested;
         resetRequested = false;
-        const storedToken = currentToken?.trim() || null;
         const registered = yield* Effect.promise(() =>
           registerWithPushRelay({
             relayUrl,
-            currentToken: storedToken,
+            current,
             reset,
             request: {
               deviceId,
@@ -152,11 +158,13 @@ export const layer = Layer.effectDiscard(
           }),
         );
         // An unreachable or busy relay must not switch computers off the relay:
-        // keep using the saved token, and retry a reset on the next sync.
+        // keep using the saved tokens, and retry a reset on the next sync.
         if (registered === null && reset) resetRequested = true;
-        relayToken = registered ?? storedToken;
-        if (registered !== null && registered !== storedToken) {
-          yield* secureStorage.setItem(PUSH_RELAY_TOKEN_KEY, registered).pipe(Effect.ignore);
+        relayToken = (registered ?? current)?.sendToken ?? null;
+        if (registered !== null && registered.sendToken !== current?.sendToken) {
+          yield* secureStorage
+            .setItem(PUSH_RELAY_TOKENS_KEY, encodeRelayTokens(registered))
+            .pipe(Effect.ignore);
         }
       }
       const entries = yield* SubscriptionRef.get(registry.entries);
@@ -188,7 +196,11 @@ export const layer = Layer.effectDiscard(
                   Constants.deviceName?.trim() ||
                   (Platform.OS === "android" ? "Android device" : "iPhone"),
                 platform: Platform.OS === "android" ? "android" : "ios",
-                token,
+                // With the relay, computers get only the send token, so Reset alerts
+                // can cut one off; the raw push token would let it sign up again.
+                ...(relayUrl !== null && relayToken !== null
+                  ? { relayUrl, relayToken }
+                  : { token }),
                 bundleId,
                 ...(Platform.OS === "ios"
                   ? {
@@ -199,7 +211,6 @@ export const layer = Layer.effectDiscard(
                   : { androidUserId }),
                 notificationsEnabled: true,
                 alertOn,
-                ...(relayUrl !== null && relayToken !== null ? { relayUrl, relayToken } : {}),
               }),
             )
             .pipe(
