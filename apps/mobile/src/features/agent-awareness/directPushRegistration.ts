@@ -15,9 +15,11 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AppState, Platform } from "react-native";
 
 import * as MobilePreferences from "../../persistence/mobile-preferences";
+import * as MobileSecureStorage from "../../persistence/mobile-secure-storage";
 import * as MobileStorage from "../../persistence/mobile-storage";
 import { configureAndroidAgentNotifications } from "./androidNotifications";
 import { supportsAgentAwarenessPush } from "./capabilities";
+import { registerWithPushRelay } from "./pushRelayClient";
 import { resolveApsEnvironment } from "./registrationPayload";
 import {
   getAgentAwarenessRelayIdentity,
@@ -59,6 +61,22 @@ export function getDirectPushStatuses(): ReadonlyMap<EnvironmentId, DirectPushEn
   return statuses;
 }
 
+const PUSH_RELAY_TOKEN_KEY = "ctrl.push-relay.send-token";
+
+/** Ctrl's push relay (apps/push-relay), from the app config. */
+function pushRelayUrl(): string | null {
+  const url = Constants.expoConfig?.extra?.pushRelayUrl;
+  return typeof url === "string" && url.startsWith("https://") ? url : null;
+}
+
+let resetRequested = false;
+
+/** Swaps this phone's relay send token for a new one, cutting off computers it is no longer connected to. */
+export function resetDirectPushRelay(): void {
+  resetRequested = true;
+  requestRegistration();
+}
+
 /** Re-runs registration now, e.g. after the user flips the setting. */
 export function requestDirectPushRegistration(): void {
   requestRegistration();
@@ -80,6 +98,7 @@ export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const storage = yield* MobileStorage.MobileStorage;
+    const secureStorage = yield* MobileSecureStorage.MobileSecureStorage;
     const preferencesStore = yield* MobilePreferences.MobilePreferencesStore;
     const requests = yield* Queue.sliding<void>(1);
     requestRegistration = () => Queue.offerUnsafe(requests, undefined);
@@ -105,6 +124,41 @@ export const layer = Layer.effectDiscard(
           ? Constants.expoConfig?.android?.package
           : Constants.expoConfig?.ios?.bundleIdentifier
         )?.trim() ?? "";
+      const relayUrl = pushRelayUrl();
+      let relayToken: string | null = null;
+      if (token !== null && bundleId && relayUrl !== null) {
+        const currentToken = yield* secureStorage
+          .getItem(PUSH_RELAY_TOKEN_KEY)
+          .pipe(Effect.orElseSucceed(() => null));
+        const reset = resetRequested;
+        resetRequested = false;
+        const storedToken = currentToken?.trim() || null;
+        const registered = yield* Effect.promise(() =>
+          registerWithPushRelay({
+            relayUrl,
+            currentToken: storedToken,
+            reset,
+            request: {
+              deviceId,
+              platform: Platform.OS === "android" ? "android" : "ios",
+              pushToken: token,
+              bundleId,
+              ...(Platform.OS === "ios"
+                ? {
+                    apsEnvironment: resolveApsEnvironment(Constants.expoConfig?.extra?.appVariant),
+                  }
+                : { androidUserId }),
+            },
+          }),
+        );
+        // An unreachable or busy relay must not switch computers off the relay:
+        // keep using the saved token, and retry a reset on the next sync.
+        if (registered === null && reset) resetRequested = true;
+        relayToken = registered ?? storedToken;
+        if (registered !== null && registered !== storedToken) {
+          yield* secureStorage.setItem(PUSH_RELAY_TOKEN_KEY, registered).pipe(Effect.ignore);
+        }
+      }
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -123,7 +177,7 @@ export const layer = Layer.effectDiscard(
               );
           }
           const alertOn = preferences.directPushAlertOn ?? DEFAULT_DIRECT_PUSH_ALERT_KINDS;
-          const signature = `${token}|${androidUserId}|${alertOn.join(",")}`;
+          const signature = `${token}|${androidUserId}|${alertOn.join(",")}|${relayToken ?? ""}`;
           if (accepted.get(environmentId) === signature) return Effect.void;
           return registry
             .run(
@@ -145,6 +199,7 @@ export const layer = Layer.effectDiscard(
                   : { androidUserId }),
                 notificationsEnabled: true,
                 alertOn,
+                ...(relayUrl !== null && relayToken !== null ? { relayUrl, relayToken } : {}),
               }),
             )
             .pipe(

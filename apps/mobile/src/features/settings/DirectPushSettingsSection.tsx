@@ -14,6 +14,7 @@ import {
   type DirectPushEnvironmentStatus,
   getDirectPushStatuses,
   requestDirectPushRegistration,
+  resetDirectPushRelay,
   subscribeDirectPushStatuses,
 } from "../agent-awareness/directPushRegistration";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
@@ -26,7 +27,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
 const STATUS_TEXT: Record<DirectPushEnvironmentStatus, string> = {
   registered: "Ready",
-  "no-credentials": "Server has no push keys yet",
+  "no-credentials": "Not ready: update this server or add push keys",
   unavailable: "Not available from this server",
 };
 
@@ -130,6 +131,24 @@ export function DirectPushSettingsSection() {
             );
           })
         : null}
+      {enabled ? (
+        <SettingsRow
+          icon="arrow.clockwise"
+          label="Reset alerts"
+          value="Get a new alert address. Computers you are not connected to right now stop reaching this phone."
+          valuePosition="below"
+          onPress={() =>
+            Alert.alert(
+              "Reset alerts?",
+              "Connected computers update automatically. Others stop alerting this phone until you connect them again.",
+              [
+                { text: "Cancel", style: "cancel" },
+                { text: "Reset", style: "destructive", onPress: resetDirectPushRelay },
+              ],
+            )
+          }
+        />
+      ) : null}
     </SettingsSection>
   );
 }
