@@ -3,52 +3,118 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ScopedThreadRef } from "@t3tools/contracts";
-import { ExternalLinkIcon, XIcon } from "lucide-react";
-import { useMemo } from "react";
+import type {
+  ProjectScript,
+  ScopedThreadRef,
+  ThreadGroupRunningResource,
+  ThreadId,
+} from "@t3tools/contracts";
+import {
+  ChevronDownIcon,
+  ExternalLinkIcon,
+  PencilIcon,
+  PlayIcon,
+  RotateCwIcon,
+  SquareIcon,
+  XIcon,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
-import { useEnvironmentQuery } from "~/state/query";
 import { threadGroupCommands } from "~/state/threadGroups";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { RUNNING_FOOTNOTE, runningRowView, type RunningRowView } from "./GroupRunningSection.logic";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { GroupInlineEdit } from "./GroupInlineEdit";
+import {
+  RUNNING_FOOTNOTE,
+  expireStoppedRows,
+  renameManualResources,
+  runningView,
+  trackStoppedRows,
+  type FoundRow,
+  type KnownRow,
+  type StoppedRow,
+} from "./GroupRunningSection.logic";
+import type { GroupScriptRunner } from "./useGroupScriptRunner";
+
+function errorToast(title: string, error: unknown) {
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title,
+      description: error instanceof Error ? error.message : "An error occurred.",
+    }),
+  );
+}
 
 /**
- * The group's running servers and containers. Mounting subscribes, which makes
- * the server scan; unmounting stops it, so render it only while the panel shows.
+ * The group's running servers: known rows, the folded worktree processes, and
+ * Start rows for scripts that are not running. `resources` comes from the panel's
+ * one scan subscription; null until the first scan arrives.
  */
 export function GroupRunningSection(props: {
   group: EnvironmentThreadGroup;
   threadRef: ScopedThreadRef;
+  resources: ReadonlyArray<ThreadGroupRunningResource> | null;
+  error: string | null;
+  scripts: ReadonlyArray<ProjectScript>;
+  runner: GroupScriptRunner;
+  chatTitles: ReadonlyMap<ThreadId, string>;
 }) {
-  const { group } = props;
-  const query = useEnvironmentQuery(
-    useMemo(
-      () =>
-        threadGroupCommands.resources({ environmentId: group.environmentId, groupId: group.id }),
-      [group.environmentId, group.id],
-    ),
+  const { group, runner } = props;
+  const [stopped, setStopped] = useState<ReadonlyArray<StoppedRow>>([]);
+  const [now, setNow] = useState(() => Date.now());
+  const previousRef = useRef<ReadonlyArray<ThreadGroupRunningResource> | null>(null);
+  useEffect(() => {
+    const next = props.resources;
+    if (next === null) return;
+    const at = Date.now();
+    // oxlint-disable-next-line react/set-state-in-effect -- Diffs each scan against the last; the clock read keeps render pure.
+    setNow(at);
+    setStopped((current) =>
+      trackStoppedRows({ previous: previousRef.current, next, stopped: current, now: at }),
+    );
+    previousRef.current = next;
+  }, [props.resources]);
+  const hasStopped = stopped.length > 0;
+  // Ticks only while a stopped row is shown, to age its label and let it go.
+  useEffect(() => {
+    if (!hasStopped) return;
+    const id = setInterval(() => {
+      const at = Date.now();
+      setNow(at);
+      setStopped((current) => expireStoppedRows(current, at));
+    }, 5_000);
+    return () => clearInterval(id);
+  }, [hasStopped]);
+  const view = useMemo(
+    () =>
+      runningView({
+        resources: props.resources ?? [],
+        stopped,
+        scripts: props.scripts,
+        chatTitles: props.chatTitles,
+        currentThreadId: props.threadRef.threadId,
+        now,
+      }),
+    [now, props.chatTitles, props.resources, props.scripts, props.threadRef.threadId, stopped],
   );
-  const rows = useMemo(() => (query.data?.resources ?? []).map(runningRowView), [query.data]);
+  const [showFound, setShowFound] = useState(false);
+
   const openLink = useOpenLink(props.threadRef);
   const removeResource = useOrchestrationCommand(threadGroupCommands.removeResource, {
     reportFailure: false,
   });
+  const updateGroup = useOrchestrationCommand(threadGroupCommands.update, {
+    reportFailure: false,
+  });
 
   const open = (url: string) => {
-    void openLink(url).catch((error: unknown) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Unable to open the link",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    });
+    void openLink(url).catch((error: unknown) => errorToast("Unable to open the link", error));
   };
 
   const remove = async (manualId: string) => {
@@ -58,78 +124,340 @@ export function GroupRunningSection(props: {
       input: { groupId: group.id, resourceId: manualId },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to remove the resource",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
+      errorToast("Failed to remove the resource", squashAtomCommandFailure(result));
     }
   };
 
+  /** Names whatever runs on `port`; an empty or unchanged name cancels. */
+  const rename = async (port: number, current: string, draft: string) => {
+    const name = draft.trim();
+    if (name === "" || name === current) return;
+    const result = await updateGroup({
+      environmentId: group.environmentId,
+      input: {
+        groupId: group.id,
+        patch: { manualResources: renameManualResources(group.manualResources, { port, name }) },
+      },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      errorToast("Failed to rename", squashAtomCommandFailure(result));
+    }
+  };
+
+  const scriptById = (scriptId: string) =>
+    props.scripts.find((script) => script.id === scriptId) ?? null;
+
+  const { found } = view;
+  const empty = view.known.length === 0 && found === null && view.start.length === 0;
   return (
     <>
       {/* Before the first scan arrives nothing is known, so claim nothing. */}
-      {query.data == null ? (
+      {props.resources === null ? (
         <p className="px-1.5 text-muted-foreground text-sm">
-          {query.error === null ? "Checking…" : "Could not check what is running"}
+          {props.error === null ? "Checking…" : "Could not check what is running"}
         </p>
-      ) : rows.length === 0 ? (
+      ) : empty ? (
         <p className="px-1.5 text-muted-foreground text-sm">Nothing running</p>
       ) : (
-        <ul className="flex flex-col gap-0.5">
-          {rows.map((row) => (
-            <RunningRow key={row.id} row={row} onOpen={open} onRemove={remove} />
-          ))}
-        </ul>
+        <>
+          {view.known.length > 0 || view.start.length > 0 ? (
+            <ul className="flex flex-col gap-0.5">
+              {view.known.map((row) => {
+                const restartScript =
+                  row.restart === null ? null : scriptById(row.restart.scriptId);
+                const restartThreadId = row.restart?.threadId ?? null;
+                return (
+                  <KnownRunRow
+                    key={row.id}
+                    row={row}
+                    canOperate={runner.canOperate}
+                    onOpen={open}
+                    onRename={(port, draft) => void rename(port, row.name, draft)}
+                    onStop={(terminal) => void runner.stop(terminal)}
+                    onRemove={(manualId) => void remove(manualId)}
+                    onRestart={
+                      restartScript === null || restartThreadId === null
+                        ? null
+                        : () => void runner.start(restartScript, restartThreadId)
+                    }
+                  />
+                );
+              })}
+              {view.start.map((row) => {
+                const script = scriptById(row.scriptId);
+                return (
+                  <li
+                    key={row.scriptId}
+                    className="flex min-w-0 list-none items-center gap-2 rounded-md px-1.5 py-1 hover:bg-accent/60"
+                  >
+                    <StatusDot running={false} />
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground text-sm">
+                      {row.name}
+                    </span>
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      disabled={!runner.canOperate || script === null}
+                      onClick={() => {
+                        if (script !== null) void runner.start(script, props.threadRef.threadId);
+                      }}
+                    >
+                      <PlayIcon aria-hidden />
+                      Start
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+          {found !== null ? (
+            <div className="mt-1.5 border-border border-t pt-1">
+              <div className="flex min-w-0 items-center gap-2 px-1.5">
+                <span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
+                  {found.label}
+                </span>
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  aria-expanded={showFound}
+                  onClick={() => setShowFound((shown) => !shown)}
+                >
+                  {showFound ? "Hide" : "Show"}
+                  <ChevronDownIcon aria-hidden className={cn(showFound && "rotate-180")} />
+                </Button>
+              </div>
+              {showFound ? (
+                <div className="mt-1 ml-3 border-border border-l pl-2">
+                  <p className="px-1.5 py-1 text-muted-foreground text-xs">
+                    Not started by a chat or run script. Shown because they run inside this
+                    worktree.
+                  </p>
+                  <ul className="flex flex-col gap-0.5">
+                    {found.rows.map((row) => (
+                      <FoundRunRow
+                        key={row.id}
+                        row={row}
+                        onOpen={open}
+                        onName={(port, draft) => void rename(port, row.name, draft)}
+                      />
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </>
       )}
       <p className="mt-2 px-1.5 text-muted-foreground text-xs">{RUNNING_FOOTNOTE}</p>
     </>
   );
 }
 
-function RunningRow(props: {
-  row: RunningRowView;
+function StatusDot(props: { running: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "size-2 shrink-0 rounded-full",
+        props.running ? "bg-success" : "bg-muted-foreground/40",
+      )}
+    />
+  );
+}
+
+/**
+ * The port (or detail) on the right, which gives way to `actions` while the row is
+ * hovered or focused. The actions stay in the tab order while visually hidden, so
+ * keyboard focus reaches them and reveals them.
+ */
+function RowEnd(props: { label: string; struck?: boolean; actions: ReactNode | null }) {
+  return (
+    <>
+      <span
+        className={cn(
+          "max-w-[45%] shrink-0 truncate font-mono text-muted-foreground text-xs",
+          props.struck && "line-through",
+          props.actions !== null && "group-hover/run:hidden group-focus-within/run:hidden",
+        )}
+      >
+        {props.label}
+      </span>
+      {props.actions !== null ? (
+        <span className="sr-only flex shrink-0 items-center gap-0.5 group-hover/run:not-sr-only group-focus-within/run:not-sr-only">
+          {props.actions}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function KnownRunRow(props: {
+  row: KnownRow;
+  canOperate: boolean;
   onOpen: (url: string) => void;
-  onRemove: (manualId: string) => Promise<void>;
+  onRename: (port: number, draft: string) => void;
+  onStop: (terminal: NonNullable<KnownRow["stopTerminal"]>) => void;
+  onRemove: (manualId: string) => void;
+  onRestart: (() => void) | null;
 }) {
   const { row } = props;
-  const { openUrl, manualId } = row;
+  const { openUrl, stopTerminal, manualId, port } = row;
+  const [editing, setEditing] = useState(false);
+  const stopped = row.state === "stopped";
+  const actions =
+    openUrl === null && !row.canRename && stopTerminal === null && manualId === null ? null : (
+      <>
+        {openUrl !== null ? (
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={`Open ${row.name}`}
+            onClick={() => props.onOpen(openUrl)}
+          >
+            <ExternalLinkIcon />
+          </Button>
+        ) : null}
+        {row.canRename && port !== null ? (
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={`Rename ${row.name}`}
+            onClick={() => setEditing(true)}
+          >
+            <PencilIcon />
+          </Button>
+        ) : null}
+        {stopTerminal !== null ? (
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={`Stop ${row.name}`}
+            disabled={!props.canOperate}
+            onClick={() => props.onStop(stopTerminal)}
+          >
+            <SquareIcon />
+          </Button>
+        ) : null}
+        {manualId !== null ? (
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={`Remove ${row.name}`}
+            onClick={() => props.onRemove(manualId)}
+          >
+            <XIcon />
+          </Button>
+        ) : null}
+      </>
+    );
   return (
-    <li className="flex min-w-0 list-none items-center gap-2 rounded-md px-1.5 py-1 hover:bg-accent/60">
-      <span
-        aria-hidden
-        className={cn(
-          "size-2 shrink-0 rounded-full",
-          row.tone === "running" ? "bg-success" : "bg-muted-foreground/40",
-        )}
-      />
-      <span className="min-w-0 flex-1 truncate text-foreground text-sm">{row.name}</span>
-      <span className="max-w-[45%] shrink-0 truncate font-mono text-muted-foreground text-xs">
-        {row.detail}
-      </span>
-      {openUrl !== null ? (
-        <Button
-          size="icon-xs"
-          variant="ghost-muted"
-          aria-label={`Open ${row.name}`}
-          onClick={() => props.onOpen(openUrl)}
-        >
-          <ExternalLinkIcon />
-        </Button>
-      ) : null}
-      {manualId !== null ? (
-        <Button
-          size="icon-xs"
-          variant="ghost-muted"
-          aria-label={`Remove ${row.name}`}
-          onClick={() => void props.onRemove(manualId)}
-        >
-          <XIcon />
-        </Button>
-      ) : null}
+    <li
+      className={cn(
+        "group/run flex min-w-0 list-none items-center gap-2 rounded-md px-1.5 py-1 hover:bg-accent/60",
+        stopped && "opacity-60",
+      )}
+    >
+      <StatusDot running={row.state === "running"} />
+      {editing && port !== null ? (
+        <GroupInlineEdit
+          label={`Name for ${row.name}`}
+          initial={row.name}
+          className="text-sm"
+          onCommit={(draft) => {
+            setEditing(false);
+            props.onRename(port, draft);
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      ) : (
+        <>
+          <span className="flex min-w-0 flex-1 flex-col">
+            {/* Below 440px the note line hides, so the name's tooltip carries it. */}
+            <Tooltip disabled={row.note === null}>
+              <TooltipTrigger
+                render={<span className="min-w-0 truncate text-foreground text-sm" />}
+              >
+                {row.name}
+              </TooltipTrigger>
+              <TooltipPopup>{row.note}</TooltipPopup>
+            </Tooltip>
+            {row.note !== null ? (
+              <span className="hidden truncate text-muted-foreground text-xs @min-[440px]/group-panel:block">
+                {row.note}
+              </span>
+            ) : null}
+          </span>
+          <RowEnd
+            label={port === null ? row.detail : `:${port}`}
+            struck={stopped}
+            actions={actions}
+          />
+          {props.onRestart !== null ? (
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              disabled={!props.canOperate}
+              onClick={props.onRestart}
+            >
+              <RotateCwIcon aria-hidden />
+              Restart
+            </Button>
+          ) : null}
+        </>
+      )}
+    </li>
+  );
+}
+
+function FoundRunRow(props: {
+  row: FoundRow;
+  onOpen: (url: string) => void;
+  onName: (port: number, draft: string) => void;
+}) {
+  const { row } = props;
+  const { openUrl, port } = row;
+  const [naming, setNaming] = useState(false);
+  return (
+    <li className="group/run flex min-w-0 list-none items-center gap-2 rounded-md px-1.5 py-1 hover:bg-accent/60">
+      <StatusDot running />
+      {naming && port !== null ? (
+        <GroupInlineEdit
+          label={`Name for ${row.name}`}
+          initial={row.name}
+          className="text-sm"
+          onCommit={(draft) => {
+            setNaming(false);
+            props.onName(port, draft);
+          }}
+          onCancel={() => setNaming(false)}
+        />
+      ) : (
+        <>
+          <span className="flex min-w-0 flex-1 items-center gap-1">
+            <span className="min-w-0 truncate text-muted-foreground text-sm">{row.name}</span>
+            {row.canNameIt ? (
+              <Button size="xs" variant="ghost-muted" onClick={() => setNaming(true)}>
+                Name it
+              </Button>
+            ) : null}
+          </span>
+          <RowEnd
+            label={port === null ? row.detail : `:${port}`}
+            actions={
+              openUrl === null ? null : (
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={`Open ${row.name}`}
+                  onClick={() => props.onOpen(openUrl)}
+                >
+                  <ExternalLinkIcon />
+                </Button>
+              )
+            }
+          />
+        </>
+      )}
     </li>
   );
 }

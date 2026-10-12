@@ -259,27 +259,3 @@ export function renameManualResources(
     { id, name: input.name, url: `http://localhost:${input.port}`, kind: "server" },
   ];
 }
-
-// Kept for GroupRunningSection.tsx until the reworked section replaces it.
-export interface RunningRowView {
-  readonly id: string;
-  readonly name: string;
-  readonly detail: string;
-  /** Scanned resources are live (green); registered ones are only remembered (grey). */
-  readonly tone: "running" | "registered";
-  /** Where the open button goes, or null when the resource has no web address. */
-  readonly openUrl: string | null;
-  /** The stored manual resource id, set only for rows that can be removed. */
-  readonly manualId: string | null;
-}
-
-export function runningRowView(resource: Resource): RunningRowView {
-  return {
-    id: resource.id,
-    name: resource.name,
-    detail: resource.detail,
-    tone: resource.kind === "manual" ? "registered" : "running",
-    openUrl: webUrl(resource.url),
-    manualId: manualIdOf(resource),
-  };
-}

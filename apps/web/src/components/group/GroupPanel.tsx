@@ -11,14 +11,7 @@ import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { useNavigate } from "@tanstack/react-router";
 import { LayersIcon, PencilIcon, PlusIcon, SendIcon } from "lucide-react";
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { canHandOffThread, useThreadGroupActions } from "~/hooks/useThreadGroupActions";
@@ -40,6 +33,7 @@ import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { GroupGlanceCards } from "./GroupGlanceCards";
+import { GroupInlineEdit } from "./GroupInlineEdit";
 import {
   groupChatSubtitle,
   groupStatusPill,
@@ -122,6 +116,10 @@ function GroupPanelContent(props: {
     [project, settings],
   );
   const runner = useGroupScriptRunner(group, project?.workspaceRoot ?? null);
+  const chatTitles = useMemo(
+    () => new Map([...threadsById].map(([id, shell]) => [id, shell.title])),
+    [threadsById],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // Each `openGroup` writes a fresh descriptor, so this runs once per request.
@@ -163,7 +161,15 @@ function GroupPanelContent(props: {
         />
       </section>
       <GroupSection section="running" title="Running">
-        <GroupRunningSection group={group} threadRef={props.threadRef} />
+        <GroupRunningSection
+          group={group}
+          threadRef={props.threadRef}
+          resources={resourcesQuery.data?.resources ?? null}
+          error={resourcesQuery.error}
+          scripts={scripts}
+          runner={runner}
+          chatTitles={chatTitles}
+        />
       </GroupSection>
       <GroupSection section="chats" title={`Chats · ${members.length}`}>
         <ul className="flex flex-col gap-0.5">
@@ -281,7 +287,7 @@ function GroupHeader(props: { group: EnvironmentThreadGroup; status: GroupStatus
       <div className="flex min-w-0 items-center gap-2">
         <LayersIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         {editing === "title" ? (
-          <InlineEdit
+          <GroupInlineEdit
             label="Group title"
             initial={group.title}
             className="font-semibold text-base"
@@ -312,7 +318,7 @@ function GroupHeader(props: { group: EnvironmentThreadGroup; status: GroupStatus
         ) : null}
       </div>
       {editing === "goal" ? (
-        <InlineEdit
+        <GroupInlineEdit
           label="Group goal"
           initial={group.goal ?? ""}
           placeholder="What is this group working towards?"
@@ -333,50 +339,6 @@ function GroupHeader(props: { group: EnvironmentThreadGroup; status: GroupStatus
         </button>
       )}
     </div>
-  );
-}
-
-/** Enter (or blur) saves, Escape cancels; mounted only while editing. */
-function InlineEdit(props: {
-  label: string;
-  initial: string;
-  placeholder?: string;
-  className: string;
-  onCommit: (draft: string) => void;
-  onCancel: () => void;
-}) {
-  const [draft, setDraft] = useState(props.initial);
-  const doneRef = useRef(false);
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    event.stopPropagation();
-    if (event.nativeEvent.isComposing) return;
-    if (event.key === "Enter") {
-      event.preventDefault();
-      doneRef.current = true;
-      props.onCommit(draft);
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      doneRef.current = true;
-      props.onCancel();
-    }
-  };
-  return (
-    <input
-      autoFocus
-      value={draft}
-      aria-label={props.label}
-      placeholder={props.placeholder}
-      onChange={(event) => setDraft(event.target.value)}
-      onFocus={(event) => event.currentTarget.select()}
-      onKeyDown={handleKeyDown}
-      onBlur={() => {
-        if (!doneRef.current) props.onCommit(draft);
-      }}
-      className={cn(
-        "min-w-0 flex-1 rounded-sm border border-input bg-card px-1 text-card-foreground outline-none focus:border-foreground",
-        props.className,
-      )}
-    />
   );
 }
 

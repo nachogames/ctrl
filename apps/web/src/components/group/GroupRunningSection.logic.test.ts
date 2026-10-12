@@ -5,7 +5,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   STOPPED_ROW_MS,
   renameManualResources,
-  runningRowView,
   runningView,
   trackStoppedRows,
 } from "./GroupRunningSection.logic";
@@ -298,19 +297,5 @@ describe("renameManualResources", () => {
       { ...web, id: "port-3000", url: null },
       { id: "port-3000-2", name: "API", url: "http://localhost:3000", kind: "server" },
     ]);
-  });
-});
-
-describe("runningRowView", () => {
-  it("marks a manual resource as registered and removable by its stored id", () => {
-    const row = runningRowView({
-      ...server(0),
-      id: "manual:db1",
-      kind: "manual",
-      source: "registered",
-      url: "postgres://x",
-      port: null,
-    });
-    expect(row).toMatchObject({ tone: "registered", manualId: "db1", openUrl: null });
   });
 });
