@@ -15,6 +15,21 @@ describe("detectComposerTrigger", () => {
       });
     },
   );
+
+  it("detects a slash command mid-message", () => {
+    const text = "please use /superpowers:br";
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: "superpowers:br",
+      rangeStart: "please use ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("closes a mid-message slash command once it looks like a path", () => {
+    const text = "look in /tmp/fo";
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
 });
 
 describe("serializeComposerFileLink", () => {
