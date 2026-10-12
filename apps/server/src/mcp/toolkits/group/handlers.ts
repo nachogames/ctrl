@@ -4,10 +4,12 @@ import {
   ThreadGroupId,
   type OrchestrationThreadGroupShell,
   type OrchestrationV2ThreadShell,
+  type ThreadGroupLink,
   type ThreadGroupManualResource,
   type ThreadGroupUpdatePayload,
   type ThreadId,
 } from "@t3tools/contracts";
+import { groupLinkLabel } from "@t3tools/shared/threadGroups";
 import { resolveNewestCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -338,18 +340,64 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
           ...(input.pinned === undefined ? {} : { pinnedAt: input.pinned ? now : null }),
           ...(input.settled === undefined ? {} : { settledAt: input.settled ? now : null }),
         };
-        if (Object.keys(patch).length === 0)
-          return yield* invalid("Pass at least one of title, goal, pinned, or settled.");
+        let group: OrchestrationThreadGroupShell | undefined;
+        if (input.links !== undefined) {
+          const adds = yield* Effect.forEach(input.links.add ?? [], (entry) => {
+            const label = groupLinkLabel(entry.url);
+            return label === null
+              ? Effect.fail(invalid(`${entry.url} is not an http(s) URL.`))
+              : Effect.succeed({ url: entry.url, label: entry.label ?? label });
+          });
+          const remove = new Set(input.links.remove ?? []);
+          if (adds.length === 0 && remove.size === 0)
+            return yield* invalid("Pass links.add or links.remove.");
+          const ids = yield* Effect.forEach(adds, () =>
+            Crypto.Crypto.pipe(
+              Effect.flatMap((crypto) => crypto.randomUUIDv4),
+              Effect.orDie,
+            ),
+          );
+          const service = yield* ThreadGroup.ThreadGroupService;
+          group = yield* service
+            .updateLinks(
+              groupId,
+              yield* commandIdFor("update-links", input.clientRequestId),
+              (current) => {
+                const kept = current.filter(
+                  (link) => !remove.has(link.id) && !remove.has(link.url),
+                );
+                const linked = new Set(kept.map((link) => link.url));
+                const added: Array<ThreadGroupLink> = [];
+                adds.forEach((entry, index) => {
+                  if (linked.has(entry.url)) return;
+                  linked.add(entry.url);
+                  added.push({ id: `link:${ids[index]}`, ...entry });
+                });
+                // A retried add or a remove of nothing changes nothing.
+                return Effect.succeed(
+                  added.length === 0 && kept.length === current.length ? null : [...kept, ...added],
+                );
+              },
+            )
+            .pipe(Effect.mapError(groupFailure));
+        }
+        if (Object.keys(patch).length === 0) {
+          if (group !== undefined) return { group };
+          return yield* invalid("Pass at least one of title, goal, pinned, settled, or links.");
+        }
         const commandId = yield* commandIdFor("update", input.clientRequestId);
         const service = yield* ThreadGroup.ThreadGroupService;
-        const group = yield* service
+        const updated = yield* service
           .update({ commandId, groupId, patch })
           .pipe(Effect.mapError(groupFailure));
         const unchanged =
           input.settled === undefined
             ? []
-            : yield* setMembersSettled(context, group, commandId, input.settled);
-        return { group, ...(unchanged.length === 0 ? {} : { unchangedChats: unchanged }) };
+            : yield* setMembersSettled(context, updated, commandId, input.settled);
+        return {
+          group: updated,
+          ...(unchanged.length === 0 ? {} : { unchangedChats: unchanged }),
+        };
       }),
   ),
   t3_group_new_thread: McpToolAccess.startsThreads(

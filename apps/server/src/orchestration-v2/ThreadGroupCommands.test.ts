@@ -30,6 +30,7 @@ const row = (overrides: Partial<ThreadGroupRow> = {}): ThreadGroupRow => ({
   snoozedUntil: null,
   settledAt: null,
   manualResources: [],
+  links: [],
   createdAt: "2026-10-10T00:00:00.000Z",
   updatedAt: "2026-10-10T00:00:00.000Z",
   deletedAt: null,
@@ -114,7 +115,7 @@ describe("planThreadGroupCommand", () => {
     assert.deepEqual(event.payload, { groupId, goal: null, updatedAt: "2026-10-10T05:00:00.000Z" });
   });
 
-  it("rejects an empty patch and duplicate resource ids", () => {
+  it("rejects an empty patch and duplicate resource or link ids", () => {
     assert.equal(
       failureTag(plan({ type: "thread-group.meta.update", commandId, groupId, patch: {} }, row())),
       "ThreadGroupCommandInvariantError",
@@ -128,6 +129,21 @@ describe("planThreadGroupCommand", () => {
             commandId,
             groupId,
             patch: { manualResources: [resource, { ...resource, name: "Other" }] },
+          },
+          row(),
+        ),
+      ),
+      "ThreadGroupCommandInvariantError",
+    );
+    const link = { id: "link:1", url: "https://linear.app/acme/issue/ENG-1", label: "ENG-1" };
+    assert.equal(
+      failureTag(
+        plan(
+          {
+            type: "thread-group.meta.update",
+            commandId,
+            groupId,
+            patch: { links: [link, { ...link, label: "Other" }] },
           },
           row(),
         ),

@@ -159,6 +159,10 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
+    "./threadGroups": {
+      "types": "./src/threadGroups.ts",
+      "import": "./src/threadGroups.ts"
+    },
     "./projectSettings": {
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"

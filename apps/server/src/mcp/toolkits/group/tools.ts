@@ -62,7 +62,7 @@ const GroupReadTool = Tool.make("t3_group_read", {
   ...groupTool,
   dependencies: [...groupTool.dependencies, GroupResourceScanner.GroupResourceScanner],
   description:
-    'Read a chat group: its title, goal, branch, worktree, pull request, last handoff, its chats (oldest first, with handoff links and which one is you), and what is running for it right now: local servers started by its chats or from its worktree, its worktree\'s docker compose containers, and resources registered by hand (source "registered", never health-checked). Omit groupId to read the group your chat is in. Chats in one group share a project and a workspace and work toward one goal.',
+    'Read a chat group: its title, goal, branch, worktree, pull request, last handoff, its chats (oldest first, with handoff links and which one is you), its ticket links, and what is running for it right now: local servers started by its chats or from its worktree, its worktree\'s docker compose containers, and resources registered by hand (source "registered", never health-checked). Omit groupId to read the group your chat is in. Chats in one group share a project and a workspace and work toward one goal.',
   parameters: Schema.Struct({ groupId: groupIdParameter }),
   success: Schema.Struct({
     group: OrchestrationThreadGroupShell,
@@ -108,13 +108,31 @@ const GroupCreateTool = Tool.make("t3_group_create", {
 const GroupUpdateTool = Tool.make("t3_group_update", {
   ...groupTool,
   description:
-    "Rename a chat group, set or clear its goal (goal: null clears it), pin or unpin it, or settle or unsettle it. Omit groupId for the group your chat is in. Omitted fields stay as they are. settled: true settles the group and every chat in it that is not settled yet (your own chat settles when your turn ends; a chat that is running, waiting on a question, or running in broader modes than yours stays as it is and is listed in unchangedChats). settled: false unsettles the group and its settled chats.",
+    "Rename a chat group, set or clear its goal (goal: null clears it), link or unlink tickets, pin or unpin it, or settle or unsettle it. Omit groupId for the group your chat is in. Omitted fields stay as they are. settled: true settles the group and every chat in it that is not settled yet (your own chat settles when your turn ends; a chat that is running, waiting on a question, or running in broader modes than yours stays as it is and is listed in unchangedChats). settled: false unsettles the group and its settled chats.",
   parameters: Schema.Struct({
     groupId: groupIdParameter,
     title: Schema.optional(TrimmedNonEmptyString),
     goal: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     pinned: Schema.optional(Schema.Boolean),
     settled: Schema.optional(Schema.Boolean),
+    links: Schema.optional(
+      Schema.Struct({
+        add: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+              label: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
+            }),
+          ),
+        ),
+        remove: Schema.optional(
+          Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(2048))),
+        ),
+      }),
+    ).annotate({
+      description:
+        "Ticket links on the group. add takes http(s) URLs: a Linear issue shows as its key and a GitHub issue as #N unless you pass label; a URL the group already links is skipped. remove takes link ids or URLs.",
+    }),
     clientRequestId,
   }),
   success: Schema.Struct({
@@ -212,7 +230,7 @@ const GroupMoveThreadTool = Tool.make("t3_group_move_thread", {
 const GroupResourceTool = Tool.make("t3_group_resource", {
   ...groupTool,
   description:
-    'Register a running resource on a group, such as a dev server or a container you started, so the user and the group\'s other chats can find it; or remove one. Omit groupId for the group your chat is in. action "add" needs name, and kind defaults to "other"; pass url when it has one. id is generated for add unless you pass one; action "remove" needs the id and succeeds with removed: false when the id is not there. Registered resources are shown as registered, never health-checked, so remove one when you stop it.',
+    'Register a running resource on a group, such as a dev server or a container you started, so the user and the group\'s other chats can find it; or remove one. Omit groupId for the group your chat is in. action "add" needs name, and kind defaults to "other"; pass url when it has one. id is generated for add unless you pass one; action "remove" needs the id and succeeds with removed: false when the id is not there. Registered resources are shown as registered, never health-checked, so remove one when you stop it. When you start a server for the group, such as a dev server or an API, register it with a clear name ("Web app", "API") and its http://localhost:<port> url: the Group panel then shows that name instead of the process name.',
   parameters: Schema.Struct({
     groupId: groupIdParameter,
     action: Schema.Literals(["add", "remove"]),

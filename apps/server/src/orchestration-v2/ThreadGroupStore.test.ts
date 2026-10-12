@@ -29,6 +29,11 @@ it.layer(
       const projectId = ProjectId.make("project:group-store:fold");
       const groupId = ThreadGroupId.make("group:store:fold");
       const resource = { id: "api", name: "Staging API", url: null, kind: "server" as const };
+      const link = {
+        id: "link:1",
+        url: "https://github.com/t3tools/t3code/issues/88",
+        label: "#88",
+      };
       yield* projects.apply(projectCreatedEvent(projectId));
       yield* groups.apply(
         sequenced(threadGroupCreatedEvent({ groupId, projectId, pullRequest: pullRequestLink }), 2),
@@ -38,6 +43,7 @@ it.layer(
           threadGroupMetaUpdatedEvent(groupId, {
             goal: "Ship the sidebar.",
             manualResources: [resource],
+            links: [link],
           }),
           3,
         ),
@@ -62,6 +68,7 @@ it.layer(
           pullRequest: shell.pullRequest,
           pinnedAt: shell.pinnedAt,
           manualResources: shell.manualResources,
+          links: shell.links,
           updatedAt: shell.updatedAt,
         },
         {
@@ -71,6 +78,7 @@ it.layer(
           pullRequest: pullRequestLink,
           pinnedAt: "2026-10-10T04:00:00.000Z",
           manualResources: [resource],
+          links: [link],
           updatedAt: "2026-10-10T04:00:00.000Z",
         },
       );

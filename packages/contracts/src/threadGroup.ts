@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -21,6 +22,14 @@ export const ThreadGroupManualResource = Schema.Struct({
   kind: ThreadGroupManualResourceKind,
 });
 export type ThreadGroupManualResource = typeof ThreadGroupManualResource.Type;
+
+/** A ticket or issue linked to a group; the label is derived from the URL unless an agent named it. */
+export const ThreadGroupLink = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  label: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+});
+export type ThreadGroupLink = typeof ThreadGroupLink.Type;
 
 /**
  * A server, container or registered resource attributed to a group. Computed
@@ -67,6 +76,8 @@ export const OrchestrationThreadGroupShell = Schema.Struct({
   snoozedUntil: Schema.NullOr(IsoDateTime),
   settledAt: Schema.NullOr(IsoDateTime),
   manualResources: Schema.Array(ThreadGroupManualResource),
+  /** Absent from servers before links; decodes as none. */
+  links: Schema.Array(ThreadGroupLink).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -84,6 +95,7 @@ export const ThreadGroupUpdatePayload = Schema.Struct({
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   settledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   manualResources: Schema.optional(Schema.Array(ThreadGroupManualResource)),
+  links: Schema.optional(Schema.Array(ThreadGroupLink)),
 });
 export type ThreadGroupUpdatePayload = typeof ThreadGroupUpdatePayload.Type;
 

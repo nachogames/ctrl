@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ThreadShell,
   ProjectId,
   ThreadGroupId,
+  type ThreadGroupLink,
   type ThreadGroupManualResource,
   type ThreadGroupMutation,
   type ThreadGroupMutationFailureReason,
@@ -241,6 +242,14 @@ export class ThreadGroupService extends Context.Service<
       change: (
         current: ReadonlyArray<ThreadGroupManualResource>,
       ) => Effect.Effect<ReadonlyArray<ThreadGroupManualResource> | null, E>,
+    ) => Effect.Effect<OrchestrationThreadGroupShell, E | ThreadGroupServiceError>;
+    /** Read-modify-write of the group's links under its lock, like `updateManualResources`. */
+    readonly updateLinks: <E>(
+      groupId: ThreadGroupId,
+      commandId: CommandId,
+      change: (
+        current: ReadonlyArray<ThreadGroupLink>,
+      ) => Effect.Effect<ReadonlyArray<ThreadGroupLink> | null, E>,
     ) => Effect.Effect<OrchestrationThreadGroupShell, E | ThreadGroupServiceError>;
   }
 >()("t3/orchestration-v2/ThreadGroupService") {}
@@ -605,27 +614,52 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const updateManualResources: ThreadGroupService["Service"]["updateManualResources"] = (
-    groupId,
-    commandId,
-    change,
+  /** Change one list field of a group under its lock; `change` returns null to leave it. */
+  const updateListLocked = <T, E>(
+    groupId: ThreadGroupId,
+    commandId: CommandId,
+    read: (group: OrchestrationThreadGroupShell) => ReadonlyArray<T>,
+    toPatch: (next: ReadonlyArray<T>) => ThreadGroupUpdatePayload,
+    change: (current: ReadonlyArray<T>) => Effect.Effect<ReadonlyArray<T> | null, E>,
   ) =>
     Effect.gen(function* () {
       yield* groupLocks.withLock(
         groupId,
         Effect.gen(function* () {
-          const next = yield* change((yield* readShell(groupId)).manualResources);
+          const next = yield* change(read(yield* readShell(groupId)));
           if (next === null) return;
           yield* commitLocked({
             type: "thread-group.meta.update",
             commandId,
             groupId,
-            patch: { manualResources: next },
+            patch: toPatch(next),
           });
         }),
       );
       return yield* readShell(groupId);
-    }).pipe(Effect.withSpan("ThreadGroupService.updateManualResources"));
+    });
+
+  const updateManualResources: ThreadGroupService["Service"]["updateManualResources"] = (
+    groupId,
+    commandId,
+    change,
+  ) =>
+    updateListLocked(
+      groupId,
+      commandId,
+      (group) => group.manualResources,
+      (manualResources) => ({ manualResources }),
+      change,
+    ).pipe(Effect.withSpan("ThreadGroupService.updateManualResources"));
+
+  const updateLinks: ThreadGroupService["Service"]["updateLinks"] = (groupId, commandId, change) =>
+    updateListLocked(
+      groupId,
+      commandId,
+      (group) => group.links,
+      (links) => ({ links }),
+      change,
+    ).pipe(Effect.withSpan("ThreadGroupService.updateLinks"));
 
   const deleteGroup: ThreadGroupService["Service"]["delete"] = Effect.fn(
     "ThreadGroupService.delete",
@@ -848,6 +882,7 @@ export const make = Effect.gen(function* () {
     pruneEmptyGroups,
     withGroupLaunch,
     updateManualResources,
+    updateLinks,
   });
 });
 

@@ -42,6 +42,13 @@ const shellInput = {
 };
 
 describe("thread group contracts", () => {
+  it("decodes a group shell from before links as having none, and decodes links", () => {
+    expect(decodeShell(shellInput).links).toEqual([]);
+    const link = { id: "link:1", url: "https://linear.app/acme/issue/ENG-1", label: "ENG-1" };
+    expect(decodeShell({ ...shellInput, links: [link] }).links).toEqual([link]);
+    expect(decodePatch({ links: [link] }).links).toEqual([link]);
+  });
+
   it("decodes a group shell with a registered resource and a handoff", () => {
     const shell = decodeShell({
       ...shellInput,

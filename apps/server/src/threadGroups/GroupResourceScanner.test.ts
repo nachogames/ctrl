@@ -48,6 +48,7 @@ const group = (
   snoozedUntil: null,
   settledAt: null,
   manualResources,
+  links: [],
   createdAt: at,
   updatedAt: at,
 });

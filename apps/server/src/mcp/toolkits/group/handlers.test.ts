@@ -7,6 +7,7 @@ import {
   ThreadId,
   type OrchestrationThreadGroupShell,
   type OrchestrationV2ThreadShell,
+  type ThreadGroupLink,
   type ThreadGroupManualResource,
   type ThreadGroupRunningResource,
 } from "@t3tools/contracts";
@@ -48,6 +49,7 @@ const group: OrchestrationThreadGroupShell = {
   snoozedUntil: null,
   settledAt: null,
   manualResources: [],
+  links: [],
   createdAt: "2026-10-10T00:00:00.000Z",
   updatedAt: "2026-10-10T00:00:00.000Z",
 };
@@ -102,6 +104,7 @@ const makeHarness = (options: {
       [buildId, thread(buildId, { status: "idle", ...options.buildFields })],
     ]);
     let resources: ReadonlyArray<ThreadGroupManualResource> = options.manualResources ?? [];
+    let links: ReadonlyArray<ThreadGroupLink> = [];
     const recorded: Recorded = {
       created: [],
       moved: [],
@@ -133,7 +136,9 @@ const makeHarness = (options: {
       Layer.mock(ThreadGroupStore.ThreadGroupStoreV2)({
         getShell: (id) =>
           Effect.succeed(
-            id === groupId ? Option.some({ ...group, manualResources: resources }) : Option.none(),
+            id === groupId
+              ? Option.some({ ...group, manualResources: resources, links })
+              : Option.none(),
           ),
       }),
       Layer.mock(ThreadGroup.ThreadGroupService)({
@@ -158,7 +163,14 @@ const makeHarness = (options: {
           change(resources).pipe(
             Effect.map((next) => {
               if (next !== null) resources = next;
-              return { ...group, manualResources: resources };
+              return { ...group, manualResources: resources, links };
+            }),
+          ),
+        updateLinks: (_groupId, _commandId, change) =>
+          change(links).pipe(
+            Effect.map((next) => {
+              if (next !== null) links = next;
+              return { ...group, manualResources: resources, links };
             }),
           ),
       }),
@@ -479,5 +491,34 @@ it.effect("refuses to move another chat that runs above the caller's modes", () 
     const result = yield* handle("t3_group_move_thread", { threadId: buildId, groupId: null });
     expect(result).toMatchObject({ code: "runtime_mode_escalation_denied" });
     expect(recorded.moved).toEqual([]);
+  }),
+);
+
+it.effect("links tickets to a group, skips a URL it already links, and removes one", () =>
+  Effect.gen(function* () {
+    const { handle } = yield* makeHarness({ callerGroupId: groupId });
+    const linear = "https://linear.app/acme/issue/ENG-123/fix-login";
+    const added = (yield* handle("t3_group_update", {
+      links: { add: [{ url: linear }, { url: "https://github.com/t3tools/t3code/issues/88" }] },
+    })) as { group: OrchestrationThreadGroupShell };
+    expect(added.group.links.map((link) => [link.url, link.label])).toEqual([
+      [linear, "ENG-123"],
+      ["https://github.com/t3tools/t3code/issues/88", "#88"],
+    ]);
+    const again = (yield* handle("t3_group_update", {
+      links: { add: [{ url: linear, label: "Login bug" }] },
+    })) as { group: OrchestrationThreadGroupShell };
+    expect(again.group.links).toHaveLength(2);
+
+    const removed = yield* handle("t3_group_update", {
+      links: { remove: [added.group.links[0]!.id] },
+    });
+    expect(removed).toMatchObject({ group: { links: [{ label: "#88" }] } });
+    expect(
+      yield* handle("t3_group_update", { links: { add: [{ url: "not a url" }] } }),
+    ).toMatchObject({ code: "invalid_request" });
+    expect(yield* handle("t3_group_read", {})).toMatchObject({
+      group: { links: [{ label: "#88" }] },
+    });
   }),
 );

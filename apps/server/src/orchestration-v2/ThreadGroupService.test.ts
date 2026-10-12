@@ -1148,6 +1148,33 @@ it.effect("two concurrent resource changes both land", () => {
   }).pipe(Effect.provide(makeLayer(threads, dispatched)));
 });
 
+it.effect("two concurrent link changes both land", () => {
+  const threads = new Map([[a, shell(a)]]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    yield* service.create({
+      commandId: CommandId.make("command:links"),
+      groupId,
+      projectId,
+      threadIds: [a],
+    });
+    const add = (id: string) =>
+      service.updateLinks(groupId, CommandId.make(`command:links:${id}`), (current) =>
+        // Yield mid-change, so an unlocked read-modify-write would drop one add.
+        Effect.yieldNow.pipe(
+          Effect.as([...current, { id, url: `https://linear.app/acme/issue/${id}`, label: id }]),
+        ),
+      );
+    yield* Effect.all([add("ENG-1"), add("ENG-2")], { concurrency: "unbounded" });
+    const group = yield* service.updateLinks(groupId, CommandId.make("command:links:none"), () =>
+      Effect.succeed(null),
+    );
+    assert.deepEqual(group.links.map((link) => link.id).toSorted(), ["ENG-1", "ENG-2"]);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
 it.effect("a client resource remove drops only its id, and a missing id is a no-op", () => {
   const threads = new Map([[a, shell(a)]]);
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
