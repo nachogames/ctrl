@@ -141,7 +141,9 @@ Groups only form when you ask for one:
 
 - **Hand off to new chat**, from a chat's menu or the command palette, asks the agent to write a
   summary and continues the work in a fresh chat. The new chat goes directly above the one it
-  continues, and both are in a group named after the original chat.
+  continues, and both are in the original chat's group. A group made for the handoff is named
+  after the original chat; a group the chat already had, for example from setting a goal, keeps
+  its name.
 - Drag a chat onto a group row to move it into that group, or onto another active chat to group
   the two. Both chats must be in the same project.
 - Choose **Move to group…** in a chat's menu to move it into one of its project's groups that
