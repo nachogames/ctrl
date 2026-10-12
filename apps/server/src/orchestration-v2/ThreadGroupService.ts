@@ -1032,6 +1032,7 @@ export function clientCommandChangesGroupMembership(command: OrchestrationV2Comm
     case "thread.metadata.update":
       return (
         command.groupId !== undefined ||
+        command.groupOrderKey !== undefined ||
         command.handedOffFrom !== undefined ||
         command.handedOffTo !== undefined
       );

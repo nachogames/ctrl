@@ -974,7 +974,12 @@ it("only thread group commands change membership", () => {
       title: "Renamed",
     }),
   );
-  for (const link of [{ groupId: null }, { handedOffFrom: b }, { handedOffTo: null }]) {
+  for (const link of [
+    { groupId: null },
+    { groupOrderKey: "a0" },
+    { handedOffFrom: b },
+    { handedOffTo: null },
+  ]) {
     assert.isTrue(
       ThreadGroupService.clientCommandChangesGroupMembership({
         type: "thread.metadata.update",

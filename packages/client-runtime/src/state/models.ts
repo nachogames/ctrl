@@ -137,6 +137,8 @@ export interface EnvironmentThreadShell {
   readonly pinOrderKey: string | null;
   /** Slot in the user-arranged active order; null for keyless active threads. */
   readonly activeOrderKey: string | null;
+  /** Slot among the chats of the thread's group; null when keyless. */
+  readonly groupOrderKey: string | null;
   /** Chat group the thread works in; null when ungrouped or unknown to the server. */
   readonly groupId: ThreadGroupId | null;
   readonly handedOffFrom: ThreadId | null;
@@ -286,6 +288,7 @@ export function presentThreadShell(
     autoSettleDisabledAt: nullableIso(thread.autoSettleDisabledAt ?? null),
     pinOrderKey: thread.pinOrderKey ?? null,
     activeOrderKey: thread.activeOrderKey ?? null,
+    groupOrderKey: thread.groupOrderKey ?? null,
     groupId: thread.groupId ?? null,
     handedOffFrom: thread.handedOffFrom ?? null,
     handedOffTo: thread.handedOffTo ?? null,

@@ -146,6 +146,11 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
   readonly orderKey: string;
 }
 
+export interface ReorderGroupThreadInput extends ThreadCommandInput {
+  /** Fractional-index key that sorts between the drop position's neighbors in the group. */
+  readonly orderKey: string;
+}
+
 export interface SnoozeThreadInput extends ThreadCommandInput {
   readonly snoozedUntil: string;
 }
@@ -608,6 +613,17 @@ export const reorderActiveThread = Effect.fn("EnvironmentCommands.reorderActiveT
 ) {
   return yield* dispatch({
     type: "thread.active.reorder",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    orderKey: input.orderKey,
+  });
+});
+
+export const reorderGroupThread = Effect.fn("EnvironmentCommands.reorderGroupThread")(function* (
+  input: ReorderGroupThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.group.reorder",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     orderKey: input.orderKey,
