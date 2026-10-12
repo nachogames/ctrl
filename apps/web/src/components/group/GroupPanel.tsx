@@ -64,7 +64,16 @@ export function GroupPanel(props: { threadRef: ScopedThreadRef; surface: GroupSu
       </div>
     );
   }
-  return <GroupPanelContent group={group} threadRef={props.threadRef} surface={props.surface} />;
+  // Keyed so per-group transient state (script runner, stopped rows, drafts)
+  // resets when the panel switches groups instead of leaking into the next one.
+  return (
+    <GroupPanelContent
+      key={`${group.environmentId}:${group.id}`}
+      group={group}
+      threadRef={props.threadRef}
+      surface={props.surface}
+    />
+  );
 }
 
 function GroupPanelContent(props: {
