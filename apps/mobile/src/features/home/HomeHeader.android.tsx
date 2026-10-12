@@ -33,12 +33,9 @@ export function HomeHeader(props: HomeHeaderProps) {
             const battery = batteries.get(environment.environmentId);
             return {
               id: `environment:${environment.environmentId}`,
-              title:
-                battery === undefined
-                  ? environment.label
-                  : `${environment.label}  ${battery.percent}%`,
+              title: environment.label,
               state: checkedMenuState(props.selectedEnvironmentId === environment.environmentId),
-              // MaterialMenuPopup draws this as the row's icon.
+              // MaterialMenuPopup draws this, with its percent, after the title.
               ...(battery === undefined ? {} : { battery }),
             };
           }),
