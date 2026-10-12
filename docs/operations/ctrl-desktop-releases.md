@@ -41,3 +41,11 @@ rm ctrl-devid.p12
 Download the `.dmg` from the latest release once and drag Ctrl into Applications. Builds made outside this workflow (local or ad-hoc signed) have no update feed and never update; replace them with a release build.
 
 Releases are public because the repository is. Anyone can download the app, and its signature shows the Developer ID name. User data, provider credentials, and push credentials stay in `~/.ctrl` on each machine and are never part of a build.
+
+## Android
+
+The same tag publishes the Android app from the `android` job. It publishes an OTA update to the `production` channel of the Expo project `@mceachinm/ctrl`, which hosts updates only; builds happen in the workflow, not EAS Build. When native code changed, it also attaches a signed `Ctrl-<version>-android-<fingerprint>.apk` to the release.
+
+A phone takes an OTA only when its APK has the same native fingerprint, which the workflow computes on the runner that builds and publishes. The job summary says when a release needs the new APK installed. Fingerprints differ between macOS and Linux, so a locally built APK never receives OTAs. Install the release APK instead. Local builds keep `T3CODE_MOBILE_UPDATES_ENABLED=0` in `.env.local`.
+
+Secrets in the `release` environment: `EXPO_TOKEN`, `CTRL_ANDROID_KEYSTORE_BASE64`, `CTRL_ANDROID_KEYSTORE_PASSWORD` (key alias `ctrl`), and `CTRL_ANDROID_GOOGLE_SERVICES_JSON`. The keystore's only other copy is `~/.ctrl-signing/ctrl-android-release.keystore` on Neil's Mac, with its password in the Keychain as `ctrl-android-keystore-password`. Losing the key means phones must uninstall to take a new APK, so back it up.
