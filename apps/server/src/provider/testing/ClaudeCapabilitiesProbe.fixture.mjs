@@ -37,12 +37,21 @@ lines.on("line", (line) => {
     );
   if (message.request?.subtype === "initialize") {
     reply({
-      commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
+      commands: [
+        { name: "review", description: "Review changes", argumentHint: "[path]" },
+        { name: "compact", description: "Compact the conversation", argumentHint: "" },
+      ],
       agents: [],
       output_style: "default",
       available_output_styles: ["default"],
       models: [],
       account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
+    });
+  }
+  // The CLI's skill list tells skills from built-in commands like compact.
+  if (message.request?.subtype === "reload_skills") {
+    reply({
+      skills: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
     });
   }
   // The probe follows initialize with get_usage on the same process.

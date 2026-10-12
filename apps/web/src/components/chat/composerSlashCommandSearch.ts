@@ -1,3 +1,4 @@
+import { providerSlashCommandNeedsPromptStart } from "@t3tools/client-runtime/providerSkills";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
@@ -12,11 +13,21 @@ type SlashSearchItem = Extract<
   { type: "slash-command" | "provider-slash-command" | "skill" }
 >;
 
+export const PROMPT_START_ONLY_HINT = "Works at the start of a message";
+
+function isMidMessageSkill(item: SlashSearchItem): boolean {
+  return (
+    item.type === "skill" ||
+    (item.type === "provider-slash-command" && !providerSlashCommandNeedsPromptStart(item.command))
+  );
+}
+
 /**
- * A provider expands a slash command only when it opens the whole message;
- * anywhere else it reaches the agent as literal text, so it is not offered
- * there. Built-ins apply locally on selection and skills insert a `$` mention
- * the server dispatches from any position, so both stay available.
+ * Everything stays on offer. Mid-message, skills (scanned ones and commands
+ * the provider reports as skills) lead, because selecting one inserts a `$`
+ * mention the server dispatches from any position. A provider command that
+ * only expands when it opens the message is still listed, last, with a hint:
+ * it goes in as literal `/name` text.
  */
 export function slashCommandItemsForPromptPosition(
   items: ReadonlyArray<SlashSearchItem>,
@@ -25,7 +36,14 @@ export function slashCommandItemsForPromptPosition(
   if (isAtPromptStart) {
     return [...items];
   }
-  return items.filter((item) => item.type !== "provider-slash-command");
+  const skills = items.filter(isMidMessageSkill);
+  const builtIns = items.filter((item) => item.type === "slash-command");
+  const startOnly = items.flatMap((item) =>
+    item.type === "provider-slash-command" && !isMidMessageSkill(item)
+      ? [{ ...item, hint: PROMPT_START_ONLY_HINT }]
+      : [],
+  );
+  return [...skills, ...builtIns, ...startOnly];
 }
 
 function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | null {

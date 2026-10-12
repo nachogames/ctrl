@@ -15,7 +15,11 @@
  * @module provider/Drivers/ClaudeSkills
  */
 
-import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
+import type {
+  ClaudeSettings,
+  ServerProviderSkill,
+  ServerProviderSlashCommand,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -26,7 +30,7 @@ import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
-type ClaudeSkillScope = "user" | "project" | "plugin";
+type ClaudeSkillScope = "user" | "project" | "plugin" | "synced";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
@@ -589,6 +593,16 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     ...(yield* directoryCandidates(path.join(configDirPath, "skills"), "user")),
     ...(cwd ? yield* directoryCandidates(path.join(cwd, ".claude", "skills"), "project") : []),
     ...(yield* discoverClaudePluginSkillCandidates(configDirPath, cwd, settings)),
+    // Skills synced from the claude.ai account, one bucket directory per
+    // account and organization. They publish under their directory name
+    // unless that collides with another command, in which case the CLI
+    // qualifies them (`anthropic-skills:deep-research`); the scan cannot see
+    // every command, so `alignSyncedSkillNames` settles that against the
+    // probed command list.
+    ...(yield* Effect.forEach(
+      yield* listSkillDirectories(path.join(configDirPath, "skills", "synced")),
+      (bucket) => directoryCandidates(bucket, "synced"),
+    )).flat(),
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
@@ -637,3 +651,29 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
 
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
+
+/**
+ * Give synced skills the name the CLI actually published. A synced skill
+ * whose directory name collides with another command is listed qualified
+ * instead (verified on a real account: `deep-research` beside the built-in
+ * `/deep-research` became `anthropic-skills:deep-research`). Without the
+ * probe's skill list the scanned names stand.
+ */
+export function alignSyncedSkillNames(
+  skills: ReadonlyArray<ServerProviderSkill>,
+  commands: ReadonlyArray<ServerProviderSlashCommand>,
+): ReadonlyArray<ServerProviderSkill> {
+  const commandNames = commands.flatMap((command) => (command.skill ? [command.name] : []));
+  if (commandNames.length === 0) return skills;
+  const published = new Set(commandNames);
+  const scannedNames = new Set(skills.map((skill) => skill.name));
+  return skills
+    .map((skill) => {
+      if (skill.scope !== "synced" || published.has(skill.name)) return skill;
+      const qualified = commandNames.find(
+        (name) => name.endsWith(`:${skill.name}`) && !scannedNames.has(name),
+      );
+      return qualified ? { ...skill, name: qualified } : skill;
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+}

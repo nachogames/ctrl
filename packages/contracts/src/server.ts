@@ -114,6 +114,12 @@ export const ServerProviderSlashCommand = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   input: Schema.optional(ServerProviderSlashCommandInput),
+  /**
+   * The provider reports this command as a skill, so the agent can start it
+   * from anywhere in a message (composers insert `$name` there). Other
+   * commands only run when `/name` opens the message.
+   */
+  skill: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderSlashCommand = typeof ServerProviderSlashCommand.Type;
 

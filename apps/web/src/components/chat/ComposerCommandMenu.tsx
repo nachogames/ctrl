@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import {
   BlocksIcon,
+  CloudIcon,
   FolderIcon,
   MessagesSquareIcon,
   PackageIcon,
@@ -53,6 +54,8 @@ export type ComposerCommandItem =
       command: ServerProviderSlashCommand;
       label: string;
       description: string;
+      /** Muted note on where the command works, e.g. only at the message start. */
+      hint?: string;
     }
   | {
       id: string;
@@ -221,6 +224,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <span className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs">
           {props.item.description}
         </span>
+        {props.item.type === "provider-slash-command" && props.item.hint ? (
+          <span className="shrink-0 text-muted-foreground/70 text-xs">{props.item.hint}</span>
+        ) : null}
         {skillSourceKind ? (
           <SkillSourceBadge
             kind={skillSourceKind}
@@ -247,6 +253,7 @@ const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
 const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
   app: BlocksIcon,
   plugin: BlocksIcon,
+  synced: CloudIcon,
   repo: FolderIcon,
   project: FolderIcon,
   personal: UserRoundIcon,
@@ -257,6 +264,7 @@ const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
 const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
   app: "App",
   plugin: "Plugin",
+  synced: "Synced",
   repo: "Repo",
   project: "Project",
   personal: "Personal",

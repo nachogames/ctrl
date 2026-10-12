@@ -286,7 +286,9 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
             name: "review",
             description: "Review changes",
             input: { hint: "[path]" },
+            skill: true,
           },
+          { name: "compact", description: "Compact the conversation" },
         ],
         usage: {
           rate_limits_available: true,

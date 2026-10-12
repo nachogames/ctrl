@@ -5,7 +5,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverClaudeSkills, skillOverrideSettingsPaths } from "./ClaudeSkills.ts";
+import {
+  alignSyncedSkillNames,
+  discoverClaudeSkills,
+  skillOverrideSettingsPaths,
+} from "./ClaudeSkills.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -902,6 +906,58 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           ["humanizer:humanizer", path.join(humanizer, "SKILL.md")],
           ["listed:alpha", path.join(listedByManifest, "extra", "alpha", "SKILL.md")],
         ],
+      );
+    }),
+  );
+
+  it.effect("discovers skills synced from the claude.ai account", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const bucket = path.join(configDir, "skills", "synced", "account_org");
+
+      yield* writeSkill(
+        bucket,
+        "docx",
+        ["---", "name: docx", "description: Work with Word files.", "---"].join("\n"),
+      );
+      yield* writeSkill(bucket, "deep-research", "# Research");
+      yield* fs.writeFileString(path.join(bucket, "manifest.json"), '{ "skills": [] }');
+      yield* fs.writeFileString(path.join(configDir, "skills", "synced", ".bucket-account"), "");
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir });
+
+      assert.deepEqual(skills, [
+        {
+          name: "deep-research",
+          path: path.join(bucket, "deep-research", "SKILL.md"),
+          enabled: true,
+          scope: "synced",
+        },
+        {
+          name: "docx",
+          path: path.join(bucket, "docx", "SKILL.md"),
+          enabled: true,
+          scope: "synced",
+          description: "Work with Word files.",
+        },
+      ]);
+
+      // The CLI qualifies a synced skill whose name a built-in command holds.
+      assert.deepEqual(
+        alignSyncedSkillNames(skills, [
+          { name: "deep-research" },
+          { name: "anthropic-skills:deep-research", skill: true },
+          { name: "docx", skill: true },
+        ]).map((skill) => skill.name),
+        ["anthropic-skills:deep-research", "docx"],
+      );
+      // Without the probe's skill list the scanned names stand.
+      assert.deepEqual(
+        alignSyncedSkillNames(skills, [{ name: "deep-research" }]).map((skill) => skill.name),
+        ["deep-research", "docx"],
       );
     }),
   );

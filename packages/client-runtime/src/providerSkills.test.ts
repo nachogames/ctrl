@@ -15,6 +15,7 @@ import {
   hasCurrentProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
+  providerSlashCommandReplacement,
   resolveProviderSkillSourceKind,
 } from "./providerSkills.ts";
 
@@ -189,6 +190,17 @@ describe("getProviderSlashCommandsForSlashMenu", () => {
     expect(
       getProviderSlashCommandsForSlashMenu(commands, visibleSkills).map((command) => command.name),
     ).toEqual(["ask-matt", "compact"]);
+  });
+});
+
+describe("providerSlashCommandReplacement", () => {
+  it("inserts a skill picked mid-message as a $ mention and anything else as /name", () => {
+    const simplify = { name: "simplify", skill: true };
+    const compact = { name: "compact" };
+    expect(providerSlashCommandReplacement(simplify, true)).toBe("/simplify ");
+    expect(providerSlashCommandReplacement(simplify, false)).toBe("$simplify ");
+    expect(providerSlashCommandReplacement(compact, true)).toBe("/compact ");
+    expect(providerSlashCommandReplacement(compact, false)).toBe("/compact ");
   });
 });
 

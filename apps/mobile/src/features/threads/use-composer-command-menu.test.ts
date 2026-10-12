@@ -67,16 +67,55 @@ describe("mobile slash commands", () => {
     },
   );
 
-  it("does not offer a native command inside the message", () => {
+  it("lists a native command inside the message as literal text with a hint", () => {
+    const items = buildComposerSlashCommandItems({
+      query: "plan",
+      atMessageStart: false,
+      hasThread: false,
+      allowInteractionMode: true,
+      selectedProviderStatus: antigravity,
+    });
+    expect(items.map((item) => [item.label, item.description])).toEqual([
+      ["/plan", "Plan with Antigravity · Works at the start of a message"],
+    ]);
+    const item = items[0];
+    if (!item) throw new Error("Expected the native plan command");
     expect(
-      buildComposerSlashCommandItems({
-        query: "plan",
-        atMessageStart: false,
-        hasThread: false,
+      resolveComposerCommandSelection({
+        draftMessage: "first /pl",
+        trigger: { rangeStart: 6, rangeEnd: 9 },
+        item,
         allowInteractionMode: true,
-        selectedProviderStatus: antigravity,
-      }),
-    ).toEqual([]);
+      }).text,
+    ).toBe("first /plan ");
+  });
+
+  it("puts skill commands first mid-message and inserts them as $ mentions", () => {
+    const items = buildComposerSlashCommandItems({
+      query: "",
+      atMessageStart: false,
+      hasThread: true,
+      hasCompactableConversation: true,
+      allowInteractionMode: false,
+      selectedProviderStatus: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        slashCommands: [
+          { name: "compact", description: "Compact" },
+          { name: "simplify", description: "Clean up the diff", skill: true },
+        ],
+      },
+    });
+    expect(items.map((item) => item.label)).toEqual(["/simplify", "/model", "/compact"]);
+    const simplify = items[0];
+    if (!simplify) throw new Error("Expected the simplify skill");
+    expect(
+      resolveComposerCommandSelection({
+        draftMessage: "tidy up /sim",
+        trigger: { rangeStart: 8, rangeEnd: 12 },
+        item: simplify,
+        allowInteractionMode: false,
+      }).text,
+    ).toBe("tidy up $simplify ");
   });
 
   it("still applies the T3 plan command for supported providers", () => {
