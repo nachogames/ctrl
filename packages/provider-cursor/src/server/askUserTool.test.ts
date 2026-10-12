@@ -1,11 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import {
-  askUserQuestions,
-  askUserResult,
-  isAskUserToolCall,
-  isUnnamedMcpToolCall,
-} from "./askUserTool.ts";
+import { askUserQuestions, askUserResult, isAskUserToolCall } from "./askUserTool.ts";
 
 describe("askUserTool", () => {
   it("normalizes questions for the question card", () => {
@@ -93,14 +88,5 @@ describe("askUserTool", () => {
       }),
     );
     assert.isFalse(isAskUserToolCall({ type: "shell", args: {} }));
-  });
-
-  it("spots an MCP call that has not named its tool yet", () => {
-    assert.isTrue(isUnnamedMcpToolCall({ type: "mcp", args: {} }));
-    assert.isTrue(isUnnamedMcpToolCall({ type: "mcp", args: { providerIdentifier: "x" } }));
-    assert.isFalse(
-      isUnnamedMcpToolCall({ type: "mcp", args: { providerIdentifier: "x", toolName: "y" } }),
-    );
-    assert.isFalse(isUnnamedMcpToolCall({ type: "shell", args: {} }));
   });
 });

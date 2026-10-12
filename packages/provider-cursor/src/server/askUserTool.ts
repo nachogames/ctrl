@@ -148,16 +148,3 @@ export function isAskUserToolCall(toolCall: {
     Reflect.get(toolCall.args, "toolName") === ASK_USER_TOOL_NAME
   );
 }
-
-/** A streamed MCP call whose server or tool name has not arrived yet. */
-export function isUnnamedMcpToolCall(toolCall: {
-  readonly type: string;
-  readonly args?: unknown;
-}): boolean {
-  if (toolCall.type !== "mcp") return false;
-  const args = typeof toolCall.args === "object" && toolCall.args !== null ? toolCall.args : {};
-  return (
-    typeof Reflect.get(args, "providerIdentifier") !== "string" ||
-    typeof Reflect.get(args, "toolName") !== "string"
-  );
-}

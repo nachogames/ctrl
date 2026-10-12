@@ -374,11 +374,24 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     const nowMs = yield* Clock.currentTimeMillis;
     const kind = alertKind({ state, previousPhase, finishedSinceStart, nowMs });
     const answeredHere = answeredKind(previousPhase, state?.phase ?? null);
-    const answered =
+    let answered =
       answeredHere !== null &&
       otherAlertStillWaiting({ threadId, alertThreadId, kind: answeredHere, tracked: phases })
         ? null
         : answeredHere;
+    // The map starts empty after a restart, so the parent's own open question
+    // is read from the parent itself before a child's answer clears its alert.
+    if (answered !== null && alertThreadId !== threadId) {
+      const parent = yield* threads.getThreadShell(alertThreadId);
+      const parentQuestion = parent === null ? null : threadQuestionPhaseV2(parent);
+      const parentKind =
+        parentQuestion === "waiting_for_input"
+          ? "input"
+          : parentQuestion === "waiting_for_approval"
+            ? "approval"
+            : null;
+      if (parentKind === answered) answered = null;
+    }
     const alert = state !== null && kind !== null ? { state, kind } : null;
     if (answered === null && alert === null) return;
     if (answered !== null) {

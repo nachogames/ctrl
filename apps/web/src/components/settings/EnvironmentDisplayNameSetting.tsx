@@ -29,7 +29,7 @@ export function EnvironmentDisplayNameSetting({
       title="Display name"
       description="What Ctrl calls this machine on every device. Leave empty to use the name each device saved for it."
       resetAction={
-        current !== null ? (
+        current !== null && canWrite ? (
           <SettingResetButton
             label="display name"
             onClick={() => updateSettings({ environmentLabel: null })}
@@ -46,6 +46,9 @@ export function EnvironmentDisplayNameSetting({
           defaultValue={current ?? ""}
           onChange={() => {
             edited.current = true;
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
           }}
           onBlur={(event) => {
             const value = event.target.value.trim();

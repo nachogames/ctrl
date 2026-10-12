@@ -36,6 +36,7 @@ import { CursorSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -86,7 +87,6 @@ import {
   askUserQuestions,
   askUserResult,
   isAskUserToolCall,
-  isUnnamedMcpToolCall,
 } from "./askUserTool.ts";
 export { cursorSdkModelSelection } from "./sdkModel.ts";
 
@@ -1874,10 +1874,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               return;
             default: {
               // Shown as the question card the call raised, not as a tool row.
-              // An MCP call still streaming without its tool's name waits to be
-              // recognized, so an ask_user call never leaves a stray row; one
-              // that completes unnamed still gets its row.
-              if (isAskUserToolCall(toolCall) || (isUnnamedMcpToolCall(toolCall) && !completed)) {
+              if (isAskUserToolCall(toolCall)) {
                 return;
               }
               const active = yield* ensureToolStarted(context, update.callId, toolCall);
@@ -2659,9 +2656,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 });
               }
               context.interrupted = true;
-              // A run waiting on the user's answer would hold the cancel open.
+              // Send the cancel before releasing a run that waits on the user's
+              // answer, so the agent cannot act on "dismissed" first. A cancel
+              // that waits for that run to stop gets two seconds, then the
+              // question is released so the run can stop.
+              const cancelling = yield* Effect.forkChild(context.run.cancel);
+              yield* Fiber.await(cancelling).pipe(Effect.timeoutOption("2 seconds"));
               yield* dropPendingUserInputs(context.providerTurnId);
-              yield* context.run.cancel;
+              yield* Fiber.join(cancelling);
               const stopped = yield* Deferred.await(context.completed).pipe(
                 Effect.timeoutOption("10 seconds"),
               );
