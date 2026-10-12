@@ -74,9 +74,9 @@ import Migration0057 from "./Migrations/057_ScheduledTaskWebhooks.ts";
 import Migration0058 from "./Migrations/058_WebhookRelayDeliveries.ts";
 import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
 import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
-import Migration0061 from "./Migrations/061_ThreadGroups.ts";
-import Migration0062 from "./Migrations/062_ThreadGroupLinks.ts";
-import Migration0063 from "./Migrations/063_PullRequestReviewGuides.ts";
+import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
+// Ctrl: fork migrations live in their own ledger; see CtrlMigrations.ts.
+import * as CtrlMigrations from "./CtrlMigrations.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -151,9 +151,7 @@ export const migrationEntries = [
   [58, "WebhookRelayDeliveries", Migration0058],
   [59, "McpAppModelContext", Migration0059],
   [60, "ThreadSnapshotWindowIndexes", Migration0060],
-  [61, "ThreadGroups", Migration0061],
-  [62, "ThreadGroupLinks", Migration0062],
-  [63, "PullRequestReviewGuides", Migration0063],
+  [61, "PullRequestReviewGuides", Migration0061],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -190,6 +188,7 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  yield* CtrlMigrations.moveCtrlMigrationsOutOfUpstreamLedger();
   const previewMigrations =
     toMigrationInclusive === undefined || toMigrationInclusive >= 55
       ? yield* reconcileV2PreviewMigration()
@@ -226,6 +225,10 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     yield* Effect.logWarning(
       "Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.",
     ).pipe(Effect.annotateLogs({ divergent }));
+  }
+  // Ctrl migrations follow upstream's; a partial upstream run is a test pinning old schema.
+  if (toMigrationInclusive === undefined) {
+    yield* CtrlMigrations.runCtrlMigrations();
   }
   return executedMigrations;
 });

@@ -4,16 +4,19 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { runMigrations } from "../Migrations.ts";
+import { runCtrlMigrations } from "../CtrlMigrations.ts";
+import { migrationEntries, runMigrations } from "../Migrations.ts";
+
+const upstreamLatest = migrationEntries[migrationEntries.length - 1]![0];
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
-layer("061_ThreadGroups", (it) => {
+layer("Ctrl 001_ThreadGroups", (it) => {
   it.effect("adds the thread group read model and widens the application index", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 60 });
-      yield* runMigrations({ toMigrationInclusive: 61 });
+      yield* runMigrations({ toMigrationInclusive: upstreamLatest });
+      yield* runCtrlMigrations({ toMigrationInclusive: 1 });
 
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_thread_groups)
@@ -49,7 +52,7 @@ layer("061_ThreadGroups", (it) => {
   it.effect("keeps the old application index so older builds still plan their queries", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 61 });
+      yield* runMigrations();
 
       const indexes = yield* sql<{ readonly sql: string }>`
         SELECT sql FROM sqlite_master
