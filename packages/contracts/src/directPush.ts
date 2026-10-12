@@ -30,6 +30,10 @@ export const DirectPushDeviceRegistration = Schema.Struct({
   notificationsEnabled: Schema.Boolean,
   /** Omitted by older apps; the server then uses DEFAULT_DIRECT_PUSH_ALERT_KINDS. */
   alertOn: Schema.optionalKey(Schema.Array(DirectPushAlertKind)),
+  /** Push relay the phone signed up with; the server sends there instead of using local keys. */
+  relayUrl: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^https:\/\//))),
+  /** The phone's relay send token. It reaches only this phone. */
+  relayToken: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type DirectPushDeviceRegistration = typeof DirectPushDeviceRegistration.Type;
 
@@ -44,3 +48,54 @@ export const DirectPushUnregisterInput = Schema.Struct({
   deviceId: TrimmedNonEmptyString,
 });
 export type DirectPushUnregisterInput = typeof DirectPushUnregisterInput.Type;
+
+/** An alert the relay turns into a push. Fixed shape: the relay never forwards free-form payloads. */
+export const PushAlertMessage = Schema.Struct({
+  type: Schema.Literal("alert"),
+  kind: DirectPushAlertKind,
+  environmentId: TrimmedNonEmptyString,
+  threadId: TrimmedNonEmptyString,
+  threadTitle: Schema.String,
+  projectTitle: Schema.String,
+  updatedAt: Schema.String,
+});
+export type PushAlertMessage = typeof PushAlertMessage.Type;
+
+/** Removes a thread's alerts from the phone once its question is answered. */
+export const PushClearMessage = Schema.Struct({
+  type: Schema.Literal("clear"),
+  environmentId: TrimmedNonEmptyString,
+  threadId: TrimmedNonEmptyString,
+});
+export type PushClearMessage = typeof PushClearMessage.Type;
+
+export const PushRelayMessage = Schema.Union([PushAlertMessage, PushClearMessage]);
+export type PushRelayMessage = typeof PushRelayMessage.Type;
+
+/** Phone → relay sign-up. Send the current send token as a Bearer header to keep it. */
+export const PushRelayRegisterRequest = Schema.Struct({
+  deviceId: TrimmedNonEmptyString,
+  platform: Schema.Literals(["ios", "android"]),
+  pushToken: TrimmedNonEmptyString,
+  bundleId: TrimmedNonEmptyString,
+  apsEnvironment: Schema.optionalKey(Schema.Literals(["sandbox", "production"])),
+  androidUserId: Schema.optionalKey(Schema.String),
+  /** Issue a new send token and kill the old one. */
+  reset: Schema.optionalKey(Schema.Boolean),
+});
+export type PushRelayRegisterRequest = typeof PushRelayRegisterRequest.Type;
+
+export const PushRelayRegisterResponse = Schema.Struct({ sendToken: TrimmedNonEmptyString });
+export type PushRelayRegisterResponse = typeof PushRelayRegisterResponse.Type;
+
+/** Computer → relay. */
+export const PushRelaySendRequest = Schema.Struct({
+  sendToken: TrimmedNonEmptyString,
+  message: PushRelayMessage,
+});
+export type PushRelaySendRequest = typeof PushRelaySendRequest.Type;
+
+export const PushRelaySendResponse = Schema.Struct({
+  result: Schema.Literals(["sent", "gone"]),
+});
+export type PushRelaySendResponse = typeof PushRelaySendResponse.Type;
