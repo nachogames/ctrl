@@ -33,13 +33,9 @@ import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { GroupGlanceCards } from "./GroupGlanceCards";
+import { GroupHandoffSection } from "./GroupHandoffSection";
 import { GroupInlineEdit } from "./GroupInlineEdit";
-import {
-  groupChatSubtitle,
-  groupStatusPill,
-  splitInlineCode,
-  type GroupStatusPill,
-} from "./GroupPanel.logic";
+import { groupChatSubtitle, groupStatusPill, type GroupStatusPill } from "./GroupPanel.logic";
 import { GroupRunningSection } from "./GroupRunningSection";
 import { useGroupScriptRunner } from "./useGroupScriptRunner";
 
@@ -184,9 +180,15 @@ function GroupPanelContent(props: {
           ))}
         </ul>
         <div className="mt-1 flex flex-wrap items-center gap-1">
-          <Button size="xs" variant="ghost-muted" onClick={() => void newChatInGroup(group)}>
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            aria-label="New chat in group"
+            onClick={() => void newChatInGroup(group)}
+          >
             <PlusIcon aria-hidden />
-            New chat in group
+            <span className="@max-[440px]/group-panel:hidden">New chat in group</span>
+            <span className="hidden @max-[440px]/group-panel:inline">New chat</span>
           </Button>
           {currentThread !== undefined ? (
             <Tooltip disabled={canHandOffCurrent}>
@@ -195,11 +197,13 @@ function GroupPanelContent(props: {
                 <Button
                   size="xs"
                   variant="ghost-muted"
+                  aria-label="Hand off to new chat"
                   disabled={!canHandOffCurrent}
                   onClick={() => void handOffThread(currentThread)}
                 >
                   <SendIcon aria-hidden />
-                  Hand off to new chat
+                  <span className="@max-[440px]/group-panel:hidden">Hand off to new chat</span>
+                  <span className="hidden @max-[440px]/group-panel:inline">Hand off</span>
                 </Button>
               </TooltipTrigger>
               <TooltipPopup>{THREAD_HANDOFF_BUSY_HINT}</TooltipPopup>
@@ -209,18 +213,7 @@ function GroupPanelContent(props: {
       </GroupSection>
       {handoff !== null ? (
         <GroupSection section="handoff" title="Last handoff">
-          <p className="px-1.5 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-            {splitInlineCode(handoff.summary).map((segment) =>
-              segment.code ? (
-                <code key={segment.start} className="font-mono">
-                  {segment.text}
-                </code>
-              ) : (
-                <span key={segment.start}>{segment.text}</span>
-              ),
-            )}
-          </p>
-          <HandoffSourceLink threadId={handoff.fromThreadId} group={group} onOpen={openChat} />
+          <GroupHandoffSection handoff={handoff} group={group} onOpen={openChat} />
         </GroupSection>
       ) : null}
     </div>
@@ -383,31 +376,5 @@ function GroupChatRow(props: {
         {pill !== null ? <StatusPill pill={pill} /> : null}
       </button>
     </li>
-  );
-}
-
-function HandoffSourceLink(props: {
-  threadId: ThreadId;
-  group: EnvironmentThreadGroup;
-  onOpen: (threadId: ThreadId) => void;
-}) {
-  const source = useThreadShell(
-    useMemo(
-      () => scopeThreadRef(props.group.environmentId, props.threadId),
-      [props.group.environmentId, props.threadId],
-    ),
-  );
-  if (source === null || source.deletedAt !== null) return null;
-  return (
-    <p className="mt-2 px-1.5 text-muted-foreground text-xs">
-      from{" "}
-      <button
-        type="button"
-        className="cursor-pointer text-foreground underline-offset-2 hover:underline"
-        onClick={() => props.onOpen(props.threadId)}
-      >
-        {source.title}
-      </button>
-    </p>
   );
 }
