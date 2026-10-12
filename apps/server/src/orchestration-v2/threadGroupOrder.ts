@@ -10,22 +10,53 @@ const keysOf = (members: ReadonlyArray<GroupOrderItem>) =>
   members.flatMap((member) => (member.groupOrderKey == null ? [] : [member.groupOrderKey]));
 
 /**
- * The key for a chat joining the group: before the group's first key, so it
- * lands at the top. Null for an unordered group, where a keyless joiner is
- * already on top as the newest, and for corrupt keys.
+ * The keys a join writes so the joining chat shows first. In a fully keyed
+ * group the joiner gets one key before the first. Otherwise none when it
+ * already shows first as the newest keyless chat, else the group gets spread
+ * keys with the joiner on top. `members` are the chats already in the group; the joiner's entry
+ * comes last, so writing in order keeps a partial write safe to re-plan.
  */
-export function planGroupJoinKey(members: ReadonlyArray<GroupOrderItem>): string | null {
-  const keys = keysOf(members);
-  if (keys.length === 0) return null;
-  const first = keys.reduce((min, key) => (key < min ? key : min));
-  return pinOrderKeyBetween(null, first);
+export function planGroupJoin<Id extends string>(
+  members: ReadonlyArray<GroupOrderItem<Id>>,
+  joiner: GroupOrderItem<Id>,
+): Array<GroupOrderAssignment<Id>> {
+  const others = members.filter((member) => member.id !== joiner.id);
+  const keyless = { ...joiner, groupOrderKey: null };
+  const allKeyed = others.length > 0 && others.every((member) => member.groupOrderKey != null);
+  if (allKeyed) {
+    const first = keysOf(others).reduce((min, key) => (key < min ? key : min));
+    const key = pinOrderKeyBetween(null, first);
+    if (key !== null) return [{ threadId: joiner.id, key }];
+  } else if (orderGroupMembers([...others, keyless])[0] === joiner.id) {
+    return [];
+  }
+  return materialize([keyless, ...others], [joiner.id, ...orderGroupMembers(others)], joiner.id);
+}
+
+/** Spread keys over `order`, skipping rows that already hold theirs; `last` is written last. */
+function materialize<Id extends string>(
+  members: ReadonlyArray<GroupOrderItem<Id>>,
+  order: ReadonlyArray<Id>,
+  last: Id,
+): Array<GroupOrderAssignment<Id>> {
+  const spread = generateSpreadPinOrderKeys(order.length);
+  const current = new Map(members.map((member) => [member.id, member.groupOrderKey ?? null]));
+  const plan = order.flatMap((threadId, index) => {
+    const key = spread[index];
+    return key === undefined || current.get(threadId) === key ? [] : [{ threadId, key }];
+  });
+  return [
+    ...plan.filter((entry) => entry.threadId !== last),
+    ...plan.filter((entry) => entry.threadId === last),
+  ];
 }
 
 /**
  * The keys a handoff writes so the new chat sits directly above its source.
  * Unordered groups need none. A keyed source gets one key for the new chat;
  * otherwise the whole group gets spread keys in its display order with the
- * new chat inserted above the source. Members must include the new chat.
+ * new chat inserted above the source. Members must include the new chat; its
+ * entry comes last.
  */
 export function planGroupInsertAbove<Id extends string>(
   members: ReadonlyArray<GroupOrderItem<Id>>,
@@ -51,10 +82,5 @@ export function planGroupInsertAbove<Id extends string>(
   const order = orderGroupMembers(members).filter((id) => id !== newId);
   const sourceIndex = order.indexOf(sourceId);
   order.splice(sourceIndex === -1 ? 0 : sourceIndex, 0, newId);
-  const spread = generateSpreadPinOrderKeys(order.length);
-  const current = new Map(members.map((member) => [member.id, member.groupOrderKey ?? null]));
-  return order.flatMap((threadId, index) => {
-    const key = spread[index];
-    return key === undefined || current.get(threadId) === key ? [] : [{ threadId, key }];
-  });
+  return materialize(members, order, newId);
 }

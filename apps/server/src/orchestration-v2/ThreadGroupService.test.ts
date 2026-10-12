@@ -362,7 +362,8 @@ it.effect("refuses to move a chat from another workspace without adopting the gr
 it.effect("adopting the group's workspace joins and switches in one update", () => {
   const threads = new Map([
     [a, shell(a)],
-    [c, shell(c, otherWorkspace)],
+    // The newest chat already shows first, so joining writes no order keys.
+    [c, shell(c, { ...otherWorkspace, createdAt: minute(5) })],
   ]);
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   return Effect.gen(function* () {
@@ -449,7 +450,7 @@ it.effect("asks to stop a running chat before it adopts the group's workspace", 
 it.effect("a chat without a worktree joins a group without one as is", () => {
   const threads = new Map([
     [a, shell(a, { branch: "main", worktreePath: null })],
-    [c, shell(c, { branch: "feat/local", worktreePath: null })],
+    [c, shell(c, { branch: "feat/local", worktreePath: null, createdAt: minute(5) })],
   ]);
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
   return Effect.gen(function* () {
@@ -1307,6 +1308,13 @@ it.effect("a failed goal title leaves the chat title", () => {
     yield* Deferred.await(attempted);
     const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
     assert.equal(Option.getOrThrow(yield* groups.getShell(groupId)).title, "Chat thread-a");
+    // The failure stays in the background: the service keeps working.
+    const renamed = yield* service.update({
+      commandId: CommandId.make("command:goal-fail:rename"),
+      groupId,
+      patch: { title: "Renamed" },
+    });
+    assert.equal(renamed.title, "Renamed");
   }).pipe(
     Effect.provide(
       makeLayer(threads, dispatched, {
@@ -1317,46 +1325,69 @@ it.effect("a failed goal title leaves the chat title", () => {
   );
 });
 
-it.effect("a chat joining a keyed group lands first", () => {
+const minute = (n: number) => DateTime.makeUnsafe(`2026-10-10T00:0${n}:00.000Z`);
+
+/** Group a and b with the given keys, then move c (created first) in. */
+const joinOlderChat = (keys: Partial<Record<ThreadId, string>>) => {
   const threads = new Map([
-    [a, shell(a)],
-    [b, shell(b)],
-    [c, shell(c)],
+    [a, shell(a, { createdAt: minute(2) })],
+    [b, shell(b, { createdAt: minute(3) })],
+    [c, shell(c, { createdAt: minute(1) })],
   ]);
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
-  return Effect.gen(function* () {
-    yield* seedProjects;
-    const service = yield* ThreadGroupService.ThreadGroupService;
-    yield* service.create({
-      commandId: CommandId.make("command:keyed"),
-      groupId,
-      projectId,
-      threadIds: [a, b],
-    });
-    threads.set(a, { ...threads.get(a)!, groupOrderKey: "m" });
-    threads.set(b, { ...threads.get(b)!, groupOrderKey: "t" });
+  return {
+    threads,
+    dispatched,
+    run: Effect.gen(function* () {
+      yield* seedProjects;
+      const service = yield* ThreadGroupService.ThreadGroupService;
+      yield* service.create({
+        commandId: CommandId.make("command:join-group"),
+        groupId,
+        projectId,
+        threadIds: [a, b],
+      });
+      for (const [id, key] of Object.entries(keys)) {
+        const thread = threads.get(id as ThreadId)!;
+        threads.set(thread.id, { ...thread, groupOrderKey: key });
+      }
+      const before = dispatched.length;
+      yield* service.moveThread({
+        commandId: CommandId.make("command:join"),
+        threadId: c,
+        groupId,
+      });
+      return dispatched.slice(before);
+    }).pipe(Effect.provide(makeLayer(threads, dispatched))),
+  };
+};
 
-    yield* service.moveThread({ commandId: CommandId.make("command:join"), threadId: c, groupId });
-
-    const join = dispatched.at(-1);
-    assert.equal(join?.type === "thread.metadata.update" && join.groupId, groupId);
-    // A keyless chat would also show first; the key keeps it there after the next reorder.
-    assert.isString(threads.get(c)?.groupOrderKey);
-    assert.deepEqual(displayOrder(threads), [c, a, b]);
-  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+it.effect("an older chat joining an unordered group lands first", () => {
+  const { threads, run } = joinOlderChat({});
+  return run.pipe(
+    Effect.map((writes) => {
+      assert.deepEqual(displayOrder(threads), [c, b, a]);
+      // The join itself is written last.
+      const join = writes.at(-1);
+      assert.equal(join?.type === "thread.metadata.update" && join.threadId, c);
+    }),
+  );
 });
 
-it.effect("a chat joining an unordered group stays keyless", () => {
-  const threads = new Map([
-    [a, shell(a)],
-    [c, shell(c)],
-  ]);
-  const dispatched: Array<OrchestrationV2ServerCommand> = [];
-  return Effect.gen(function* () {
-    const service = yield* createGroupOfA;
-    yield* service.moveThread({ commandId: CommandId.make("command:join"), threadId: c, groupId });
-    assert.isNull(threads.get(c)?.groupOrderKey);
-  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+it.effect("a chat joining a partly keyed group lands first", () => {
+  const { threads, run } = joinOlderChat({ [a]: "m" });
+  return run.pipe(Effect.map(() => assert.deepEqual(displayOrder(threads), [c, b, a])));
+});
+
+it.effect("a chat joining a fully keyed group gets one key before the first", () => {
+  const { threads, run } = joinOlderChat({ [a]: "m", [b]: "t" });
+  return run.pipe(
+    Effect.map((writes) => {
+      assert.equal(writes.length, 1);
+      assert.isString(threads.get(c)?.groupOrderKey);
+      assert.deepEqual(displayOrder(threads), [c, a, b]);
+    }),
+  );
 });
 
 const successor = ThreadId.make("thread-successor");

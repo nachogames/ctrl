@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { orderGroupMembers } from "@t3tools/shared/groupOrder";
 
-import { planGroupInsertAbove, planGroupJoinKey } from "./threadGroupOrder.ts";
+import { planGroupInsertAbove, planGroupJoin } from "./threadGroupOrder.ts";
 
 const member = (
   id: string,
@@ -22,27 +22,49 @@ const applied = (
   );
 };
 
-describe("planGroupJoinKey", () => {
-  it("leaves a joiner of an unordered group keyless", () => {
-    assert.isNull(planGroupJoinKey([member("a", 1), member("b", 2)]));
+describe("planGroupJoin", () => {
+  it("writes nothing for the newest chat joining an unordered group", () => {
+    const members = [member("a", 1), member("b", 2)];
+    assert.deepEqual(planGroupJoin(members, member("new", 3)), []);
   });
 
-  it("puts a joiner of a keyed group before its first key", () => {
+  it("puts an older chat joining an unordered group first", () => {
+    const members = [member("a", 2), member("b", 3)];
+    const joiner = member("old", 1);
+    const plan = planGroupJoin(members, joiner);
+    assert.equal(plan.at(-1)?.threadId, "old");
+    assert.deepEqual(applied([...members, joiner], plan), ["old", "b", "a"]);
+  });
+
+  it("puts a joiner of a partly keyed group above its keyless chats", () => {
+    const members = [member("a", 1, { groupOrderKey: "m" }), member("b", 3)];
+    const joiner = member("old", 2);
+    const plan = planGroupJoin(members, joiner);
+    assert.deepEqual(applied([...members, joiner], plan), ["old", "b", "a"]);
+  });
+
+  it("gives a joiner of a fully keyed group one key before the first", () => {
     const members = [
       member("a", 1, { groupOrderKey: "m" }),
       member("b", 2, { groupOrderKey: "f" }),
     ];
-    const key = planGroupJoinKey(members);
-    assert.isNotNull(key);
-    assert.deepEqual(applied([...members, member("new", 3)], [{ threadId: "new", key: key! }]), [
-      "new",
-      "b",
-      "a",
-    ]);
+    const joiner = member("new", 3);
+    const plan = planGroupJoin(members, joiner);
+    assert.equal(plan.length, 1);
+    assert.deepEqual(applied([...members, joiner], plan), ["new", "b", "a"]);
   });
 
-  it("returns null instead of throwing on a corrupt key", () => {
-    assert.isNull(planGroupJoinKey([member("a", 1, { groupOrderKey: "A!" })]));
+  it("materializes instead of throwing on a corrupt first key", () => {
+    const members = [
+      member("a", 1, { groupOrderKey: "A!" }),
+      member("b", 2, { groupOrderKey: "m" }),
+    ];
+    const joiner = member("new", 3);
+    assert.deepEqual(applied([...members, joiner], planGroupJoin(members, joiner)), [
+      "new",
+      "a",
+      "b",
+    ]);
   });
 });
 

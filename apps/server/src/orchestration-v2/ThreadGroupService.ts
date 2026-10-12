@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import type { GroupOrderItem } from "@t3tools/shared/groupOrder";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import * as Cause from "effect/Cause";
@@ -39,7 +40,7 @@ import {
   planThreadGroupCommand,
   type ThreadGroupCommand,
 } from "./ThreadGroupCommands.ts";
-import { planGroupInsertAbove, planGroupJoinKey } from "./threadGroupOrder.ts";
+import { planGroupInsertAbove, planGroupJoin } from "./threadGroupOrder.ts";
 import * as ThreadGroupStore from "./ThreadGroupStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -411,6 +412,59 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const dispatchThreadUpdate = (
+    update: { readonly commandId: CommandId; readonly threadId: ThreadId } & Partial<{
+      readonly handedOffFrom: ThreadId;
+      readonly handedOffTo: ThreadId;
+      readonly groupOrderKey: string;
+    }>,
+  ) =>
+    threads.dispatch({ type: "thread.metadata.update", ...update }).pipe(
+      Effect.asVoid,
+      Effect.mapError(
+        (cause) =>
+          new ThreadGroupOperationError({
+            operation: "update-thread",
+            threadId: update.threadId,
+            cause,
+          }),
+      ),
+    );
+
+  /**
+   * Plan a chat's join so it shows first in the group. Returns the writes that
+   * re-key other members (run them before the join) and the joiner's own key.
+   * `seated` is the group's order and is updated, so the next joiner sees it.
+   */
+  const placeJoiner = (
+    commandId: CommandId,
+    seated: Array<GroupOrderItem<ThreadId>>,
+    joiner: OrchestrationV2ThreadShell,
+  ) => {
+    const keys = new Map(
+      planGroupJoin(seated, toOrderItem(joiner)).map((entry) => [entry.threadId, entry.key]),
+    );
+    seated.forEach((item, index) => {
+      const key = keys.get(item.id);
+      if (key !== undefined) seated[index] = { ...item, groupOrderKey: key };
+    });
+    seated.push({ ...toOrderItem(joiner), groupOrderKey: keys.get(joiner.id) ?? null });
+    const others = [...keys].filter(([threadId]) => threadId !== joiner.id);
+    return {
+      reorder: Effect.forEach(
+        others,
+        ([threadId, key]) =>
+          dispatchThreadUpdate({
+            commandId: CommandId.make(`${commandId}:order:${threadId}`),
+            threadId,
+            groupOrderKey: key,
+          }),
+        { concurrency: 1, discard: true },
+      ),
+      key: keys.get(joiner.id) ?? null,
+    };
+  };
+
   /**
    * The checks before a chat switches to a group's workspace: it is idle, the
    * group's worktree exists, and its own worktree has no uncommitted work.
@@ -679,17 +733,25 @@ export const make = Effect.gen(function* () {
             return yield* new ThreadGroupNotFoundError({ groupId: input.groupId });
           }
           const seated = (yield* liveMembers(input.projectId, input.groupId)).map(toOrderItem);
+          // The chats of a new group keep their natural order; only chats
+          // joining members already seated (a retried create) are placed on top.
+          const placing = seated.length > 0;
           yield* Effect.forEach(
             members,
             (member) => {
               if (member.groupId === input.groupId) return Effect.void;
               if (member.groupId != null) previousGroups.add(member.groupId);
               const joinCommandId = CommandId.make(`${input.commandId}:join:${member.id}`);
-              const key = planGroupJoinKey(seated);
-              seated.push({ ...toOrderItem(member), groupOrderKey: key });
-              return adopting.has(member.id)
-                ? adoptWorkspace(joinCommandId, member, input.groupId, workspace, key)
-                : setThreadGroup(joinCommandId, member.id, input.groupId, key);
+              const { reorder, key } = placing
+                ? placeJoiner(joinCommandId, seated, member)
+                : { reorder: Effect.void, key: null };
+              return reorder.pipe(
+                Effect.andThen(
+                  adopting.has(member.id)
+                    ? adoptWorkspace(joinCommandId, member, input.groupId, workspace, key)
+                    : setThreadGroup(joinCommandId, member.id, input.groupId, key),
+                ),
+              );
             },
             { concurrency: 1, discard: true },
           );
@@ -823,10 +885,10 @@ export const make = Effect.gen(function* () {
           // The workspace is the worktree path; a branch label alone does not
           // move the chat anywhere.
           const { branch, worktreePath } = group.value;
-          const key = planGroupJoinKey(
-            (yield* liveMembers(thread.projectId, target)).map(toOrderItem),
-          );
+          const seated = (yield* liveMembers(thread.projectId, target)).map(toOrderItem);
           if (thread.worktreePath === worktreePath) {
+            const { reorder, key } = placeJoiner(setCommandId, seated, thread);
+            yield* reorder;
             return yield* setThreadGroup(setCommandId, thread.id, target, key);
           }
           if (input.adoptGroupWorkspace !== true) {
@@ -836,6 +898,8 @@ export const make = Effect.gen(function* () {
             });
           }
           yield* checkAdoptable(thread, target, worktreePath);
+          const { reorder, key } = placeJoiner(setCommandId, seated, thread);
+          yield* reorder;
           yield* adoptWorkspace(setCommandId, thread, target, { branch, worktreePath }, key);
         }),
       );
@@ -910,25 +974,6 @@ export const make = Effect.gen(function* () {
     );
     return yield* readShell(groupId);
   });
-
-  const dispatchThreadUpdate = (
-    update: { readonly commandId: CommandId; readonly threadId: ThreadId } & Partial<{
-      readonly handedOffFrom: ThreadId;
-      readonly handedOffTo: ThreadId;
-      readonly groupOrderKey: string;
-    }>,
-  ) =>
-    threads.dispatch({ type: "thread.metadata.update", ...update }).pipe(
-      Effect.asVoid,
-      Effect.mapError(
-        (cause) =>
-          new ThreadGroupOperationError({
-            operation: "update-thread",
-            threadId: update.threadId,
-            cause,
-          }),
-      ),
-    );
 
   const setHandoffLinks: ThreadGroupService["Service"]["setHandoffLinks"] = Effect.fn(
     "ThreadGroupService.setHandoffLinks",
