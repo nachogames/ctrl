@@ -23,11 +23,6 @@ import IconArrowUpRightCircle from "@tabler/icons-react-native/IconArrowUpRightC
 import IconArrowsLeftRight from "@tabler/icons-react-native/IconArrowsLeftRight";
 import IconArrowsDiagonal2 from "@tabler/icons-react-native/IconArrowsDiagonal2";
 import IconArrowsMinimize from "@tabler/icons-react-native/IconArrowsMinimize";
-import IconBattery1 from "@tabler/icons-react-native/IconBattery1";
-import IconBattery2 from "@tabler/icons-react-native/IconBattery2";
-import IconBattery3 from "@tabler/icons-react-native/IconBattery3";
-import IconBattery4 from "@tabler/icons-react-native/IconBattery4";
-import IconBatteryCharging from "@tabler/icons-react-native/IconBatteryCharging";
 import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
 import IconBox from "@tabler/icons-react-native/IconBox";
@@ -166,11 +161,6 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "arrow.uturn.forward": IconArrowForwardUp,
   archivebox: IconArchive,
   "archivebox.fill": IconArchive,
-  "battery.25percent": IconBattery1,
-  "battery.50percent": IconBattery2,
-  "battery.75percent": IconBattery3,
-  "battery.100percent": IconBattery4,
-  "battery.100percent.bolt": IconBatteryCharging,
   "bell.badge": IconBellRinging,
   "bolt.circle": IconBolt,
   "bolt.horizontal.circle": IconBolt,

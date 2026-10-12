@@ -197,7 +197,7 @@ function BranchSelectionRow(props: {
 
 function EnvironmentPickerBattery(props: { readonly environmentId: EnvironmentId }) {
   const battery = useHostBattery(props.environmentId);
-  return battery === null ? null : <EnvironmentBattery battery={battery} percentShown />;
+  return battery === null ? null : <EnvironmentBattery battery={battery} percent="shown" />;
 }
 
 function PickerSurface(props: { readonly children: ReactNode }) {
