@@ -102,6 +102,13 @@ interface PushCredentials {
   readonly fcm: FcmServiceAccount | null;
 }
 
+/** Whether alerts for this device go through the push relay rather than local keys. */
+function usesRelay(
+  device: Pick<DirectPushDeviceRegistration, "relayUrl" | "relayToken">,
+): device is { readonly relayUrl: string; readonly relayToken: string } {
+  return device.relayUrl !== undefined && device.relayToken !== undefined;
+}
+
 function sameRegistration(a: DirectPushDeviceRegistration, b: DirectPushDeviceRegistration) {
   return (Object.keys(DirectPushDeviceRegistrationSchema.fields) as Array<keyof typeof a>).every(
     (key) => String(a[key]) === String(b[key]),
@@ -193,12 +200,14 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
       let result: PushSendResult;
-      if (device.relayUrl !== undefined && device.relayToken !== undefined) {
+      if (usesRelay(device)) {
         result = yield* sendRelay({
           relayUrl: device.relayUrl,
           relayToken: device.relayToken,
           message,
         });
+      } else if (device.token === undefined) {
+        return yield* Effect.logWarning("Direct push skipped: device has no push token");
       } else if (device.platform === "ios") {
         if (credentials.apns === null) {
           return yield* Effect.logWarning("Direct push skipped: APNs is not configured");
@@ -229,7 +238,12 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
         });
       }
       // The phone may have re-registered with a new token while this send was in flight.
-      if (result === "unregistered" && devices.get(device.deviceId)?.token === device.token) {
+      const current = devices.get(device.deviceId);
+      if (
+        result === "unregistered" &&
+        current?.token === device.token &&
+        current?.relayToken === device.relayToken
+      ) {
         devices.delete(device.deviceId);
         yield* saveDevices;
         yield* Effect.logInfo(
@@ -255,7 +269,7 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     );
     if (targets.length === 0) return;
     // Relay devices need no local keys, so only read them for direct devices.
-    const credentials = targets.some((device) => device.relayToken === undefined)
+    const credentials = targets.some((device) => !usesRelay(device))
       ? yield* readCredentials
       : ({ apns: null, fcm: null } satisfies PushCredentials);
     yield* Effect.forEach(targets, (device) => sendToDevice(device, message, credentials), {
@@ -334,7 +348,7 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
         notificationsEnabled: registration.notificationsEnabled,
       });
     }
-    const relay = registration.relayToken !== undefined && registration.relayUrl !== undefined;
+    const relay = usesRelay(registration);
     const credentials = yield* readCredentials;
     return { ios: relay || credentials.apns !== null, android: relay || credentials.fcm !== null };
   });

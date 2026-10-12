@@ -20,8 +20,12 @@ export const DirectPushDeviceRegistration = Schema.Struct({
   deviceId: TrimmedNonEmptyString,
   label: Schema.String,
   platform: Schema.Literals(["ios", "android"]),
-  /** Raw APNs device token (hex) or FCM registration token. */
-  token: TrimmedNonEmptyString,
+  /**
+   * Raw APNs device token (hex) or FCM registration token. Omitted when the
+   * phone uses the relay, so a computer cut off by Reset alerts cannot sign
+   * the phone up again on its own.
+   */
+  token: Schema.optionalKey(TrimmedNonEmptyString),
   /** iOS bundle id or Android package; the APNs topic / FCM restricted package. */
   bundleId: TrimmedNonEmptyString,
   apsEnvironment: Schema.optionalKey(Schema.Literals(["sandbox", "production"])),

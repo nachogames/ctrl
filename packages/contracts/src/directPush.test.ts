@@ -35,6 +35,14 @@ describe("DirectPushDeviceRegistration", () => {
     ).toBe("None");
   });
 
+  it("accepts a relay registration without the phone's push token", () => {
+    const { token: _token, ...withoutToken } = base;
+    expect(
+      decodeRegistration({ ...withoutToken, relayUrl: "https://relay.test", relayToken: "abc" })
+        ._tag,
+    ).toBe("Some");
+  });
+
   it("still accepts registrations without a relay", () => {
     expect(decodeRegistration(base)._tag).toBe("Some");
   });

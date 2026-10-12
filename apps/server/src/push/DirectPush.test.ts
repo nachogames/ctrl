@@ -37,8 +37,10 @@ const makeService = (pushDir: string, httpClientLayer?: Layer.Layer<HttpClient.H
     ),
   );
 
+// Relay phones keep their push token to themselves, so Reset can cut a computer off.
+const { token: _phoneToken, ...phoneWithoutToken } = phone;
 const relayPhone: DirectPushDeviceRegistration = {
-  ...phone,
+  ...phoneWithoutToken,
   relayUrl: "https://relay.test",
   relayToken: "send-token",
 };
@@ -184,6 +186,29 @@ it.layer(NodeServices.layer)("DirectPush", (it) => {
         yield* service.notify(awaiting, "input");
         assert.include(yield* fs.readFileString(path.join(pushDir, "devices.json")), "device-1");
       }
+    }),
+  );
+
+  it.effect("a dead token does not delete the phone's newer relay registration", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const pushDir = yield* fs.makeTempDirectoryScoped({ prefix: "direct-push-" });
+      let service: DirectPush.DirectPush["Service"] | undefined;
+      // The phone resets and re-registers while the send with its old token is in flight.
+      const relay = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.gen(function* () {
+            yield* service!.registerDevice({ ...relayPhone, relayToken: "new-token" });
+            return HttpClientResponse.fromWeb(request, new Response("{}", { status: 404 }));
+          }),
+        ),
+      );
+      service = yield* makeService(pushDir, relay);
+      yield* service.registerDevice(relayPhone);
+      yield* service.notify(awaiting, "input");
+      assert.include(yield* fs.readFileString(path.join(pushDir, "devices.json")), "new-token");
     }),
   );
 });
