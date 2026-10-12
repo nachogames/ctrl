@@ -54,6 +54,16 @@ describe("thread group presentation", () => {
     expect([...orderThreadGroupMembers([x, y, z])].toSorted()).toEqual(["x", "y", "z"]);
   });
 
+  it("leaves archived chats out of the members and the visibility count", () => {
+    const live = member("live", "2026-06-20T01:00:00.000Z");
+    const archived = member("archived", "2026-06-20T02:00:00.000Z", {
+      archivedAt: DateTime.makeUnsafe("2026-06-20T03:00:00.000Z"),
+    });
+    const group = presentThreadGroup(environmentId, v2ThreadGroup, [live, archived]);
+    expect(group.threadIds).toEqual(["live"]);
+    expect(group.visible).toBe(false);
+  });
+
   it("shows a group only from two members", () => {
     const one = member("one", "2026-06-20T01:00:00.000Z");
     const two = member("two", "2026-06-20T02:00:00.000Z");

@@ -357,9 +357,8 @@ export interface EnvironmentThreadGroup extends OrchestrationThreadGroupShell {
   /** Live members in display order: unkeyed chats newest first, then keyed chats. */
   readonly threadIds: ReadonlyArray<ThreadId>;
   /**
-   * Whether the group shows as a group: two or more members. The shell's
-   * `threads` list holds only unarchived threads (archived ones arrive in
-   * `archivedThreads`), so the member count is the count of active members.
+   * Whether the group shows as a group: two or more members. Archived chats
+   * are never members, so this counts active chats only.
    */
   readonly visible: boolean;
   /** The stored group. Its `pullRequest` may be null where the presented one falls back to a member's. */
@@ -392,6 +391,8 @@ export function presentThreadGroup(
       thread.groupId === group.id &&
       thread.projectId === group.projectId &&
       thread.deletedAt === null &&
+      // A live `thread.archived` event can leave the thread in the list with this set.
+      thread.archivedAt === null &&
       // Subagents belong to their parent thread, never to a group.
       thread.lineage.relationshipToParent !== "subagent",
   );

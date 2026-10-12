@@ -42,13 +42,14 @@ describe("orderGroupMembers", () => {
     ).toEqual(["new", "old", "k1", "k2", "k3"]);
   });
 
-  it("treats a handoff from a keyed chat as a chain root", () => {
+  it("sorts a keyless successor of a keyed chat by time among keyless; the source stays in the keyed tail", () => {
     expect(
       orderGroupMembers([
         item("k", 1, { groupOrderKey: "a" }),
         item("s", 2, { handedOffFrom: "k" }),
+        item("n", 3),
       ]),
-    ).toEqual(["s", "k"]);
+    ).toEqual(["n", "s", "k"]);
   });
 
   it("keeps everyone when handoff links loop or leave the group", () => {

@@ -11,7 +11,9 @@ const compareText = (left: string, right: string) => (left < right ? -1 : left >
  * A group's display order. Chats with no stored key come first, as handoff
  * chains read newest to oldest (a successor sits directly above its source)
  * and chains ordered by their newest member. Keyed chats follow, ascending by
- * key. Links that loop or point outside the keyless chats never drop a chat.
+ * key. The keyed/keyless split wins over handoff links: a keyless successor
+ * of a keyed chat sorts among the keyless, so the server writes a key for the
+ * successor at handoff in keyed groups to keep it adjacent. Links that loop or point outside the keyless chats never drop a chat.
  */
 export function orderGroupMembers<Id extends string>(
   items: ReadonlyArray<GroupOrderItem<Id>>,
