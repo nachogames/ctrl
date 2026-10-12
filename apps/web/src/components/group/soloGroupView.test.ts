@@ -90,6 +90,11 @@ describe("soloGroupView", () => {
       soloGroupView(thread({ worktreePath: ROOT }), null, { workspaceRoot: ROOT }).worktreePath,
     ).toBeNull();
     expect(soloGroupView(thread({ worktreePath: null }), null, null).worktreePath).toBeNull();
+    expect(
+      soloGroupView(thread({ worktreePath: ROOT }), hiddenGroup({ worktreePath: ROOT }), {
+        workspaceRoot: ROOT,
+      }).worktreePath,
+    ).toBeNull();
   });
 
   it("has no pull request when the chat has none", () => {

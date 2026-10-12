@@ -218,6 +218,7 @@ function GroupPanelContent(props: {
           renameLabel="Rename group"
           status={groupStatusPill(resolveThreadGroupStatus(members))}
           goal={group.goal}
+          goalLabel="Group goal"
           goalPlaceholder="What is this group working towards?"
           onRename={(draft) => void renameGroup(group, draft)}
           onSaveGoal={(goal) => void saveGoal(goal)}
@@ -343,13 +344,23 @@ function SoloPanelContent(props: {
   });
   const { moveThreadIntoGroup } = useThreadGroupActions();
 
-  /** Creates the group with this chat first, so it keeps this chat's workspace and title. */
-  const create = async (
+  /**
+   * Creates the hidden group with this chat first, so it keeps this chat's
+   * workspace and title. Every solo create goes through the one in-flight
+   * promise: a second create would move the chat out of the first group, and
+   * the prune would drop that group with whatever was just written to it.
+   */
+  const pendingCreate = useRef<Promise<ThreadGroupId | null> | null>(null);
+  // Once the group shows up it is the source of truth; a stale id must not outlive it.
+  useEffect(() => {
+    if (hiddenGroup !== null) pendingCreate.current = null;
+  }, [hiddenGroup]);
+  const createOnce = (
     input: { readonly threadIds?: ReadonlyArray<ThreadId>; readonly goal?: string },
     failure: string,
   ) => {
     const groupId = newThreadGroupId();
-    const result = await createGroup({
+    const pending = createGroup({
       environmentId: thread.environmentId,
       input: {
         groupId,
@@ -357,20 +368,21 @@ function SoloPanelContent(props: {
         threadIds: [thread.id, ...(input.threadIds ?? [])],
         ...(input.goal === undefined ? {} : { goal: input.goal }),
       },
+    }).then((result) => {
+      failureToast(failure, result);
+      if (result._tag === "Success") return groupId;
+      if (pendingCreate.current === pending) pendingCreate.current = null;
+      return null;
     });
-    failureToast(failure, result);
-    return result._tag === "Success" ? groupId : null;
+    pendingCreate.current = pending;
+    return pending;
   };
-  // A second write while the first create is in flight joins it instead of making another group.
-  const pendingCreate = useRef<Promise<ThreadGroupId | null> | null>(null);
-  const ensureGroup = () => {
-    if (hiddenGroup !== null) return Promise.resolve(hiddenGroup.id);
-    pendingCreate.current ??= create({}, "Failed to create the group").then((groupId) => {
-      if (groupId === null) pendingCreate.current = null;
-      return groupId;
-    });
-    return pendingCreate.current;
-  };
+  /** The group a write should land in: one being created, the hidden one, or a new one. */
+  const ensureGroup = () =>
+    pendingCreate.current ??
+    (hiddenGroup !== null
+      ? Promise.resolve(hiddenGroup.id)
+      : createOnce({}, "Failed to create the group"));
 
   const rename = async (draft: string) => {
     const resolution = resolveRenameCommit({ title: draft, originalTitle: thread.title });
@@ -387,15 +399,18 @@ function SoloPanelContent(props: {
   };
 
   const saveGoal = async (goal: string | null) => {
-    if (hiddenGroup === null) {
+    const pending = pendingCreate.current;
+    if (pending === null && hiddenGroup === null) {
       // The server names the new group from this chat, then from the goal.
-      if (goal !== null) await create({ goal }, "Failed to set the goal");
+      if (goal !== null) await createOnce({ goal }, "Failed to set the goal");
       return;
     }
-    if (goal === hiddenGroup.goal) return;
+    const groupId = pending !== null ? await pending : (hiddenGroup?.id ?? null);
+    if (groupId === null) return;
+    if (pending === null && goal === hiddenGroup?.goal) return;
     const result = await updateGroup({
-      environmentId: hiddenGroup.environmentId,
-      input: { groupId: hiddenGroup.id, patch: { goal } },
+      environmentId: thread.environmentId,
+      input: { groupId, patch: { goal } },
     });
     failureToast("Failed to update the goal", result);
   };
@@ -411,14 +426,30 @@ function SoloPanelContent(props: {
       ),
     [groupsById, project?.workspaceRoot, thread, threadsById],
   );
+  const [grouping, setGrouping] = useState(false);
   const groupSuggested = async () => {
-    if (hiddenGroup === null) {
-      await create({ threadIds: suggestedIds }, "Failed to create group");
-      return;
-    }
-    for (const threadId of suggestedIds) {
-      const other = threadsById.get(threadId);
-      if (other !== undefined) await moveThreadIntoGroup(other, hiddenGroup);
+    setGrouping(true);
+    try {
+      const pending = pendingCreate.current;
+      if (pending === null && hiddenGroup === null) {
+        await createOnce({ threadIds: suggestedIds }, "Failed to create group");
+        return;
+      }
+      const groupId = pending !== null ? await pending : (hiddenGroup?.id ?? null);
+      if (groupId === null) return;
+      // A group made from this chat has this chat's title and workspace until it loads.
+      const target = {
+        id: groupId,
+        title: hiddenGroup?.title ?? thread.title,
+        branch: workspace.branch,
+        worktreePath: workspace.worktreePath,
+      };
+      for (const threadId of suggestedIds) {
+        const other = threadsById.get(threadId);
+        if (other !== undefined) await moveThreadIntoGroup(other, target);
+      }
+    } finally {
+      setGrouping(false);
     }
   };
 
@@ -435,6 +466,7 @@ function SoloPanelContent(props: {
           renameLabel="Rename chat"
           status={groupStatusPill(resolveThreadGroupStatus(members))}
           goal={hiddenGroup?.goal ?? null}
+          goalLabel="Chat goal"
           goalPlaceholder="What is this chat working towards?"
           onRename={(draft) => void rename(draft)}
           onSaveGoal={(goal) => void saveGoal(goal)}
@@ -487,7 +519,12 @@ function SoloPanelContent(props: {
               ? "1 other chat uses this worktree"
               : `${suggestedIds.length} other chats use this worktree`}
             <span aria-hidden>·</span>
-            <Button size="xs" variant="link" onClick={() => void groupSuggested()}>
+            <Button
+              size="xs"
+              variant="link"
+              disabled={grouping}
+              onClick={() => void groupSuggested()}
+            >
               Group them
             </Button>
           </p>
@@ -574,6 +611,7 @@ function PanelHeader(props: {
   renameLabel: string;
   status: GroupStatusPill | null;
   goal: string | null;
+  goalLabel: string;
   goalPlaceholder: string;
   onRename: (draft: string) => void;
   onSaveGoal: (goal: string | null) => void;
@@ -616,7 +654,7 @@ function PanelHeader(props: {
       </div>
       {editing === "goal" ? (
         <GroupInlineEdit
-          label="Goal"
+          label={props.goalLabel}
           initial={props.goal ?? ""}
           placeholder={props.goalPlaceholder}
           className="text-sm"

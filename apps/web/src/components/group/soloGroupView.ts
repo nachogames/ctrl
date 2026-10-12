@@ -34,14 +34,13 @@ export function soloGroupView(
   > | null,
   project: { readonly workspaceRoot: string } | null,
 ): GroupWorkspaceSource {
-  const threadWorktree =
-    thread.worktreePath === project?.workspaceRoot ? null : thread.worktreePath;
+  const worktreePath = hiddenGroup?.worktreePath ?? thread.worktreePath;
   return {
     id: hiddenGroup?.id ?? null,
     environmentId: thread.environmentId,
     projectId: thread.projectId,
     branch: hiddenGroup?.branch ?? thread.branch,
-    worktreePath: hiddenGroup?.worktreePath ?? threadWorktree,
+    worktreePath: worktreePath === project?.workspaceRoot ? null : worktreePath,
     pullRequest: hiddenGroup?.pullRequest ?? resolveNewestCurrentPullRequestLink([thread]),
     links: hiddenGroup?.links ?? [],
     threadIds: [thread.id],
