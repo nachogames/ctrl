@@ -1158,18 +1158,41 @@ export function resolveThreadGroupStatus(
 
 export type SidebarGroupSection = "pinned" | "active" | "snoozed" | "settled";
 
-/** Snoozed › settled › pinned › active. A group is settled when stamped, or
- * when it has members and every one of them is settled. */
+/** The group's settle stamp while it still holds: null once any member has been
+ * used, unsettled or set active since it was stamped. Labels and sorting use it too. */
+export function groupSettleStampMs(
+  group: Pick<EnvironmentThreadGroup, "settledAt">,
+  members: ReadonlyArray<
+    Parameters<typeof sidebarActivityMs>[0] & {
+      readonly settledOverride: "settled" | "active" | null;
+    }
+  >,
+): number | null {
+  const stampedAt = timestampMsOrNull(group.settledAt);
+  if (stampedAt === null) return null;
+  return members.every(
+    (member) => member.settledOverride !== "active" && sidebarActivityMs(member) <= stampedAt,
+  )
+    ? stampedAt
+    : null;
+}
+
+/** Snoozed › settled › pinned › active. A group is settled when every member is
+ * settled, or when it is stamped and no member has been unsettled or used since. */
 export function resolveSidebarGroupSection(input: {
   readonly group: Pick<EnvironmentThreadGroup, "pinnedAt" | "snoozedUntil" | "settledAt">;
-  readonly members: ReadonlyArray<{ readonly settledOverride: "settled" | "active" | null }>;
+  readonly members: ReadonlyArray<
+    Parameters<typeof sidebarActivityMs>[0] & {
+      readonly settledOverride: "settled" | "active" | null;
+    }
+  >;
   readonly now: string;
 }): SidebarGroupSection {
   const snoozedUntil = timestampMsOrNull(input.group.snoozedUntil);
   const now = timestampMsOrNull(input.now);
   if (snoozedUntil !== null && now !== null && snoozedUntil > now) return "snoozed";
   if (
-    input.group.settledAt !== null ||
+    groupSettleStampMs(input.group, input.members) !== null ||
     (input.members.length > 0 &&
       input.members.every((member) => member.settledOverride === "settled"))
   ) {

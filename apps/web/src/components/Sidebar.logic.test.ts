@@ -12,6 +12,7 @@ import {
   partitionThreadsByGroup,
   resolveForcedOpenGroupKey,
   resolveSidebarGroupExpanded,
+  groupSettleStampMs,
   resolveSidebarGroupSection,
   resolveThreadGroupStatus,
   sidebarActivityMs,
@@ -2455,8 +2456,9 @@ describe("resolveThreadGroupStatus", () => {
 describe("resolveSidebarGroupSection", () => {
   const now = "2026-03-09T12:00:00.000Z";
   const shell = { pinnedAt: null, snoozedUntil: null, settledAt: null };
-  const active = { settledOverride: null };
-  const settled = { settledOverride: "settled" as const };
+  const activity = { createdAt: "2026-03-09T09:00:00.000Z", latestUserMessageAt: null };
+  const active = { ...activity, settledOverride: null };
+  const settled = { ...activity, settledOverride: "settled" as const };
 
   it("lets a future snooze beat settled and pinned", () => {
     expect(
@@ -2490,6 +2492,40 @@ describe("resolveSidebarGroupSection", () => {
         now,
       }),
     ).toBe("settled");
+  });
+
+  it("drops a settle stamp that a later use outlived, for labels and sorting too", () => {
+    const group = { settledAt: "2026-03-09T10:00:00.000Z" };
+    expect(groupSettleStampMs(group, [settled])).toBe(Date.parse("2026-03-09T10:00:00.000Z"));
+    expect(
+      groupSettleStampMs(group, [{ ...settled, unsettledAt: "2026-03-09T11:00:00.000Z" }]),
+    ).toBeNull();
+    expect(groupSettleStampMs({ settledAt: null }, [settled])).toBeNull();
+  });
+
+  it("brings a stamped group back when a member is used or unsettled after the stamp", () => {
+    const group = { ...shell, settledAt: "2026-03-09T10:00:00.000Z" };
+    expect(
+      resolveSidebarGroupSection({
+        group,
+        members: [settled, { ...active, latestUserMessageAt: "2026-03-09T10:30:00.000Z" }],
+        now,
+      }),
+    ).toBe("active");
+    expect(
+      resolveSidebarGroupSection({
+        group,
+        members: [{ ...active, unsettledAt: "2026-03-09T10:05:00.000Z" }],
+        now,
+      }),
+    ).toBe("active");
+    expect(
+      resolveSidebarGroupSection({
+        group,
+        members: [{ ...settled, settledOverride: "active" }],
+        now,
+      }),
+    ).toBe("active");
   });
 
   it("settles a group whose members are all settled, unless one is active", () => {

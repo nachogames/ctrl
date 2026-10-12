@@ -21,6 +21,7 @@ import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import {
   compactSidebarTimeLabel,
   resolveThreadGroupStatus,
+  groupSettleStampMs,
   sidebarActivityMs,
   type SidebarGroupSection,
   type SidebarThreadStatus,
@@ -154,11 +155,12 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
     (newest, member) => Math.max(newest, sidebarActivityMs(member)),
     Number.NEGATIVE_INFINITY,
   );
+  const settleStampMs = groupSettleStampMs(group, members);
   const timeLabel =
     props.section === "snoozed" && group.snoozedUntil !== null
       ? snoozeWakeLabel(group.snoozedUntil, { now: new Date().toISOString() })
-      : props.section === "settled" && group.settledAt !== null
-        ? relativeLabel(Date.parse(group.settledAt))
+      : props.section === "settled" && settleStampMs !== null
+        ? relativeLabel(settleStampMs)
         : relativeLabel(newestActivityMs);
   const countLabel = `${members.length} ${members.length === 1 ? "chat" : "chats"}`;
 

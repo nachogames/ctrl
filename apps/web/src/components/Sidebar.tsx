@@ -206,6 +206,7 @@ import {
   resolveForcedOpenGroupKey,
   resolveSidebarEnvironmentScope,
   resolveSidebarGroupExpanded,
+  groupSettleStampMs,
   resolveSidebarGroupSection,
   sidebarActivityMs,
   type SidebarGroupSection,
@@ -3070,10 +3071,7 @@ export default function Sidebar() {
       settledGroups: sectionGroups.settled
         .map((entry) => ({
           entry,
-          at:
-            entry.group.settledAt === null
-              ? newestMemberMs(entry)
-              : firstValidTimestampMs(entry.group.settledAt),
+          at: groupSettleStampMs(entry.group, entry.members) ?? newestMemberMs(entry),
         }))
         .toSorted((left, right) => right.at - left.at)
         .map(({ entry }) => entry),
