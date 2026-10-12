@@ -20,8 +20,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
+import { orderGroupMembers } from "@t3tools/shared/groupOrder";
+import * as Stream from "effect/Stream";
+
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ThreadGroupService from "./ThreadGroupService.ts";
@@ -48,6 +54,7 @@ const shell = (id: ThreadId, overrides: Partial<OrchestrationV2ThreadShell> = {}
     lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
     archivedAt: null,
     deletedAt: null,
+    createdAt: DateTime.makeUnsafe("2026-10-10T00:00:00.000Z"),
     ...overrides,
   }) as OrchestrationV2ThreadShell;
 
@@ -67,6 +74,7 @@ interface LayerOptions {
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly pruneWorktrees?: GitWorkflow.GitWorkflowService["Service"]["pruneWorktrees"];
   readonly localStatus?: GitWorkflow.GitWorkflowService["Service"]["localStatus"];
+  readonly generateThreadTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
 }
 
 function makeLayer(
@@ -86,9 +94,14 @@ function makeLayer(
           localStatus: options.localStatus ?? (() => Effect.die("unused")),
         }),
         RuntimeLayer.layerEventSink,
+        RuntimeLayer.layerEventInfrastructure,
         ThreadGroupStore.layer,
         ProjectStore.layer,
         IdAllocator.layer,
+        Layer.mock(TextGeneration.TextGeneration)({
+          generateThreadTitle: options.generateThreadTitle ?? (() => Effect.die("unused")),
+        }),
+        ServerSettings.layerTest(),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (threadId) => Effect.succeed(threads.get(threadId) ?? null),
           listProjectThreads: (input) =>
@@ -125,7 +138,19 @@ function makeLayer(
               if (command.type === "thread.metadata.update" && thread !== undefined) {
                 threads.set(command.threadId, {
                   ...thread,
-                  ...(command.groupId === undefined ? {} : { groupId: command.groupId }),
+                  // Changing the group clears the order key unless the command sets one.
+                  ...(command.groupId === undefined
+                    ? {}
+                    : { groupId: command.groupId, groupOrderKey: null }),
+                  ...(command.groupOrderKey === undefined
+                    ? {}
+                    : { groupOrderKey: command.groupOrderKey }),
+                  ...(command.handedOffFrom === undefined
+                    ? {}
+                    : { handedOffFrom: command.handedOffFrom }),
+                  ...(command.handedOffTo === undefined
+                    ? {}
+                    : { handedOffTo: command.handedOffTo }),
                   ...(command.branch === undefined ? {} : { branch: command.branch }),
                   ...(command.worktreePath === undefined
                     ? {}
@@ -147,7 +172,7 @@ const seedProjects = Effect.gen(function* () {
   yield* projects.apply(projectCreatedEvent(otherProjectId, 2));
 });
 
-it.effect("creates a group from its threads with the first thread's workspace", () => {
+it.effect("creates a group from its threads with the first thread's workspace and title", () => {
   const threads = new Map([
     [a, shell(a, { pullRequests: [pullRequestLink] })],
     [b, shell(b, { branch: "other" })],
@@ -172,7 +197,7 @@ it.effect("creates a group from its threads with the first thread's workspace", 
         pullRequest: group.pullRequest?.number,
       },
       {
-        title: "Chat groups",
+        title: "Chat thread-a",
         branch: "feat/auth-refactor",
         worktreePath: "/repo-worktrees/auth",
         pullRequest: 42,
@@ -1219,5 +1244,244 @@ it.effect("a client resource remove drops only its id, and a missing id is a no-
       retried.group?.manualResources.map((resource) => resource.id),
       ["db"],
     );
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("a create with a goal names the group from the goal once generated", () => {
+  const threads = new Map([[a, shell(a)]]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  const prompts: Array<string> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const events = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const afterSequence = yield* events.latestApplicationSequence;
+    const renamed = yield* events.streamApplicationEvents({ afterSequence }).pipe(
+      Stream.filter((stored) => "type" in stored && stored.type === "thread-group.meta-updated"),
+      Stream.take(1),
+      Stream.runDrain,
+      Effect.forkChild,
+    );
+
+    const group = yield* service.create({
+      commandId: CommandId.make("command:goal-create"),
+      groupId,
+      projectId,
+      threadIds: [a],
+      goal: "Ship passkey login",
+    });
+    assert.equal(group.title, "Chat thread-a");
+    yield* Fiber.join(renamed);
+
+    assert.deepEqual(prompts, ["Ship passkey login"]);
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    assert.equal(Option.getOrThrow(yield* groups.getShell(groupId)).title, "Passkey login");
+  }).pipe(
+    Effect.provide(
+      makeLayer(threads, dispatched, {
+        generateThreadTitle: (input) =>
+          Effect.sync(() => {
+            prompts.push(input.message);
+            return { title: "  Passkey login " };
+          }),
+      }),
+    ),
+  );
+});
+
+it.effect("a failed goal title leaves the chat title", () => {
+  const threads = new Map([[a, shell(a)]]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  const attempted = Deferred.makeUnsafe<void>();
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const group = yield* service.create({
+      commandId: CommandId.make("command:goal-fail"),
+      groupId,
+      projectId,
+      threadIds: [a],
+      goal: "Ship passkey login",
+    });
+    assert.equal(group.title, "Chat thread-a");
+    yield* Deferred.await(attempted);
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    assert.equal(Option.getOrThrow(yield* groups.getShell(groupId)).title, "Chat thread-a");
+  }).pipe(
+    Effect.provide(
+      makeLayer(threads, dispatched, {
+        generateThreadTitle: () =>
+          Deferred.succeed(attempted, undefined).pipe(Effect.andThen(Effect.die("offline"))),
+      }),
+    ),
+  );
+});
+
+it.effect("a chat joining a keyed group lands first", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [b, shell(b)],
+    [c, shell(c)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    yield* service.create({
+      commandId: CommandId.make("command:keyed"),
+      groupId,
+      projectId,
+      threadIds: [a, b],
+    });
+    threads.set(a, { ...threads.get(a)!, groupOrderKey: "m" });
+    threads.set(b, { ...threads.get(b)!, groupOrderKey: "t" });
+
+    yield* service.moveThread({ commandId: CommandId.make("command:join"), threadId: c, groupId });
+
+    const join = dispatched.at(-1);
+    assert.equal(join?.type === "thread.metadata.update" && join.groupId, groupId);
+    // A keyless chat would also show first; the key keeps it there after the next reorder.
+    assert.isString(threads.get(c)?.groupOrderKey);
+    assert.deepEqual(displayOrder(threads), [c, a, b]);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("a chat joining an unordered group stays keyless", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [c, shell(c)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    const service = yield* createGroupOfA;
+    yield* service.moveThread({ commandId: CommandId.make("command:join"), threadId: c, groupId });
+    assert.isNull(threads.get(c)?.groupOrderKey);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+const successor = ThreadId.make("thread-successor");
+
+/** The group's members, in the order the clients show them. */
+const displayOrder = (threads: Map<ThreadId, OrchestrationV2ThreadShell>) =>
+  orderGroupMembers(
+    [...threads.values()]
+      .filter((thread) => thread.groupId === groupId)
+      .map((thread) => ({
+        id: thread.id,
+        createdAtMs: DateTime.toEpochMillis(thread.createdAt),
+        handedOffFrom: thread.handedOffFrom,
+        groupOrderKey: thread.groupOrderKey,
+      })),
+  );
+
+/** A group of a, b and c with the given keys, plus a new successor chat in it. */
+const handoffGroup = (keys: Partial<Record<ThreadId, string>>) => {
+  const at = (minute: number) => DateTime.makeUnsafe(`2026-10-10T00:0${minute}:00.000Z`);
+  return new Map(
+    [
+      shell(a, { createdAt: at(1) }),
+      shell(b, { createdAt: at(2) }),
+      shell(c, { createdAt: at(3) }),
+      shell(successor, { createdAt: at(4) }),
+    ].map((thread) => [thread.id, { ...thread, groupId, groupOrderKey: keys[thread.id] ?? null }]),
+  );
+};
+
+const handOff = (from: ThreadId) =>
+  Effect.gen(function* () {
+    const service = yield* createGroupOfA;
+    yield* service.setHandoffLinks({
+      commandId: CommandId.make("command:handoff"),
+      fromThreadId: from,
+      toThreadId: successor,
+    });
+  });
+
+it.effect("a handoff in a keyed group lands directly above its source", () => {
+  const threads = handoffGroup({ [a]: "d", [b]: "m", [c]: "t" });
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* handOff(b);
+    assert.deepEqual(displayOrder(threads), [a, successor, b, c]);
+    assert.equal(threads.get(successor)?.handedOffFrom, b);
+    assert.equal(threads.get(b)?.handedOffTo, successor);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("a handoff from the first chat of a keyed group lands first", () => {
+  const threads = handoffGroup({ [a]: "d", [b]: "m", [c]: "t" });
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* handOff(a);
+    assert.deepEqual(displayOrder(threads), [successor, a, b, c]);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("a handoff in a partly keyed group materializes keys around its source", () => {
+  const threads = handoffGroup({ [a]: "m" });
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* handOff(b);
+    assert.deepEqual(displayOrder(threads), [successor, b, c, a]);
+    for (const id of [a, b, c, successor]) assert.isString(threads.get(id)?.groupOrderKey);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("a handoff over corrupt keys still lands above its source", () => {
+  const threads = handoffGroup({ [a]: "Q!", [b]: "zz", [c]: "zzz" });
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* handOff(b);
+    assert.deepEqual(displayOrder(threads), [a, successor, b, c]);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("a handoff in an unordered group writes no keys", () => {
+  const threads = handoffGroup({});
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* handOff(b);
+    assert.isNull(threads.get(successor)?.groupOrderKey);
+    assert.deepEqual(displayOrder(threads), [successor, b, c, a]);
+  }).pipe(Effect.provide(makeLayer(threads, dispatched)));
+});
+
+it.effect("archiving a group down to one live chat clears its pin, snooze and settle", () => {
+  const threads = new Map([
+    [a, shell(a)],
+    [b, shell(b)],
+  ]);
+  const dispatched: Array<OrchestrationV2ServerCommand> = [];
+  return Effect.gen(function* () {
+    yield* seedProjects;
+    const service = yield* ThreadGroupService.ThreadGroupService;
+    const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
+    yield* service.create({
+      commandId: CommandId.make("command:solo"),
+      groupId,
+      projectId,
+      threadIds: [a, b],
+    });
+    const state = {
+      pinnedAt: "2026-10-10T01:00:00.000Z",
+      snoozedUntil: "2026-10-11T01:00:00.000Z",
+      settledAt: "2026-10-10T02:00:00.000Z",
+    };
+    yield* service.update({ commandId: CommandId.make("command:solo:pin"), groupId, patch: state });
+
+    // Two live chats keep the group's state.
+    yield* service.pruneIfEmpty(groupId);
+    assert.deepInclude(Option.getOrThrow(yield* groups.getShell(groupId)), state);
+
+    threads.set(b, {
+      ...threads.get(b)!,
+      archivedAt: DateTime.makeUnsafe("2026-10-10T06:00:00.000Z"),
+    });
+    yield* service.pruneIfEmpty(groupId);
+    assert.deepInclude(Option.getOrThrow(yield* groups.getShell(groupId)), {
+      pinnedAt: null,
+      snoozedUntil: null,
+      settledAt: null,
+    });
   }).pipe(Effect.provide(makeLayer(threads, dispatched)));
 });
