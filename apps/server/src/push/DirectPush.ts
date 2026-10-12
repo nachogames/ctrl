@@ -12,6 +12,7 @@ import {
   type DirectPushStatus,
   type OrchestrationV2DomainEvent,
   type ThreadId,
+  type PushRelayMessage,
 } from "@t3tools/contracts";
 import {
   type AgentAwarenessPhase,
@@ -41,15 +42,13 @@ import * as ProjectService from "../project/ProjectService.ts";
 import { shouldPublishAgentAwarenessEvent } from "../relay/AgentAwarenessRelay.ts";
 import { forkParked } from "../serverActivation.ts";
 import {
-  alertKind,
-  type AlertThread,
-  answeredKind,
   apnsAlertPayload,
   apnsClearPayload,
-  deviceWantsAlert,
+  apnsPushType,
   fcmAlertData,
   fcmClearData,
-} from "./directPushAlerts.ts";
+} from "@t3tools/shared/pushPayloads";
+import { alertKind, alertMessage, answeredKind, deviceWantsAlert } from "./directPushAlerts.ts";
 import {
   type ApnsCredentials,
   FcmServiceAccount,
@@ -68,7 +67,10 @@ export class DirectPush extends Context.Service<
     /** Alerts every registered device about this state; exposed for tests. */
     readonly notify: (state: AgentAwarenessState, kind: DirectPushAlertKind) => Effect.Effect<void>;
     /** Removes a thread's alerts from phones that got its `kind` alert. */
-    readonly clear: (thread: AlertThread, kind: DirectPushAlertKind) => Effect.Effect<void>;
+    readonly clear: (
+      thread: { readonly environmentId: string; readonly threadId: string },
+      kind: DirectPushAlertKind,
+    ) => Effect.Effect<void>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/push/DirectPush") {}
@@ -96,13 +98,6 @@ const encodeStoredDevices = Schema.encodeEffect(StoredDevicesJson);
 interface PushCredentials {
   readonly apns: ApnsCredentials | null;
   readonly fcm: FcmServiceAccount | null;
-}
-
-/** One push, in the shape each platform's service takes. */
-interface DeviceMessage {
-  readonly apnsPayload: unknown;
-  readonly apnsPushType: "alert" | "background";
-  readonly fcmData: (device: StoredDevice, nowMs: number) => Record<string, string>;
 }
 
 function sameRegistration(a: DirectPushDeviceRegistration, b: DirectPushDeviceRegistration) {
@@ -188,7 +183,7 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
 
   const sendToDevice = (
     device: StoredDevice,
-    message: DeviceMessage,
+    message: PushRelayMessage,
     credentials: PushCredentials,
   ) =>
     Effect.gen(function* () {
@@ -203,19 +198,23 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
           environment: device.apsEnvironment ?? "production",
           deviceToken: device.token,
           topic: device.bundleId,
-          payload: message.apnsPayload,
-          pushType: message.apnsPushType,
+          payload: message.type === "alert" ? apnsAlertPayload(message) : apnsClearPayload(message),
+          pushType: apnsPushType(message),
           nowMs,
         });
       } else {
         if (credentials.fcm === null) {
           return yield* Effect.logWarning("Direct push skipped: FCM is not configured");
         }
+        const identity = { deviceId: device.deviceId, userId: device.androidUserId ?? "", nowMs };
         result = yield* sendFcm({
           account: credentials.fcm,
           registrationToken: device.token,
           packageName: device.bundleId,
-          data: message.fcmData(device, nowMs),
+          data:
+            message.type === "alert"
+              ? fcmAlertData({ alert: message, ...identity })
+              : fcmClearData({ clear: message, ...identity }),
           nowMs,
         });
       }
@@ -236,7 +235,7 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
 
   const sendToDevices = Effect.fn("DirectPush.sendToDevices")(function* (
     kind: DirectPushAlertKind,
-    message: DeviceMessage,
+    message: PushRelayMessage,
   ) {
     const targets = [...devices.values()].filter(
       (device) => device.notificationsEnabled && deviceWantsAlert(device.alertOn, kind),
@@ -250,29 +249,16 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
   });
 
   const notify = (state: AgentAwarenessState, kind: DirectPushAlertKind) =>
-    sendToDevices(kind, {
-      apnsPayload: apnsAlertPayload(state),
-      apnsPushType: "alert",
-      fcmData: (device, nowMs) =>
-        fcmAlertData({
-          state,
-          deviceId: device.deviceId,
-          userId: device.androidUserId ?? "",
-          nowMs,
-        }),
-    });
+    sendToDevices(kind, alertMessage(state, kind));
 
-  const clear = (thread: AlertThread, kind: DirectPushAlertKind) =>
+  const clear = (
+    thread: { readonly environmentId: string; readonly threadId: string },
+    kind: DirectPushAlertKind,
+  ) =>
     sendToDevices(kind, {
-      apnsPayload: apnsClearPayload(thread),
-      apnsPushType: "background",
-      fcmData: (device, nowMs) =>
-        fcmClearData({
-          thread,
-          deviceId: device.deviceId,
-          userId: device.androidUserId ?? "",
-          nowMs,
-        }),
+      type: "clear",
+      environmentId: thread.environmentId,
+      threadId: thread.threadId,
     });
 
   const handleThread = Effect.fn("DirectPush.handleThread")(function* (
