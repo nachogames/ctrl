@@ -35,10 +35,13 @@ export function createRemoteEnvironmentProjectionAtoms(input: {
       }
 
       const prepared = Option.getOrNull(get(input.preparedConnectionAtom(environmentId)));
+      // The label also follows the display name set on the server.
+      const environmentLabel = environmentDisplayLabel(presentation);
       if (
         previous !== null &&
         presentation.entry === previousEntry &&
-        prepared === previousPrepared
+        prepared === previousPrepared &&
+        environmentLabel === previous.environmentLabel
       ) {
         return previous;
       }
@@ -62,7 +65,7 @@ export function createRemoteEnvironmentProjectionAtoms(input: {
       previousPrepared = prepared;
       previous = {
         environmentId,
-        environmentLabel: environmentDisplayLabel(presentation),
+        environmentLabel,
         pairingUrl: displayUrl,
         displayUrl,
         httpBaseUrl,

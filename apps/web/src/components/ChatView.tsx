@@ -8298,7 +8298,7 @@ export default function ChatView(props: ChatViewProps) {
         );
         const index = pickable.findIndex((env) => env.environmentId === currentId);
         const next = pickable[(index + 1) % pickable.length];
-        if (next) onEnvironmentChange(next.environmentId);
+        if (next && next.environmentId !== currentId) onEnvironmentChange(next.environmentId);
         return;
       }
 

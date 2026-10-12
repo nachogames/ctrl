@@ -9,7 +9,11 @@ import type {
 import { ProviderInstanceId, RuntimeRequestId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { projectThreadAwarenessV2, threadQuestionPhaseV2 } from "./agentAwareness.ts";
+import {
+  projectThreadAwarenessV2,
+  threadAwarenessInPhaseV2,
+  threadQuestionPhaseV2,
+} from "./agentAwareness.ts";
 
 const NOW = "2026-05-22T12:00:00.000Z";
 
@@ -43,6 +47,29 @@ describe("projectThreadAwarenessV2", () => {
     pendingRuntimeRequest: null,
     updatedAt,
     ...overrides,
+  });
+
+  it("puts an idle thread in a subagent's waiting phase", () => {
+    const thread = v2Thread({ status: "idle" });
+    expect(
+      projectThreadAwarenessV2({ environmentId: "env-1" as EnvironmentId, project, thread }),
+    ).toBeNull();
+    const childUpdatedAt = DateTime.makeUnsafe("2026-05-22T12:05:00.000Z");
+    expect(
+      threadAwarenessInPhaseV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread,
+        phase: "waiting_for_input",
+        updatedAt: childUpdatedAt,
+      }),
+    ).toMatchObject({
+      threadId: "thread-2",
+      phase: "waiting_for_input",
+      headline: "Waiting for input",
+      updatedAt: "2026-05-22T12:05:00.000Z",
+      deepLink: "/threads/env-1/thread-2",
+    });
   });
 
   it("projects V2 run state", () => {

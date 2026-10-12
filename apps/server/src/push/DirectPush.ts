@@ -18,6 +18,7 @@ import {
   type AgentAwarenessPhase,
   type AgentAwarenessState,
   projectThreadAwarenessV2,
+  threadAwarenessInPhaseV2,
   threadQuestionPhaseV2,
 } from "@t3tools/shared/agentAwareness";
 import * as NodeOS from "node:os";
@@ -56,7 +57,6 @@ import {
   answeredKind,
   deviceWantsAlert,
   otherAlertStillWaiting,
-  subagentQuestionState,
 } from "./directPushAlerts.ts";
 import {
   type ApnsCredentials,
@@ -310,14 +310,11 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
   ) {
     const shell = yield* threads.getThreadShell(threadId);
     const environmentId = yield* serverEnvironment.getEnvironmentId;
-    const awarenessOf = Effect.fnUntraced(function* (thread: typeof shell) {
-      const project =
-        thread === null || thread.archivedAt !== null
-          ? Option.none()
-          : yield* projects.getById(thread.projectId);
-      return thread !== null && Option.isSome(project)
-        ? projectThreadAwarenessV2({ environmentId, project: project.value, thread })
-        : null;
+    // The thread with its project, or null when it is gone or archived.
+    const withProject = Effect.fnUntraced(function* (thread: typeof shell) {
+      if (thread === null || thread.archivedAt !== null) return null;
+      const project = yield* projects.getById(thread.projectId);
+      return Option.isSome(project) ? { thread, project: project.value } : null;
     });
     // A subagent's own run is its parent's business, but nothing answers its
     // question unless the user hears about it. That alert names the top-level
@@ -347,13 +344,21 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
         return;
       }
       const parent =
-        question === null ? null : yield* awarenessOf(yield* threads.getThreadShell(alertThreadId));
+        question === null ? null : yield* withProject(yield* threads.getThreadShell(alertThreadId));
+      // In the child's phase whatever the parent's own run is doing: an idle
+      // or stopped parent must not swallow, or clear, the child's question.
       state =
-        parent === null
+        parent === null || question === null
           ? null
-          : subagentQuestionState(parent, question, DateTime.formatIso(shell.updatedAt));
+          : threadAwarenessInPhaseV2({
+              environmentId,
+              ...parent,
+              phase: question,
+              updatedAt: shell.updatedAt,
+            });
     } else {
-      state = yield* awarenessOf(shell);
+      const own = yield* withProject(shell);
+      state = own === null ? null : projectThreadAwarenessV2({ environmentId, ...own });
     }
     // Subagents and deleted threads only matter while a question is open, so
     // the map does not grow with every thread that ever ran.

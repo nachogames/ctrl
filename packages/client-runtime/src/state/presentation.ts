@@ -1,4 +1,5 @@
 import {
+  resolveEnvironmentLabel,
   resolveEnvironmentMachineKind,
   type EnvironmentMachineKind,
   type EnvironmentId,
@@ -99,7 +100,7 @@ export interface EnvironmentConnectionSummary {
 export function environmentDisplayLabel(
   environment: Pick<EnvironmentPresentation, "entry" | "serverConfig">,
 ): string {
-  return environment.serverConfig?.settings?.environmentLabel ?? environment.entry.target.label;
+  return resolveEnvironmentLabel(environment.serverConfig, environment.entry.target.label);
 }
 
 export function projectEnvironmentConnectionSummary(

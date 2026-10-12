@@ -6,6 +6,7 @@
  * @module usageLimits
  */
 import {
+  resolveEnvironmentLabel,
   type EnvironmentId,
   type UsageLimitsReport,
   type ProviderInstanceId,
@@ -85,9 +86,8 @@ export interface LimitPresentation {
 
 export type LimitPresentations = ReadonlyMap<EnvironmentId, LimitPresentation>;
 
-/** The machine's display name when its server has one, else its saved label. */
 function presentationLabel(presentation: LimitPresentation): string {
-  return presentation.serverConfig?.settings?.environmentLabel ?? presentation.entry.target.label;
+  return resolveEnvironmentLabel(presentation.serverConfig, presentation.entry.target.label);
 }
 
 /** One destination per service, even when several accounts or environments use it. */

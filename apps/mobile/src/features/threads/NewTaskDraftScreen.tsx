@@ -459,7 +459,7 @@ export function NewTaskDraftScreen(props: {
         environment.unavailableReason === undefined || environment.environmentId === current,
     );
     const next = nextEnvironmentId(pickable, current);
-    if (next !== null) void switchEnvironment(next);
+    if (next !== null && next !== current) void switchEnvironment(next);
     return true;
   }, [
     environments,

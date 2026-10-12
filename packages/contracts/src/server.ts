@@ -765,6 +765,19 @@ export function resolveEnvironmentMachineKind(
   return config?.settings?.environmentIcon ?? config?.environment.platform.machine ?? "server";
 }
 
+/**
+ * The name clients show for an environment: the display name set on its
+ * server, else `fallback`, the label saved with the client's connection.
+ */
+export function resolveEnvironmentLabel(
+  config: {
+    readonly settings?: { readonly environmentLabel?: string | null } | undefined;
+  } | null,
+  fallback: string,
+): string {
+  return config?.settings?.environmentLabel ?? fallback;
+}
+
 const ServerUpsertKeybindingReplaceTarget = Schema.Struct({
   key: KeybindingValue,
   command: KeybindingCommand,

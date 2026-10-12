@@ -28,7 +28,7 @@ export function EnvironmentDisplayNameSetting({
   return (
     <SettingsRow
       title="Display name"
-      description="What Ctrl calls this machine on every device. Leave empty to use the computer's name."
+      description="What Ctrl calls this machine on every device. Leave empty to use the name each device saved for it."
       resetAction={
         current !== null ? (
           <SettingResetButton
@@ -50,7 +50,9 @@ export function EnvironmentDisplayNameSetting({
           }}
           onBlur={(event) => {
             const value = event.target.value.trim();
-            const next = value === "" || value === detected ? null : value;
+            // A typed name is kept even when it matches the computer's name:
+            // devices fall back to the label they saved, not to that name.
+            const next = value === "" ? null : value;
             if (edited.current && next !== current) updateSettings({ environmentLabel: next });
             edited.current = false;
           }}
