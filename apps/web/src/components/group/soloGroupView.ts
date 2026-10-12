@@ -25,7 +25,8 @@ export type GroupWorkspaceSource = Pick<
 /**
  * A chat with no visible group, shaped as its own group: branch, worktree and
  * pull request from the chat (the hidden group's win when set), tickets from
- * the hidden group. A worktree on the project root is no worktree of its own.
+ * the hidden group. A worktree on the project root is no worktree of its own, and
+ * there the branch comes from the live checkout, since the chat's recorded one goes stale.
  */
 export function soloGroupView(
   thread: Pick<
@@ -45,7 +46,7 @@ export function soloGroupView(
     id: hiddenGroup?.id ?? null,
     environmentId: thread.environmentId,
     projectId: thread.projectId,
-    branch: hiddenGroup?.branch ?? thread.branch,
+    branch: ownWorktree === null ? null : (hiddenGroup?.branch ?? thread.branch),
     worktreePath: ownWorktree,
     pullRequest: hiddenGroup?.pullRequest ?? resolveNewestCurrentPullRequestLink([thread]),
     links: hiddenGroup?.links ?? [],

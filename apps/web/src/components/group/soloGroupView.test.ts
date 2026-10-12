@@ -110,6 +110,20 @@ describe("soloGroupView", () => {
     ).toBeNull();
   });
 
+  it("leaves the branch to the live checkout when the chat has no worktree of its own", () => {
+    // A chat's recorded branch goes stale on the shared project folder.
+    expect(
+      soloGroupView(thread({ worktreePath: null, branch: "feat/old" }), null, {
+        workspaceRoot: ROOT,
+      }).branch,
+    ).toBeNull();
+    expect(
+      soloGroupView(thread({ worktreePath: ROOT, branch: "feat/old" }), null, {
+        workspaceRoot: ROOT,
+      }).branch,
+    ).toBeNull();
+  });
+
   it("has no pull request when the chat has none", () => {
     expect(soloGroupView(thread({ pullRequests: [] }), null, null).pullRequest).toBeNull();
   });
