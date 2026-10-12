@@ -2766,7 +2766,7 @@ const layerWsRpc = (
               }),
             ),
         [WS_METHODS.threadGroupsSubscribeResources]: (input) =>
-          groupResources.changes(input.groupId).pipe(Stream.map((resources) => ({ resources }))),
+          groupResources.changes(input).pipe(Stream.map((resources) => ({ resources }))),
         [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(
