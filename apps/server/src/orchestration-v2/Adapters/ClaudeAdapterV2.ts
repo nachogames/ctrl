@@ -3129,6 +3129,12 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
+  /**
+   * Names the CLI last reported as skills for `cwd` (bundled, org-synced,
+   * markdown commands, ...) that the filesystem scan cannot see, so a `$name`
+   * mention of one is dispatched like a scanned skill.
+   */
+  readonly skillCommandNames?: (cwd: string | null) => Effect.Effect<ReadonlySet<string>>;
   /** Sink for wake-turn continuation requests; defaults to dropping them. */
   readonly continuationRequests?: {
     readonly offer: (
@@ -3155,19 +3161,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   // the scan is a few directory reads. A skill switched off via skillOverrides,
   // or reserved for the agent with `user-invocable: false`, is left as prose:
   // the CLI would answer `/name` with a notice instead of running it.
+  //
+  // Skills the scan cannot see (bundled, org-synced, markdown commands) come
+  // from the CLI's last reported skill list, which already omits switched-off
+  // ones.
   const userInvocableSkillNames = (cwd: string | null) =>
-    discoverClaudeSkills(
-      adapterOptions.settings,
-      cwd ?? undefined,
-      adapterOptions.environment,
-    ).pipe(
+    Effect.all([
+      discoverClaudeSkills(adapterOptions.settings, cwd ?? undefined, adapterOptions.environment),
+      adapterOptions.skillCommandNames?.(cwd) ?? Effect.succeed(new Set<string>()),
+    ]).pipe(
       Effect.map(
-        (skills) =>
-          new Set(
-            skills
+        ([skills, skillCommandNames]) =>
+          new Set([
+            ...skills
               .filter((skill) => skill.enabled && skill.userInvocable !== false)
               .map((skill) => skill.name),
-          ),
+            ...skillCommandNames,
+          ]),
       ),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
@@ -8342,7 +8352,10 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits"> = {},
+    hooks: Pick<
+      ClaudeAdapterV2Options,
+      "scopedLimitNames" | "onUsageLimits" | "skillCommandNames"
+    > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

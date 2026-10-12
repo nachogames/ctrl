@@ -39,6 +39,8 @@ import {
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
   isProviderSkillUserInvocable,
+  providerSlashCommandNeedsPromptStart,
+  providerSlashCommandReplacement,
   hasCompleteProviderWorkspaceSnapshot,
   hasCurrentProviderWorkspaceSnapshot,
   resolveProviderSkillsForCwd,
@@ -58,6 +60,8 @@ const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
   return { start: draftMessage.length, end: draftMessage.length };
 }
+
+const PROMPT_START_ONLY_HINT = "Works at the start of a message";
 
 export function buildComposerSlashCommandItems(input: {
   readonly query: string;
@@ -102,9 +106,11 @@ export function buildComposerSlashCommandItems(input: {
     (item) => item.command.includes(query) && (item.command === "model" || allowInteractionMode),
   );
 
-  // Providers expand commands only at the start of a message. T3 commands
-  // change local state and do not have this restriction.
-  if (!input.atMessageStart) return items;
+  // Providers expand commands only at the start of a message, but every
+  // command stays listed: mid-message a skill goes in as a `$name` mention
+  // the server dispatches, and anything else as literal `/name` text.
+  const skillCommandItems: ComposerCommandItem[] = [];
+  const providerItems: ComposerCommandItem[] = [];
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
     if (!command.name.toLowerCase().includes(query)) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
@@ -120,15 +126,26 @@ export function buildComposerSlashCommandItems(input: {
     ) {
       continue;
     }
-    items.push({
+    const startOnly = !input.atMessageStart && providerSlashCommandNeedsPromptStart(command);
+    const item = {
       id: `pcmd:${command.name}`,
       type: "provider-slash-command",
       command,
       label: `/${command.name}`,
-      description: command.description ?? "",
-    });
+      description: startOnly
+        ? [command.description, PROMPT_START_ONLY_HINT].filter(Boolean).join(" · ")
+        : (command.description ?? ""),
+    } satisfies ComposerCommandItem;
+    if (input.atMessageStart || startOnly) {
+      providerItems.push(item);
+    } else {
+      skillCommandItems.push(item);
+    }
   }
-  return items;
+  // Mid-message, skills lead and start-only commands trail.
+  return input.atMessageStart
+    ? [...items, ...providerItems]
+    : [...skillCommandItems, ...items, ...providerItems];
 }
 
 export function resolveComposerCommandSelection(input: {
@@ -161,7 +178,7 @@ export function resolveComposerCommandSelection(input: {
   } else if (item.type === "slash-command") {
     replacement = `/${item.command} `;
   } else if (item.type === "provider-slash-command") {
-    replacement = `/${item.command.name} `;
+    replacement = providerSlashCommandReplacement(item.command, trigger.rangeStart === 0);
   }
   return {
     ...replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, replacement),
@@ -412,7 +429,9 @@ export function useComposerCommandMenu({
           description: skill.shortDescription ?? skill.description ?? "",
         }));
 
-      return [...commandItems, ...skillItems];
+      return trigger.rangeStart === 0
+        ? [...commandItems, ...skillItems]
+        : [...skillItems, ...commandItems];
     }
 
     if (trigger.kind === "skill") {

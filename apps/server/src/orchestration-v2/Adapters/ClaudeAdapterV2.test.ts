@@ -957,6 +957,94 @@ describe("ClaudeAdapterV2 session permissions", () => {
   });
 });
 
+describe("ClaudeAdapterV2 skill dispatch", () => {
+  it.effect("runs a CLI-reported skill picked mid-message as its slash command", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-skill-dispatch-",
+        });
+        const offeredMessages: Array<SDKUserMessage> = [];
+        const requestedCwds: Array<string | null> = [];
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          // An empty config dir: `simplify` is a bundled skill no scan sees.
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: attachmentsDir },
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          skillCommandNames: (cwd) =>
+            Effect.sync(() => {
+              requestedCwds.push(cwd);
+              return new Set(["simplify"]);
+            }),
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-skill-dispatch"),
+            open: () =>
+              Effect.succeed({
+                messages: Stream.never,
+                offer: (message: SDKUserMessage) =>
+                  Effect.sync(() => {
+                    offeredMessages.push(message);
+                  }),
+                setModel: () => Effect.void,
+                setPermissionMode: () => Effect.void,
+                interrupt: Effect.void,
+                close: Effect.void,
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: attachmentsDir,
+        });
+        const threadId = ThreadId.make("thread-claude-skill-dispatch");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-skill-dispatch"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-skill-dispatch"),
+            text: "after the fix, $simplify the diff",
+            attachments: [],
+            runtimePolicy,
+          }),
+        );
+
+        assert.deepEqual(requestedCwds, [attachmentsDir]);
+        const content = offeredMessages.at(-1)?.message.content;
+        assert.isArray(content);
+        if (!Array.isArray(content)) return;
+        assert.match(String(Reflect.get(content[0] ?? {}, "text")), /after the fix,$/);
+        assert.deepEqual(content.at(-1), { type: "text", text: "/simplify the diff" });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+});
+
 describe("ClaudeAdapterV2 Auto-accept edits", () => {
   it.effect("asks before a command instead of allowing it", () =>
     Effect.scoped(

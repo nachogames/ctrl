@@ -5,7 +5,15 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 
-export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
+export type ProviderSkillSourceKind =
+  | "app"
+  | "plugin"
+  | "synced"
+  | "repo"
+  | "project"
+  | "personal"
+  | "system"
+  | "other";
 
 function normalizePathSeparators(pathValue: string): string {
   return pathValue.replaceAll("\\", "/");
@@ -55,6 +63,26 @@ export function getProviderSlashCommandsForSlashMenu(
   return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
 }
 
+/**
+ * Text a composer inserts for a picked provider command. A provider runs
+ * `/name` only when it opens the message, so mid-message a command the
+ * provider reports as a skill goes in as a `$name` mention, which the server
+ * dispatches from any position. Anything else stays literal `/name`.
+ */
+export function providerSlashCommandReplacement(
+  command: Pick<ServerProviderSlashCommand, "name" | "skill">,
+  isAtPromptStart: boolean,
+): string {
+  return !isAtPromptStart && command.skill === true ? `$${command.name} ` : `/${command.name} `;
+}
+
+/** Whether a picked provider command only runs when it opens the message. */
+export function providerSlashCommandNeedsPromptStart(
+  command: Pick<ServerProviderSlashCommand, "skill">,
+): boolean {
+  return command.skill !== true;
+}
+
 export function resolveProviderSkillSourceKind(
   skill: Pick<ServerProviderSkill, "path" | "scope">,
 ): ProviderSkillSourceKind {
@@ -77,6 +105,12 @@ export function resolveProviderSkillSourceKind(
       return "personal";
     case "system":
       return "system";
+    // Claude Code skills shipped by an installed plugin (`plugin:skill`).
+    case "plugin":
+      return "plugin";
+    // Claude Code skills synced from the claude.ai account.
+    case "synced":
+      return "synced";
     case undefined:
     case "":
       return "other";

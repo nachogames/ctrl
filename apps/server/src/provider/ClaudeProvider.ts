@@ -36,7 +36,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
-import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
+import { alignSyncedSkillNames, discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
@@ -286,8 +286,15 @@ type ClaudeCapabilitiesProbe = {
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
 };
 
-function parseClaudeInitializationCommands(
+/**
+ * `skillNames` is the CLI's own skill list (`reloadSkills`), which separates
+ * skills — bundled, personal, project, plugin, org-synced, and markdown
+ * commands — from built-in commands such as `/compact` that only run when
+ * they open a message. Without it every command is treated as built-in.
+ */
+export function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
+  skillNames?: ReadonlySet<string>,
 ): ReadonlyArray<ServerProviderSlashCommand> {
   return dedupeSlashCommands(
     (commands ?? []).flatMap((command) => {
@@ -304,6 +311,7 @@ function parseClaudeInitializationCommands(
           name,
           ...(description ? { description } : {}),
           ...(argumentHint ? { input: { hint: argumentHint } } : {}),
+          ...(skillNames?.has(name) ? { skill: true } : {}),
         } satisfies ServerProviderSlashCommand,
       ];
     }),
@@ -343,6 +351,7 @@ function dedupeSlashCommands(
         : command.input?.hint
           ? { input: { hint: command.input.hint } }
           : {}),
+      ...(command.skill && !existing.skill ? { skill: true } : {}),
     });
   }
 
@@ -414,6 +423,16 @@ const probeClaudeCapabilities = (
               q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
             ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
           : undefined;
+        // The skill list tells skills apart from built-in commands. It only
+        // re-reads skill directories in this throwaway process; on failure
+        // every command is offered as start-of-message only.
+        const skillsResult = yield* Effect.tryPromise(() => q.reloadSkills()).pipe(
+          Effect.timeout(DEFAULT_TIMEOUT_MS),
+          Effect.result,
+        );
+        const skillNames = Result.isSuccess(skillsResult)
+          ? new Set(skillsResult.success.skills.map((skill) => skill.name))
+          : undefined;
         const usage =
           usageResult && Result.isSuccess(usageResult)
             ? {
@@ -436,7 +455,7 @@ const probeClaudeCapabilities = (
           tokenSource: account?.tokenSource,
           apiKeySource: account?.apiKeySource,
           apiProvider: account?.apiProvider,
-          slashCommands: parseClaudeInitializationCommands(init.commands),
+          slashCommands: parseClaudeInitializationCommands(init.commands, skillNames),
           ...(usage ? { usage } : {}),
         } satisfies ClaudeCapabilitiesProbe;
       }),
@@ -477,13 +496,14 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
   const capabilities = yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false);
+  const slashCommands = dedupeSlashCommands([
+    COMPACT_SLASH_COMMAND,
+    ...(capabilities?.slashCommands ?? []),
+  ]);
   return {
     ...machineSnapshot,
-    skills,
-    slashCommands: dedupeSlashCommands([
-      COMPACT_SLASH_COMMAND,
-      ...(capabilities?.slashCommands ?? []),
-    ]),
+    skills: alignSyncedSkillNames(skills, slashCommands),
+    slashCommands,
     slashCommandsPending: !capabilities,
   };
 });
@@ -608,9 +628,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
-  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
+  const skills = alignSyncedSkillNames(
+    yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment),
+    dedupedSlashCommands,
+  );
 
   if (!capabilities) {
     return buildServerProvider({

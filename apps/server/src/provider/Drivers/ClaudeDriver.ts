@@ -12,13 +12,18 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
-import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  ProviderDriverKind,
+  type ServerProviderSlashCommand,
+} from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
@@ -170,6 +175,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       });
 
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+      // Skill names from the latest workspace probe per cwd, so the adapter
+      // dispatches `$name` for skills only the CLI can list (bundled, synced).
+      const workspaceSkillCommandNames = yield* Ref.make(new Map<string, ReadonlySet<string>>());
+      const skillCommandNamesOf = (commands: ReadonlyArray<ServerProviderSlashCommand>) =>
+        new Set(commands.flatMap((command) => (command.skill ? [command.name] : [])));
       const orchestrationAdapter = yield* createClaudeAdapterV2(
         {
           instanceId,
@@ -179,7 +189,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           enabled,
           config,
         },
-        { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+        {
+          scopedLimitNames,
+          onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+          skillCommandNames: (cwd) =>
+            Effect.all([snapshot.getSnapshot, Ref.get(workspaceSkillCommandNames)]).pipe(
+              Effect.map(
+                ([machineSnapshot, byCwd]) =>
+                  new Set([
+                    ...skillCommandNamesOf(machineSnapshot.slashCommands),
+                    ...((cwd ? byCwd.get(cwd) : undefined) ?? []),
+                  ]),
+              ),
+            ),
+        },
       ).pipe(
         Effect.mapError(
           (cause) =>
@@ -362,6 +385,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           snapshot.getSnapshot.pipe(
             Effect.flatMap((machineSnapshot) =>
               probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv),
+            ),
+            Effect.tap((workspaceSnapshot) =>
+              workspaceSnapshot.slashCommandsPending
+                ? Effect.void
+                : Ref.update(workspaceSkillCommandNames, (byCwd) =>
+                    new Map(byCwd).set(cwd, skillCommandNamesOf(workspaceSnapshot.slashCommands)),
+                  ),
             ),
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, path),
