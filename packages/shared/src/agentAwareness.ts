@@ -84,9 +84,14 @@ export function projectThreadAwarenessV2(
   };
 }
 
-function resolveThreadAwarenessPhaseV2(
-  thread: ProjectThreadAwarenessV2Input["thread"],
-): AgentAwarenessPhase | null {
+/**
+ * The question a thread is stopped on, or null. Unlike the full awareness
+ * phase this also applies to subagent threads, whose questions reach the user
+ * through their parent.
+ */
+export function threadQuestionPhaseV2(
+  thread: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest">,
+): Extract<AgentAwarenessPhase, "waiting_for_input" | "waiting_for_approval"> | null {
   if (thread.pendingRuntimeRequest?.kind === "user_input") {
     return "waiting_for_input";
   }
@@ -95,6 +100,16 @@ function resolveThreadAwarenessPhaseV2(
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
   ) {
     return "waiting_for_approval";
+  }
+  return null;
+}
+
+function resolveThreadAwarenessPhaseV2(
+  thread: ProjectThreadAwarenessV2Input["thread"],
+): AgentAwarenessPhase | null {
+  const question = threadQuestionPhaseV2(thread);
+  if (question !== null) {
+    return question;
   }
   switch (thread.activityRunStatus ?? thread.status) {
     case "preparing":
@@ -119,7 +134,7 @@ function resolveThreadAwarenessPhaseV2(
   }
 }
 
-function headlineForPhase(phase: AgentAwarenessPhase): string {
+export function headlineForPhase(phase: AgentAwarenessPhase): string {
   switch (phase) {
     case "starting":
       return "Starting agent";

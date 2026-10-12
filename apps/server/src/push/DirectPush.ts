@@ -18,6 +18,7 @@ import {
   type AgentAwarenessPhase,
   type AgentAwarenessState,
   projectThreadAwarenessV2,
+  threadQuestionPhaseV2,
 } from "@t3tools/shared/agentAwareness";
 import * as NodeOS from "node:os";
 
@@ -49,7 +50,13 @@ import {
   fcmAlertData,
   fcmClearData,
 } from "@t3tools/shared/pushPayloads";
-import { alertKind, alertMessage, answeredKind, deviceWantsAlert } from "./directPushAlerts.ts";
+import {
+  alertKind,
+  alertMessage,
+  answeredKind,
+  deviceWantsAlert,
+  subagentQuestionState,
+} from "./directPushAlerts.ts";
 import {
   type ApnsCredentials,
   FcmServiceAccount,
@@ -296,20 +303,40 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     sendScope: Scope.Scope,
   ) {
     const shell = yield* threads.getThreadShell(threadId);
-    // Subagents never project activity; their parent thread carries it.
-    if (shell?.lineage.relationshipToParent === "subagent") return;
-    const project =
-      shell === null || shell.archivedAt !== null
-        ? Option.none()
-        : yield* projects.getById(shell.projectId);
     const environmentId = yield* serverEnvironment.getEnvironmentId;
-    const state =
-      shell !== null && Option.isSome(project)
-        ? projectThreadAwarenessV2({ environmentId, project: project.value, thread: shell })
+    const awarenessOf = Effect.fnUntraced(function* (thread: typeof shell) {
+      const project =
+        thread === null || thread.archivedAt !== null
+          ? Option.none()
+          : yield* projects.getById(thread.projectId);
+      return thread !== null && Option.isSome(project)
+        ? projectThreadAwarenessV2({ environmentId, project: project.value, thread })
         : null;
+    });
+    // A subagent's own run is its parent's business, but nothing answers its
+    // question unless the user hears about it. That alert names the top-level
+    // thread, the one phones can open and that shows the child's question.
+    const isSubagent = shell?.lineage.relationshipToParent === "subagent";
+    const alertThreadId = shell !== null && isSubagent ? shell.lineage.rootThreadId : threadId;
+    if (isSubagent && alertThreadId === threadId) return;
+    let state: AgentAwarenessState | null;
+    if (shell !== null && isSubagent) {
+      const parent = yield* awarenessOf(yield* threads.getThreadShell(alertThreadId));
+      state =
+        parent === null
+          ? null
+          : subagentQuestionState(
+              parent,
+              threadQuestionPhaseV2(shell),
+              DateTime.formatIso(shell.updatedAt),
+            );
+    } else {
+      state = yield* awarenessOf(shell);
+    }
     const previousPhase = phases.get(threadId);
     phases.set(threadId, state?.phase ?? null);
     const finishedSinceStart =
+      !isSubagent &&
       shell?.latestRunCompletedAt != null &&
       DateTime.toEpochMillis(shell.latestRunCompletedAt) > startedAt;
     const nowMs = yield* Clock.currentTimeMillis;
@@ -327,7 +354,7 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     // miss phases of, the events behind this one. The clear goes first so it
     // cannot remove a finished-run alert sent for the same change.
     yield* Effect.gen(function* () {
-      if (answered !== null) yield* clear({ environmentId, threadId }, answered);
+      if (answered !== null) yield* clear({ environmentId, threadId: alertThreadId }, answered);
       if (alert !== null) yield* notify(alert.state, alert.kind);
     }).pipe(Effect.forkIn(sendScope));
   });

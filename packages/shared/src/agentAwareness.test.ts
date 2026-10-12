@@ -9,7 +9,7 @@ import type {
 import { ProviderInstanceId, RuntimeRequestId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { projectThreadAwarenessV2 } from "./agentAwareness.ts";
+import { projectThreadAwarenessV2, threadQuestionPhaseV2 } from "./agentAwareness.ts";
 
 const NOW = "2026-05-22T12:00:00.000Z";
 
@@ -136,5 +136,19 @@ describe("projectThreadAwarenessV2", () => {
         }),
       }),
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
+  });
+});
+
+describe("threadQuestionPhaseV2", () => {
+  const createdAt = DateTime.makeUnsafe(NOW);
+  const request = (kind: "user_input" | "command" | "auth_refresh") => ({
+    pendingRuntimeRequest: { id: RuntimeRequestId.make(`request-${kind}`), kind, createdAt },
+  });
+
+  it("names the question a thread, subagent or not, is stopped on", () => {
+    expect(threadQuestionPhaseV2(request("user_input"))).toBe("waiting_for_input");
+    expect(threadQuestionPhaseV2(request("command"))).toBe("waiting_for_approval");
+    expect(threadQuestionPhaseV2(request("auth_refresh"))).toBeNull();
+    expect(threadQuestionPhaseV2({ pendingRuntimeRequest: null })).toBeNull();
   });
 });

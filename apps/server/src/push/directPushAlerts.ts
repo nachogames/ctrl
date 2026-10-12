@@ -3,7 +3,11 @@ import {
   type DirectPushAlertKind,
   type PushAlertMessage,
 } from "@t3tools/contracts";
-import type { AgentAwarenessPhase, AgentAwarenessState } from "@t3tools/shared/agentAwareness";
+import {
+  type AgentAwarenessPhase,
+  type AgentAwarenessState,
+  headlineForPhase,
+} from "@t3tools/shared/agentAwareness";
 
 /** A finished run older than this is history, not news. Matches the relay. */
 export const TERMINAL_ALERT_FRESHNESS_MS = 2 * 60_000;
@@ -51,6 +55,26 @@ export function answeredKind(
     value === "waiting_for_approval" || value === "waiting_for_input";
   if (!isQuestion(previousPhase) || isQuestion(phase)) return null;
   return ALERTS[previousPhase as AgentAwarenessPhase] ?? null;
+}
+
+/**
+ * The state to alert on when a subagent stops on a question: the parent's
+ * thread, which phones can open and which shows the child's question, in the
+ * child's waiting phase. Subagent threads are hidden from thread lists, so an
+ * alert for the child itself would lead nowhere.
+ */
+export function subagentQuestionState(
+  parent: AgentAwarenessState,
+  question: Extract<AgentAwarenessPhase, "waiting_for_input" | "waiting_for_approval"> | null,
+  childUpdatedAt: string,
+): AgentAwarenessState | null {
+  if (question === null) return null;
+  return {
+    ...parent,
+    phase: question,
+    headline: headlineForPhase(question),
+    updatedAt: childUpdatedAt,
+  };
 }
 
 export function deviceWantsAlert(

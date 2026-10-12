@@ -3,7 +3,13 @@ import type { AgentAwarenessState } from "@t3tools/shared/agentAwareness";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
-import { alertKind, alertMessage, answeredKind, deviceWantsAlert } from "./directPushAlerts.ts";
+import {
+  alertKind,
+  alertMessage,
+  answeredKind,
+  deviceWantsAlert,
+  subagentQuestionState,
+} from "./directPushAlerts.ts";
 
 const NOW = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-10T12:00:00.000Z"));
 const isoAt = (epochMillis: number) => DateTime.formatIso(DateTime.makeUnsafe(epochMillis));
@@ -100,5 +106,28 @@ describe("alertMessage", () => {
       projectTitle: "Ctrl",
       updatedAt: isoAt(NOW - 5_000),
     });
+  });
+});
+
+describe("subagentQuestionState", () => {
+  it("alerts on the parent thread while a subagent waits on the user", () => {
+    const parent = state("running");
+    const asked = subagentQuestionState(parent, "waiting_for_input", isoAt(NOW));
+    expect(asked).toEqual({
+      ...parent,
+      phase: "waiting_for_input",
+      headline: "Waiting for input",
+      updatedAt: isoAt(NOW),
+    });
+    expect(kindFor("waiting_for_input", "running")).toBe("input");
+    expect(subagentQuestionState(parent, "waiting_for_approval", isoAt(NOW))?.phase).toBe(
+      "waiting_for_approval",
+    );
+  });
+
+  it("has nothing to send while the subagent is not waiting", () => {
+    expect(subagentQuestionState(state("running"), null, isoAt(NOW))).toBeNull();
+    // Its answered question still clears the parent's alert.
+    expect(answeredKind("waiting_for_input", null)).toBe("input");
   });
 });
