@@ -322,25 +322,46 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     // A subagent's own run is its parent's business, but nothing answers its
     // question unless the user hears about it. That alert names the top-level
     // thread, the one phones can open and that shows the child's question.
+    const tracked = phases.get(threadId);
     const isSubagent = shell?.lineage.relationshipToParent === "subagent";
-    const alertThreadId = shell !== null && isSubagent ? shell.lineage.rootThreadId : threadId;
+    // A deleted thread keeps the alert target it had, so its clear lands where
+    // its alert did.
+    const alertThreadId =
+      shell === null
+        ? (tracked?.alertThreadId ?? threadId)
+        : isSubagent
+          ? shell.lineage.rootThreadId
+          : threadId;
     if (isSubagent && alertThreadId === threadId) return;
+    const previousPhase = tracked?.phase;
     let state: AgentAwarenessState | null;
     if (shell !== null && isSubagent) {
-      const parent = yield* awarenessOf(yield* threads.getThreadShell(alertThreadId));
+      const question = threadQuestionPhaseV2(shell);
+      // Most subagent updates are its own work; only a question, or the end
+      // of one, needs the parent.
+      if (
+        question === null &&
+        previousPhase !== "waiting_for_input" &&
+        previousPhase !== "waiting_for_approval"
+      ) {
+        return;
+      }
+      const parent =
+        question === null ? null : yield* awarenessOf(yield* threads.getThreadShell(alertThreadId));
       state =
         parent === null
           ? null
-          : subagentQuestionState(
-              parent,
-              threadQuestionPhaseV2(shell),
-              DateTime.formatIso(shell.updatedAt),
-            );
+          : subagentQuestionState(parent, question, DateTime.formatIso(shell.updatedAt));
     } else {
       state = yield* awarenessOf(shell);
     }
-    const previousPhase = phases.get(threadId)?.phase;
-    phases.set(threadId, { alertThreadId, phase: state?.phase ?? null });
+    // Subagents and deleted threads only matter while a question is open, so
+    // the map does not grow with every thread that ever ran.
+    if (state === null && (isSubagent || shell === null)) {
+      phases.delete(threadId);
+    } else {
+      phases.set(threadId, { alertThreadId, phase: state?.phase ?? null });
+    }
     const finishedSinceStart =
       !isSubagent &&
       shell?.latestRunCompletedAt != null &&

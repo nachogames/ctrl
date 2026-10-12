@@ -2247,7 +2247,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             );
           }
           const context = yield* awaitActiveTurn;
-          if (context === null || context.finalized) {
+          if (context === null || context.finalized || context.interrupted) {
             return askUserError("There is no active turn to ask the user from.");
           }
           const providerSessionId = context.input.providerThread.providerSessionId ?? session.id;
@@ -2315,6 +2315,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             questions: [...questions],
           };
           const answers = yield* Deferred.make<ProviderUserInputAnswers | null, never>();
+          // Stop or the turn's end may have dropped pending questions while
+          // this one was being built; it must not outlive the turn.
+          if (context.finalized || context.interrupted) {
+            return askUserError("The turn ended before the question could be asked.");
+          }
           pendingUserInputs.set(String(requestId), {
             providerTurnId: context.providerTurnId,
             answers,

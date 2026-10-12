@@ -75,8 +75,9 @@ export function askUserQuestions(args: unknown): ReadonlyArray<OrchestrationV2Us
     const record = value as Record<string, unknown>;
     const question = trimmedString(record.question);
     if (question.length === 0) return [];
-    // Answers come back keyed by id, so two identical questions need distinct ids.
-    const id = seen.has(question) ? `${question} (${index + 1})` : question;
+    // Answers come back keyed by id, so every question needs a distinct one.
+    let id = question;
+    for (let suffix = index + 1; seen.has(id); suffix++) id = `${question} (${suffix})`;
     seen.add(id);
     const header = trimmedString(record.header) || `Question ${index + 1}`;
     const options = Array.isArray(record.options)

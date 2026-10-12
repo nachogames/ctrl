@@ -134,16 +134,19 @@ export function createEnvironmentSummaryAtoms(input: {
       ? previous
       : next;
   });
-  const identitiesAtom = Atom.make((get) => {
-    // Reads each presentation for its display name; the equality check below
-    // keeps unrelated config refreshes from reaching subscribers.
-    const next = [...get(input.catalogValueAtom).entries].map(([environmentId, entry]) => {
+  // One derived label per environment, so a config refresh that leaves the
+  // name alone stops here instead of rebuilding every identity.
+  const labelAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
       const presentation = get(input.presentationAtom(environmentId));
-      return {
-        environmentId,
-        label: presentation === null ? entry.target.label : environmentDisplayLabel(presentation),
-      };
-    });
+      return presentation === null ? null : environmentDisplayLabel(presentation);
+    }),
+  );
+  const identitiesAtom = Atom.make((get) => {
+    const next = [...get(input.catalogValueAtom).entries].map(([environmentId, entry]) => ({
+      environmentId,
+      label: get(labelAtom(environmentId)) ?? entry.target.label,
+    }));
     const previous = Option.getOrNull(
       get.self<ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>>(),
     );

@@ -67,6 +67,13 @@ describe("askUserTool", () => {
     );
   });
 
+  it("never gives two questions the same id", () => {
+    const ids = askUserQuestions({
+      questions: [{ question: "A (3)" }, { question: "A" }, { question: "A" }],
+    }).map((question) => question.id);
+    assert.deepEqual(ids, ["A (3)", "A", "A (4)"]);
+  });
+
   it("recognizes its own MCP tool calls", () => {
     assert.isTrue(
       isAskUserToolCall({

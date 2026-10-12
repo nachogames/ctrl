@@ -1229,7 +1229,9 @@ export const ServerSettings = Schema.Struct({
    * the name the server detected (the computer's name). Lives on the server so
    * every device that connects to it shows the same name.
    */
-  environmentLabel: Schema.NullOr(EnvironmentLabel).pipe(
+  // Forward compatible: a value this build rejects (a hand-edited file, a
+  // newer server's longer name) reads as unset rather than failing the snapshot.
+  environmentLabel: ForwardCompatibleNullable(EnvironmentLabel).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /**

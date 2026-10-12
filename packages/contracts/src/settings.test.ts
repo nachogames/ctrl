@@ -1033,9 +1033,9 @@ describe("ServerSettings environment label", () => {
     expect(encodeServerSettings(settings).environmentLabel).toBe("Work Mac");
   });
 
-  it("rejects an empty or over-long name", () => {
-    expect(() => decodeServerSettings({ environmentLabel: "   " })).toThrow();
-    expect(() => decodeServerSettings({ environmentLabel: "x".repeat(65) })).toThrow();
+  it("reads an empty or over-long name as unset instead of failing the snapshot", () => {
+    expect(decodeServerSettings({ environmentLabel: "   " }).environmentLabel).toBeNull();
+    expect(decodeServerSettings({ environmentLabel: "x".repeat(65) }).environmentLabel).toBeNull();
   });
 });
 
