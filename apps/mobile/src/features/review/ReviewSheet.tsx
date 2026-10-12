@@ -1,5 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import type { ScreenHeaderMenuItem } from "../../components/ScreenHeader.types";
@@ -18,7 +20,6 @@ import {
   useState,
 } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   Platform,
   Pressable,
@@ -68,6 +69,7 @@ import { resolveReviewAvailability } from "./reviewAvailability";
 import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 import { buildReviewSectionMenu } from "./review-section-menu";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/presentation";
 
 function ReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
@@ -282,9 +284,11 @@ const ReviewFileNavigatorRow = memo(function ReviewFileNavigatorRow(props: {
       </Text>
       <View className="mt-1 flex-row gap-2">
         <Text className="text-2xs font-t3-bold text-adaptive-emerald-700-300">
-          +{file.additions}
+          +{formatDiffCount(file.additions)}
         </Text>
-        <Text className="text-2xs font-t3-bold text-adaptive-rose-700-300">-{file.deletions}</Text>
+        <Text className="text-2xs font-t3-bold text-adaptive-rose-700-300">
+          -{formatDiffCount(file.deletions)}
+        </Text>
       </View>
     </Pressable>
   );
@@ -740,7 +744,11 @@ export function ReviewSheet(props: ReviewSheetProps) {
           {showConnectionNotice ? (
             <View className="flex-1" style={{ paddingTop: topContentInset }}>
               <EnvironmentConnectionNotice
-                environmentLabel={environment.presentation?.entry.target.label ?? "Environment"}
+                environmentLabel={
+                  environment.presentation
+                    ? environmentDisplayLabel(environment.presentation)
+                    : "Environment"
+                }
                 connection={
                   environment.presentation?.connection ?? {
                     phase: "available",
@@ -852,7 +860,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     Platform.OS !== "android" && "border-b border-border bg-card",
                   )}
                 >
-                  <ActivityIndicator size="small" />
+                  <AppActivityIndicator size="small" />
                   <Text className="text-xs text-foreground-muted">Loading diff…</Text>
                 </View>
               ) : parsedDiff.kind === "empty" ? (

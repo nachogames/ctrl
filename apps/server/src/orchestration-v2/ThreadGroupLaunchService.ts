@@ -57,6 +57,7 @@ export class ThreadGroupHandoffSummaryError extends Schema.TaggedError<ThreadGro
 export type ThreadGroupLaunchServiceError =
   | ThreadGroupService.ThreadGroupServiceError
   | ThreadLaunch.ThreadLaunchError
+  | ThreadManagement.ThreadManagementProviderInstanceDisabledError
   | ThreadGroupLaunchOperationError
   | ThreadGroupHandoffSummaryError;
 

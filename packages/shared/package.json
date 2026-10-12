@@ -15,6 +15,10 @@
       "types": "./src/appHome.ts",
       "import": "./src/appHome.ts"
     },
+    "./githubMarkdownLinks": {
+      "types": "./src/githubMarkdownLinks.ts",
+      "import": "./src/githubMarkdownLinks.ts"
+    },
     "./authScopeOptions": {
       "types": "./src/authScopeOptions.ts",
       "import": "./src/authScopeOptions.ts"
@@ -275,6 +279,10 @@
       "types": "./src/assistantCitations.ts",
       "import": "./src/assistantCitations.ts"
     },
+    "./promptLinks": {
+      "types": "./src/promptLinks.ts",
+      "import": "./src/promptLinks.ts"
+    },
     "./threadLinks": {
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"
@@ -509,7 +517,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc-rs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {

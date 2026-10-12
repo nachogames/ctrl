@@ -28,6 +28,7 @@ import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProviderColors } from "./usageProviders";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/presentation";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
@@ -333,7 +334,7 @@ export function useRefreshLimits(
           setFailedEnvironments((previous) => [
             ...previous.filter((failed) => failed.environmentId !== environmentId),
             ...(result._tag === "Failure"
-              ? [{ environmentId, label: presentation.entry.target.label }]
+              ? [{ environmentId, label: environmentDisplayLabel(presentation) }]
               : []),
           ]);
         }),

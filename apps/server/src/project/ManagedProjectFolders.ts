@@ -9,7 +9,14 @@
  *
  * @module ManagedProjectFolders
  */
-import { CommandId, ProjectId, type ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type GitManagerServiceError,
+  ProjectId,
+  type ScratchUnavailability,
+  type ThreadId,
+  VcsProcessSpawnError,
+} from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -96,6 +103,8 @@ export class ManagedProjectFolders extends Context.Service<
   {
     /** The Scratch folder, or None when this environment does not offer one. */
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
+    /** Why `scratchRoot` is None, for clients to show; None when it is offered. */
+    readonly scratchUnavailable: Effect.Effect<Option.Option<ScratchUnavailability>>;
     /** Finds or creates the Scratch project and (re)creates its folder. */
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
     /**
@@ -220,6 +229,19 @@ function describeCommitFailure(stderr: string): string {
   return lines.at(-1) ?? "Git could not make the first commit.";
 }
 
+const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
+
+// Spawning a `git` that is not on PATH fails with NotFound, on Windows too.
+const isGitMissing = (error: GitManagerServiceError) =>
+  error._tag === "GitManagerError" &&
+  isVcsProcessSpawnError(error.cause) &&
+  PlatformError.isPlatformError(error.cause.cause) &&
+  error.cause.cause.reason._tag === "NotFound";
+
+type ScratchAvailability =
+  | { readonly _tag: "available"; readonly root: string }
+  | { readonly _tag: "unavailable"; readonly unavailable: ScratchUnavailability };
+
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -256,23 +278,65 @@ const make = Effect.gen(function* () {
     }
   });
 
+  // Names the checkout in the unavailable reason; the reason stands without it.
+  const enclosingRepositoryRoot = git
+    .execute({
+      operation: "ManagedProjectFolders.scratchRepositoryRoot",
+      cwd: config.baseDir,
+      args: ["rev-parse", "--show-toplevel"],
+      allowNonZeroExit: true,
+      timeoutMs: 10_000,
+    })
+    .pipe(
+      Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() || null : null)),
+      Effect.orElseSucceed(() => null),
+    );
+
   // Inside a checkout (a dev worktree's .t3, a dotfiles home) the folder would
   // inherit the repo's git status and checkpoints, so Scratch is offered only
-  // when the data dir is outside any work tree. Probed once; detection
+  // when the data dir is outside any work tree. With no Git installed nothing
+  // can see a checkout, so Scratch is offered. Probed once; other detection
   // failures hide Scratch rather than failing callers. An interrupted probe
   // invalidates the cache so the next caller probes again.
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
     gitWorkflow.isRepository(config.baseDir).pipe(
-      Effect.map((isRepository) =>
-        isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
+      Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
+      Effect.flatMap((isRepository): Effect.Effect<ScratchAvailability> =>
+        isRepository
+          ? enclosingRepositoryRoot.pipe(
+              Effect.map((repositoryRoot) => ({
+                _tag: "unavailable" as const,
+                unavailable: {
+                  reason: "inside-git-repo" as const,
+                  ...(repositoryRoot === null ? {} : { repositoryRoot }),
+                },
+              })),
+            )
+          : Effect.succeed({
+              _tag: "available" as const,
+              root: path.resolve(config.baseDir, "scratch"),
+            }),
       ),
       Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
+        Cause.hasInterrupts(cause)
+          ? Effect.interrupt
+          : Effect.succeed<ScratchAvailability>({
+              _tag: "unavailable",
+              unavailable: { reason: "detection-failed" },
+            }),
       ),
     ),
     Duration.infinity,
   );
-  const scratchRoot = probe.pipe(Effect.onInterrupt(() => invalidate));
+  const availability = probe.pipe(Effect.onInterrupt(() => invalidate));
+  const scratchRoot = availability.pipe(
+    Effect.map((value) => (value._tag === "available" ? Option.some(value.root) : Option.none())),
+  );
+  const scratchUnavailable = availability.pipe(
+    Effect.map((value) =>
+      value._tag === "unavailable" ? Option.some(value.unavailable) : Option.none(),
+    ),
+  );
 
   const makeScratchFolder = (folder: string) =>
     fileSystem
@@ -500,6 +564,7 @@ const make = Effect.gen(function* () {
 
   return ManagedProjectFolders.of({
     scratchRoot,
+    scratchUnavailable,
     ensureScratchProject,
     folderForThread,
     namedProjectsRoot,

@@ -21,6 +21,8 @@ export interface EnvironmentOption {
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
+  /** Set when the machine is listed but cannot be picked, saying why. */
+  disabledReason?: string;
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);

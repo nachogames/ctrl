@@ -24,7 +24,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
@@ -95,7 +95,10 @@ import {
   useRemoteConnectionStatus,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import {
+  availableScratchWorkspaceRoot,
+  scratchUnavailableReason,
+} from "@t3tools/client-runtime/operations/projects";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -173,6 +176,7 @@ type NewTaskFlowContextValue = {
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
   readonly startFromOrigin: boolean;
+  readonly pullRequestReference: string | undefined;
   readonly draftKey: string | null;
   readonly editingPendingTask: QueuedThreadMessage | null;
   readonly prompt: string;
@@ -192,6 +196,8 @@ type NewTaskFlowContextValue = {
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly environmentLabel: string;
+    /** Set when the machine is listed but cannot take this draft, saying why. */
+    readonly unavailableReason?: string;
   }>;
   readonly selectedProject: EnvironmentProject | null;
   /** True when the draft is a thread without a project (its machine's Scratch project). */
@@ -378,19 +384,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     isScratchProject(selectedProject, selectedEnvironmentServerConfig?.scratchWorkspaceRoot);
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
-  // A thread without a project can move to any connected machine that offers
-  // one; its Scratch project there is created on the switch if it is missing.
-  const scratchEnvironments = useMemo(
-    () =>
-      connectedEnvironments.filter(
-        (environment) =>
-          availableScratchWorkspaceRoot(
-            environment.connectionState,
-            serverConfigs.get(environment.environmentId),
-          ) !== null,
-      ),
-    [connectedEnvironments, serverConfigs],
-  );
 
   // Only offer machines that actually host the currently selected repository, so
   // switching computers moves the same repo across machines instead of jumping to
@@ -406,10 +399,32 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectedProjectTitle = selectedProject?.title ?? null;
   const environments = useMemo(() => {
     if (isScratchDraft) {
-      return scratchEnvironments.map((environment) => ({
-        environmentId: environment.environmentId,
-        environmentLabel: environment.environmentLabel,
-      }));
+      // A connected machine that says why it offers no "No project" folder is
+      // listed, disabled, so the choice of machine is never a mystery.
+      return connectedEnvironments.flatMap((environment) => {
+        const serverConfig = serverConfigs.get(environment.environmentId);
+        if (availableScratchWorkspaceRoot(environment.connectionState, serverConfig) !== null) {
+          return [
+            {
+              environmentId: environment.environmentId,
+              environmentLabel: environment.environmentLabel,
+            },
+          ];
+        }
+        const unavailableReason = scratchUnavailableReason(
+          environment.connectionState,
+          serverConfig,
+        );
+        return unavailableReason === null
+          ? []
+          : [
+              {
+                environmentId: environment.environmentId,
+                environmentLabel: environment.environmentLabel,
+                unavailableReason,
+              },
+            ];
+      });
     }
     const seen = new Set<EnvironmentId>();
     const result: Array<{
@@ -450,10 +465,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     }
     return result;
   }, [
+    connectedEnvironments,
     isScratchDraft,
     projects,
     savedConnectionsById,
-    scratchEnvironments,
+    serverConfigs,
     selectedRepositoryKey,
     selectedWorkspaceBasename,
     selectedProjectTitle,
@@ -487,7 +503,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const attachments = selectedProjectDraft.attachments;
   // Default mode until the user picks one explicitly — same resolution web
   // uses for new draft threads: per-project setting, then the repo's
-  // checked-in t3.json, then the server's configured default.
+  // checked-in t3.json, then the server's configured default (which a new
+  // project with no threads yet replaces with its checkout).
   const fileAccessSession = useEnvironmentQuery(
     selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? environmentSession.sessionStateAtom(selectedProject.environmentId)
@@ -535,8 +552,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // A thread without a project runs in a plain folder, so worktree mode
   // would leave it unsendable: it is always local and offers no choice.
   const canChooseWorkspace = !isScratchDraft;
+  const selectedProjectHasThreads =
+    selectedProject !== null &&
+    threads.some(
+      (thread) =>
+        thread.environmentId === selectedProject.environmentId &&
+        thread.projectId === selectedProject.id,
+    );
   const defaultWorkspaceMode: WorkspaceMode = canChooseWorkspace
-    ? projectSettings.settings.defaultThreadEnvMode
+    ? resolveNewThreadEnvMode({
+        projectSettings,
+        workspaceRoot: selectedProject?.workspaceRoot ?? null,
+        newProjectsRoot: selectedEnvironmentServerConfig?.newProjectsRoot,
+        projectHasThreads: selectedProjectHasThreads,
+      })
     : "local";
   // While the file read is pending and nothing above it decided, the
   // resolved default is provisional. Nothing may write it into the draft
@@ -568,27 +597,33 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const draftModelSelection = resolveSelectableModelSelection(
     selectedEnvironmentServerConfig,
     selectedProjectDraft.modelSelection ?? null,
+    selectedProject?.id ?? null,
   );
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     projectSettings.settings.defaultModelSelection,
+    selectedProject?.id ?? null,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const stickyModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
+    selectedProject?.id ?? null,
   );
   const modelOptions = useMemo(
     () =>
       buildModelOptions(
         selectedEnvironmentServerConfig,
         draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+        undefined,
+        selectedProject?.id ?? null,
       ),
     [
       selectedEnvironmentServerConfig,
       draftModelSelection,
       projectDefaultModelSelection,
       stickyModelSelection,
+      selectedProject?.id,
     ],
   );
 
@@ -1074,6 +1109,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           branch: message.creation.branch,
           worktreePath: message.creation.worktreePath,
           startFromOrigin: message.creation.startFromOrigin ?? false,
+          pullRequestReference: message.creation.pullRequestReference,
         },
       });
     }
@@ -1104,6 +1140,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         resolveSelectableModelSelection(
           selectedEnvironmentServerConfig,
           draft.modelSelection ?? null,
+          selectedProject.id,
         ) ?? selectedModel;
       // A shared image or file is a task on its own; text is optional.
       if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
@@ -1150,6 +1187,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
+          ...(mode === "worktree" && workspaceSelection?.pullRequestReference
+            ? { pullRequestReference: workspaceSelection.pullRequestReference }
+            : {}),
           // An explicit picker choice wins. Otherwise only a task sending now
           // records the current checkout: a queued local task drains days
           // later against whatever is checked out then, so a queue-time
@@ -1300,6 +1340,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedWorktreePath,
       startFromOrigin,
       draftKey: selectedProjectDraftKey,
+      pullRequestReference: selectedProjectDraft.workspaceSelection?.pullRequestReference,
       editingPendingTask,
       prompt,
       attachments,
@@ -1390,6 +1431,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProviderStatus,
       setSelectedModelOptions,
       selectedProject,
+      selectedProjectDraft.workspaceSelection?.pullRequestReference,
       selectedProjectKey,
       selectedWorktreePath,
       setProject,
