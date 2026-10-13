@@ -1,6 +1,9 @@
 import {
+  CommandId,
+  MessageId,
   ReviewSessionError,
   ReviewSessionId,
+  type OrchestrationV2ThreadShell,
   type ProjectId,
   type ReviewAlreadyFixedIn,
   type ReviewApplyState,
@@ -13,8 +16,10 @@ import {
   type ReviewSessionSnapshot,
   type ReviewSessionSubscribeInput,
   type ReviewSessionSubscribeResult,
+  type ReviewSource,
   type ReviewSourceComment,
   type ReviewSuggestedDecision,
+  type ReviewTurnRequest,
   type ThreadGroupId,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -32,11 +37,19 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ThreadGroupLaunchService from "../orchestration-v2/ThreadGroupLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ReviewSessions from "../persistence/ReviewSessions.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { checkDecisionQuote, decisionQuoteRefusalMessage } from "./decisionQuote.ts";
 import { latestUserMessageText } from "./latestUserMessage.ts";
 import * as ReviewSessionChanges from "./ReviewSessionChanges.ts";
+import {
+  localReviewPrompt,
+  reviewRequestText,
+  sideChatPrompt,
+  sideChatTitle,
+} from "./reviewPrompts.ts";
 import { reviewStackNeighbours, type ReviewStackNeighbour } from "./reviewStack.ts";
 import * as ReviewSyncService from "./ReviewSyncService.ts";
 
@@ -89,6 +102,15 @@ export interface ReviewItemAnnotation {
   readonly alreadyFixedIn?: ReviewAlreadyFixedIn | null | undefined;
   readonly conclusion?: string | null | undefined;
   readonly draftReply?: string | null | undefined;
+}
+
+/** One problem the local review found; `slug` names the defect so later rounds match it. */
+export interface ReviewLocalFinding {
+  readonly path: string | null;
+  readonly line: number | null;
+  readonly title: string;
+  readonly body: string;
+  readonly slug: string;
 }
 
 /** Who decided: the agent quoting the user's latest message in `threadId`, or the user in the panel. */
@@ -187,6 +209,30 @@ export class ReviewSessionService extends Context.Service<
       readonly headSha: string;
       readonly finish: boolean;
     }) => Effect.Effect<ReviewSessionSnapshot, ReviewSessionError>;
+    /**
+     * The side chat about one point: the existing one while it lives, else a new chat in the
+     * review's group seeded with only that point. The server sends the seed as the review
+     * chat's agent, so it never counts as the user's words.
+     */
+    readonly openSideChat: (
+      input: PointInput,
+    ) => Effect.Effect<{ readonly threadId: ThreadId }, ReviewSessionError>;
+    /** Your independent review of the round, in its own chat on the review chat's model. */
+    readonly runLocalReview: (input: {
+      readonly sessionId: ReviewSessionId;
+    }) => Effect.Effect<{ readonly threadId: ThreadId }, ReviewSessionError>;
+    /** The local review chat hands in its findings; its source becomes `done`. */
+    readonly submitLocalFindings: (input: {
+      readonly sessionId: ReviewSessionId;
+      readonly sourceId: string;
+      readonly headSha: string;
+      readonly findings: ReadonlyArray<ReviewLocalFinding>;
+    }) => Effect.Effect<ReviewSource, ReviewSessionError>;
+    /** A Review tab button: a turn in the review chat, sent as the system. */
+    readonly requestTurn: (input: {
+      readonly sessionId: ReviewSessionId;
+      readonly request: ReviewTurnRequest;
+    }) => Effect.Effect<void, ReviewSessionError>;
   }
 >()("t3/reviewSessions/ReviewSessionService") {}
 
@@ -250,6 +296,10 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const crypto = yield* Crypto.Crypto;
   const writeLock = yield* Semaphore.make(1);
+  const launches = yield* ThreadGroupLaunchService.ThreadGroupLaunchService;
+  const providers = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  // Two quick clicks must not start two chats.
+  const launchLock = yield* Semaphore.make(1);
 
   /** Read-modify-write under one lock and one transaction; subscribers hear of it after commit. */
   const write = <A, E, R>(sessionId: ReviewSessionId, effect: Effect.Effect<A, E, R>) =>
@@ -849,6 +899,266 @@ export const make = Effect.gen(function* () {
       return yield* snapshotOf(next);
     }).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
 
+  const liveThread = (threadId: ThreadId) =>
+    threads
+      .getThreadShell(threadId)
+      .pipe(Effect.map((shell) => (shell !== null && shell.deletedAt === null ? shell : null)));
+
+  const reviewChatOf = (session: ReviewSession) =>
+    liveThread(session.reviewThreadId).pipe(
+      Effect.filterOrFail(
+        (shell): shell is OrchestrationV2ThreadShell => shell !== null,
+        () => fail("The review chat is gone; open the review again from a chat.", session.id),
+      ),
+    );
+
+  /**
+   * A new chat in the review's group on the review chat's model and modes. The server sends
+   * `prompt` for the review chat's agent, so it never counts as the user's words.
+   */
+  const launch = (
+    session: ReviewSession,
+    reviewChat: OrchestrationV2ThreadShell,
+    title: string,
+    prompt: string,
+  ) =>
+    Effect.gen(function* () {
+      return yield* launches
+        .newThread({
+          commandId: CommandId.make(`review-chat:${yield* crypto.randomUUIDv4}`),
+          groupId: session.groupId,
+          title,
+          prompt,
+          modelSelection: reviewChat.modelSelection,
+          runtimeMode: reviewChat.runtimeMode,
+          interactionMode: reviewChat.interactionMode,
+          senderThreadId: session.reviewThreadId,
+          createdBy: "agent",
+          creationSource: "server",
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            fail(`Could not start the chat: ${error.message}`, session.id),
+          ),
+        );
+    });
+
+  const openSideChat: ReviewSessionService["Service"]["openSideChat"] = (input) =>
+    launchLock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const session = yield* loadSession(input.sessionId);
+          yield* requireLive(session);
+          const item = yield* loadItem(session.id, input.number);
+          if (item.sideThreadId !== null && (yield* liveThread(item.sideThreadId)) !== null) {
+            return { threadId: item.sideThreadId };
+          }
+          const launched = yield* launch(
+            session,
+            yield* reviewChatOf(session),
+            sideChatTitle(item),
+            sideChatPrompt(session, item),
+          );
+          yield* write(
+            session.id,
+            Effect.gen(function* () {
+              yield* repo.setItemSideThread({
+                sessionId: session.id,
+                number: item.number,
+                threadId: launched.threadId,
+                updatedAt: yield* now,
+              });
+            }),
+          );
+          return { threadId: launched.threadId };
+        }),
+      )
+      .pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
+
+  const runLocalReview: ReviewSessionService["Service"]["runLocalReview"] = (input) =>
+    launchLock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const session = yield* loadSession(input.sessionId);
+          yield* requireLive(session);
+          yield* requireCollecting(session, yield* loadRound(session));
+          const running = (yield* repo.listSources(session.id)).filter(
+            (source) =>
+              source.kind === "local" &&
+              source.round === session.round &&
+              source.state === "reviewing",
+          );
+          const abandoned: Array<string> = [];
+          for (const source of running) {
+            if (source.threadId !== null && (yield* liveThread(source.threadId)) !== null) {
+              return { threadId: source.threadId };
+            }
+            abandoned.push(source.id);
+          }
+          const reviewChat = yield* reviewChatOf(session);
+          const instance = yield* providers.getInstance(reviewChat.modelSelection.instanceId);
+          const launched = yield* launch(
+            session,
+            reviewChat,
+            `Your review · round ${session.round}`,
+            localReviewPrompt({ session, driverKind: instance?.driverKind ?? null }),
+          );
+          const sourceId = `local:${yield* crypto.randomUUIDv4}`;
+          yield* write(
+            session.id,
+            Effect.gen(function* () {
+              // A run whose chat was deleted can never hand in findings; it must not
+              // show as still reviewing next to the new one.
+              for (const id of abandoned) yield* repo.deleteSource(session.id, id);
+              yield* repo.upsertSource(
+                session.id,
+                {
+                  id: sourceId,
+                  round: session.round,
+                  kind: "local",
+                  state: "reviewing",
+                  author: null,
+                  isBot: false,
+                  commitSha: null,
+                  commentCount: 0,
+                  triaged: false,
+                  threadId: launched.threadId,
+                  ranOn: {
+                    instanceId: reviewChat.modelSelection.instanceId,
+                    model: reviewChat.modelSelection.model,
+                  },
+                  url: null,
+                  updatedAt: yield* now,
+                },
+                [],
+              );
+            }),
+          );
+          return { threadId: launched.threadId };
+        }),
+      )
+      .pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
+
+  const submitLocalFindings: ReviewSessionService["Service"]["submitLocalFindings"] = (input) =>
+    write(
+      input.sessionId,
+      Effect.gen(function* () {
+        const session = yield* loadSession(input.sessionId);
+        yield* requireLive(session);
+        const source = (yield* repo.listSources(session.id)).find(
+          (candidate) => candidate.id === input.sourceId && candidate.kind === "local",
+        );
+        if (source === undefined) {
+          return yield* fail("This chat is not running a review of this pull request.", session.id);
+        }
+        if (source.state === "done") {
+          return yield* fail(
+            "These findings are already in. Start a new run from the Review tab for another look.",
+            session.id,
+          );
+        }
+        const comments = input.findings.map((finding): ReviewSourceComment => ({
+          key: `local:${finding.path ?? ""}:${finding.slug}`,
+          threadId: null,
+          path: finding.path,
+          line: finding.line,
+          body: `${finding.title}\n\n${finding.body}`,
+          url: null,
+          diffHunk: null,
+        }));
+        const done: ReviewSource = {
+          ...source,
+          state: "done",
+          commitSha: input.headSha,
+          commentCount: comments.length,
+          updatedAt: yield* now,
+        };
+        yield* repo.upsertSource(session.id, done, comments);
+        return done;
+      }),
+    ).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
+
+  const requestTurn: ReviewSessionService["Service"]["requestTurn"] = (input) =>
+    Effect.gen(function* () {
+      const session = yield* loadSession(input.sessionId);
+      yield* requireLive(session);
+      yield* requireCollecting(session, yield* loadRound(session));
+      const request = input.request;
+      let item: ReviewItem | null = null;
+      let untriaged: ReadonlyArray<ReviewSource> = [];
+      if (request._tag === "triage") {
+        untriaged = (yield* repo.listSources(session.id)).filter(
+          (source) => source.round === session.round && source.state === "done" && !source.triaged,
+        );
+        if (untriaged.length === 0) {
+          return yield* fail("No finished review is waiting for triage in this round.", session.id);
+        }
+      }
+      if (request._tag === "rewrite-reply") {
+        item = yield* loadItem(session.id, request.number);
+        yield* requireCurrent(session, item);
+      }
+      if (request._tag === "apply") {
+        // The panel shows "Waiting" on every point from the moment the user confirms.
+        // Checked again under the lock: a point may have changed since the reads above.
+        yield* write(
+          session.id,
+          Effect.gen(function* () {
+            const current = yield* loadSession(session.id);
+            yield* requireLive(current);
+            const round = yield* loadRound(current);
+            yield* requireCollecting(current, round);
+            yield* applyGate(current, yield* repo.listItems(current.id));
+            yield* repo.upsertRound(current.id, {
+              ...round,
+              state: "applying",
+              updatedAt: yield* now,
+            });
+          }),
+        );
+      }
+      // The agent never got the request, so the round goes back to collecting.
+      const moveBack = write(
+        session.id,
+        Effect.gen(function* () {
+          const current = yield* loadSession(session.id);
+          const round = yield* loadRound(current);
+          if (current.round === session.round && round.state === "applying") {
+            yield* repo.upsertRound(current.id, {
+              ...round,
+              state: "collecting",
+              updatedAt: yield* now,
+            });
+          }
+        }),
+      );
+      const id = yield* crypto.randomUUIDv4;
+      yield* threads
+        .sendToThread({
+          projectId: session.projectId,
+          commandId: CommandId.make(`review-request:${id}`),
+          threadId: session.reviewThreadId,
+          messageId: MessageId.make(`message:review-request:${id}`),
+          text: reviewRequestText({ session, request, item, sources: untriaged }),
+          attachments: [],
+          mode: "queue",
+          // Sent as the system so the quote guard never reads it as the user's words.
+          createdBy: "system",
+          creationSource: "server",
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ReviewSessionError({
+                message: "The review chat could not be reached.",
+                sessionId: session.id,
+                cause,
+              }),
+          ),
+          Effect.tapError(() => (request._tag === "apply" ? moveBack : Effect.void)),
+        );
+    }).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
+
   return ReviewSessionService.of({
     open,
     read,
@@ -863,6 +1173,10 @@ export const make = Effect.gen(function* () {
     editReply,
     recordApply,
     advanceRound,
+    openSideChat,
+    runLocalReview,
+    submitLocalFindings,
+    requestTurn,
   });
 });
 

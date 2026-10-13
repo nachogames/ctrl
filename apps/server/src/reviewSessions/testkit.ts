@@ -321,6 +321,8 @@ export interface ReviewServiceHarness extends SyncHarness {
   readonly projectThreads: Array<OrchestrationV2ThreadShell>;
   /** Provider instance id to driver kind, for the local review's prompt. */
   readonly drivers: Map<string, string>;
+  /** When true, sends to a chat fail as if it were archived. */
+  sendFails: boolean;
 }
 
 export const newHarness = (): ReviewServiceHarness => ({
@@ -330,6 +332,7 @@ export const newHarness = (): ReviewServiceHarness => ({
   shells: new Map([[reviewThreadId, chatShell(reviewThreadId)]]),
   projectThreads: [],
   drivers: new Map([["claudeAgent", "claudeAgent"]]),
+  sendFails: false,
 });
 
 /** The real service and sync on an in-memory database; threads, sends and launches go to `harness`. */
@@ -349,10 +352,16 @@ export const makeReviewServiceLayer = (harness: ReviewServiceHarness) =>
           getThreadShell: (threadId) => Effect.succeed(harness.shells.get(threadId) ?? null),
           listProjectThreads: () => Effect.sync(() => harness.projectThreads),
           sendToThread: (input) =>
-            Effect.sync(() => {
-              harness.sent.push(input);
-              return {} as never;
-            }),
+            harness.sendFails
+              ? Effect.fail(
+                  new ThreadManagementService.ThreadManagementThreadArchivedError({
+                    threadId: input.threadId,
+                  }),
+                )
+              : Effect.sync(() => {
+                  harness.sent.push(input);
+                  return {} as never;
+                }),
         }),
         Layer.mock(ThreadGroupLaunchService.ThreadGroupLaunchService)({
           newThread: (input) => {
