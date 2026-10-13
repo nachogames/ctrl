@@ -69,6 +69,7 @@ export type T3McpToolSummaryAction =
   | "write-pr-guides"
   | "read-pr-guide"
   | "pr-review"
+  | "pr-review-read"
   | "browser"
   | "device"
   | "html-preview"
@@ -352,7 +353,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   review_session_read: tool(
     ["Read", "Reading", "Read", "the review list"],
-    "pr-review",
+    "pr-review-read",
     "pull-request",
   ),
   review_source_submit: tool(

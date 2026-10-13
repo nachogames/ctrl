@@ -3,12 +3,15 @@ import type { ReviewSession } from "@t3tools/contracts";
 /**
  * The rules of the review loop, returned by review_session_open. The skills on every
  * provider only say "open the session and follow its brief", so these rules live here once.
+ * The agent gets it once per review, so it names no round: each step reads the current one.
  */
 export function reviewBrief(session: ReviewSession): string {
   const pr = session.pullRequest.number;
-  return `# Review brief: ${session.url}, round ${session.round}
+  return `# Review brief: ${session.url}
 
 The review list is the memory, not the chat. Call review_session_read at the start of every turn and write every conclusion to the list. The user works through it in the Review tab of the pull request panel: each point has a Viewed box, a Fix/Decline toggle and the reply you drafted.
+
+This brief holds for every round of the review. "The current round" below is session.round as review_session_read returns it at the start of the turn; a Triage or Apply request names the same round. Wherever a step shows <session.round>, put that number.
 
 ## Rules
 - Decisions are the user's. Call review_items_decide only when the user's latest message states a decision on that point, and pass their exact words as quote. A question ("why #2?") never decides anything: answer it, and record your view with review_items_annotate (suggestedDecision, recommendation).
@@ -19,7 +22,7 @@ The review list is the memory, not the chat. Call review_session_read at the sta
 - A side chat works on its own point only. The local review chat only hands in findings.
 
 ## Triage (when asked, or when review_session_read shows finished reviews with triaged: false)
-1. Read every finished, untriaged source of round ${session.round} in review_session_read: Copilot's review, your local review, human reviews. Their comments are exactly what each review said.
+1. Read every finished, untriaged source of the current round in review_session_read: Copilot's review, your local review, human reviews. Their comments are exactly what each review said.
 2. Merge them into one list of distinct problems. One problem raised by two reviews is one point with both sourceKeys and both sources.
    - A GitHub comment's key is its comment key ("gh:<thread id>").
    - A local finding's key is its key ("local:<path>:<slug>").
@@ -42,15 +45,15 @@ The review list is the memory, not the chat. Call review_session_read at the sta
 If the round has no local review yet, offer to run one; review_local_review_start starts it in its own chat. It never sees Copilot's comments. Triage it together with the others once it is done.
 
 ## Apply (when asked, after the user confirmed in the panel)
-1. review_session_read. Apply only round ${session.round}'s live points; every one is viewed.
+1. review_session_read. Apply only the current round's live points (lastSeenRound equal to session.round, not stale); every one is viewed.
 2. For each fix point, in number order:
    - call review_items_record_apply with applyState "working";
    - make the change;
    - call review_items_annotate with a conclusion (what changed, one or two sentences) and update draftReply if the fix differs from it.
 3. Run the smallest proof the repository's AGENTS.md asks for. Never run repo-wide checks.
-4. Commit with a conventional message naming the points, for example \`fix: review round ${session.round} (#1, #4)\`, then git push. Never push with --force or --force-with-lease. If a check fails or the push is rejected, stop, record nothing as fixed, and tell the user.
+4. Commit with a conventional message naming the points, for example \`fix: review round <session.round> (#1, #4)\`, then git push. Never push with --force or --force-with-lease. If a check fails or the push is rejected, stop, record nothing as fixed, and tell the user.
 5. Call review_items_record_apply with applyState "fixed" for each fix point.
-6. Post the user's own review as a record. Use event COMMENT, never approve or request changes. The body starts "Self-review, round ${session.round}" and has one line per point whose sources include local-review: "#N summary: Fixed in <short sha>. <conclusion>" or "#N summary: Not changing. <reason or skipReason>".
+6. Post the user's own review as a record. Use event COMMENT, never approve or request changes. The body starts "Self-review, round <session.round>" and has one line per point whose sources include local-review: "#N summary: Fixed in <short sha>. <conclusion>" or "#N summary: Not changing. <reason or skipReason>".
    \`jq -n --arg commit "$(git rev-parse HEAD)" --arg body "$BODY" '{commit_id: $commit, event: "COMMENT", body: $body}' | gh api --method POST "repos/{owner}/{repo}/pulls/${pr}/reviews" --input -\`
 7. Reply on every GitHub thread of every point with its draftReply:
    \`gh api graphql -f query='mutation($thread: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $thread, body: $body}) { comment { url } } }' -f thread="$THREAD_ID" -f body="$REPLY"\`

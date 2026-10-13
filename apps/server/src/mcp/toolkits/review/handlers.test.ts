@@ -126,7 +126,9 @@ it.effect("opens the review from a grouped chat with its brief, and refuses an u
           items: [toolItem("gh:T1"), toolItem("gh:T2")],
         }),
       ).toMatchObject({ created: [1, 2], matched: [] });
+      // The brief names no round; the agent reads the current one here every turn.
       expect(yield* review("review_session_read", {})).toMatchObject({
+        session: { round: 1 },
         role: "review",
         scopedToItem: null,
         focusedItem: null,

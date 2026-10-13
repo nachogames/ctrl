@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { T3_MCP_TOOL_NAMES, resolveT3McpToolPresentation } from "./t3McpToolPresentation.ts";
+import {
+  T3_MCP_TOOL_NAMES,
+  resolveT3McpToolPresentation,
+  resolveT3McpToolSummaryAction,
+} from "./t3McpToolPresentation.ts";
 
 describe("resolveT3McpToolPresentation", () => {
   it("recognizes every T3 tool across provider prefixes and completion suffixes", () => {
@@ -92,6 +96,17 @@ describe("resolveT3McpToolPresentation", () => {
       resolveT3McpToolPresentation("t3-code-thread_opencode2-adapter_delegate_task")?.displayName,
     ).toBe("Delegate a child task");
     expect(resolveT3McpToolPresentation("t3-code-thread_opencode2-adapter_not_a_tool")).toBeNull();
+  });
+
+  it("summarizes reading the review list apart from changing it", () => {
+    expect(resolveT3McpToolSummaryAction("mcp__t3-code__review_session_read")).toBe(
+      "pr-review-read",
+    );
+    for (const tool of [...T3_MCP_TOOL_NAMES].filter(
+      (name) => name.startsWith("review_") && name !== "review_session_read",
+    )) {
+      expect(resolveT3McpToolSummaryAction(tool), tool).toBe("pr-review");
+    }
   });
 
   it("keeps unknown MCP tools on the generic renderer path", () => {

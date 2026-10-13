@@ -484,6 +484,9 @@ export function summarizeT3ToolCalls(
     case "pr-review":
       label = phrase("Updated", "update", `the review list ${times}`);
       break;
+    case "pr-review-read":
+      label = phrase("Read", "read", `the review list ${times}`);
+      break;
     case "read-pr-guide":
       label = phrase("Read", "read", quantity(selected.length, "review guide"));
       break;

@@ -11,6 +11,9 @@ describe("summarizeT3ToolCalls", () => {
     expect(summarizeT3ToolCalls("pr-review", [completed({}, {}), completed({}, {})]).label).toBe(
       "Updated the review list 2 times",
     );
+    expect(
+      summarizeT3ToolCalls("pr-review-read", [completed({}, {}), completed({}, {})]).label,
+    ).toBe("Read the review list 2 times");
   });
 
   it("counts registered projects, repository destinations, and accepted thread launches", () => {
