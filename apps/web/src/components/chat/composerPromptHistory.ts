@@ -2,6 +2,7 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+import { parseReviewPointTag } from "@t3tools/shared/reviewPointTag";
 import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
 
 /**
@@ -110,11 +111,12 @@ function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string
 /**
  * Reduce a sent message to the text the user typed. Send-time appends
  * (terminal and element context blocks, preview annotations, review
- * comments, the Claude ultrathink prefix) are stripped so a recalled prompt
- * never carries stale context from another turn.
+ * comments, the review point tag, the Claude ultrathink prefix) are stripped so a
+ * recalled prompt never carries stale context from another turn.
  */
 export function recallableComposerPrompt(messageText: string): string {
-  let prompt = messageText.trim();
+  // The review chat's composer adds the point tag outside everything else, so it goes first.
+  let prompt = (parseReviewPointTag(messageText.trim())?.body ?? messageText).trim();
   if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
     prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
   }

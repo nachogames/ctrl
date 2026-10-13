@@ -49,6 +49,13 @@ describe("recallableComposerPrompt", () => {
       ),
     ).toBe("email@build:7");
   });
+  it("strips the review point tag the chip added at send time", () => {
+    expect(recallableComposerPrompt("[#2 build cache key]\nwhy not hash the patch?")).toBe(
+      "why not hash the patch?",
+    );
+    expect(recallableComposerPrompt("[#2 build cache key]\nUltrathink:\nwhy?")).toBe("why?");
+  });
+
   it("strips legacy send-time context blocks and the ultrathink prefix", () => {
     const sent =
       "Ultrathink:\nInvestigate this\n\n<terminal_context>\n- Terminal 1 lines 12-13:\n  12 | git status\n  13 | On branch main\n</terminal_context>\n\n<element_context>\n- <button>:\n  url: https://example.com\n</element_context>";

@@ -4,6 +4,7 @@
  * starts with nothing open, and opening a point attaches it again.
  */
 import type { EnvironmentId } from "@t3tools/contracts";
+import { formatReviewPointTag } from "@t3tools/shared/reviewPointTag";
 import { create } from "zustand";
 
 export interface ReviewPointFocus {
@@ -84,4 +85,19 @@ export function readAttachedReviewPoint(
   return focus === undefined || focus.detached
     ? null
     : { number: focus.number, label: focus.label };
+}
+
+// The provider runs a slash command only when it opens the message, the same rule the
+// ultrathink prefix follows (`applyClaudePromptEffortPrefix`). A path such as `/tmp/x` is prose.
+const LEADING_SLASH_COMMAND = /^\/[^\s/]+(?:\s|$)/u;
+
+/**
+ * What a send from this chat's composer carries: the tag line while a point is attached. A
+ * slash command goes out untagged, since a tag above it would turn the command into prose.
+ */
+export function withAttachedReviewPoint(threadKey: string, text: string): string {
+  const point = readAttachedReviewPoint(threadKey);
+  return point === null || LEADING_SLASH_COMMAND.test(text)
+    ? text
+    : formatReviewPointTag(point, text);
 }

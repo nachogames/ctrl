@@ -11,6 +11,7 @@ import {
   offersLocalReview,
   ranOnLabel,
   replyTarget,
+  reviewApplyLines,
   reviewPointMentionCounts,
   reviewRoundViews,
   rewritePending,
@@ -194,5 +195,20 @@ describe("toggledDecision", () => {
     expect(toggledDecision({ decision: "needs-call", suggestedDecision: null }, ["fix"])).toBe(
       "fix",
     );
+  });
+});
+
+describe("reviewApplyLines", () => {
+  it("says exactly what apply will do, and what it never does", () => {
+    expect(reviewApplyLines({ fixes: [1, 2, 5], replies: 3, resolves: 2, findings: 4 })).toEqual([
+      "Fix #1 #2 #5, run the checks, then commit and push. Never a force push.",
+      "Reply to 3 threads with the drafts you approved.",
+      "Post your review as a record: its 4 findings and what was decided for each.",
+      "Resolve 2 threads (yours, Copilot's and Claude's). Human threads only get a reply.",
+    ]);
+    expect(reviewApplyLines({ fixes: [], replies: 1, resolves: 0, findings: 0 })).toEqual([
+      "Reply to 1 thread with the drafts you approved.",
+      "Post your review as a record of what was decided.",
+    ]);
   });
 });

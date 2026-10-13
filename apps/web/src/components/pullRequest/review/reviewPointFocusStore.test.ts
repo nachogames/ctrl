@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { readAttachedReviewPoint, useReviewPointFocusStore } from "./reviewPointFocusStore";
+import {
+  readAttachedReviewPoint,
+  useReviewPointFocusStore,
+  withAttachedReviewPoint,
+} from "./reviewPointFocusStore";
 
 const key = "environment:thread:review";
 
@@ -23,5 +27,27 @@ describe("review point focus", () => {
     expect(readAttachedReviewPoint(key)).toEqual({ number: 3, label: "pin version" });
     store.closePoint(key);
     expect(readAttachedReviewPoint(key)).toBeNull();
+  });
+
+  it("tags a message only while its point is attached", () => {
+    const store = useReviewPointFocusStore.getState();
+    expect(withAttachedReviewPoint(key, "why?")).toBe("why?");
+    store.openPoint(key, { number: 2, label: "build cache key" });
+    expect(withAttachedReviewPoint(key, "why?")).toBe("[#2 build cache key]\nwhy?");
+    store.detach(key);
+    expect(withAttachedReviewPoint(key, "why?")).toBe("why?");
+  });
+
+  it("leaves a slash command first, so the provider still runs it", () => {
+    useReviewPointFocusStore.getState().openPoint(key, { number: 2, label: "build cache key" });
+    expect(withAttachedReviewPoint(key, "/compact")).toBe("/compact");
+    expect(withAttachedReviewPoint(key, "/review-pr focus on #2")).toBe("/review-pr focus on #2");
+    // A path is prose, not a command, and a skill mention works anywhere in the message.
+    expect(withAttachedReviewPoint(key, "/tmp/out.log is empty")).toBe(
+      "[#2 build cache key]\n/tmp/out.log is empty",
+    );
+    expect(withAttachedReviewPoint(key, "$review-pr on this")).toBe(
+      "[#2 build cache key]\n$review-pr on this",
+    );
   });
 });

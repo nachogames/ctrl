@@ -168,3 +168,34 @@ export function toggledDecision(
   if (item.decision !== "needs-call") return "needs-call";
   return item.suggestedDecision;
 }
+
+const threads = (count: number) => `${count} ${count === 1 ? "thread" : "threads"}`;
+
+/** The Apply confirmation's list. Every line is something apply does, or a promise it keeps. */
+export function reviewApplyLines(summary: {
+  readonly fixes: ReadonlyArray<number>;
+  readonly replies: number;
+  readonly resolves: number;
+  readonly findings: number;
+}): ReadonlyArray<string> {
+  const lines: Array<string> = [];
+  if (summary.fixes.length > 0) {
+    lines.push(
+      `Fix ${summary.fixes.map((number) => `#${number}`).join(" ")}, run the checks, then commit and push. Never a force push.`,
+    );
+  }
+  if (summary.replies > 0) {
+    lines.push(`Reply to ${threads(summary.replies)} with the drafts you approved.`);
+  }
+  lines.push(
+    summary.findings > 0
+      ? `Post your review as a record: its ${summary.findings} findings and what was decided for each.`
+      : "Post your review as a record of what was decided.",
+  );
+  if (summary.resolves > 0) {
+    lines.push(
+      `Resolve ${threads(summary.resolves)} (yours, Copilot's and Claude's). Human threads only get a reply.`,
+    );
+  }
+  return lines;
+}
