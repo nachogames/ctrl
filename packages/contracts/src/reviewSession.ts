@@ -1,0 +1,292 @@
+import * as Schema from "effect/Schema";
+
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ProjectId,
+  ReviewSessionId,
+  ThreadGroupId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
+import { ThreadPullRequestKey } from "./threadPullRequest.ts";
+
+/** Where a review is in the loop. The first slice runs `self-review` and ends at `done`. */
+export const ReviewPhase = Schema.Literals([
+  "self-review",
+  "human-review",
+  "awaiting-approval",
+  "done",
+]);
+export type ReviewPhase = typeof ReviewPhase.Type;
+
+/** Who raised a point: Copilot, the local review, CI, or a human reviewer by login. */
+export const ReviewItemSource = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^(copilot|local-review|ci|human:[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?)$/),
+);
+export type ReviewItemSource = typeof ReviewItemSource.Type;
+
+/** The user's decision. `needs-call` until the user decides or views Claude's suggestion. */
+export const ReviewDecision = Schema.Literals(["needs-call", "fix", "decline"]);
+export type ReviewDecision = typeof ReviewDecision.Type;
+
+/** Claude's call on a point; the panel shows it until the user decides. */
+export const ReviewSuggestedDecision = Schema.Literals(["fix", "decline"]);
+export type ReviewSuggestedDecision = typeof ReviewSuggestedDecision.Type;
+
+/** `working` while the apply turn is on this point. */
+export const ReviewApplyState = Schema.Literals([
+  "pending",
+  "working",
+  "fixed",
+  "replied",
+  "resolved",
+]);
+export type ReviewApplyState = typeof ReviewApplyState.Type;
+
+/** `chat`: the agent quoted the user's latest message. `panel`: the user chose it in the Review tab. */
+export const ReviewDecidedBy = Schema.Literals(["chat", "panel"]);
+export type ReviewDecidedBy = typeof ReviewDecidedBy.Type;
+
+/** Who last wrote a reply draft: the agent (from chat or triage) or the user in the panel. */
+export const ReviewEditor = Schema.Literals(["agent", "panel"]);
+export type ReviewEditor = typeof ReviewEditor.Type;
+
+/** Where a point's GitHub threads stand, from the latest sync. */
+export const ReviewGithubState = Schema.Literals(["open", "resolved", "outdated"]);
+export type ReviewGithubState = typeof ReviewGithubState.Type;
+
+export const ReviewRoundState = Schema.Literals(["collecting", "applying", "applied"]);
+export type ReviewRoundState = typeof ReviewRoundState.Type;
+
+export const ReviewSourceKind = Schema.Literals(["copilot", "human", "local"]);
+export type ReviewSourceKind = typeof ReviewSourceKind.Type;
+
+/** `not-run`: requested, then withdrawn without a review. */
+export const ReviewSourceState = Schema.Literals(["requested", "reviewing", "done", "not-run"]);
+export type ReviewSourceState = typeof ReviewSourceState.Type;
+
+export const ReviewReplyStyle = Schema.Literals(["shorter", "friendlier", "mention-commit"]);
+export type ReviewReplyStyle = typeof ReviewReplyStyle.Type;
+
+/** One live review per pull request per group; its review chat owns the list. */
+export const ReviewSession = Schema.Struct({
+  id: ReviewSessionId,
+  projectId: ProjectId,
+  pullRequest: ThreadPullRequestKey,
+  url: TrimmedNonEmptyString,
+  groupId: ThreadGroupId,
+  reviewThreadId: ThreadId,
+  phase: ReviewPhase,
+  round: PositiveInt,
+  headSha: Schema.NullOr(TrimmedNonEmptyString),
+  nextNumber: PositiveInt,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type ReviewSession = typeof ReviewSession.Type;
+
+/** A round: the reviews that went in on `headSha` and the points that came out. */
+export const ReviewRound = Schema.Struct({
+  round: PositiveInt,
+  headSha: Schema.NullOr(TrimmedNonEmptyString),
+  state: ReviewRoundState,
+  /** The commit the apply pushed; set when the round is applied. */
+  appliedSha: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type ReviewRound = typeof ReviewRound.Type;
+
+/** The provider instance and model a local review ran on, shown as "ran on …". */
+export const ReviewRanOn = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+});
+export type ReviewRanOn = typeof ReviewRanOn.Type;
+
+/**
+ * One review that went into a round: a GitHub review (id is its node id), a pending
+ * request (`request:<round>:<login>`), or a local review run (`local:<uuid>`).
+ */
+export const ReviewSource = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  round: PositiveInt,
+  kind: ReviewSourceKind,
+  state: ReviewSourceState,
+  author: Schema.NullOr(TrimmedNonEmptyString),
+  isBot: Schema.Boolean,
+  commitSha: Schema.NullOr(TrimmedNonEmptyString),
+  commentCount: NonNegativeInt,
+  /** Covered by a triage; new untriaged finished sources light the Triage button. */
+  triaged: Schema.Boolean,
+  /** The chat a local review runs in. */
+  threadId: Schema.NullOr(ThreadId),
+  ranOn: Schema.NullOr(ReviewRanOn),
+  url: Schema.NullOr(TrimmedNonEmptyString),
+  updatedAt: IsoDateTime,
+});
+export type ReviewSource = typeof ReviewSource.Type;
+
+/**
+ * Exactly what a review said. `key` is the finding key points use:
+ * `gh:<thread node id>`, `gh-review:<review node id>` for a review's body, or
+ * `local:<path>:<slug>` for a local finding.
+ */
+export const ReviewSourceComment = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  threadId: Schema.NullOr(TrimmedNonEmptyString),
+  path: Schema.NullOr(TrimmedNonEmptyString),
+  line: Schema.NullOr(PositiveInt),
+  body: Schema.String,
+  url: Schema.NullOr(TrimmedNonEmptyString),
+  diffHunk: Schema.NullOr(Schema.String),
+});
+export type ReviewSourceComment = typeof ReviewSourceComment.Type;
+
+/** Another pull request in the stack already fixes this point. */
+export const ReviewAlreadyFixedIn = Schema.Struct({
+  number: PositiveInt,
+  url: TrimmedNonEmptyString,
+});
+export type ReviewAlreadyFixedIn = typeof ReviewAlreadyFixedIn.Type;
+
+/**
+ * One numbered point. `round` is where it was first raised, `lastSeenRound` the latest
+ * round that raised it; the panel lists it under `lastSeenRound`.
+ */
+export const ReviewItem = Schema.Struct({
+  number: PositiveInt,
+  round: PositiveInt,
+  lastSeenRound: PositiveInt,
+  sourceKeys: Schema.Array(TrimmedNonEmptyString),
+  sources: Schema.Array(ReviewItemSource),
+  /** The review rows whose comments carry one of `sourceKeys`. */
+  sourceIds: Schema.Array(TrimmedNonEmptyString),
+  githubThreadIds: Schema.Array(TrimmedNonEmptyString),
+  githubState: Schema.NullOr(ReviewGithubState),
+  path: Schema.NullOr(TrimmedNonEmptyString),
+  line: Schema.NullOr(PositiveInt),
+  summary: TrimmedNonEmptyString,
+  /** A few words for the composer chip and the message tag. */
+  shortName: TrimmedNonEmptyString,
+  /** What's wrong, in plain words. */
+  problem: Schema.String,
+  /** Why it matters. */
+  impact: Schema.String,
+  /** What the fix does. */
+  solution: Schema.String,
+  /** Why we'd skip it. */
+  skipReason: Schema.String,
+  /** A few unified-diff lines the point is about. */
+  excerpt: Schema.NullOr(Schema.String),
+  /** Claude's one-line call. Never a decision. */
+  recommendation: Schema.NullOr(Schema.String),
+  suggestedDecision: Schema.NullOr(ReviewSuggestedDecision),
+  alreadyFixedIn: Schema.NullOr(ReviewAlreadyFixedIn),
+  decision: ReviewDecision,
+  decidedBy: Schema.NullOr(ReviewDecidedBy),
+  reason: Schema.NullOr(Schema.String),
+  conclusion: Schema.NullOr(Schema.String),
+  draftReply: Schema.NullOr(Schema.String),
+  /** Counts every write, so the panel can mark a draft that changed while it was open. */
+  draftReplyRevision: NonNegativeInt,
+  draftReplyBy: Schema.NullOr(ReviewEditor),
+  applyState: ReviewApplyState,
+  /** Not raised again since the round moved on. */
+  stale: Schema.Boolean,
+  viewed: Schema.Boolean,
+  sideThreadId: Schema.NullOr(ThreadId),
+  updatedAt: IsoDateTime,
+});
+export type ReviewItem = typeof ReviewItem.Type;
+
+export const ReviewSessionSnapshot = Schema.Struct({
+  session: ReviewSession,
+  rounds: Schema.Array(ReviewRound),
+  sources: Schema.Array(ReviewSource),
+  items: Schema.Array(ReviewItem),
+});
+export type ReviewSessionSnapshot = typeof ReviewSessionSnapshot.Type;
+
+/** The review of one pull request in the group of `threadId`. */
+export const ReviewSessionSubscribeInput = Schema.Struct({
+  threadId: ThreadId,
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+});
+export type ReviewSessionSubscribeInput = typeof ReviewSessionSubscribeInput.Type;
+
+/** The latest review of that pull request in the group, or null when there is none. */
+export const ReviewSessionSubscribeResult = Schema.Struct({
+  snapshot: Schema.NullOr(ReviewSessionSnapshot),
+});
+export type ReviewSessionSubscribeResult = typeof ReviewSessionSubscribeResult.Type;
+
+export const ReviewSourceReadInput = Schema.Struct({
+  sessionId: ReviewSessionId,
+  sourceId: TrimmedNonEmptyString,
+});
+export type ReviewSourceReadInput = typeof ReviewSourceReadInput.Type;
+
+export const ReviewSourceReadResult = Schema.Struct({
+  comments: Schema.Array(ReviewSourceComment),
+});
+export type ReviewSourceReadResult = typeof ReviewSourceReadResult.Type;
+
+const PointFields = { sessionId: ReviewSessionId, number: PositiveInt } as const;
+
+/** A decision from the Review tab. The user made it there, so it needs no quote. */
+export const ReviewItemsDecideInput = Schema.Struct({
+  ...PointFields,
+  decision: ReviewDecision,
+  reason: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2000))),
+});
+export type ReviewItemsDecideInput = typeof ReviewItemsDecideInput.Type;
+
+export const ReviewItemSetViewedInput = Schema.Struct({ ...PointFields, viewed: Schema.Boolean });
+export type ReviewItemSetViewedInput = typeof ReviewItemSetViewedInput.Type;
+
+export const ReviewItemEditReplyInput = Schema.Struct({
+  ...PointFields,
+  draftReply: Schema.String.check(Schema.isMaxLength(20_000)),
+});
+export type ReviewItemEditReplyInput = typeof ReviewItemEditReplyInput.Type;
+
+export const ReviewItemResult = Schema.Struct({ item: ReviewItem });
+export type ReviewItemResult = typeof ReviewItemResult.Type;
+
+/** What a panel button asks the review chat's agent to do. */
+export const ReviewTurnRequest = Schema.Union([
+  Schema.TaggedStruct("triage", {}),
+  Schema.TaggedStruct("apply", {}),
+  Schema.TaggedStruct("rewrite-reply", { number: PositiveInt, style: ReviewReplyStyle }),
+]);
+export type ReviewTurnRequest = typeof ReviewTurnRequest.Type;
+
+export const ReviewRequestInput = Schema.Struct({
+  sessionId: ReviewSessionId,
+  request: ReviewTurnRequest,
+});
+export type ReviewRequestInput = typeof ReviewRequestInput.Type;
+
+export const ReviewSessionInput = Schema.Struct({ sessionId: ReviewSessionId });
+export type ReviewSessionInput = typeof ReviewSessionInput.Type;
+
+export const ReviewSideChatInput = Schema.Struct(PointFields);
+export type ReviewSideChatInput = typeof ReviewSideChatInput.Type;
+
+/** A chat the review started or found: a side chat or the local review's chat. */
+export const ReviewThreadResult = Schema.Struct({ threadId: ThreadId });
+export type ReviewThreadResult = typeof ReviewThreadResult.Type;
+
+export class ReviewSessionError extends Schema.TaggedError<ReviewSessionError>()(
+  "ReviewSessionError",
+  {
+    message: Schema.String,
+    sessionId: Schema.optional(ReviewSessionId),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}

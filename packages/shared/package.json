@@ -7,6 +7,10 @@
       "types": "./src/groupOrder.ts",
       "import": "./src/groupOrder.ts"
     },
+    "./reviewPointTag": {
+      "types": "./src/reviewPointTag.ts",
+      "import": "./src/reviewPointTag.ts"
+    },
     "./orderKeys": {
       "types": "./src/orderKeys.ts",
       "import": "./src/orderKeys.ts"

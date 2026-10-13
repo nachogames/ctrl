@@ -391,6 +391,9 @@ export const ScheduledTaskId = makeEntityId("ScheduledTaskId");
 export const SecretRef = makeEntityId("SecretRef");
 export type SecretRef = typeof SecretRef.Type;
 export type ScheduledTaskId = typeof ScheduledTaskId.Type;
+/** A pull request review session in Ctrl's review loop. */
+export const ReviewSessionId = makeEntityId("ReviewSessionId");
+export type ReviewSessionId = typeof ReviewSessionId.Type;
 export const ApprovalRequestId = makeEntityId("ApprovalRequestId");
 export type ApprovalRequestId = typeof ApprovalRequestId.Type;
 export const CheckpointRef = makeEntityId("CheckpointRef");
