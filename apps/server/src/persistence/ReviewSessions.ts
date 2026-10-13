@@ -276,6 +276,15 @@ export class ReviewSessionRepository extends Context.Service<
       sourceId: string,
     ) => Effect.Effect<ReadonlyArray<ReviewSourceComment>, E>;
     readonly deleteSource: (sessionId: ReviewSessionId, sourceId: string) => Effect.Effect<void, E>;
+    /**
+     * Files a review under a later round, keeping its triage mark and comments. Only the
+     * review service moves rounds; `upsertSource` keeps a known source's round.
+     */
+    readonly moveSourceToRound: (
+      sessionId: ReviewSessionId,
+      sourceId: string,
+      round: number,
+    ) => Effect.Effect<void, E>;
     readonly markSourcesTriaged: (
       sessionId: ReviewSessionId,
       sourceIds: ReadonlyArray<string>,
@@ -485,6 +494,11 @@ const make = Effect.gen(function* () {
       sql`
         DELETE FROM review_sources WHERE session_id = ${sessionId} AND source_id = ${sourceId}
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("deleteReviewSource"))),
+    moveSourceToRound: (sessionId, sourceId, round) =>
+      sql`
+        UPDATE review_sources SET round = ${round}
+        WHERE session_id = ${sessionId} AND source_id = ${sourceId}
+      `.pipe(Effect.asVoid, Effect.mapError(sqlError("moveReviewSourceToRound"))),
     markSourcesTriaged: (sessionId, sourceIds) =>
       sourceIds.length === 0
         ? Effect.void

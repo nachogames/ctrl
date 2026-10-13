@@ -246,3 +246,67 @@ it.effect("takes a local review's findings only once", () => {
     assert.include(unknown.message, "not running a review");
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
+
+it.effect(
+  "files a local review that finishes after its round moved on in the current round",
+  () => {
+    const harness = newHarness();
+    return Effect.gen(function* () {
+      const reviews = yield* service;
+      const { snapshot } = yield* reviews.open(openInput);
+      const sessionId = snapshot.session.id;
+      yield* reviews.runLocalReview({ sessionId });
+      const [running] = (yield* reviews.read(sessionId)).sources;
+      yield* reviews.advanceRound({ sessionId, headSha: "def456", finish: false });
+      const done = yield* reviews.submitLocalFindings({
+        sessionId,
+        sourceId: running!.id,
+        headSha: "abc123",
+        findings: [{ path: null, line: null, title: "Stale", body: "Fix it.", slug: "stale" }],
+      });
+      assert.deepEqual([done.round, done.state, done.triaged], [2, "done", false]);
+      const [stored] = (yield* reviews.read(sessionId)).sources;
+      assert.deepEqual([stored?.round, stored?.state, stored?.triaged], [2, "done", false]);
+      yield* reviews.requestTurn({ sessionId, request: { _tag: "triage" } });
+      assert.include(harness.sent[0]?.text ?? "", "Triage round 2");
+      assert.include(harness.sent[0]?.text ?? "", "your review");
+      yield* reviews.importItems({
+        sessionId,
+        sourceIds: [done.id],
+        items: [importItem("local::stale", { sources: ["local-review"] })],
+      });
+    }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+  },
+);
+
+it.effect("carries a finished, untriaged review into the next round", () => {
+  const harness = newHarness();
+  harness.read = reviewRoundRead({
+    reviews: [
+      githubReview("PRR_1", "copilot-pull-request-reviewer", { isBot: true }),
+      githubReview("PRR_dan", "dan"),
+    ],
+  });
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({ sessionId, sourceIds: ["PRR_1"], items: [] });
+    // GitHub has nothing new; only the advance moves sources.
+    harness.read = null;
+    yield* reviews.advanceRound({ sessionId, headSha: "def456", finish: false });
+    const sources = (yield* reviews.read(sessionId)).sources;
+    assert.deepEqual(
+      sources
+        .map((source) => [source.id, source.round, source.triaged])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      [
+        ["PRR_1", 1, true],
+        ["PRR_dan", 2, false],
+      ],
+    );
+    yield* reviews.requestTurn({ sessionId, request: { _tag: "triage" } });
+    assert.include(harness.sent[0]?.text ?? "", "Triage round 2 of the review of");
+    assert.include(harness.sent[0]?.text ?? "", "@dan");
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});

@@ -890,6 +890,12 @@ export const make = Effect.gen(function* () {
             });
             // Points stay stale until a new round's import raises them again.
             yield* repo.markItemsStale(session.id);
+            // A review that finished but was never triaged goes to the next round's triage.
+            for (const source of yield* repo.listSources(session.id)) {
+              if (source.round === session.round && source.state === "done" && !source.triaged) {
+                yield* repo.moveSourceToRound(session.id, source.id, updated.round);
+              }
+            }
           }
           return updated;
         }),
@@ -1066,14 +1072,20 @@ export const make = Effect.gen(function* () {
           url: null,
           diffHunk: null,
         }));
+        // A run can outlast its round. Its findings go to the current round's triage;
+        // `commitSha` says which code they were about.
         const done: ReviewSource = {
           ...source,
+          round: session.round,
           state: "done",
           commitSha: input.headSha,
           commentCount: comments.length,
           updatedAt: yield* now,
         };
         yield* repo.upsertSource(session.id, done, comments);
+        if (source.round !== session.round) {
+          yield* repo.moveSourceToRound(session.id, source.id, session.round);
+        }
         return done;
       }),
     ).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));

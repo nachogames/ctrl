@@ -158,6 +158,27 @@ it.effect("links one point to every review that raised it", () =>
   ),
 );
 
+it.effect("moves a review to a later round with its triage mark and comments", () =>
+  Effect.gen(function* () {
+    const repo = yield* repository;
+    yield* repo.insertSession(session);
+    yield* repo.upsertSource(session.id, local, [comment("local::stale", "Stale comment.")]);
+    yield* repo.upsertSource(session.id, copilot, null);
+    yield* repo.moveSourceToRound(session.id, local.id, 2);
+    const sources = yield* repo.listSources(session.id);
+    assert.deepEqual(
+      sources.map((source) => [source.id, source.round, source.triaged]),
+      [
+        ["local:run-1", 2, false],
+        ["PRR_copilot", 1, false],
+      ],
+    );
+    assert.equal((yield* repo.listSourceComments(session.id, local.id)).length, 1);
+  }).pipe(
+    Effect.provide(ReviewSessions.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
+  ),
+);
+
 it.effect("keeps a point key with the first point that raised it", () =>
   Effect.gen(function* () {
     const repo = yield* repository;
