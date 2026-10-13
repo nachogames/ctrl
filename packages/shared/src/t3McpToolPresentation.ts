@@ -68,6 +68,7 @@ export type T3McpToolSummaryAction =
   | "unwatch-pr"
   | "write-pr-guides"
   | "read-pr-guide"
+  | "pr-review"
   | "browser"
   | "device"
   | "html-preview"
@@ -344,6 +345,51 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "group-move-thread",
   ),
   t3_group_resource: tool(["Update", "Updating", "Updated", "group resources"], "group-resource"),
+  review_session_open: tool(
+    ["Open", "Opening", "Opened", "a pull request review"],
+    "pr-review",
+    "pull-request",
+  ),
+  review_session_read: tool(
+    ["Read", "Reading", "Read", "the review list"],
+    "pr-review",
+    "pull-request",
+  ),
+  review_source_submit: tool(
+    ["Submit", "Submitting", "Submitted", "your review's findings"],
+    "pr-review",
+    "pull-request",
+  ),
+  review_local_review_start: tool(
+    ["Start", "Starting", "Started", "your review"],
+    "pr-review",
+    "pull-request",
+  ),
+  review_items_import: tool(
+    ["Import", "Importing", "Imported", "review points"],
+    "pr-review",
+    "pull-request",
+  ),
+  review_items_annotate: tool(
+    ["Annotate", "Annotating", "Annotated", "a review point"],
+    "pr-review",
+    "pull-request",
+  ),
+  review_items_decide: tool(
+    ["Record", "Recording", "Recorded", "a review decision"],
+    "pr-review",
+    "pull-request",
+  ),
+  review_items_record_apply: tool(
+    ["Record", "Recording", "Recorded", "a review result"],
+    "pr-review",
+    "pull-request",
+  ),
+  review_round_advance: tool(
+    ["Start", "Starting", "Started", "the next review round"],
+    "pr-review",
+    "pull-request",
+  ),
   t3_attachment_prepare_upload: tool(
     ["Prepare", "Preparing", "Prepared", "an attachment upload"],
     "attachment-prepare",

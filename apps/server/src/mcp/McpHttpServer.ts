@@ -32,6 +32,8 @@ import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { GroupToolkit } from "./toolkits/group/tools.ts";
 import * as GroupHandlers from "./toolkits/group/handlers.ts";
+import { ReviewToolkit } from "./toolkits/review/tools.ts";
+import * as ReviewHandlers from "./toolkits/review/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 import * as AttachmentHandlers from "./toolkits/attachment/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
@@ -837,6 +839,8 @@ const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHand
 
 export const layerGroupToolkit = toolkitRegistration(GroupToolkit, GroupHandlers.layer);
 
+export const layerReviewToolkit = toolkitRegistration(ReviewToolkit, ReviewHandlers.layer);
+
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
   AttachmentHandlers.layer,
@@ -877,6 +881,7 @@ export const layer = Layer.mergeAll(
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerGroupToolkit,
+  layerReviewToolkit,
   layerEnvironmentToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,

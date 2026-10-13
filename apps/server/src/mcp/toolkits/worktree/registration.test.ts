@@ -38,6 +38,7 @@ import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import * as GroupResourceScanner from "../../../threadGroups/GroupResourceScanner.ts";
+import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -65,6 +66,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(ThreadGroupLaunchService.ThreadGroupLaunchService)({}),
   Layer.mock(ThreadGroupStore.ThreadGroupStoreV2)({}),
   Layer.mock(GroupResourceScanner.GroupResourceScanner)({}),
+  Layer.mock(ReviewSessionService.ReviewSessionService)({}),
 );
 
 const ToolsListPayload = Schema.fromJsonString(

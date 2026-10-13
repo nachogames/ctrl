@@ -42,6 +42,7 @@ import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts
 import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.ts";
 import * as ReviewSessions from "./persistence/ReviewSessions.ts";
 import * as ReviewSessionChanges from "./reviewSessions/ReviewSessionChanges.ts";
+import * as ReviewSessionService from "./reviewSessions/ReviewSessionService.ts";
 import * as ReviewSyncService from "./reviewSessions/ReviewSyncService.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -748,6 +749,8 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   // Ctrl review loop: one sync, one repository and one change feed for every review consumer
   // above. Provided before `layerPullRequestService`, which therefore reaches the sync too.
+  // One review service for the MCP tools and WebSocket subscribers, so each sees every change.
+  Layer.provide(ReviewSessionService.layer),
   Layer.provide(ReviewSyncService.layer),
   Layer.provide(Layer.mergeAll(ReviewSessions.layer, ReviewSessionChanges.layer)),
   // Both transports consume the same service instance, so caches single-flight across clients

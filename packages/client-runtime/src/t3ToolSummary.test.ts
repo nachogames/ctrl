@@ -7,6 +7,12 @@ function completed(input: unknown, output?: unknown): T3ToolSummaryCall {
 }
 
 describe("summarizeT3ToolCalls", () => {
+  it("summarizes review list updates", () => {
+    expect(summarizeT3ToolCalls("pr-review", [completed({}, {}), completed({}, {})]).label).toBe(
+      "Updated the review list 2 times",
+    );
+  });
+
   it("counts registered projects, repository destinations, and accepted thread launches", () => {
     expect(
       summarizeT3ToolCalls("project-create", [

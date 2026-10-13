@@ -54,6 +54,7 @@ import { EnvironmentToolkit } from "./environment/tools.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
 import { ProjectToolkit } from "./project/tools.ts";
 import { GroupToolkit } from "./group/tools.ts";
+import { ReviewToolkit } from "./review/tools.ts";
 import { AttachmentToolkit } from "./attachment/tools.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
@@ -94,6 +95,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     AttachmentToolkit,
     ProjectToolkit,
     GroupToolkit,
+    ReviewToolkit,
     EnvironmentToolkit,
     PreviewControlsToolkit,
     DeviceToolkit,
