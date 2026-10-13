@@ -312,6 +312,59 @@ it.effect("sends the Review tab a fresh snapshot after every change", () =>
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
 
+it.effect("shows a review started after the tab opened on a chat that had no group yet", () => {
+  const harness = newHarness();
+  const caller = ThreadId.make("thread:caller");
+  harness.shells.set(caller, chatShell(caller, { groupId: null }));
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const subscribed = yield* Deferred.make<void>();
+    const fiber = yield* reviews
+      .subscribe({ threadId: caller, repository: prKey.repository, number: prKey.number })
+      .pipe(
+        Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+    yield* Deferred.await(subscribed);
+    // The skill puts the chat in a group, then opens the review from it.
+    harness.shells.set(caller, chatShell(caller));
+    yield* reviews.open({ ...openInput, reviewThreadId: caller });
+    const emitted = Array.from(yield* Fiber.join(fiber));
+    assert.deepEqual(
+      emitted.map((result) => result.snapshot?.session.reviewThreadId ?? null),
+      [null, caller],
+    );
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("follows a chat moved to another group to that group's review", () => {
+  const harness = newHarness();
+  const otherGroup = ThreadGroupId.make("group:other");
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const first = yield* reviews.open(openInput);
+    const subscribed = yield* Deferred.make<void>();
+    const fiber = yield* reviews
+      .subscribe({ threadId: reviewThreadId, repository: prKey.repository, number: prKey.number })
+      .pipe(
+        Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+    yield* Deferred.await(subscribed);
+    harness.shells.set(reviewThreadId, chatShell(reviewThreadId, { groupId: otherGroup }));
+    const moved = yield* reviews.open({ ...openInput, groupId: otherGroup });
+    const emitted = Array.from(yield* Fiber.join(fiber));
+    assert.deepEqual(
+      emitted.map((result) => result.snapshot?.session.id),
+      [first.snapshot.session.id, moved.snapshot.session.id],
+    );
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
 it.effect("tells the agent which point a message is about and what else is in the stack", () => {
   const harness = newHarness();
   harness.projectThreads.push(

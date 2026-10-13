@@ -465,14 +465,17 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         // Subscribe before the first read so a change landing between the two is not lost.
         const feed = yield* changes.subscribe;
-        const shell = yield* threads
-          .getThreadShell(input.threadId)
-          .pipe(Effect.orElseSucceed(() => null));
-        const groupId = shell?.groupId ?? null;
+        // The chat's group is read on every lookup: the agent may group the chat (or move it)
+        // after the tab opened, and the open tab must then show that group's review.
         const lookup: Effect.Effect<ReviewSessionSubscribeResult, ReviewSessionError> =
-          groupId === null
-            ? Effect.succeed({ snapshot: null })
-            : repo
+          Effect.suspend(() => threads.getThreadShell(input.threadId)).pipe(
+            Effect.orElseSucceed(() => null),
+            Effect.flatMap((shell) => {
+              const groupId = shell?.groupId ?? null;
+              if (groupId === null) {
+                return Effect.succeed<ReviewSessionSubscribeResult>({ snapshot: null });
+              }
+              return repo
                 .findLatestSessionForPullRequest({
                   repository: input.repository,
                   number: input.number,
@@ -489,15 +492,23 @@ export const make = Effect.gen(function* () {
                   ),
                   Effect.mapError(keepReviewErrors()),
                 );
+            }),
+          );
         const first = yield* lookup;
-        // Re-read only for this review, or for any review while none is shown or it is done
-        // (a new one for the same pull request may start).
+        // Re-read for this review, for any review while none is shown or it is done (a new one
+        // for the same pull request may start), or once the chat has left the shown review's
+        // group (another group's review may be the one to show).
         let shown = first.snapshot?.session ?? null;
         return Stream.concat(
           Stream.make(first),
           feed.pipe(
-            Stream.filter(
-              (sessionId) => shown === null || shown.phase === "done" || sessionId === shown.id,
+            Stream.filterEffect((sessionId) =>
+              shown === null || shown.phase === "done" || sessionId === shown.id
+                ? Effect.succeed(true)
+                : threads.getThreadShell(input.threadId).pipe(
+                    Effect.map((shell) => shell?.groupId !== shown?.groupId),
+                    Effect.orElseSucceed(() => true),
+                  ),
             ),
             Stream.mapEffect(() => lookup),
             Stream.tap((result) =>

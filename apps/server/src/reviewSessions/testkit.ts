@@ -349,7 +349,7 @@ export const makeReviewServiceLayer = (harness: ReviewServiceHarness) =>
           watchFingerprint: () => Effect.succeed(null),
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadShell: (threadId) => Effect.succeed(harness.shells.get(threadId) ?? null),
+          getThreadShell: (threadId) => Effect.sync(() => harness.shells.get(threadId) ?? null),
           listProjectThreads: () => Effect.sync(() => harness.projectThreads),
           sendToThread: (input) =>
             harness.sendFails
