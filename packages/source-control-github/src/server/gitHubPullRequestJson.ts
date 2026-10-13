@@ -1102,14 +1102,16 @@ export const REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY = `query($owner: String!, $nam
 /**
  * One read for Ctrl's review loop: reviews with the commit each reviewed, the reviewers still
  * asked, and thread comments with the review that wrote them, so each review's own comments can
- * be shown as it wrote them.
+ * be shown as it wrote them. Reviews and threads are the newest 100 (`last:`, still oldest first
+ * within the page): every thread reply Ctrl posts is itself a review, so a long-running pull
+ * request passes 100 reviews, and a `first:` page would never see a new one.
  */
 export const REVIEW_ROUND_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       headRefOid
       author { __typename login avatarUrl }
-      reviews(first: 100) {
+      reviews(last: 100) {
         nodes {
           id body state submittedAt url
           commit { oid }
@@ -1124,7 +1126,7 @@ export const REVIEW_ROUND_GRAPHQL_QUERY = `query($owner: String!, $name: String!
           }
         }
       }
-      reviewThreads(first: 100) {
+      reviewThreads(last: 100) {
         nodes {
           id isResolved isOutdated path line
           comments(first: 20) {

@@ -27,6 +27,7 @@ import {
   decodeViewerPermissionsJson,
   decodeWorkflowRunsJson,
   reviewThreadConversation,
+  REVIEW_ROUND_GRAPHQL_QUERY,
   REVIEW_THREADS_GRAPHQL_QUERY,
   pullRequestCoreGraphQlQuery,
   pullRequestSearchGraphQlQuery,
@@ -2152,6 +2153,16 @@ describe("pull request watch fingerprints", () => {
 });
 
 describe("decodeReviewRoundJson", () => {
+  it("asks for the newest reviews and threads, each thread from its first comment", () => {
+    // Every thread reply Ctrl posts is a review, so a busy pull request passes 100 reviews; the
+    // newest page must be the one read. GitHub returns a `last:` page in chronological order.
+    const query = REVIEW_ROUND_GRAPHQL_QUERY.replace(/\s+/g, " ");
+    expect(query).toContain("reviews(last: 100)");
+    expect(query).toContain("reviewThreads(last: 100)");
+    // A thread's first comment is its author's, so comments stay oldest first.
+    expect(query).toMatch(/comments\(first: \d+\)/);
+  });
+
   it("reads each review's commit, who is still asked, and which review wrote each comment", () => {
     const raw = JSON.stringify({
       data: {
