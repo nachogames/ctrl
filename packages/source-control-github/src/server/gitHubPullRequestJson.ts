@@ -32,6 +32,7 @@ import type {
   PullRequestState,
   PullRequestThreadComment,
 } from "@t3tools/contracts";
+import type { ProviderChangeRequestReviewRound } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
@@ -1093,6 +1094,47 @@ export const REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY = `query($owner: String!, $nam
       comments(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
+      }
+    }
+  }
+}`;
+
+/**
+ * One read for Ctrl's review loop: reviews with the commit each reviewed, the reviewers still
+ * asked, and thread comments with the review that wrote them, so each review's own comments can
+ * be shown as it wrote them.
+ */
+export const REVIEW_ROUND_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      headRefOid
+      author { __typename login avatarUrl }
+      reviews(first: 100) {
+        nodes {
+          id body state submittedAt url
+          commit { oid }
+          author { __typename login avatarUrl }
+        }
+      }
+      reviewRequests(first: 50) {
+        nodes {
+          requestedReviewer {
+            ... on User { login name avatarUrl }
+            ... on Bot { __typename login avatarUrl }
+          }
+        }
+      }
+      reviewThreads(first: 100) {
+        nodes {
+          id isResolved isOutdated path line
+          comments(first: 20) {
+            nodes {
+              id body url diffHunk
+              pullRequestReview { id }
+              author { __typename login avatarUrl }
+            }
+          }
+        }
       }
     }
   }
@@ -2706,6 +2748,114 @@ export function decodeReviewDismissalsJson(raw: string): Result.Result<
   return Result.succeed({
     dismissalsByReviewId: toDismissalEntries(items.nodes),
     nextCursor: nextCursorOf(items.pageInfo),
+  });
+}
+
+const RawReviewRoundSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      pullRequest: Schema.Struct({
+        headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
+        author: Schema.optional(Schema.NullOr(RawActorSchema)),
+        reviews: Schema.optional(
+          Schema.Struct({
+            nodes: Schema.Array(
+              Schema.Struct({
+                id: Schema.String,
+                body: Schema.optional(Schema.NullOr(Schema.String)),
+                state: Schema.optional(Schema.NullOr(Schema.String)),
+                submittedAt: Schema.optional(Schema.NullOr(Schema.String)),
+                url: Schema.optional(Schema.NullOr(Schema.String)),
+                commit: Schema.optional(
+                  Schema.NullOr(
+                    Schema.Struct({ oid: Schema.optional(Schema.NullOr(Schema.String)) }),
+                  ),
+                ),
+                author: Schema.optional(Schema.NullOr(RawActorSchema)),
+              }),
+            ),
+          }),
+        ),
+        reviewRequests: Schema.optional(
+          Schema.Struct({
+            nodes: Schema.Array(
+              Schema.Struct({ requestedReviewer: Schema.optional(Schema.NullOr(RawActorSchema)) }),
+            ),
+          }),
+        ),
+        reviewThreads: Schema.optional(
+          Schema.Struct({
+            nodes: Schema.Array(
+              Schema.Struct({
+                id: Schema.String,
+                isResolved: Schema.optional(Schema.NullOr(Schema.Boolean)),
+                isOutdated: Schema.optional(Schema.NullOr(Schema.Boolean)),
+                path: Schema.optional(Schema.NullOr(Schema.String)),
+                line: Schema.optional(Schema.NullOr(Schema.Number)),
+                comments: Schema.Struct({
+                  nodes: Schema.Array(
+                    Schema.Struct({
+                      id: Schema.String,
+                      body: Schema.optional(Schema.NullOr(Schema.String)),
+                      url: Schema.optional(Schema.NullOr(Schema.String)),
+                      diffHunk: Schema.optional(Schema.NullOr(Schema.String)),
+                      pullRequestReview: Schema.optional(
+                        Schema.NullOr(
+                          Schema.Struct({ id: Schema.optional(Schema.NullOr(Schema.String)) }),
+                        ),
+                      ),
+                      author: Schema.optional(Schema.NullOr(RawActorSchema)),
+                    }),
+                  ),
+                }),
+              }),
+            ),
+          }),
+        ),
+      }),
+    }),
+  }),
+});
+const decodeReviewRound = decodeJsonResult(RawReviewRoundSchema);
+
+export function decodeReviewRoundJson(
+  raw: string,
+): Result.Result<ProviderChangeRequestReviewRound, DecodeFailure> {
+  const decoded = decodeReviewRound(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const pullRequest = decoded.success.data.repository.pullRequest;
+  return Result.succeed({
+    authorLogin: trimmed(pullRequest.author?.login),
+    headSha: trimmed(pullRequest.headRefOid),
+    reviews: (pullRequest.reviews?.nodes ?? []).map((review) => ({
+      id: review.id,
+      author: toActor(review.author),
+      state: review.state?.toUpperCase() ?? "COMMENTED",
+      body: review.body ?? "",
+      submittedAt: trimmed(review.submittedAt),
+      url: trimmed(review.url),
+      commitSha: trimmed(review.commit?.oid),
+    })),
+    pendingReviewers: (pullRequest.reviewRequests?.nodes ?? []).flatMap((node) => {
+      const reviewer = toActor(node.requestedReviewer);
+      return reviewer === null ? [] : [reviewer];
+    }),
+    threads: (pullRequest.reviewThreads?.nodes ?? []).map((thread) => ({
+      id: thread.id,
+      isResolved: thread.isResolved === true,
+      isOutdated: thread.isOutdated === true,
+      path: trimmed(thread.path),
+      line:
+        thread.line !== null && thread.line !== undefined && thread.line > 0 ? thread.line : null,
+      comments: thread.comments.nodes.map((comment) => ({
+        id: comment.id,
+        reviewId: trimmed(comment.pullRequestReview?.id),
+        author: toActor(comment.author),
+        body: comment.body ?? "",
+        url: trimmed(comment.url),
+        diffHunk: comment.diffHunk ?? null,
+      })),
+    })),
   });
 }
 

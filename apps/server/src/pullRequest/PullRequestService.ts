@@ -86,6 +86,7 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   type ProviderChangeRequest,
+  type ProviderChangeRequestReviewRound,
   type ProviderListCursor,
   type ProviderChangeRequestWatchFingerprint,
   type PullRequestProviderApi,
@@ -275,6 +276,10 @@ export class PullRequestService extends Context.Service<
     readonly activity: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestActivity, PullRequestError>;
+    /** Reviews, outstanding requests and threads for Ctrl's review loop; null off GitHub. */
+    readonly reviewRound: (
+      input: PullRequestRef,
+    ) => Effect.Effect<ProviderChangeRequestReviewRound | null, PullRequestError>;
     readonly threadComments: (
       input: PullRequestThreadCommentsInput,
     ) => Effect.Effect<PullRequestThreadCommentsResult, PullRequestError>;
@@ -651,6 +656,14 @@ function withRateLimitBackoff(
           getChangeRequestWatchFingerprint: wrap(
             "getChangeRequestWatchFingerprint",
             api.getChangeRequestWatchFingerprint,
+          ),
+        }),
+    ...(api.getChangeRequestReviewRound === undefined
+      ? {}
+      : {
+          getChangeRequestReviewRound: wrap(
+            "getChangeRequestReviewRound",
+            api.getChangeRequestReviewRound,
           ),
         }),
     getChangeRequestActivity: wrap("getChangeRequestActivity", api.getChangeRequestActivity),
@@ -1904,6 +1917,20 @@ export const make = Effect.gen(function* () {
             })),
           ),
       ),
+    );
+
+  const reviewRoundUncached: PullRequestService["Service"]["reviewRound"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project) => {
+        const read = project.api.getChangeRequestReviewRound;
+        if (read === undefined) return Effect.succeed(null);
+        return read({
+          cwd: project.project.workspaceRoot,
+          repository: project.repository,
+          host: project.host,
+          number: input.number,
+        }).pipe(Effect.mapError(toPullRequestError("reviewRound")));
+      }),
     );
 
   const threadComments: PullRequestService["Service"]["threadComments"] = (input) =>
@@ -3565,6 +3592,8 @@ export const make = Effect.gen(function* () {
       Cache.get(watchFingerprintCache, refCacheKey(input)),
     ),
     activity: credentialCached(activity),
+    // Uncached: the review sync gates its reads on the watch fingerprint instead.
+    reviewRound: credentialCached(reviewRoundUncached),
     preview: credentialCached(preview),
     threadComments,
     diff: credentialCached(diff),

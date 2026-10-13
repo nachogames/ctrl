@@ -270,6 +270,41 @@ export interface ProviderChangeRequestActivity {
   readonly reactions?: ReadonlyArray<PullRequestReaction>;
 }
 
+/**
+ * What Ctrl's review loop files as review sources: every submitted review with the commit it
+ * reviewed, who is still asked to review, and each thread with the review each comment came
+ * from. Bounded to the first hundred reviews and threads.
+ */
+export interface ProviderChangeRequestReviewRound {
+  readonly authorLogin: string | null;
+  readonly headSha: string | null;
+  readonly reviews: ReadonlyArray<{
+    readonly id: string;
+    readonly author: PullRequestActor | null;
+    readonly state: string;
+    readonly body: string;
+    readonly submittedAt: string | null;
+    readonly url: string | null;
+    readonly commitSha: string | null;
+  }>;
+  readonly pendingReviewers: ReadonlyArray<PullRequestActor>;
+  readonly threads: ReadonlyArray<{
+    readonly id: string;
+    readonly isResolved: boolean;
+    readonly isOutdated: boolean;
+    readonly path: string | null;
+    readonly line: number | null;
+    readonly comments: ReadonlyArray<{
+      readonly id: string;
+      readonly reviewId: string | null;
+      readonly author: PullRequestActor | null;
+      readonly body: string;
+      readonly url: string | null;
+      readonly diffHunk: string | null;
+    }>;
+  }>;
+}
+
 export interface ProviderDiffSlice {
   readonly patch: string;
   /** Something in this slice could not be shown, as opposed to there being more slices. */
@@ -486,6 +521,11 @@ export interface PullRequestProviderApi {
   readonly getChangeRequestActivity: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestActivity, PullRequestProviderError>;
+
+  /** Reviews, outstanding requests and threads for Ctrl's review loop. Optional: GitHub only. */
+  readonly getChangeRequestReviewRound?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderChangeRequestReviewRound, PullRequestProviderError>;
 
   /** One explicit page after a reader asks to continue an unfinished review thread. */
   readonly getReviewThreadComments?: (

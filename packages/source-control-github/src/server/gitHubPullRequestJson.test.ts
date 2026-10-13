@@ -22,6 +22,7 @@ import {
   decodeLabelCandidatesJson,
   decodeReviewerCandidatesJson,
   decodeReviewThreadCommentsJson,
+  decodeReviewRoundJson,
   decodeReviewThreadsJson,
   decodeViewerPermissionsJson,
   decodeWorkflowRunsJson,
@@ -2147,5 +2148,85 @@ describe("pull request watch fingerprints", () => {
     expect(replied.remarks).not.toBe(before.remarks);
     // A pull request GitHub had no answer for is left for a full read.
     expect(decode(null, pullRequest(base)).has(0)).toBe(false);
+  });
+});
+
+describe("decodeReviewRoundJson", () => {
+  it("reads each review's commit, who is still asked, and which review wrote each comment", () => {
+    const raw = JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            headRefOid: "c7d8e9f",
+            author: { __typename: "User", login: "nach" },
+            reviews: {
+              nodes: [
+                {
+                  id: "PRR_1",
+                  body: "",
+                  state: "COMMENTED",
+                  submittedAt: "2026-10-13T10:00:00Z",
+                  url: "https://github.com/nachogames/ctrl/pull/23#pullrequestreview-1",
+                  commit: { oid: "b4c5d6e" },
+                  author: { __typename: "Bot", login: "copilot-pull-request-reviewer" },
+                },
+              ],
+            },
+            reviewRequests: {
+              nodes: [{ requestedReviewer: { login: "dan", name: "Dan", avatarUrl: null } }, {}],
+            },
+            reviewThreads: {
+              nodes: [
+                {
+                  id: "PRRT_1",
+                  isResolved: false,
+                  isOutdated: false,
+                  path: "scripts/mobile-native-client.ts",
+                  line: 88,
+                  comments: {
+                    nodes: [
+                      {
+                        id: "PRRC_1",
+                        body: "The cache is never invalidated.",
+                        url: "https://github.com/nachogames/ctrl/pull/23#discussion_r1",
+                        diffHunk: "@@ -86,3 +86,3 @@",
+                        pullRequestReview: { id: "PRR_1" },
+                        author: { __typename: "Bot", login: "copilot-pull-request-reviewer" },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    const read = expectSuccess(decodeReviewRoundJson(raw));
+    expect(read.authorLogin).toBe("nach");
+    expect(read.headSha).toBe("c7d8e9f");
+    expect(read.reviews).toEqual([
+      {
+        id: "PRR_1",
+        author: {
+          login: "copilot-pull-request-reviewer",
+          name: null,
+          avatarUrl: null,
+          isBot: true,
+        },
+        state: "COMMENTED",
+        body: "",
+        submittedAt: "2026-10-13T10:00:00Z",
+        url: "https://github.com/nachogames/ctrl/pull/23#pullrequestreview-1",
+        commitSha: "b4c5d6e",
+      },
+    ]);
+    // A team or mannequin request has no login and names nobody.
+    expect(read.pendingReviewers.map((reviewer) => reviewer.login)).toEqual(["dan"]);
+    expect(read.threads[0]?.comments[0]).toMatchObject({
+      reviewId: "PRR_1",
+      diffHunk: "@@ -86,3 +86,3 @@",
+    });
+    expect(read.threads[0]).toMatchObject({ id: "PRRT_1", line: 88, isResolved: false });
   });
 });

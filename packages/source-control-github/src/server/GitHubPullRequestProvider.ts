@@ -505,6 +505,9 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
+    getChangeRequestReviewRound: (input) =>
+      cli.getReviewRound(input).pipe(Effect.mapError(fail("getChangeRequestReviewRound"))),
+
     getReviewThreadComments: (input) =>
       cli.getReviewThreadComments(input).pipe(Effect.mapError(fail("getReviewThreadComments"))),
 

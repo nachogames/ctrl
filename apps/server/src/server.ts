@@ -40,6 +40,9 @@ import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.ts";
+import * as ReviewSessions from "./persistence/ReviewSessions.ts";
+import * as ReviewSessionChanges from "./reviewSessions/ReviewSessionChanges.ts";
+import * as ReviewSyncService from "./reviewSessions/ReviewSyncService.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -737,11 +740,16 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),
+  ReviewSyncService.layerStart,
 ).pipe(
   // Guides read through the same pull request service as every other surface.
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
+  // Ctrl review loop: one sync, one repository and one change feed for every review consumer
+  // above. Provided before `layerPullRequestService`, which therefore reaches the sync too.
+  Layer.provide(ReviewSyncService.layer),
+  Layer.provide(Layer.mergeAll(ReviewSessions.layer, ReviewSessionChanges.layer)),
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP. Provided
   // after the guide service so it reaches that too.

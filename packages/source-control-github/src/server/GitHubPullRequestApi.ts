@@ -87,6 +87,7 @@ import {
   LABEL_CANDIDATES_GRAPHQL_QUERY,
   decodeReviewDismissalsJson,
   decodeReviewThreadCommentsJson,
+  decodeReviewRoundJson,
   decodeReviewThreadsJson,
   buildPullRequestStatsGraphQlQuery,
   buildPullRequestSummariesGraphQlQuery,
@@ -103,6 +104,7 @@ import {
   gitHubReactionContent,
   RESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,
   REVIEWER_CANDIDATES_GRAPHQL_QUERY,
+  REVIEW_ROUND_GRAPHQL_QUERY,
   REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY,
   REVIEW_DISMISSALS_GRAPHQL_QUERY,
   REVIEW_THREAD_REPLY_GRAPHQL_MUTATION,
@@ -129,6 +131,7 @@ import {
   type GitHubViewerAccess,
 } from "./gitHubPullRequestJson.ts";
 import type {
+  ProviderChangeRequestReviewRound,
   ProviderChangeRequestSummary,
   ProviderListCursor,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -638,6 +641,13 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly host: string;
       readonly number: number;
     }) => Effect.Effect<GitHubReviewThreadComments, GitHubPullRequestApiError>;
+
+    readonly getReviewRound: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<ProviderChangeRequestReviewRound, GitHubPullRequestApiError>;
 
     /** One request for a listing's authors, since no `gh` JSON field reports an avatar. */
     readonly listActorAvatars: (input: {
@@ -2286,6 +2296,19 @@ export const make = Effect.gen(function* () {
         ),
       );
     },
+
+    getReviewRound: (input) =>
+      Effect.gen(function* () {
+        const { owner, name } = parseRepositorySelector(input.repository);
+        return yield* graphqlRead({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "getReviewRound",
+          variables: { owner, name, number: input.number },
+          query: REVIEW_ROUND_GRAPHQL_QUERY,
+          decode: decodeReviewRoundJson,
+        });
+      }),
 
     listReviewThreadComments: (input) =>
       Effect.gen(function* () {
