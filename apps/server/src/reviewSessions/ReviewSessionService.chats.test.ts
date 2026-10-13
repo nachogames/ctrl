@@ -42,7 +42,7 @@ it.effect("starts one side chat per point, in the group, from the review chat", 
     assert.equal(launch?.creationSource, "server");
     assert.equal(launch?.senderThreadId, reviewThreadId);
     assert.equal(launch?.title, "#1 · null session");
-    assert.include(launch?.prompt ?? "", "point #1");
+    assert.include(harness.sent[0]?.text ?? "", "point #1");
     assert.equal((yield* reviews.read(sessionId)).items[0]?.sideThreadId, first.threadId);
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
@@ -77,7 +77,7 @@ it.effect(
       // A second click while it runs opens the same chat.
       assert.equal((yield* reviews.runLocalReview({ sessionId })).threadId, run.threadId);
       assert.equal(harness.launched.length, 1);
-      assert.include(harness.launched[0]?.prompt ?? "", "/code-review");
+      assert.include(harness.sent[0]?.text ?? "", "/code-review");
       const [running] = (yield* reviews.read(sessionId)).sources;
       assert.deepEqual(
         [running?.kind, running?.state, running?.threadId, running?.ranOn?.model],
@@ -124,7 +124,7 @@ it.effect("asks other providers for a plain review", () => {
     const reviews = yield* service;
     const { snapshot } = yield* reviews.open(openInput);
     yield* reviews.runLocalReview({ sessionId: snapshot.session.id });
-    const prompt = harness.launched[0]?.prompt ?? "";
+    const prompt = harness.sent[0]?.text ?? "";
     assert.notInclude(prompt, "/code-review");
     assert.include(prompt, "Review this branch");
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
@@ -270,8 +270,8 @@ it.effect(
       const [stored] = (yield* reviews.read(sessionId)).sources;
       assert.deepEqual([stored?.round, stored?.state, stored?.triaged], [2, "done", false]);
       yield* reviews.requestTurn({ sessionId, request: { _tag: "triage" } });
-      assert.include(harness.sent[0]?.text ?? "", "Triage round 2");
-      assert.include(harness.sent[0]?.text ?? "", "your review");
+      assert.include(harness.sent.at(-1)?.text ?? "", "Triage round 2");
+      assert.include(harness.sent.at(-1)?.text ?? "", "your review");
       yield* reviews.importItems({
         sessionId,
         sourceIds: [done.id],
@@ -420,5 +420,50 @@ it.effect("carries a finished, untriaged review into the next round", () => {
     yield* reviews.requestTurn({ sessionId, request: { _tag: "triage" } });
     assert.include(harness.sent[0]?.text ?? "", "Triage round 2 of the review of");
     assert.include(harness.sent[0]?.text ?? "", "@dan");
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("makes side and local review tools available before their seed turns start", () => {
+  const harness = newHarness();
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("gh:T1")] });
+    const roles: Array<string> = [];
+    harness.beforeSend = (threadId) =>
+      reviews.resolveForThread({ threadId, groupId }).pipe(
+        Effect.tap((access) =>
+          Effect.sync(() => {
+            roles.push(access.role);
+          }),
+        ),
+        Effect.asVoid,
+        Effect.orDie,
+      );
+    yield* reviews.openSideChat({ sessionId, number: 1 });
+    yield* reviews.runLocalReview({ sessionId });
+    assert.deepEqual(roles, ["side", "local"]);
+    assert.isTrue(harness.launched.every((launch) => launch.prompt === undefined));
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("can retry a review chat whose seed could not be sent", () => {
+  const harness = newHarness();
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("gh:T1")] });
+    harness.sendFails = true;
+    yield* reviews.openSideChat({ sessionId, number: 1 }).pipe(Effect.flip);
+    yield* reviews.runLocalReview({ sessionId }).pipe(Effect.flip);
+    const failed = yield* reviews.read(sessionId);
+    assert.equal(failed.items[0]?.sideThreadId, null);
+    assert.equal(failed.sources.length, 0);
+    harness.sendFails = false;
+    yield* reviews.openSideChat({ sessionId, number: 1 });
+    yield* reviews.runLocalReview({ sessionId });
+    assert.equal(harness.sent.length, 2);
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });

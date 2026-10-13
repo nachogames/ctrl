@@ -323,3 +323,28 @@ it.effect("reports a storage failure as an orchestration error, not a bad reques
     }),
   ),
 );
+
+it.effect("stores the pull request URL rebuilt from its parts, never as typed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { as } = yield* harnessed;
+      const review = yield* as(reviewThreadId);
+      expect(
+        yield* review("review_session_open", {
+          url: "https://GitHub.com/NachoGames/Ctrl/pull/23/files?diff=split&x=$(touch%20pwned)#r1;ls`id`",
+        }),
+      ).toMatchObject({ session: { url: prUrl } });
+      // Only names GitHub allows reach the URL that prompts put in a shell command.
+      expect(
+        yield* review("review_session_open", {
+          url: "https://github.com/nachogames/ctrl$(id)/pull/24",
+        }),
+      ).toMatchObject({ code: "invalid_request" });
+      expect(
+        yield* review("review_session_open", {
+          url: "https://gitlab.com/nachogames/ctrl/-/merge_requests/24",
+        }),
+      ).toMatchObject({ code: "invalid_request", message: expect.stringContaining("GitHub") });
+    }),
+  ),
+);

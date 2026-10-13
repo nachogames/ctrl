@@ -41,11 +41,21 @@ export function reviewRoundViews(snapshot: ReviewSessionSnapshot): ReadonlyArray
 
 /** How many messages the user sent with each point attached. */
 export function reviewPointMentionCounts(
-  messages: ReadonlyArray<{ readonly role: string; readonly text: string }>,
+  messages: ReadonlyArray<{
+    readonly role: string;
+    readonly text: string;
+    readonly createdBy?: string;
+    readonly senderThreadId?: string | undefined;
+  }>,
 ): ReadonlyMap<number, number> {
   const counts = new Map<number, number>();
   for (const message of messages) {
-    if (message.role !== "user") continue;
+    if (
+      message.role !== "user" ||
+      (message.createdBy !== undefined && message.createdBy !== "user") ||
+      message.senderThreadId !== undefined
+    )
+      continue;
     const tag = parseReviewPointTag(message.text);
     if (tag !== null) counts.set(tag.number, (counts.get(tag.number) ?? 0) + 1);
   }

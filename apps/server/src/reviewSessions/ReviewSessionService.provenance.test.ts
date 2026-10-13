@@ -90,18 +90,22 @@ const layerLaunches = Layer.effect(
             createdBy: input.createdBy,
             creationSource: input.creationSource,
           });
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make(`${input.commandId}:message`),
-            threadId,
-            messageId: MessageId.make(`message:${threadId}:seed`),
-            text: input.prompt,
-            ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-            createdBy: input.createdBy,
-            creationSource: input.creationSource,
-          });
+          if (input.prompt !== undefined) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`${input.commandId}:message`),
+              threadId,
+              messageId: MessageId.make(`message:${threadId}:seed`),
+              text: input.prompt,
+              ...(input.senderThreadId === undefined
+                ? {}
+                : { senderThreadId: input.senderThreadId }),
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: input.createdBy,
+              creationSource: input.creationSource,
+            });
+          }
           return { group: {} as never, threadId };
         }).pipe(Effect.orDie),
       handoff: () => Effect.die("A review never hands off"),

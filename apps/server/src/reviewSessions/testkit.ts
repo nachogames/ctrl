@@ -328,6 +328,7 @@ export interface ReviewServiceHarness extends SyncHarness {
   readonly drivers: Map<string, string>;
   /** When true, sends to a chat fail as if it were archived. */
   sendFails: boolean;
+  beforeSend?: (threadId: ThreadId) => Effect.Effect<void>;
 }
 
 export const newHarness = (): ReviewServiceHarness => ({
@@ -363,7 +364,8 @@ export const makeReviewServiceLayer = (harness: ReviewServiceHarness) =>
                     threadId: input.threadId,
                   }),
                 )
-              : Effect.sync(() => {
+              : Effect.gen(function* () {
+                  if (harness.beforeSend) yield* harness.beforeSend(input.threadId);
                   harness.sent.push(input);
                   return {} as never;
                 }),

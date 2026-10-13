@@ -78,6 +78,8 @@ describe("review presentation", () => {
   it("follows each point through the apply", () => {
     const fix = item(1, { decision: "fix" });
     expect(reviewApplyBadges(fix, "collecting")).toEqual([]);
+    expect(reviewApplyBadges(fix, "applied")).toEqual(["Not applied"]);
+    expect(reviewApplyBadges({ ...fix, decision: "decline" }, "applied")).toEqual(["Declined"]);
     expect(reviewApplyBadges(fix, "applying")).toEqual(["Waiting"]);
     expect(reviewApplyBadges({ ...fix, applyState: "working" }, "applying")).toEqual(["Fixing…"]);
     expect(reviewApplyBadges({ ...fix, applyState: "resolved" }, "applied")).toEqual([

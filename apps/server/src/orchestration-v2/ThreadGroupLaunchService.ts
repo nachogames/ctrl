@@ -65,7 +65,7 @@ export interface ThreadGroupNewThreadInput {
   readonly commandId: CommandId;
   readonly groupId: ThreadGroupId;
   readonly title?: string;
-  readonly prompt: string;
+  readonly prompt?: string;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -101,7 +101,7 @@ export interface ThreadGroupHandoffResult {
 export class ThreadGroupLaunchService extends Context.Service<
   ThreadGroupLaunchService,
   {
-    /** Starts a chat in the group, in the group's workspace, with `prompt` as its first message. */
+    /** Creates a chat in the group's workspace; starts its first turn when `prompt` is supplied. */
     readonly newThread: (
       input: ThreadGroupNewThreadInput,
     ) => Effect.Effect<ThreadGroupNewThreadResult, ThreadGroupLaunchServiceError>;
@@ -199,11 +199,17 @@ export const make = Effect.gen(function* () {
         interactionMode: input.interactionMode,
         workspaceStrategy: workspaceOf(group),
         groupId: group.id,
-        initialMessage: {
-          text: input.prompt,
-          attachments: [],
-          ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
-        },
+        ...(input.prompt === undefined
+          ? {}
+          : {
+              initialMessage: {
+                text: input.prompt,
+                attachments: [],
+                ...(input.senderThreadId === undefined
+                  ? {}
+                  : { senderThreadId: input.senderThreadId }),
+              },
+            }),
         createdBy: input.createdBy,
         creationSource: input.creationSource,
       }),

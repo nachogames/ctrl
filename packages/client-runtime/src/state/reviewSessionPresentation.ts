@@ -76,7 +76,9 @@ export function reviewApplyBadges(
   const threads = item.githubThreadIds.length > 0;
   switch (item.applyState) {
     case "pending":
-      return ["Waiting"];
+      return roundState === "applied"
+        ? [item.decision === "decline" ? "Declined" : "Not applied"]
+        : ["Waiting"];
     case "working":
       return [fix ? "Fixing…" : "Replying…"];
     case "fixed":

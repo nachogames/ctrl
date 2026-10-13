@@ -1005,21 +1005,15 @@ export const make = Effect.gen(function* () {
 
   /**
    * A new chat in the review's group on the review chat's model and modes. The server sends
-   * `prompt` for the review chat's agent, so it never counts as the user's words.
+   * the seed after recording its review association, so tools are available immediately.
    */
-  const launch = (
-    session: ReviewSession,
-    reviewChat: OrchestrationV2ThreadShell,
-    title: string,
-    prompt: string,
-  ) =>
+  const launch = (session: ReviewSession, reviewChat: OrchestrationV2ThreadShell, title: string) =>
     Effect.gen(function* () {
       return yield* launches
         .newThread({
           commandId: CommandId.make(`review-chat:${yield* crypto.randomUUIDv4}`),
           groupId: session.groupId,
           title,
-          prompt,
           modelSelection: reviewChat.modelSelection,
           runtimeMode: reviewChat.runtimeMode,
           interactionMode: reviewChat.interactionMode,
@@ -1032,6 +1026,24 @@ export const make = Effect.gen(function* () {
             fail(`Could not start the chat: ${error.message}`, session.id),
           ),
         );
+    });
+
+  // Record the review association before dispatching the seed: the first turn can call tools.
+  const seedChat = (session: ReviewSession, threadId: ThreadId, text: string) =>
+    Effect.gen(function* () {
+      const id = yield* crypto.randomUUIDv4;
+      yield* threads.sendToThread({
+        projectId: session.projectId,
+        threadId,
+        commandId: CommandId.make(`review-seed:${id}`),
+        messageId: MessageId.make(`message:review-seed:${id}`),
+        text,
+        attachments: [],
+        mode: "queue",
+        senderThreadId: session.reviewThreadId,
+        createdBy: "agent",
+        creationSource: "server",
+      });
     });
 
   const openSideChat: ReviewSessionService["Service"]["openSideChat"] = (input) =>
@@ -1048,7 +1060,6 @@ export const make = Effect.gen(function* () {
             session,
             yield* reviewChatOf(session),
             sideChatTitle(item),
-            sideChatPrompt(session, item),
           );
           yield* write(
             session.id,
@@ -1060,6 +1071,21 @@ export const make = Effect.gen(function* () {
                 updatedAt: yield* now,
               });
             }),
+          );
+          yield* seedChat(session, launched.threadId, sideChatPrompt(session, item)).pipe(
+            Effect.tapError(() =>
+              write(
+                session.id,
+                Effect.gen(function* () {
+                  yield* repo.setItemSideThread({
+                    sessionId: session.id,
+                    number: item.number,
+                    threadId: null,
+                    updatedAt: yield* now,
+                  });
+                }),
+              ),
+            ),
           );
           return { threadId: launched.threadId };
         }),
@@ -1092,7 +1118,6 @@ export const make = Effect.gen(function* () {
             session,
             reviewChat,
             `Your review · round ${session.round}`,
-            localReviewPrompt({ session, driverKind: instance?.driverKind ?? null }),
           );
           const sourceId = `local:${yield* crypto.randomUUIDv4}`;
           yield* write(
@@ -1125,6 +1150,11 @@ export const make = Effect.gen(function* () {
               );
             }),
           );
+          yield* seedChat(
+            session,
+            launched.threadId,
+            localReviewPrompt({ session, driverKind: instance?.driverKind ?? null }),
+          ).pipe(Effect.tapError(() => write(session.id, repo.deleteSource(session.id, sourceId))));
           return { threadId: launched.threadId };
         }),
       )

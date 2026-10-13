@@ -125,7 +125,7 @@ export function reviewRequestText(input: {
     case "triage":
       return `Triage round ${session.round} of the review of ${session.url}: ${input.sources.map(reviewSourceName).join(", ")}. Read the list with review_session_read and follow the brief's triage steps.`;
     case "apply":
-      return `Apply round ${session.round} of the review of ${session.url}. Every point is viewed. Follow the brief's apply steps.`;
+      return `Apply round ${session.round} of the review of ${session.url}. Every point is viewed. Call review_session_open with this URL to reload the brief, then follow its apply steps.`;
     case "rewrite-reply":
       return formatReviewPointTag(
         { number: request.number, label: input.item?.shortName ?? "point" },

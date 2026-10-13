@@ -108,10 +108,16 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
       }
       const parsed = parseChangeRequestUrl(input.url);
       if (parsed === null) return yield* invalid("This is not a recognised pull request URL.");
+      if (parsed.host !== "github.com")
+        return yield* invalid("Review sessions support GitHub pull requests.");
+      if (!/^[a-z0-9-]+\/[a-z0-9_.-]+$/i.test(parsed.repository)) {
+        return yield* invalid("This is not a recognised GitHub repository.");
+      }
+      const key = normalizeThreadPullRequestKey(parsed);
       const result = yield* sessions
         .open({
-          key: normalizeThreadPullRequestKey(parsed),
-          url: input.url,
+          key,
+          url: `https://${key.host}/${key.repository}/pull/${key.number}`,
           projectId: caller.projectId,
           groupId,
           reviewThreadId: caller.id,

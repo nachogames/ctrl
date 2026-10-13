@@ -63,6 +63,8 @@ describe("review tab helpers", () => {
       { role: "user", text: "[#2 build cache key]\nok, shorter" },
       { role: "assistant", text: "[#3 pin]\nnot a tag from the user" },
       { role: "user", text: "#3 decline" },
+      { role: "user", createdBy: "system", text: "[#2 build cache key]\nrewrite" },
+      { role: "user", createdBy: "agent", text: "[#2 build cache key]\nseed" },
     ]);
     expect([...counts]).toEqual([[2, 2]]);
   });

@@ -321,7 +321,7 @@ export class ReviewSessionRepository extends Context.Service<
     readonly setItemSideThread: (input: {
       readonly sessionId: ReviewSessionId;
       readonly number: number;
-      readonly threadId: ThreadId;
+      readonly threadId: ThreadId | null;
       readonly updatedAt: string;
     }) => Effect.Effect<void, E>;
     readonly markItemsStale: (sessionId: ReviewSessionId) => Effect.Effect<void, E>;

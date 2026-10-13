@@ -305,3 +305,16 @@ the scope and merge strategy. GitHub rebases the remaining stack after merging.
 It can rewrite history and restart checks. If a layer fails, earlier updates remain; resolve that
 layer before retrying. GitHub may require manual conflict resolution after a lower layer is amended,
 even when its changes look independent. Stack actions require an environment that supports them.
+
+## Conversational PR reviews
+
+For a GitHub PR you built, ask the agent to start a review with `review-pr` in a chat in
+the PR's group. Open the PR panel's **Review** tab to collect Copilot, human and independent
+local reviews, then triage them into numbered points, grouped by review round.
+Ask about `#3` in the review chat, or open a point's own chat. Questions leave decisions alone;
+say `#3 fix` or `#3 decline` to decide. Conclusions and reply drafts stay with the point.
+
+Read each point and mark it viewed before applying. **Apply** shows the work and replies for
+you to confirm, then runs in the review chat. It fixes accepted points, runs checks, commits
+and pushes, and posts the approved replies. Human reviewers' threads stay open. New reviews
+arrive in the same session; after applying, the next round lets you check them again.
