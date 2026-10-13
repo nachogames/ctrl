@@ -63,6 +63,15 @@ const make = Effect.gen(function* () {
     return created;
   };
 
+  const currentRoundState = (session: ReviewSession) =>
+    repo
+      .listRounds(session.id)
+      .pipe(
+        Effect.map(
+          (rounds) => rounds.find((round) => round.round === session.round)?.state ?? "collecting",
+        ),
+      );
+
   const syncSession: ReviewSyncService["Service"]["syncSession"] = (sessionId) =>
     lockFor(sessionId)
       .withPermits(1)(
@@ -70,13 +79,12 @@ const make = Effect.gen(function* () {
           const found = yield* repo.getSession(sessionId);
           if (Option.isNone(found) || found.value.phase === "done") return false;
           const session = found.value;
+          const roundState = yield* currentRoundState(session);
           const read = yield* pullRequests.reviewRound(refOf(session));
           if (read === null) return false;
-          const rounds = yield* repo.listRounds(session.id);
           const plan = planReviewSync({
             sessionRound: session.round,
-            roundState:
-              rounds.find((round) => round.round === session.round)?.state ?? "collecting",
+            roundState,
             existing: yield* repo.listSources(session.id),
             read,
             now: DateTime.formatIso(yield* DateTime.now),
@@ -96,8 +104,19 @@ const make = Effect.gen(function* () {
           }
           // Sync writes only sources, their comments and each point's GitHub state. It never
           // rewrites a point, so it cannot overwrite what the user or the review service decided.
-          yield* sql.withTransaction(
+          const written = yield* sql.withTransaction(
             Effect.gen(function* () {
+              // The round may have moved on while GitHub was read: the plan would file new
+              // reviews in a closed round. Skip; the sync the advance runs files them.
+              const latest = yield* repo.getSession(session.id);
+              if (
+                Option.isNone(latest) ||
+                latest.value.phase === "done" ||
+                latest.value.round !== session.round ||
+                (yield* currentRoundState(latest.value)) !== roundState
+              ) {
+                return false;
+              }
               for (const { source, comments } of plan.upserts) {
                 yield* repo.upsertSource(session.id, source, comments);
               }
@@ -105,8 +124,10 @@ const make = Effect.gen(function* () {
               for (const { number, next } of githubStates) {
                 yield* repo.setItemGithubState(session.id, number, next);
               }
+              return true;
             }),
           );
+          if (!written) return false;
           yield* changes.publish(session.id);
           return true;
         }),
@@ -157,7 +178,12 @@ const make = Effect.gen(function* () {
     syncSession,
     start: () =>
       forkParked(
-        sweep.pipe(Effect.repeat(Schedule.spaced(`${SWEEP_MINUTES} minutes`)), Effect.asVoid),
+        sweep.pipe(
+          // A defect in one sweep must not end the loop for the server's lifetime.
+          Effect.catchCause((cause) => Effect.logWarning("review sync sweep failed", cause)),
+          Effect.repeat(Schedule.spaced(`${SWEEP_MINUTES} minutes`)),
+          Effect.asVoid,
+        ),
       ),
   });
 });

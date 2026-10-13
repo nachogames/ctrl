@@ -164,6 +164,8 @@ export const reviewRoundRead = (fields: Partial<Read> = {}): Read => ({
 /** What GitHub answers; tests change `read` between syncs. */
 export interface SyncHarness {
   read: Read | null;
+  /** Runs while GitHub is being read, as if another write landed meanwhile. */
+  duringRead?: Effect.Effect<void> | undefined;
 }
 
 /** The real sync on an in-memory database, reading GitHub from `harness`. */
@@ -174,7 +176,10 @@ export const makeSyncLayer = (harness: SyncHarness) =>
         ReviewSessions.layer,
         ReviewSessionChanges.layer,
         Layer.mock(PullRequestService.PullRequestService)({
-          reviewRound: () => Effect.sync(() => harness.read),
+          reviewRound: () =>
+            Effect.suspend(() => harness.duringRead ?? Effect.void).pipe(
+              Effect.map(() => harness.read),
+            ),
           watchFingerprint: () => Effect.succeed(null),
         }),
       ),
