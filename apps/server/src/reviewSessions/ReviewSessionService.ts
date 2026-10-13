@@ -325,6 +325,16 @@ export const make = Effect.gen(function* () {
       Effect.asVoid,
     );
 
+  /** A chat that still exists and is not archived; a deleted or archived chat is gone. */
+  const liveThread = (threadId: ThreadId) =>
+    threads
+      .getThreadShell(threadId)
+      .pipe(
+        Effect.map((shell) =>
+          shell !== null && shell.deletedAt === null && shell.archivedAt === null ? shell : null,
+        ),
+      );
+
   const loadSession = (sessionId: ReviewSessionId) =>
     repo.getSession(sessionId).pipe(
       Effect.flatMap(
@@ -429,7 +439,27 @@ export const make = Effect.gen(function* () {
         sql.withTransaction(
           Effect.gen(function* () {
             const existing = yield* repo.findLiveSession({ key, groupId: input.groupId });
-            if (Option.isSome(existing)) return { session: existing.value, created: false };
+            if (Option.isSome(existing)) {
+              const session = existing.value;
+              // A review whose chat was deleted or archived could never be driven again; the
+              // chat that opens it takes it over, with its rounds, points and side chats.
+              if (
+                session.reviewThreadId === input.reviewThreadId ||
+                (yield* liveThread(session.reviewThreadId)) !== null
+              ) {
+                return { session, created: false };
+              }
+              const at = yield* now;
+              yield* repo.setSessionReviewThread({
+                sessionId: session.id,
+                reviewThreadId: input.reviewThreadId,
+                updatedAt: at,
+              });
+              return {
+                session: { ...session, reviewThreadId: input.reviewThreadId, updatedAt: at },
+                created: false,
+              };
+            }
             const at = yield* now;
             const session: ReviewSession = {
               id: ReviewSessionId.make(`review:${yield* crypto.randomUUIDv4}`),
@@ -843,16 +873,6 @@ export const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
 
-  /** A chat that still exists and is not archived; a deleted or archived chat is gone. */
-  const liveThread = (threadId: ThreadId) =>
-    threads
-      .getThreadShell(threadId)
-      .pipe(
-        Effect.map((shell) =>
-          shell !== null && shell.deletedAt === null && shell.archivedAt === null ? shell : null,
-        ),
-      );
-
   /**
    * A review cannot finish over a review of its round that is in but not triaged, or still
    * running: nothing could triage it once the review is done. A local run whose chat is gone
@@ -975,7 +995,11 @@ export const make = Effect.gen(function* () {
     liveThread(session.reviewThreadId).pipe(
       Effect.filterOrFail(
         (shell): shell is OrchestrationV2ThreadShell => shell !== null,
-        () => fail("The review chat is gone; open the review again from a chat.", session.id),
+        () =>
+          fail(
+            "The review chat is gone. Ask for the review in another chat of this group (review_session_open) and it continues there.",
+            session.id,
+          ),
       ),
     );
 
@@ -1156,6 +1180,7 @@ export const make = Effect.gen(function* () {
       const session = yield* loadSession(input.sessionId);
       yield* requireLive(session);
       yield* requireCollecting(session, yield* loadRound(session));
+      yield* reviewChatOf(session);
       const request = input.request;
       let item: ReviewItem | null = null;
       let untriaged: ReadonlyArray<ReviewSource> = [];

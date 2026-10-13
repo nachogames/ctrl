@@ -179,6 +179,31 @@ it.effect("moves a review to a later round with its triage mark and comments", (
   ),
 );
 
+it.effect("hands a review to another chat", () =>
+  Effect.gen(function* () {
+    const repo = yield* repository;
+    const other = ThreadId.make("thread:other");
+    yield* repo.insertSession(session);
+    yield* repo.setSessionReviewThread({
+      sessionId: session.id,
+      reviewThreadId: other,
+      updatedAt: "2026-10-13T11:00:00.000Z",
+    });
+    const stored = Option.getOrNull(yield* repo.getSession(session.id));
+    assert.deepEqual(
+      [stored?.reviewThreadId, stored?.updatedAt, stored?.round],
+      [other, "2026-10-13T11:00:00.000Z", 1],
+    );
+    assert.deepEqual(
+      (yield* repo.listLiveSessionsForThread(other)).map((live) => live.id),
+      [session.id],
+    );
+    assert.deepEqual(yield* repo.listLiveSessionsForThread(session.reviewThreadId), []);
+  }).pipe(
+    Effect.provide(ReviewSessions.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
+  ),
+);
+
 it.effect("keeps a point key with the first point that raised it", () =>
   Effect.gen(function* () {
     const repo = yield* repository;

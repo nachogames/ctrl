@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -342,6 +343,51 @@ it.effect("does not wait on your review once its chat is gone", () => {
     );
     const finished = yield* reviews.advanceRound({ sessionId, headSha: "abc123", finish: true });
     assert.equal(finished.session.phase, "done");
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("moves a review whose chat was deleted or archived to the chat that opens it", () => {
+  const harness = newHarness();
+  harness.read = reviewRoundRead({
+    reviews: [githubReview("PRR_1", "copilot-pull-request-reviewer", { isBot: true })],
+  });
+  const other = ThreadId.make("thread:other");
+  const third = ThreadId.make("thread:third");
+  harness.shells.set(other, chatShell(other));
+  harness.shells.set(third, chatShell(third));
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    // While the review chat lives, another chat opening it gets it unchanged.
+    const unchanged = yield* reviews.open({ ...openInput, reviewThreadId: other });
+    assert.equal(unchanged.snapshot.session.reviewThreadId, reviewThreadId);
+
+    harness.shells.set(
+      reviewThreadId,
+      chatShell(reviewThreadId, { deletedAt: DateTime.makeUnsafe(2) as DateTime.Utc }),
+    );
+    const gone = yield* Effect.flip(
+      reviews.requestTurn({ sessionId, request: { _tag: "triage" } }),
+    );
+    assert.include(gone.message, "Ask for the review in another chat of this group");
+    const moved = yield* reviews.open({ ...openInput, reviewThreadId: other });
+    assert.deepEqual(
+      [moved.created, moved.snapshot.session.id, moved.snapshot.session.reviewThreadId],
+      [false, sessionId, other],
+    );
+    const access = yield* reviews.resolveForThread({ threadId: other, groupId });
+    assert.deepEqual([access.role, access.session.reviewThreadId], ["review", other]);
+    yield* reviews.requestTurn({ sessionId, request: { _tag: "triage" } });
+    assert.equal(harness.sent[0]?.threadId, other);
+
+    // An archived review chat is gone too.
+    harness.shells.set(
+      other,
+      chatShell(other, { archivedAt: DateTime.makeUnsafe(3) as DateTime.Utc }),
+    );
+    const again = yield* reviews.open({ ...openInput, reviewThreadId: third });
+    assert.equal(again.snapshot.session.reviewThreadId, third);
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
 

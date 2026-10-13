@@ -237,6 +237,12 @@ export class ReviewSessionRepository extends Context.Service<
     readonly insertSession: (session: ReviewSession) => Effect.Effect<void, E>;
     readonly updateSession: (session: ReviewSession) => Effect.Effect<void, E>;
     readonly getSession: (id: ReviewSessionId) => Effect.Effect<Option.Option<ReviewSession>, E>;
+    /** Hands the review to another chat; only for a review whose chat is gone. */
+    readonly setSessionReviewThread: (input: {
+      readonly sessionId: ReviewSessionId;
+      readonly reviewThreadId: ThreadId;
+      readonly updatedAt: string;
+    }) => Effect.Effect<void, E>;
     readonly findLiveSession: (input: {
       readonly key: ThreadPullRequestKey;
       readonly groupId: ThreadGroupId;
@@ -378,6 +384,11 @@ const make = Effect.gen(function* () {
         Effect.mapError(sqlError("getReviewSession")),
         Effect.flatMap(firstSession),
       ),
+    setSessionReviewThread: ({ sessionId, reviewThreadId, updatedAt }) =>
+      sql`
+        UPDATE review_sessions SET review_thread_id = ${reviewThreadId}, updated_at = ${updatedAt}
+        WHERE session_id = ${sessionId}
+      `.pipe(Effect.asVoid, Effect.mapError(sqlError("setReviewSessionThread"))),
     findLiveSession: ({ key, groupId }) =>
       sql<SessionRow>`
         SELECT * FROM review_sessions
