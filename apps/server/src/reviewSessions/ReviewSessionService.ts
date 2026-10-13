@@ -20,6 +20,7 @@ import {
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { parseReviewPointTag } from "@t3tools/shared/reviewPointTag";
+import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -222,6 +223,15 @@ const nextDraft = (item: ReviewItem, draftReply: string | null, by: ReviewEditor
 const liveItems = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>
   items.filter((item) => item.lastSeenRound === session.round && !item.stale);
 
+/** `#N` of each live point the user has not yet viewed and decided. */
+const unseenPoints = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>
+  liveItems(session, items)
+    .filter((item) => !item.viewed || item.decision === "needs-call")
+    .map((item) => `#${item.number}`);
+
+const isOpen = (applyState: ReviewApplyState) =>
+  applyState === "pending" || applyState === "working";
+
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repo = yield* ReviewSessions.ReviewSessionRepository;
@@ -306,9 +316,7 @@ export const make = Effect.gen(function* () {
         );
 
   const applyGate = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) => {
-    const waiting = liveItems(session, items)
-      .filter((item) => !item.viewed || item.decision === "needs-call")
-      .map((item) => `#${item.number}`);
+    const waiting = unseenPoints(session, items);
     return waiting.length === 0
       ? Effect.void
       : Effect.fail(
@@ -346,19 +354,18 @@ export const make = Effect.gen(function* () {
 
   const open: ReviewSessionService["Service"]["open"] = (input) =>
     Effect.gen(function* () {
+      // Stored and looked up in one case, so `Owner/Repo` and `owner/repo` are one review.
+      const key = normalizeThreadPullRequestKey(input.key);
       const result = yield* writeLock.withPermits(1)(
         sql.withTransaction(
           Effect.gen(function* () {
-            const existing = yield* repo.findLiveSession({
-              key: input.key,
-              groupId: input.groupId,
-            });
+            const existing = yield* repo.findLiveSession({ key, groupId: input.groupId });
             if (Option.isSome(existing)) return { session: existing.value, created: false };
             const at = yield* now;
             const session: ReviewSession = {
               id: ReviewSessionId.make(`review:${yield* crypto.randomUUIDv4}`),
               projectId: input.projectId,
-              pullRequest: input.key,
+              pullRequest: key,
               url: input.url,
               groupId: input.groupId,
               reviewThreadId: input.reviewThreadId,
@@ -563,6 +570,8 @@ export const make = Effect.gen(function* () {
               stale: false,
               // Raised again in a new round: the user looks at it again; the decision stays.
               viewed: item.lastSeenRound < session.round ? false : item.viewed,
+              // Last round's fix or reply does not answer this round's raising of it.
+              applyState: item.lastSeenRound < session.round ? "pending" : item.applyState,
               updatedAt: at,
             });
             if (!created.includes(item.number) && !matched.includes(item.number)) {
@@ -759,16 +768,38 @@ export const make = Effect.gen(function* () {
           const session = yield* loadSession(input.sessionId);
           yield* requireLive(session);
           const round = yield* loadRound(session);
-          const unapplied = liveItems(session, yield* repo.listItems(session.id))
-            .filter(
-              (item) =>
-                item.decision === "fix" &&
-                (item.applyState === "pending" || item.applyState === "working"),
-            )
+          const items = yield* repo.listItems(session.id);
+          if (round.state === "collecting") {
+            const unseen = unseenPoints(session, items);
+            if (unseen.length > 0) {
+              return yield* fail(
+                `${unseen.join(", ")} ${unseen.length === 1 ? "is" : "are"} not viewed yet: a round moves on only once every point in it is viewed and decided.`,
+                session.id,
+              );
+            }
+          }
+          const live = liveItems(session, items);
+          const unapplied = live
+            .filter((item) => item.decision === "fix" && isOpen(item.applyState))
             .map((item) => `#${item.number}`);
           if (unapplied.length > 0) {
             return yield* fail(
               `Apply ${unapplied.join(", ")} first: decided fix and not yet pushed.`,
+              session.id,
+            );
+          }
+          // Every GitHub thread gets its drafted reply before the round closes.
+          const unreplied = live
+            .filter(
+              (item) =>
+                item.githubThreadIds.length > 0 &&
+                (item.draftReply?.trim() ?? "") !== "" &&
+                isOpen(item.applyState),
+            )
+            .map((item) => `#${item.number}`);
+          if (unreplied.length > 0) {
+            return yield* fail(
+              `Post the replies on ${unreplied.join(", ")} first, then record them with review_items_record_apply.`,
               session.id,
             );
           }

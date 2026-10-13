@@ -391,3 +391,119 @@ it.effect("leaves the GitHub state sync recorded when a point changes", () =>
     assert.equal((yield* reviews.read(sessionId)).items[0]?.githubState, "resolved");
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
+
+it.effect("will not move a collecting round on while a point in it is unseen or undecided", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({
+      sessionId,
+      sourceIds: [],
+      items: [
+        importItem("gh:T1", { suggestedDecision: "decline" }),
+        importItem("gh:T2", { suggestedDecision: null }),
+        importItem("gh:T3", { suggestedDecision: "decline" }),
+      ],
+    });
+    yield* reviews.setViewed({ sessionId, number: 1, viewed: true });
+    yield* reviews.decide({
+      sessionId,
+      number: 3,
+      decision: "decline",
+      authority: { _tag: "panel" },
+    });
+    // #2 needs a call; #3 is decided but not viewed.
+    const refused = yield* Effect.flip(
+      reviews.advanceRound({ sessionId, headSha: "abc123", finish: true }),
+    );
+    assert.include(refused.message, "#2, #3 are not viewed yet");
+    assert.equal((yield* reviews.read(sessionId)).session.phase, "self-review");
+
+    yield* reviews.decide({
+      sessionId,
+      number: 2,
+      decision: "decline",
+      authority: { _tag: "panel" },
+    });
+    yield* reviews.setViewed({ sessionId, number: 2, viewed: true });
+    yield* reviews.setViewed({ sessionId, number: 3, viewed: true });
+    const advanced = yield* reviews.advanceRound({ sessionId, headSha: "abc123", finish: false });
+    assert.equal(advanced.session.round, 2);
+    // Round 2 has no live points yet, so it can move on straight away.
+    const finished = yield* reviews.advanceRound({ sessionId, headSha: "abc123", finish: true });
+    assert.equal(finished.session.phase, "done");
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);
+
+it.effect("brings a fixed point raised again in a new round back as pending and unseen", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("gh:T1")] });
+    yield* reviews.setViewed({ sessionId, number: 1, viewed: true });
+    yield* reviews.recordApply({ sessionId, number: 1, applyState: "fixed" });
+    yield* reviews.advanceRound({ sessionId, headSha: "def456", finish: false });
+
+    const reraised = yield* reviews.importItems({
+      sessionId,
+      sourceIds: [],
+      items: [importItem("gh:T1")],
+    });
+    const one = reraised.snapshot.items[0];
+    assert.deepEqual(
+      [one?.lastSeenRound, one?.decision, one?.applyState, one?.viewed],
+      [2, "fix", "pending", false],
+    );
+    const refused = yield* Effect.flip(
+      reviews.advanceRound({ sessionId, headSha: "def456", finish: true }),
+    );
+    assert.include(refused.message, "#1");
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);
+
+it.effect("will not move an applying round on before its drafted GitHub replies are posted", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({
+      sessionId,
+      sourceIds: [],
+      items: [
+        importItem("gh:T1"),
+        importItem("gh:T2", {
+          suggestedDecision: "decline",
+          githubThreadIds: ["T2"],
+          draftReply: "Out of scope.",
+        }),
+      ],
+    });
+    yield* reviews.setViewed({ sessionId, number: 1, viewed: true });
+    yield* reviews.setViewed({ sessionId, number: 2, viewed: true });
+    yield* reviews.recordApply({ sessionId, number: 1, applyState: "fixed" });
+    const unreplied = yield* Effect.flip(
+      reviews.advanceRound({ sessionId, headSha: "def456", finish: false }),
+    );
+    assert.include(unreplied.message, "#2");
+
+    yield* reviews.recordApply({ sessionId, number: 2, applyState: "replied" });
+    const advanced = yield* reviews.advanceRound({ sessionId, headSha: "def456", finish: false });
+    assert.equal(advanced.session.round, 2);
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);
+
+it.effect("finds the live review whatever the case of the pull request's repository", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const first = yield* reviews.open({
+      ...openInput,
+      key: { host: "GitHub.com", repository: "NachoGames/Ctrl", number: prKey.number },
+    });
+    const again = yield* reviews.open(openInput);
+    assert.isFalse(again.created);
+    assert.equal(again.snapshot.session.id, first.snapshot.session.id);
+    assert.deepEqual(first.snapshot.session.pullRequest, prKey);
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);
