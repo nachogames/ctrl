@@ -185,11 +185,12 @@ import {
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { PullRequestGuideTab } from "./PullRequestGuideTab";
+import { PullRequestReviewTab } from "./review/PullRequestReviewTab";
 import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
-type DetailTab = "summary" | "guide" | "timeline" | "code";
+type DetailTab = "summary" | "review" | "guide" | "timeline" | "code";
 
 /** Said as the thing that did not happen, rather than as the operation that returned an error. */
 const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
@@ -240,6 +241,7 @@ const UPDATE_BRANCH_REBASE_FAILURE_HINT =
 
 const TABS: ReadonlyArray<{ value: DetailTab; label: string }> = [
   { value: "summary", label: "Summary" },
+  { value: "review", label: "Review" },
   { value: "guide", label: "Guide" },
   { value: "timeline", label: "Timeline" },
   { value: "code", label: "Code" },
@@ -1562,7 +1564,9 @@ export function PullRequestDetailPanel({
   const visibleTabs = TABS.filter(
     (item) =>
       (item.value !== "code" || detail === null || detail.capabilities.diff) &&
-      (item.value !== "guide" || reviewGuidesEnabled),
+      (item.value !== "guide" || reviewGuidesEnabled) &&
+      // A review belongs to a chat's group, so the tab needs the chat the panel sits beside.
+      (item.value !== "review" || threadRef != null),
   );
   // The Code tab can be opened while the detail is still on its way, and the detail may then say
   // this host has no patch to show. The tab goes, so whoever was standing on it is moved back to
@@ -2937,6 +2941,15 @@ export function PullRequestDetailPanel({
                   {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}
+                />
+              </div>
+            ) : null}
+            {mountedTabs.has("review") && threadRef ? (
+              <div className={cn("absolute inset-0", tab !== "review" && "invisible")}>
+                <PullRequestReviewTab
+                  environmentId={environmentId}
+                  threadRef={threadRef}
+                  reference={reference}
                 />
               </div>
             ) : null}

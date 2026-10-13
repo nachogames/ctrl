@@ -132,6 +132,9 @@ vi.mock("./PullRequestSummaryTab", () => ({
 }));
 // The guide renders diffs, which start the diff worker; this suite never opens it.
 vi.mock("./PullRequestGuideTab", () => ({ PullRequestGuideTab: () => null }));
+vi.mock("./review/PullRequestReviewTab", () => ({
+  PullRequestReviewTab: () => <div data-test-review-tab="shown" />,
+}));
 vi.mock("./PullRequestCodeTab", () => ({
   default: ({
     onAddToAgentSelection,
@@ -329,6 +332,19 @@ describe.each([
       .findAllByType("button")
       .filter((node) => node.props["aria-label"] === "Check out");
     expect(checkout).toHaveLength(thread === stackThread ? 0 : 1);
+  });
+
+  it(`${target ? "shows" : "hides"} the Review tab`, async () => {
+    await act(async () => render());
+    const reviewTab = renderer.root
+      .findAllByType("button")
+      .filter((node) => node.findAll((child) => child.children.includes("Review")).length > 0);
+    expect(reviewTab.length > 0).toBe(target !== undefined);
+    if (!target) return;
+    await click("Review");
+    expect(
+      renderer.root.findAll((node) => node.props["data-test-review-tab"] === "shown"),
+    ).toHaveLength(1);
   });
 
   it.each(actions)("%s writes to the correct composer", async (action) => {
