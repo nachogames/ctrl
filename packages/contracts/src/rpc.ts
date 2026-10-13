@@ -1996,8 +1996,10 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
 
 /**
  * Checks the connection's scopes against the scope each RPC declares, before
- * the handler runs. Every RPC in `WsRpcGroup` carries it, so a handler cannot
- * be added without authorization.
+ * the handler runs. Every RPC in both `WsBaseRpcGroup` and `WsReviewSessionsRpcGroup`
+ * carries it, so a handler cannot be added without authorization. Each group attaches it
+ * itself, which TypeScript cannot check, so `rpc.test.ts` reads it off every RPC in the
+ * merged group; a new group must repeat `.middleware(RpcScopeAuthorization)`.
  */
 export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthorization>()(
   "t3/contracts/RpcScopeAuthorization",
@@ -2016,6 +2018,7 @@ export const WsReviewSessionsRpcGroup = RpcGroup.make(
   WsReviewSessionsDiscussInSideChatRpc,
 ).middleware(RpcScopeAuthorization);
 
+/** Everything but the review RPCs, so the server builds its handlers apart; clients use `WsRpcGroup`. */
 export const WsBaseRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,

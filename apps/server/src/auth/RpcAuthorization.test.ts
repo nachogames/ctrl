@@ -6,6 +6,7 @@ import {
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
+  ReviewSessionId,
   ThreadId,
   AuthOrchestrationOperateScope,
   ORCHESTRATION_V2_WS_METHODS,
@@ -282,6 +283,47 @@ describe("RPC scope middleware", () => {
         requiredPermission: missing,
       });
       expect(handled).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("review RPC scope middleware", () => {
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (
+        tag,
+      ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.reviewSessionsDecide> =>
+        tag !== WS_METHODS.reviewSessionsDecide,
+    ),
+  );
+
+  it.effect("rejects a read-only connection's decision before the handler runs", () =>
+    Effect.gen(function* () {
+      let handled = 0;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.reviewSessionsDecide, () =>
+              Effect.sync(() => {
+                handled++;
+              }).pipe(Effect.andThen(Effect.never)),
+            ),
+            RpcAuthorization.layer([AuthOrchestrationReadScope]),
+          ),
+        ),
+      );
+
+      expect(
+        yield* client[WS_METHODS.reviewSessionsDecide]({
+          sessionId: ReviewSessionId.make("review-1"),
+          number: 1,
+          decision: "fix",
+        }).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthOrchestrationOperateScope,
+      });
+      expect(handled).toBe(0);
     }).pipe(Effect.scoped),
   );
 });
