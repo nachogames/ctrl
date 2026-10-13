@@ -1,0 +1,126 @@
+import type {
+  ReviewItem,
+  ReviewSessionSnapshot,
+  ReviewSource,
+  ServerProvider,
+} from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  draftUpdateLabel,
+  offersLocalReview,
+  ranOnLabel,
+  replyTarget,
+  reviewPointMentionCounts,
+  reviewRoundViews,
+  sameReviewItem,
+} from "./pullRequestReview.logic";
+
+const round = (n: number, state: "collecting" | "applying" | "applied") => ({
+  round: n,
+  headSha: "abc",
+  state,
+  appliedSha: null,
+  createdAt: "t",
+  updatedAt: "t",
+});
+const point = (number: number, lastSeenRound: number, stale: boolean) =>
+  ({ number, lastSeenRound, stale }) as ReviewItem;
+const source = (id: string, round: number, kind: ReviewSource["kind"], state = "done") =>
+  ({ id, round, kind, state }) as ReviewSource;
+
+describe("reviewRoundViews", () => {
+  it("lists rounds newest first, each with its own reviews and points", () => {
+    const snapshot = {
+      session: { round: 2, phase: "self-review" },
+      rounds: [round(2, "collecting"), round(1, "applied")],
+      sources: [source("PRR_2", 2, "copilot", "reviewing"), source("PRR_1", 1, "copilot")],
+      items: [point(1, 1, true), point(2, 2, false), point(3, 1, true)],
+    } as unknown as ReviewSessionSnapshot;
+    expect(
+      reviewRoundViews(snapshot).map((view) => [
+        view.round.round,
+        view.current,
+        view.sources.map((s) => s.id),
+        view.items.map((i) => i.number),
+      ]),
+    ).toEqual([
+      [2, true, ["PRR_2"], [2]],
+      [1, false, ["PRR_1"], [1, 3]],
+    ]);
+  });
+});
+
+describe("review tab helpers", () => {
+  it("counts the user's messages sent about each point", () => {
+    const counts = reviewPointMentionCounts([
+      { role: "user", text: "[#2 build cache key]\nwhy?" },
+      { role: "user", text: "[#2 build cache key]\nok, shorter" },
+      { role: "assistant", text: "[#3 pin]\nnot a tag from the user" },
+      { role: "user", text: "#3 decline" },
+    ]);
+    expect([...counts]).toEqual([[2, 2]]);
+  });
+
+  it("names the model a local review ran on", () => {
+    const providers = [
+      { instanceId: "claudeAgent", models: [{ slug: "claude-opus-5-5", name: "Claude Opus 5.5" }] },
+    ] as unknown as ReadonlyArray<ServerProvider>;
+    expect(
+      ranOnLabel({ instanceId: "claudeAgent", model: "claude-opus-5-5" } as never, providers),
+    ).toBe("Claude Opus 5.5");
+    expect(ranOnLabel({ instanceId: "codex", model: "gpt-6" } as never, providers)).toBe("gpt-6");
+    expect(ranOnLabel(null, providers)).toBeNull();
+  });
+
+  it("knows whom a reply goes to", () => {
+    expect(replyTarget({ githubThreadIds: ["T1"], sources: ["copilot"] } as never)).toBe("Copilot");
+    expect(replyTarget({ githubThreadIds: ["T1"], sources: ["human:dan"] } as never)).toBe("dan");
+    expect(replyTarget({ githubThreadIds: [], sources: ["local-review"] } as never)).toBeNull();
+  });
+
+  it("offers your review only in a collecting round that has none", () => {
+    const view = (
+      sources: ReadonlyArray<ReviewSource>,
+      state: "collecting" | "applying" = "collecting",
+    ) => ({ round: round(1, state), current: true, sources, items: [] }) as never;
+    expect(offersLocalReview(view([source("PRR_1", 1, "copilot")]))).toBe(true);
+    expect(offersLocalReview(view([source("local:1", 1, "local", "reviewing")]))).toBe(false);
+    expect(offersLocalReview(view([source("local:1", 1, "local", "not-run")]))).toBe(true);
+    expect(offersLocalReview(view([], "applying"))).toBe(false);
+  });
+
+  it("marks a reply the agent rewrote while the point was open", () => {
+    expect(draftUpdateLabel({ draftReplyRevision: 3, draftReplyBy: "agent" } as never, 2)).toBe(
+      "Updated from chat",
+    );
+    expect(
+      draftUpdateLabel({ draftReplyRevision: 3, draftReplyBy: "panel" } as never, 2),
+    ).toBeNull();
+    expect(
+      draftUpdateLabel({ draftReplyRevision: 2, draftReplyBy: "agent" } as never, 2),
+    ).toBeNull();
+  });
+
+  it("treats a point re-sent unchanged as the same, and any changed field as new", () => {
+    const item = {
+      number: 2,
+      sources: ["copilot", "local-review"],
+      githubThreadIds: ["T1"],
+      alreadyFixedIn: { number: 24, url: "https://github.com/o/r/pull/24" },
+      viewed: false,
+      draftReply: "Fixed.",
+    } as unknown as ReviewItem;
+    const resent = structuredClone(item);
+    expect(sameReviewItem(item, resent)).toBe(true);
+    expect(sameReviewItem(item, { ...resent, viewed: true })).toBe(false);
+    expect(sameReviewItem(item, { ...resent, sources: ["copilot"] })).toBe(false);
+    expect(sameReviewItem(item, { ...resent, alreadyFixedIn: null })).toBe(false);
+    expect(
+      sameReviewItem(item, {
+        ...resent,
+        alreadyFixedIn: { number: 25, url: "https://github.com/o/r/pull/25" },
+      }),
+    ).toBe(false);
+  });
+});
