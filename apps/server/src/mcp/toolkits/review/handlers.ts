@@ -14,8 +14,24 @@ import { ReviewToolkit } from "./tools.ts";
 const invalid = (message: string) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message });
 
-/** Review errors are written for the agent; storage causes stay in the logs. */
-const reviewFailure = (error: ReviewSessionError) => invalid(error.message);
+/**
+ * Review errors are written for the agent. One with a cause (storage, or a chat that could not
+ * be reached) is the server's failure, not a bad request: its cause is logged, never shown.
+ */
+const reviewFailure = (error: ReviewSessionError) =>
+  error.cause === undefined
+    ? Effect.fail(invalid(error.message))
+    : Effect.logWarning("review tool failed", {
+        sessionId: error.sessionId,
+        message: error.message,
+        cause: error.cause,
+      }).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        ),
+      );
 
 /**
  * Every review tool acts for the chat that calls it, under the pull-requests capability. The
@@ -45,7 +61,7 @@ const reviewAccess = Effect.gen(function* () {
   const sessions = yield* ReviewSessionService.ReviewSessionService;
   const access = yield* sessions
     .resolveForThread({ threadId: caller.id, groupId: caller.groupId ?? null })
-    .pipe(Effect.mapError(reviewFailure));
+    .pipe(Effect.catch(reviewFailure));
   return { ...access, caller };
 });
 
@@ -101,7 +117,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           reviewThreadId: caller.id,
           headSha: input.headSha ?? null,
         })
-        .pipe(Effect.mapError(reviewFailure));
+        .pipe(Effect.catch(reviewFailure));
       return {
         ...result.snapshot,
         created: result.created,
@@ -116,7 +132,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
       const sessions = yield* ReviewSessionService.ReviewSessionService;
       const view = yield* sessions
         .agentView({ sessionId: access.session.id, threadId: access.caller.id })
-        .pipe(Effect.mapError(reviewFailure));
+        .pipe(Effect.catch(reviewFailure));
       return {
         ...view.snapshot,
         sources: view.snapshot.sources.map((source) => ({
@@ -150,7 +166,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
             slug: finding.slug,
           })),
         })
-        .pipe(Effect.mapError(reviewFailure));
+        .pipe(Effect.catch(reviewFailure));
       return { source };
     }),
   ),
@@ -161,7 +177,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
       const sessions = yield* ReviewSessionService.ReviewSessionService;
       return yield* sessions
         .runLocalReview({ sessionId: access.session.id })
-        .pipe(Effect.mapError(reviewFailure));
+        .pipe(Effect.catch(reviewFailure));
     }),
   ),
   review_items_import: McpToolAccess.actsAsCaller((input) =>
@@ -192,7 +208,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
             draftReply: item.draftReply ?? null,
           })),
         })
-        .pipe(Effect.mapError(reviewFailure));
+        .pipe(Effect.catch(reviewFailure));
       return { ...result.snapshot, created: result.created, matched: result.matched };
     }),
   ),
@@ -204,7 +220,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
       const { number, ...annotation } = input;
       const item = yield* sessions
         .annotate({ sessionId: access.session.id, number, annotation })
-        .pipe(Effect.mapError(reviewFailure));
+        .pipe(Effect.catch(reviewFailure));
       return { item };
     }),
   ),
@@ -221,7 +237,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           reason: input.reason,
           authority: { _tag: "chat", threadId: access.caller.id, quote: input.quote },
         })
-        .pipe(Effect.mapError(reviewFailure));
+        .pipe(Effect.catch(reviewFailure));
       return { item };
     }),
   ),
@@ -238,7 +254,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           conclusion: input.conclusion,
           draftReply: input.draftReply,
         })
-        .pipe(Effect.mapError(reviewFailure));
+        .pipe(Effect.catch(reviewFailure));
       return { item };
     }),
   ),
@@ -253,7 +269,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           headSha: input.headSha,
           finish: input.finish ?? false,
         })
-        .pipe(Effect.mapError(reviewFailure));
+        .pipe(Effect.catch(reviewFailure));
     }),
   ),
 });

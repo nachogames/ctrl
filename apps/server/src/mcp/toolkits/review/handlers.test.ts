@@ -304,3 +304,22 @@ it.effect("keeps a side chat to its point and the local review to its findings",
     }),
   ),
 );
+
+it.effect("reports a storage failure as an orchestration error, not a bad request", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { provided, as } = yield* harnessed;
+      const review = yield* as(reviewThreadId);
+      yield* review("review_session_open", { url: prUrl });
+      yield* provided(
+        sqlClient.pipe(
+          Effect.flatMap((sql) => sql`ALTER TABLE review_items RENAME TO review_items_gone`),
+        ),
+      );
+      expect(yield* review("review_session_read", {})).toMatchObject({
+        code: "orchestration_error",
+        message: "The review list could not be read or saved.",
+      });
+    }),
+  ),
+);
