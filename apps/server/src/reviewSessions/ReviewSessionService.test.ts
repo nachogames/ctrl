@@ -507,3 +507,76 @@ it.effect("finds the live review whatever the case of the pull request's reposit
     assert.deepEqual(first.snapshot.session.pullRequest, prKey);
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
+
+it.effect("holds a round until every drafted GitHub reply is posted", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({
+      sessionId,
+      sourceIds: [],
+      items: [
+        importItem("gh:T1", { githubThreadIds: ["T1"], draftReply: "Fixed in def456." }),
+        // A local finding has no thread to reply on.
+        importItem("local:auth.ts:null-session", { sources: ["local-review"] }),
+        importItem("gh:T3", { githubThreadIds: ["T3"], draftReply: "   " }),
+        importItem("gh:T4", {
+          suggestedDecision: "decline",
+          githubThreadIds: ["T4"],
+          draftReply: "Out of scope.",
+        }),
+      ],
+    });
+    for (const number of [1, 2, 3, 4])
+      yield* reviews.setViewed({ sessionId, number, viewed: true });
+    for (const number of [1, 2, 3]) {
+      yield* reviews.recordApply({ sessionId, number, applyState: "fixed" });
+    }
+    const advance = reviews.advanceRound({ sessionId, headSha: "def456", finish: false });
+    assert.include((yield* Effect.flip(advance)).message, "#1, #4: reply not posted yet");
+    yield* reviews.recordApply({ sessionId, number: 1, applyState: "replied" });
+    assert.include((yield* Effect.flip(advance)).message, "#4: reply not posted yet");
+    yield* reviews.recordApply({ sessionId, number: 4, applyState: "replied" });
+    assert.equal((yield* advance).session.round, 2);
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);
+
+it.effect("asks for a fresh reply when a replied point is raised again", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    const declined = (key: string, draftReply: string) =>
+      importItem(key, { suggestedDecision: "decline", githubThreadIds: [key], draftReply });
+    yield* reviews.importItems({
+      sessionId,
+      sourceIds: [],
+      items: [declined("gh:T1", "Out of scope."), declined("gh:T2", "Not needed.")],
+    });
+    for (const number of [1, 2]) yield* reviews.setViewed({ sessionId, number, viewed: true });
+    for (const number of [1, 2]) {
+      yield* reviews.recordApply({ sessionId, number, applyState: "replied" });
+    }
+    yield* reviews.advanceRound({ sessionId, headSha: "def456", finish: false });
+
+    const reraised = yield* reviews.importItems({
+      sessionId,
+      sourceIds: [],
+      items: [importItem("gh:T1"), importItem("gh:T2", { draftReply: "Still not needed." })],
+    });
+    assert.deepEqual(
+      reraised.snapshot.items.map((item) => [
+        item.number,
+        item.applyState,
+        item.draftReply,
+        item.draftReplyRevision,
+        item.draftReplyBy,
+      ]),
+      [
+        [1, "pending", null, 2, null],
+        [2, "pending", "Still not needed.", 2, "agent"],
+      ],
+    );
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);

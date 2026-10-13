@@ -219,6 +219,16 @@ const nextDraft = (item: ReviewItem, draftReply: string | null, by: ReviewEditor
     ? {}
     : { draftReply, draftReplyRevision: item.draftReplyRevision + 1, draftReplyBy: by };
 
+const hasText = (text: string | null) => text !== null && text.trim() !== "";
+
+/** A point raised again needs a new reply: triage's new draft, or none until one is written. */
+const replyForNewRound = (item: ReviewItem, draftReply: string | null) =>
+  hasText(draftReply)
+    ? nextDraft(item, draftReply, "agent")
+    : item.draftReply === null
+      ? {}
+      : { draftReply: null, draftReplyRevision: item.draftReplyRevision + 1, draftReplyBy: null };
+
 /** The points the panel lists under the current round. */
 const liveItems = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>
   items.filter((item) => item.lastSeenRound === session.round && !item.stale);
@@ -559,6 +569,7 @@ export const make = Effect.gen(function* () {
             : Option.none<ReviewItem>();
           if (Option.isSome(existing)) {
             const item = existing.value;
+            const raisedAgain = item.lastSeenRound < session.round;
             yield* repo.upsertItem(session.id, {
               ...item,
               sourceKeys: union(item.sourceKeys, incoming.sourceKeys),
@@ -569,9 +580,11 @@ export const make = Effect.gen(function* () {
               lastSeenRound: session.round,
               stale: false,
               // Raised again in a new round: the user looks at it again; the decision stays.
-              viewed: item.lastSeenRound < session.round ? false : item.viewed,
-              // Last round's fix or reply does not answer this round's raising of it.
-              applyState: item.lastSeenRound < session.round ? "pending" : item.applyState,
+              viewed: raisedAgain ? false : item.viewed,
+              // Last round's fix or reply does not answer this round's raising of it, and
+              // its posted reply is not posted twice.
+              applyState: raisedAgain ? "pending" : item.applyState,
+              ...(raisedAgain ? replyForNewRound(item, incoming.draftReply) : {}),
               updatedAt: at,
             });
             if (!created.includes(item.number) && !matched.includes(item.number)) {
@@ -788,18 +801,20 @@ export const make = Effect.gen(function* () {
               session.id,
             );
           }
-          // Every GitHub thread gets its drafted reply before the round closes.
+          // Every GitHub thread gets its drafted reply before the round closes; `fixed` is
+          // not enough while a drafted reply waits on the thread.
           const unreplied = live
             .filter(
               (item) =>
                 item.githubThreadIds.length > 0 &&
-                (item.draftReply?.trim() ?? "") !== "" &&
-                isOpen(item.applyState),
+                hasText(item.draftReply) &&
+                item.applyState !== "replied" &&
+                item.applyState !== "resolved",
             )
             .map((item) => `#${item.number}`);
           if (unreplied.length > 0) {
             return yield* fail(
-              `Post the replies on ${unreplied.join(", ")} first, then record them with review_items_record_apply.`,
+              `${unreplied.join(", ")}: reply not posted yet. Post it, then record it with review_items_record_apply.`,
               session.id,
             );
           }
