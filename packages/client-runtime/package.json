@@ -279,6 +279,10 @@
       "types": "./src/state/threadGroups.ts",
       "default": "./src/state/threadGroups.ts"
     },
+    "./state/review-sessions": {
+      "types": "./src/state/reviewSessions.ts",
+      "default": "./src/state/reviewSessions.ts"
+    },
     "./state/thread-inbox": {
       "types": "./src/state/threadInbox.ts",
       "default": "./src/state/threadInbox.ts"
