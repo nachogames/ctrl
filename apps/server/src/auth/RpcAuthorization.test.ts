@@ -18,6 +18,7 @@ import {
   AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
+  clientRpcRequiredScopes,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -125,6 +126,29 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsRequestReviewers)).toBe(
       requiredScopeForRpcMethod(WS_METHODS.pullRequestsComment),
     );
+  });
+
+  it("lets readers watch a review but only operators change it or start its chats", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.reviewSessionsSubscribe)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.reviewSessionsReadSource)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    for (const method of [
+      WS_METHODS.reviewSessionsDecide,
+      WS_METHODS.reviewSessionsSetViewed,
+      WS_METHODS.reviewSessionsEditReply,
+      WS_METHODS.reviewSessionsRequest,
+      WS_METHODS.reviewSessionsRunLocalReview,
+      WS_METHODS.reviewSessionsDiscussInSideChat,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+      // Clients refuse these before sending when the grant lacks operate.
+      expect(clientRpcRequiredScopes(method, undefined)).toEqual([AuthOrchestrationOperateScope]);
+    }
+    expect(clientRpcRequiredScopes(WS_METHODS.reviewSessionsSubscribe, undefined)).toEqual([]);
+    expect(clientRpcRequiredScopes(WS_METHODS.reviewSessionsReadSource, undefined)).toEqual([]);
   });
 
   it("requires source control writes to start, retry, or cancel project clones", () => {

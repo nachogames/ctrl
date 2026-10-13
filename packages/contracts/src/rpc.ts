@@ -352,6 +352,21 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import {
+  ReviewItemEditReplyInput,
+  ReviewItemResult,
+  ReviewItemSetViewedInput,
+  ReviewItemsDecideInput,
+  ReviewRequestInput,
+  ReviewSessionError,
+  ReviewSessionInput,
+  ReviewSessionSubscribeInput,
+  ReviewSessionSubscribeResult,
+  ReviewSideChatInput,
+  ReviewSourceReadInput,
+  ReviewSourceReadResult,
+  ReviewThreadResult,
+} from "./reviewSession.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -540,6 +555,15 @@ export const WS_METHODS = {
   secretsAnswerRequest: "secrets.answerRequest",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+  // Ctrl: pull request review loop.
+  reviewSessionsSubscribe: "reviewSessions.subscribe",
+  reviewSessionsReadSource: "reviewSessions.readSource",
+  reviewSessionsDecide: "reviewSessions.decide",
+  reviewSessionsSetViewed: "reviewSessions.setViewed",
+  reviewSessionsEditReply: "reviewSessions.editReply",
+  reviewSessionsRequest: "reviewSessions.request",
+  reviewSessionsRunLocalReview: "reviewSessions.runLocalReview",
+  reviewSessionsDiscussInSideChat: "reviewSessions.discussInSideChat",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1834,6 +1858,65 @@ const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe
   stream: true,
 });
 
+const ReviewRpcError = Schema.Union([ReviewSessionError, EnvironmentAuthorizationError]);
+
+/** The review of a pull request in a chat's group: one snapshot on subscribe, then one per change. */
+const WsReviewSessionsSubscribeRpc = Rpc.make(WS_METHODS.reviewSessionsSubscribe, {
+  payload: ReviewSessionSubscribeInput,
+  success: ReviewSessionSubscribeResult,
+  error: ReviewRpcError,
+  stream: true,
+});
+
+/** Exactly what one review said, read when the panel expands it. */
+const WsReviewSessionsReadSourceRpc = Rpc.make(WS_METHODS.reviewSessionsReadSource, {
+  payload: ReviewSourceReadInput,
+  success: ReviewSourceReadResult,
+  error: ReviewRpcError,
+});
+
+/** A decision the user made in the Review tab. */
+const WsReviewSessionsDecideRpc = Rpc.make(WS_METHODS.reviewSessionsDecide, {
+  payload: ReviewItemsDecideInput,
+  success: ReviewItemResult,
+  error: ReviewRpcError,
+});
+
+/** The Viewed box on a point. */
+const WsReviewSessionsSetViewedRpc = Rpc.make(WS_METHODS.reviewSessionsSetViewed, {
+  payload: ReviewItemSetViewedInput,
+  success: ReviewItemResult,
+  error: ReviewRpcError,
+});
+
+/** The user's own edit of a reply draft. */
+const WsReviewSessionsEditReplyRpc = Rpc.make(WS_METHODS.reviewSessionsEditReply, {
+  payload: ReviewItemEditReplyInput,
+  success: ReviewItemResult,
+  error: ReviewRpcError,
+});
+
+/** Triage, Apply, or a reply rewrite: a turn in the review chat. */
+const WsReviewSessionsRequestRpc = Rpc.make(WS_METHODS.reviewSessionsRequest, {
+  payload: ReviewRequestInput,
+  success: Schema.Void,
+  error: ReviewRpcError,
+});
+
+/** "Run your review": the local review in its own chat. */
+const WsReviewSessionsRunLocalReviewRpc = Rpc.make(WS_METHODS.reviewSessionsRunLocalReview, {
+  payload: ReviewSessionInput,
+  success: ReviewThreadResult,
+  error: ReviewRpcError,
+});
+
+/** Starts, or finds, the side chat about one point. */
+const WsReviewSessionsDiscussInSideChatRpc = Rpc.make(WS_METHODS.reviewSessionsDiscussInSideChat, {
+  payload: ReviewSideChatInput,
+  success: ReviewThreadResult,
+  error: ReviewRpcError,
+});
+
 const WsScheduledTasksUpsertRpc = Rpc.make(WS_METHODS.scheduledTasksUpsert, {
   payload: ScheduledTaskUpsertInput,
   success: ScheduledTaskMutationResult,
@@ -1921,7 +2004,19 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
-export const WsRpcGroup = RpcGroup.make(
+/** The review loop's RPCs, a group of their own so the server builds their handlers apart. */
+export const WsReviewSessionsRpcGroup = RpcGroup.make(
+  WsReviewSessionsSubscribeRpc,
+  WsReviewSessionsReadSourceRpc,
+  WsReviewSessionsDecideRpc,
+  WsReviewSessionsSetViewedRpc,
+  WsReviewSessionsEditReplyRpc,
+  WsReviewSessionsRequestRpc,
+  WsReviewSessionsRunLocalReviewRpc,
+  WsReviewSessionsDiscussInSideChatRpc,
+).middleware(RpcScopeAuthorization);
+
+export const WsBaseRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -2120,3 +2215,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
 ).middleware(RpcScopeAuthorization);
+
+export const WsRpcGroup = WsBaseRpcGroup.merge(WsReviewSessionsRpcGroup);

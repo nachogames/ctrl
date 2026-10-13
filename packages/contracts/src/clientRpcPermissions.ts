@@ -46,6 +46,13 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
+  // Each changes the review, and the last three start an agent turn or a chat.
+  [WS_METHODS.reviewSessionsDecide]: AuthOrchestrationOperateScope,
+  [WS_METHODS.reviewSessionsSetViewed]: AuthOrchestrationOperateScope,
+  [WS_METHODS.reviewSessionsEditReply]: AuthOrchestrationOperateScope,
+  [WS_METHODS.reviewSessionsRequest]: AuthOrchestrationOperateScope,
+  [WS_METHODS.reviewSessionsRunLocalReview]: AuthOrchestrationOperateScope,
+  [WS_METHODS.reviewSessionsDiscussInSideChat]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;

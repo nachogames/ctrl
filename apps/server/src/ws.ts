@@ -101,6 +101,8 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  WsBaseRpcGroup,
+  WsReviewSessionsRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -232,6 +234,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
+import * as ReviewSessionService from "./reviewSessions/ReviewSessionService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -549,6 +552,8 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+const ServerWsBaseRpcGroup = WsBaseRpcGroup.middleware(RpcInstrumentation);
+const ServerReviewSessionsRpcGroup = WsReviewSessionsRpcGroup.middleware(RpcInstrumentation);
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -1203,6 +1208,31 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
+// Its own group, so no single `toLayer` has to check every RPC at once: with all of them
+// together TypeScript gives up ("Type instantiation is excessively deep").
+const layerReviewSessionsRpc = ServerReviewSessionsRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const reviewSessions = yield* ReviewSessionService.ReviewSessionService;
+    return ServerReviewSessionsRpcGroup.of({
+      [WS_METHODS.reviewSessionsSubscribe]: (input) => reviewSessions.subscribe(input),
+      [WS_METHODS.reviewSessionsReadSource]: (input) =>
+        reviewSessions.readSourceComments(input).pipe(Effect.map((comments) => ({ comments }))),
+      // The panel's decision is the user's own, so it carries no quote.
+      [WS_METHODS.reviewSessionsDecide]: (input) =>
+        reviewSessions
+          .decide({ ...input, authority: { _tag: "panel" } })
+          .pipe(Effect.map((item) => ({ item }))),
+      [WS_METHODS.reviewSessionsSetViewed]: (input) =>
+        reviewSessions.setViewed(input).pipe(Effect.map((item) => ({ item }))),
+      [WS_METHODS.reviewSessionsEditReply]: (input) =>
+        reviewSessions.editReply(input).pipe(Effect.map((item) => ({ item }))),
+      [WS_METHODS.reviewSessionsRequest]: (input) => reviewSessions.requestTurn(input),
+      [WS_METHODS.reviewSessionsRunLocalReview]: (input) => reviewSessions.runLocalReview(input),
+      [WS_METHODS.reviewSessionsDiscussInSideChat]: (input) => reviewSessions.openSideChat(input),
+    });
+  }),
+);
+
 const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -1210,7 +1240,7 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  ServerWsBaseRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1850,7 +1880,7 @@ const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = ServerWsBaseRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           ThreadGroupService.clientCommandChangesGroupMembership(command)
             ? Effect.fail(
@@ -3273,6 +3303,7 @@ export const layer = Layer.unwrap(
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
+    const reviewSessions = yield* ReviewSessionService.ReviewSessionService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3321,12 +3352,15 @@ export const layer = Layer.unwrap(
           return httpEffect;
         }).pipe(
           Effect.provide(
-            layerWsRpc(
-              session,
-              clientOrigin,
-              clientAnalyticsProps,
-              previewAutomationBroker,
-              serverBrowser,
+            Layer.merge(
+              layerWsRpc(
+                session,
+                clientOrigin,
+                clientAnalyticsProps,
+                previewAutomationBroker,
+                serverBrowser,
+              ),
+              layerReviewSessionsRpc,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees
@@ -3346,6 +3380,10 @@ export const layer = Layer.unwrap(
                   PullRequestReviewGuideService.PullRequestReviewGuideService,
                   reviewGuides,
                 ),
+              ),
+              // One server-lifetime instance, so Review tab subscribers hear MCP and sync writes.
+              Layer.provide(
+                Layer.succeed(ReviewSessionService.ReviewSessionService, reviewSessions),
               ),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
