@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { liveRoundItems, nextUnviewedNumber } from "@t3tools/client-runtime/state/review-sessions";
+import {
+  liveRoundItems,
+  nextUnviewedNumber,
+  reviewApplySummary,
+} from "@t3tools/client-runtime/state/review-sessions";
 import type {
   EnvironmentId,
   PullRequestRef,
@@ -8,15 +12,22 @@ import type {
   ReviewItem,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { useThreadProjection } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { reviewSessionEnvironment } from "~/state/reviewSessions";
 import { EMPTY_SERVER_PROVIDERS, environmentServerConfigsAtom } from "~/state/server";
+import { Button } from "../../ui/button";
 import { toastManager } from "../../ui/toast";
-import { reviewPointMentionCounts, reviewRoundViews } from "./pullRequestReview.logic";
+import {
+  reviewApplyLines,
+  reviewPointMentionCounts,
+  reviewRoundViews,
+} from "./pullRequestReview.logic";
+import { ReviewApplyDialog } from "./ReviewApplyDialog";
+import { ReviewPointMenu, ReviewSideChatBanner, useOpenReviewSideChat } from "./ReviewPointMenu";
 import { useReviewPointFocusStore } from "./reviewPointFocusStore";
 import { ReviewPointRow } from "./ReviewPointRow";
 import { ReviewRoundCard } from "./ReviewRoundCard";
@@ -24,6 +35,7 @@ import { useReviewCommand } from "./useReviewCommand";
 
 const NO_MENTIONS: ReadonlyMap<number, number> = new Map();
 const NO_ITEMS: ReadonlyArray<ReviewItem> = [];
+const NO_LINES: ReadonlyArray<string> = [];
 
 /**
  * The Review tab: the pull request's review in this chat's group, as a stack of rounds.
@@ -64,6 +76,14 @@ export function PullRequestReviewTab({
     "Could not change the viewed mark",
   );
   const decide = useReviewCommand(reviewSessionEnvironment.decide, "Could not save the decision");
+  const canRequest = useAtomValue(reviewSessionEnvironment.request.permissionAtom(environmentId));
+  const request = useReviewCommand(reviewSessionEnvironment.request, "Could not apply");
+  const sideChat = useOpenReviewSideChat(environmentId);
+  const [confirmingApply, setConfirmingApply] = useState(false);
+  // The round an Apply was sent for. The request only moves the round to applying and queues the
+  // agent's turn, so Apply stays busy until the subscription shows the round has left
+  // collecting, or the server refuses.
+  const [applySent, setApplySent] = useState<string | null>(null);
   const openLink = useOpenLink(threadRef);
   const openNumber = useReviewPointFocusStore((state) =>
     reviewThreadKey === null ? null : (state.focus[reviewThreadKey]?.number ?? null),
@@ -90,6 +110,14 @@ export function PullRequestReviewTab({
   }, [liveItems]);
 
   const session = snapshot?.session ?? null;
+  const applyKey = session === null ? null : `${session.id}:${session.round}`;
+  const currentRoundState =
+    session === null
+      ? null
+      : (snapshot?.rounds.find((round) => round.round === session.round)?.state ?? null);
+  if (applySent !== null && (applySent !== applyKey || currentRoundState !== "collecting")) {
+    setApplySent(null);
+  }
   useEffect(() => {
     if (session === null || reviewThreadKey === null) return;
     useReviewPointFocusStore.getState().registerReviewChat(reviewThreadKey, {
@@ -178,6 +206,20 @@ export function PullRequestReviewTab({
     );
   }
 
+  const startApply = async () => {
+    if (applyKey === null) return;
+    setConfirmingApply(false);
+    focusPoint(null);
+    setApplySent(applyKey);
+    const result = await request({
+      environmentId,
+      input: { sessionId, request: { _tag: "apply" } },
+    });
+    if (result._tag === "Failure") {
+      setApplySent((current) => (current === applyKey ? null : current));
+    }
+  };
+
   const views = reviewRoundViews(snapshot);
   return (
     <div className="flex h-full flex-col gap-2.5 overflow-y-auto p-3">
@@ -185,7 +227,8 @@ export function PullRequestReviewTab({
         const collecting = view.current && view.round.state === "collecting";
         return (
           <ReviewRoundCard
-            key={view.round.round}
+            // A round that stops being current collapses under the new one.
+            key={`${view.round.round}:${view.current}`}
             view={view}
             sessionId={sessionId}
             environmentId={environmentId}
@@ -195,28 +238,102 @@ export function PullRequestReviewTab({
                 (item) => (mentions.get(item.number) ?? 0) > 0 || item.sideThreadId !== null,
               ).length
             }
-            renderPoint={(item) => (
-              <ReviewPointRow
-                key={item.number}
-                item={item}
-                environmentId={environmentId}
-                sessionId={sessionId}
-                roundState={view.round.state}
-                open={view.current && openNumber === item.number}
-                openable={view.current}
-                collecting={collecting}
-                canView={canView}
-                canDecide={canDecide}
-                talked={mentions.get(item.number) ?? 0}
-                onOpenChange={onOpenChange}
-                onViewed={onViewed}
-                onDecide={onDecide}
-                onOpenLink={onOpenLink}
-              />
-            )}
+            footer={
+              collecting ? (
+                <ApplyRow
+                  left={view.items.filter((item) => !item.viewed).length}
+                  round={view.round.round}
+                  sending={applySent === applyKey}
+                  disabled={!canRequest}
+                  onApply={() => setConfirmingApply(true)}
+                />
+              ) : null
+            }
+            renderPoint={(item) => {
+              const open = view.current && openNumber === item.number;
+              const sideThreadId = item.sideThreadId;
+              return (
+                <ReviewPointRow
+                  key={item.number}
+                  item={item}
+                  environmentId={environmentId}
+                  sessionId={sessionId}
+                  roundState={view.round.state}
+                  open={open}
+                  openable={view.current}
+                  collecting={collecting}
+                  canView={canView}
+                  canDecide={canDecide}
+                  talked={mentions.get(item.number) ?? 0}
+                  onOpenChange={onOpenChange}
+                  onViewed={onViewed}
+                  onDecide={onDecide}
+                  onOpenLink={onOpenLink}
+                  // Only the open row gets these, so the closed rows stay memoised.
+                  menu={
+                    open ? (
+                      <ReviewPointMenu
+                        environmentId={environmentId}
+                        disabled={!collecting || sideChat.opening}
+                        onDiscuss={() => void sideChat.open(sessionId, item.number)}
+                      />
+                    ) : undefined
+                  }
+                  banner={
+                    open && sideThreadId !== null ? (
+                      <ReviewSideChatBanner onOpen={() => void sideChat.goToThread(sideThreadId)} />
+                    ) : undefined
+                  }
+                />
+              );
+            }}
           />
         );
       })}
+      <ReviewApplyDialog
+        open={confirmingApply}
+        onOpenChange={setConfirmingApply}
+        round={snapshot.session.round}
+        pullRequestNumber={snapshot.session.pullRequest.number}
+        lines={
+          confirmingApply
+            ? reviewApplyLines(
+                reviewApplySummary(liveItems, snapshot.sources, snapshot.session.round),
+              )
+            : NO_LINES
+        }
+        onApply={() => void startApply()}
+      />
+    </div>
+  );
+}
+
+/** The footer of the round being collected: how many are left to view, and Apply once none are. */
+function ApplyRow({
+  left,
+  round,
+  sending,
+  disabled,
+  onApply,
+}: {
+  left: number;
+  round: number;
+  sending: boolean;
+  disabled: boolean;
+  onApply: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2.5 px-1 pt-1.5">
+      <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+        {sending
+          ? "Starting the apply in the review chat…"
+          : left === 0
+            ? "All viewed. Apply fixes, posts your review, replies and resolves."
+            : `${left} left to view.`}
+      </span>
+      <Button size="sm" disabled={disabled || sending || left > 0} onClick={onApply}>
+        Apply round {round}
+      </Button>
     </div>
   );
 }
