@@ -240,7 +240,7 @@ const ReviewItemsRecordApplyTool = Tool.make("review_items_record_apply", {
 const ReviewRoundAdvanceTool = Tool.make("review_round_advance", {
   ...reviewTool,
   description:
-    "Close the applied round on the pushed head commit and open the next one, or pass finish: true when a round raised nothing new. Refused while a fix point is not yet pushed, or a point's drafted reply on its GitHub threads is not yet recorded replied or resolved. Every point is stale until the new round raises it again. Review chat only.",
+    "Close the applied round on the pushed head commit and open the next one, or pass finish: true when a round raised nothing new. Refused while a fix point is not yet pushed, or a point's drafted reply on its GitHub threads is not yet recorded replied or resolved; finish is also refused while a review of the round is in but untriaged or still running. Every point is stale until the new round raises it again. Review chat only.",
   parameters: Schema.Struct({
     headSha: TrimmedNonEmptyString.annotate({ description: "git rev-parse HEAD after the push." }),
     finish: Schema.optional(Schema.Boolean),

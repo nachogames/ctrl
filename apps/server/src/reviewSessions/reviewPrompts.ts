@@ -95,7 +95,8 @@ export function localReviewPrompt(input: {
   ].join("\n");
 }
 
-const sourceName = (source: ReviewSource) =>
+/** How the chat names a review: Copilot, your review, or the reviewer's login. */
+export const reviewSourceName = (source: ReviewSource) =>
   source.kind === "copilot"
     ? "Copilot"
     : source.kind === "local"
@@ -122,7 +123,7 @@ export function reviewRequestText(input: {
   const { session, request } = input;
   switch (request._tag) {
     case "triage":
-      return `Triage round ${session.round} of the review of ${session.url}: ${input.sources.map(sourceName).join(", ")}. Read the list with review_session_read and follow the brief's triage steps.`;
+      return `Triage round ${session.round} of the review of ${session.url}: ${input.sources.map(reviewSourceName).join(", ")}. Read the list with review_session_read and follow the brief's triage steps.`;
     case "apply":
       return `Apply round ${session.round} of the review of ${session.url}. Every point is viewed. Follow the brief's apply steps.`;
     case "rewrite-reply":

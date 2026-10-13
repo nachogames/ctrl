@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 
 import * as ReviewSessionService from "./ReviewSessionService.ts";
 import {
+  actor,
   chatShell,
   githubReview,
   githubThread,
@@ -278,6 +279,71 @@ it.effect(
     }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
   },
 );
+
+it.effect("will not finish while a review of the round is untriaged or still running", () => {
+  const harness = newHarness();
+  harness.read = reviewRoundRead({
+    reviews: [githubReview("PRR_dan", "dan")],
+    pendingReviewers: [actor("Copilot", true)],
+  });
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    const finish = reviews.advanceRound({ sessionId, headSha: "abc123", finish: true });
+    const both = yield* Effect.flip(finish);
+    assert.include(both.message, "@dan is done but not triaged");
+    assert.include(both.message, "Copilot is still reviewing");
+
+    yield* reviews.importItems({ sessionId, sourceIds: ["PRR_dan"], items: [] });
+    yield* reviews.runLocalReview({ sessionId });
+    const running = yield* Effect.flip(finish);
+    assert.include(running.message, "your review and Copilot are still reviewing");
+    assert.notInclude(running.message, "@dan");
+
+    const local = (yield* reviews.read(sessionId)).sources.find(
+      (source) => source.kind === "local",
+    );
+    yield* reviews.submitLocalFindings({
+      sessionId,
+      sourceId: local!.id,
+      headSha: "abc123",
+      findings: [],
+    });
+    const untriaged = yield* Effect.flip(finish);
+    assert.include(untriaged.message, "your review is done but not triaged");
+    assert.equal((yield* reviews.read(sessionId)).session.phase, "self-review");
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("finishes a round whose reviews are all triaged", () => {
+  const harness = newHarness();
+  harness.read = reviewRoundRead({ reviews: [githubReview("PRR_dan", "dan")] });
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({ sessionId, sourceIds: ["PRR_dan"], items: [] });
+    const finished = yield* reviews.advanceRound({ sessionId, headSha: "abc123", finish: true });
+    assert.equal(finished.session.phase, "done");
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("does not wait on your review once its chat is gone", () => {
+  const harness = newHarness();
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    const run = yield* reviews.runLocalReview({ sessionId });
+    harness.shells.set(
+      run.threadId,
+      chatShell(run.threadId, { archivedAt: DateTime.makeUnsafe(2) as DateTime.Utc }),
+    );
+    const finished = yield* reviews.advanceRound({ sessionId, headSha: "abc123", finish: true });
+    assert.equal(finished.session.phase, "done");
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
 
 it.effect("carries a finished, untriaged review into the next round", () => {
   const harness = newHarness();

@@ -47,6 +47,7 @@ import * as ReviewSessionChanges from "./ReviewSessionChanges.ts";
 import {
   localReviewPrompt,
   reviewRequestText,
+  reviewSourceName,
   sideChatPrompt,
   sideChatTitle,
 } from "./reviewPrompts.ts";
@@ -287,6 +288,14 @@ const unseenPoints = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) 
 
 const isOpen = (applyState: ReviewApplyState) =>
   applyState === "pending" || applyState === "working";
+
+/** "Copilot", "Copilot and your review", "Copilot, @dan and your review". */
+const namesOf = (names: ReadonlyArray<string>) => {
+  const unique = [...new Set(names)];
+  return unique.length <= 1
+    ? (unique[0] ?? "")
+    : `${unique.slice(0, -1).join(", ")} and ${unique[unique.length - 1]}`;
+};
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -834,6 +843,51 @@ export const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
 
+  /** A chat that still exists and is not archived; a deleted or archived chat is gone. */
+  const liveThread = (threadId: ThreadId) =>
+    threads
+      .getThreadShell(threadId)
+      .pipe(
+        Effect.map((shell) =>
+          shell !== null && shell.deletedAt === null && shell.archivedAt === null ? shell : null,
+        ),
+      );
+
+  /**
+   * A review cannot finish over a review of its round that is in but not triaged, or still
+   * running: nothing could triage it once the review is done. A local run whose chat is gone
+   * never hands in findings, so it does not hold the review.
+   */
+  const requireReviewsSettled = (session: ReviewSession) =>
+    Effect.gen(function* () {
+      const untriaged: Array<string> = [];
+      const running: Array<string> = [];
+      for (const source of yield* repo.listSources(session.id)) {
+        if (source.round !== session.round) continue;
+        if (source.state === "done" && !source.triaged) untriaged.push(reviewSourceName(source));
+        if (source.state !== "requested" && source.state !== "reviewing") continue;
+        if (source.kind === "local") {
+          if (source.threadId === null || (yield* liveThread(source.threadId)) === null) continue;
+        }
+        running.push(reviewSourceName(source));
+      }
+      const clauses = [
+        ...(untriaged.length === 0
+          ? []
+          : [
+              `${namesOf(untriaged)} ${untriaged.length === 1 ? "is" : "are"} done but not triaged`,
+            ]),
+        ...(running.length === 0
+          ? []
+          : [`${namesOf(running)} ${running.length === 1 ? "is" : "are"} still reviewing`]),
+      ];
+      if (clauses.length === 0) return;
+      return yield* fail(
+        `The review cannot finish yet: ${clauses.join("; ")}. Triage what is in and wait for what is running (or withdraw that review request on GitHub), then finish.`,
+        session.id,
+      );
+    });
+
   const advanceRound: ReviewSessionService["Service"]["advanceRound"] = (input) =>
     Effect.gen(function* () {
       const next = yield* write(
@@ -879,6 +933,7 @@ export const make = Effect.gen(function* () {
               session.id,
             );
           }
+          if (input.finish) yield* requireReviewsSettled(session);
           const at = yield* now;
           yield* repo.upsertRound(session.id, {
             ...round,
@@ -915,11 +970,6 @@ export const make = Effect.gen(function* () {
       if (!input.finish) yield* syncQuietly(next.id);
       return yield* snapshotOf(next);
     }).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
-
-  const liveThread = (threadId: ThreadId) =>
-    threads
-      .getThreadShell(threadId)
-      .pipe(Effect.map((shell) => (shell !== null && shell.deletedAt === null ? shell : null)));
 
   const reviewChatOf = (session: ReviewSession) =>
     liveThread(session.reviewThreadId).pipe(
