@@ -13,7 +13,11 @@ import {
   replyTarget,
   reviewPointMentionCounts,
   reviewRoundViews,
+  rewritePending,
   sameReviewItem,
+  toggledDecision,
+  triageButton,
+  triageInFlight,
 } from "./pullRequestReview.logic";
 
 const round = (n: number, state: "collecting" | "applying" | "applied") => ({
@@ -122,5 +126,73 @@ describe("review tab helpers", () => {
         alreadyFixedIn: { number: 25, url: "https://github.com/o/r/pull/25" },
       }),
     ).toBe(false);
+  });
+});
+
+describe("triage in flight", () => {
+  const triaged = (id: string, done: boolean) =>
+    ({ id, round: 1, kind: "copilot", state: "done", triaged: done }) as ReviewSource;
+
+  it("lasts until every review it covered is triaged, and ends if one is gone", () => {
+    expect(triageInFlight([], [triaged("A", false)])).toBe(false);
+    expect(triageInFlight(["A", "B"], [triaged("A", true), triaged("B", false)])).toBe(true);
+    expect(triageInFlight(["A", "B"], [triaged("A", true), triaged("B", true)])).toBe(false);
+    expect(triageInFlight(["A"], [])).toBe(false);
+  });
+
+  it("shows Triage disabled before any review is in, busy while triaging, gone once done", () => {
+    const view = (
+      sources: ReadonlyArray<ReviewSource>,
+      state: "collecting" | "applying" = "collecting",
+    ) => ({ round: round(1, state), current: true, sources, items: [] }) as never;
+    const reviewing = { ...triaged("A", false), state: "reviewing" } as ReviewSource;
+    expect(triageButton(view([reviewing]), [])).toEqual({
+      label: "Triage",
+      busy: false,
+      ready: false,
+    });
+    expect(triageButton(view([]), [])).toEqual({ label: "Triage", busy: false, ready: false });
+    expect(triageButton(view([triaged("A", false), triaged("B", false)]), [])).toEqual({
+      label: "Triage both",
+      busy: false,
+      ready: true,
+    });
+    expect(triageButton(view([triaged("A", false)]), ["A"])).toEqual({
+      label: "Triaging…",
+      busy: true,
+      ready: false,
+    });
+    expect(triageButton(view([triaged("A", true)]), ["A"])).toBeNull();
+    expect(triageButton(view([triaged("A", false)], "applying"), [])).toBeNull();
+  });
+});
+
+describe("reply rewrite in flight", () => {
+  it("waits for the next write of the draft", () => {
+    expect(rewritePending(null, 3)).toBe(false);
+    expect(rewritePending(3, 3)).toBe(true);
+    expect(rewritePending(3, 4)).toBe(false);
+  });
+});
+
+describe("toggledDecision", () => {
+  const suggested = { decision: "needs-call", suggestedDecision: "fix" } as const;
+  const decided = { decision: "decline", suggestedDecision: "fix" } as const;
+
+  it("turns a click on Claude's pressed call into the user's decision", () => {
+    expect(toggledDecision(suggested, [])).toBe("fix");
+    expect(toggledDecision(suggested, ["decline"])).toBe("decline");
+  });
+
+  it("switches an explicit decision, or clears it back to Claude's call", () => {
+    expect(toggledDecision(decided, ["fix"])).toBe("fix");
+    expect(toggledDecision(decided, [])).toBe("needs-call");
+  });
+
+  it("sends nothing for a point with no call and no decision clicked off", () => {
+    expect(toggledDecision({ decision: "needs-call", suggestedDecision: null }, [])).toBeNull();
+    expect(toggledDecision({ decision: "needs-call", suggestedDecision: null }, ["fix"])).toBe(
+      "fix",
+    );
   });
 });

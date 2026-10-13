@@ -36,6 +36,12 @@ function ReviewSourceAvatar({ kind, author }: Pick<ReviewSource, "kind" | "autho
   );
 }
 
+const SOURCE_NAMES: Record<string, string> = {
+  copilot: "Copilot",
+  "local-review": "your review",
+  ci: "CI",
+};
+
 const SOURCE_TIPS: Record<string, string> = {
   copilot: "Copilot · review comment on GitHub",
   "local-review": "Your review · ran on this computer",
@@ -46,6 +52,7 @@ const SOURCE_TIPS: Record<string, string> = {
 export function ReviewItemSourceIcons({ sources }: { sources: ReadonlyArray<ReviewItemSource> }) {
   return (
     <span className="flex min-w-10 shrink-0 gap-0.5">
+      <span className="sr-only">Raised by</span>
       {sources.map((name) => {
         const human = name.startsWith("human:") ? name.slice("human:".length) : null;
         return (
@@ -66,6 +73,7 @@ export function ReviewItemSourceIcons({ sources }: { sources: ReadonlyArray<Revi
                   {(human ?? name).charAt(0).toUpperCase()}
                 </span>
               )}
+              <span className="sr-only">{human ?? SOURCE_NAMES[name] ?? name}</span>
             </TooltipTrigger>
             <TooltipPopup side="top">
               {human === null ? (SOURCE_TIPS[name] ?? name) : `${human} · review on GitHub`}

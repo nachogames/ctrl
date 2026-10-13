@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/review-sessions";
 import type {
   EnvironmentId,
+  ReviewDecision,
   ReviewItem,
   ReviewRoundState,
   ReviewSessionId,
@@ -19,7 +20,7 @@ import { Button } from "../../ui/button";
 import { Checkbox } from "../../ui/checkbox";
 import { Toggle, ToggleGroup } from "../../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
-import { sameReviewItem } from "./pullRequestReview.logic";
+import { sameReviewItem, toggledDecision } from "./pullRequestReview.logic";
 import { ReviewItemSourceIcons } from "./ReviewSourceRow";
 import { ReviewReplyDraft } from "./ReviewReplyDraft";
 
@@ -47,7 +48,7 @@ interface ReviewPointRowProps {
   // The callbacks take the point so the tab can pass the same function to every row.
   onOpenChange: (item: ReviewItem, open: boolean) => void;
   onViewed: (item: ReviewItem, viewed: boolean) => void;
-  onDecide: (item: ReviewItem, decision: "fix" | "decline") => void;
+  onDecide: (item: ReviewItem, decision: ReviewDecision) => void;
   onOpenLink: (url: string) => void;
   /**
    * The ⋯ menu and the side-chat banner (Task 11). Read only while the point is open: pass them
@@ -210,8 +211,8 @@ export const ReviewPointRow = memo(function ReviewPointRow({
               value={decision === null ? [] : [decision]}
               disabled={!collecting || !canDecide}
               onValueChange={(next) => {
-                const value = next[0];
-                if (value === "fix" || value === "decline") onDecide(item, value);
+                const value = toggledDecision(item, next);
+                if (value !== null) onDecide(item, value);
               }}
             >
               <Toggle value="fix">Fix</Toggle>

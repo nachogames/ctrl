@@ -1,4 +1,6 @@
+import { reviewTriageLabel } from "@t3tools/client-runtime/state/review-sessions";
 import type {
+  ReviewDecision,
   ReviewItem,
   ReviewRanOn,
   ReviewRound,
@@ -114,4 +116,55 @@ export function sameReviewItem(a: ReviewItem, b: ReviewItem): boolean {
   if (a === b) return true;
   const keys = Object.keys(a) as Array<keyof ReviewItem>;
   return keys.length === Object.keys(b).length && keys.every((key) => sameValue(a[key], b[key]));
+}
+
+/**
+ * A Triage the user sent is still running while any review it covered is untriaged. The request
+ * resolves once the turn is queued; only the agent's import flips the reviews to triaged.
+ */
+export function triageInFlight(
+  coveredIds: ReadonlyArray<string>,
+  sources: ReadonlyArray<Pick<ReviewSource, "id" | "triaged">>,
+): boolean {
+  return coveredIds.some((id) => sources.some((source) => source.id === id && !source.triaged));
+}
+
+/**
+ * The round header's Triage button: shown disabled until a review is in, busy while a triage
+ * runs, ready for every finished untriaged review, and gone once they are all triaged.
+ */
+export function triageButton(
+  view: ReviewRoundView,
+  coveredIds: ReadonlyArray<string>,
+): { readonly label: string; readonly busy: boolean; readonly ready: boolean } | null {
+  if (!view.current || view.round.state !== "collecting") return null;
+  if (triageInFlight(coveredIds, view.sources)) {
+    return { label: "Triaging…", busy: true, ready: false };
+  }
+  const untriaged = view.sources.filter((source) => source.state === "done" && !source.triaged);
+  const label = reviewTriageLabel(untriaged.length);
+  if (label !== null) return { label, busy: false, ready: true };
+  return view.sources.some((source) => source.state === "done")
+    ? null
+    : { label: "Triage", busy: false, ready: false };
+}
+
+/** A rewrite the user asked for is pending until the draft is written again. */
+export function rewritePending(requestedAtRevision: number | null, revision: number): boolean {
+  return requestedAtRevision !== null && revision === requestedAtRevision;
+}
+
+/**
+ * What a click on the Fix/Decline toggle decides. The toggle shows Claude's call pressed while the
+ * point needs a call, so clicking that pressed value makes it the user's decision; clicking the
+ * user's own pressed decision hands the point back to Claude's call. Null sends nothing.
+ */
+export function toggledDecision(
+  item: Pick<ReviewItem, "decision" | "suggestedDecision">,
+  next: ReadonlyArray<string>,
+): ReviewDecision | null {
+  const value = next[0];
+  if (value === "fix" || value === "decline") return value;
+  if (item.decision !== "needs-call") return "needs-call";
+  return item.suggestedDecision;
 }

@@ -4,6 +4,7 @@ import { liveRoundItems, nextUnviewedNumber } from "@t3tools/client-runtime/stat
 import type {
   EnvironmentId,
   PullRequestRef,
+  ReviewDecision,
   ReviewItem,
   ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -149,7 +150,7 @@ export function PullRequestReviewTab({
     [environmentId, focusPoint, reviewThreadKey, sessionId, setViewed],
   );
   const onDecide = useCallback(
-    (item: ReviewItem, decision: "fix" | "decline") => {
+    (item: ReviewItem, decision: ReviewDecision) => {
       if (sessionId === null) return;
       void decide({ environmentId, input: { sessionId, number: item.number, decision } });
     },

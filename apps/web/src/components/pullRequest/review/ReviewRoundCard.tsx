@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   reviewPointCounts,
   reviewRoundStatusLine,
-  reviewTriageLabel,
 } from "@t3tools/client-runtime/state/review-sessions";
 import type {
   EnvironmentId,
@@ -15,9 +14,16 @@ import { type ReactNode, useState } from "react";
 
 import { reviewSessionEnvironment } from "~/state/reviewSessions";
 import { Button } from "../../ui/button";
-import { offersLocalReview, ranOnLabel, type ReviewRoundView } from "./pullRequestReview.logic";
+import {
+  offersLocalReview,
+  ranOnLabel,
+  type ReviewRoundView,
+  triageButton,
+} from "./pullRequestReview.logic";
 import { ReviewLocalOfferRow, ReviewSourceRow } from "./ReviewSourceRow";
 import { useReviewCommand } from "./useReviewCommand";
+
+const NO_SOURCE_IDS: ReadonlyArray<string> = [];
 
 const SECTION_LABEL =
   "px-1 pt-1 text-2xs font-medium tracking-wider text-muted-foreground uppercase";
@@ -43,8 +49,13 @@ export function ReviewRoundCard({
   footer?: ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(!view.current);
-  // Set while the request is on its way; the agent's triage turn then flips the reviews to triaged.
-  const [sending, setSending] = useState<"triage" | "local" | null>(null);
+  // The reviews a Triage click covered. The request only queues the agent's turn; the triage
+  // runs until the agent marks each of them triaged. Keyed so a new round or session drops it.
+  const [triage, setTriage] = useState<{
+    readonly key: string;
+    readonly ids: ReadonlyArray<string>;
+  } | null>(null);
+  const [startingLocal, setStartingLocal] = useState(false);
   const canRequest = useAtomValue(reviewSessionEnvironment.request.permissionAtom(environmentId));
   const canRunLocal = useAtomValue(
     reviewSessionEnvironment.runLocalReview.permissionAtom(environmentId),
@@ -54,9 +65,11 @@ export function ReviewRoundCard({
     reviewSessionEnvironment.runLocalReview,
     "Could not start your review",
   );
-  const collecting = view.current && view.round.state === "collecting";
-  const untriaged = view.sources.filter((source) => source.state === "done" && !source.triaged);
-  const triageLabel = collecting ? reviewTriageLabel(untriaged.length) : null;
+  const triageKey = `${sessionId}:${view.round.round}`;
+  const triageButtonState = triageButton(
+    view,
+    triage?.key === triageKey ? triage.ids : NO_SOURCE_IDS,
+  );
   const offerLocal = offersLocalReview(view);
   // The offer row stands in for a local review that was never run.
   const sources = offerLocal
@@ -64,14 +77,26 @@ export function ReviewRoundCard({
     : view.sources;
   const viewed = view.items.filter((item) => item.viewed).length;
 
-  const send = async (kind: "triage" | "local") => {
-    setSending(kind);
-    if (kind === "triage") {
-      await request({ environmentId, input: { sessionId, request: { _tag: "triage" } } });
-    } else {
-      await runLocal({ environmentId, input: { sessionId } });
+  const startTriage = async () => {
+    const record = {
+      key: triageKey,
+      ids: view.sources
+        .filter((source) => source.state === "done" && !source.triaged)
+        .map((source) => source.id),
+    };
+    setTriage(record);
+    const result = await request({
+      environmentId,
+      input: { sessionId, request: { _tag: "triage" } },
+    });
+    if (result._tag === "Failure") {
+      setTriage((current) => (current === record ? null : current));
     }
-    setSending(null);
+  };
+  const startLocal = async () => {
+    setStartingLocal(true);
+    await runLocal({ environmentId, input: { sessionId } });
+    setStartingLocal(false);
   };
 
   return (
@@ -82,16 +107,22 @@ export function ReviewRoundCard({
       <header className="flex items-center gap-2.5 px-1">
         <h3 className="text-sm font-semibold">Round {view.round.round}</h3>
         <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          {reviewRoundStatusLine({ round: view.round, sources: view.sources, items: view.items })}
+          {triageButtonState?.busy
+            ? "Triaging the reviews…"
+            : reviewRoundStatusLine({
+                round: view.round,
+                sources: view.sources,
+                items: view.items,
+              })}
         </p>
-        {triageLabel === null ? null : (
+        {triageButtonState === null ? null : (
           <Button
             size="xs"
-            disabled={!canRequest || sending !== null}
-            onClick={() => void send("triage")}
+            disabled={!canRequest || !triageButtonState.ready}
+            onClick={() => void startTriage()}
           >
             <SparklesIcon aria-hidden="true" />
-            {triageLabel}
+            {triageButtonState.label}
           </Button>
         )}
         {view.current ? null : (
@@ -120,8 +151,8 @@ export function ReviewRoundCard({
             ))}
             {offerLocal ? (
               <ReviewLocalOfferRow
-                disabled={!canRunLocal || sending !== null}
-                onRun={() => void send("local")}
+                disabled={!canRunLocal || startingLocal}
+                onRun={() => void startLocal()}
               />
             ) : null}
           </ul>

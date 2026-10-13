@@ -13,7 +13,7 @@ import { reviewSessionEnvironment } from "~/state/reviewSessions";
 import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
 import { Textarea } from "../../ui/textarea";
-import { draftUpdateLabel, replyTarget } from "./pullRequestReview.logic";
+import { draftUpdateLabel, replyTarget, rewritePending } from "./pullRequestReview.logic";
 import { useReviewCommand } from "./useReviewCommand";
 
 const REWRITES: ReadonlyArray<readonly [ReviewReplyStyle, string]> = [
@@ -43,6 +43,9 @@ export function ReviewReplyDraft({
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
+  // The draft's revision when a rewrite was asked for; the chips wait for the agent's next write.
+  const [rewriteFrom, setRewriteFrom] = useState<number | null>(null);
+  const rewriting = rewritePending(rewriteFrom, item.draftReplyRevision);
   const canEdit = useAtomValue(reviewSessionEnvironment.editReply.permissionAtom(environmentId));
   const canRequest = useAtomValue(reviewSessionEnvironment.request.permissionAtom(environmentId));
   const editReply = useReviewCommand(
@@ -74,6 +77,15 @@ export function ReviewReplyDraft({
     if (result._tag === "Failure") return;
     setSeenRevision(result.value.item.draftReplyRevision);
     setEditing(false);
+  };
+  const rewrite = async (style: ReviewReplyStyle) => {
+    const from = item.draftReplyRevision;
+    setRewriteFrom(from);
+    const result = await request({
+      environmentId,
+      input: { sessionId, request: { _tag: "rewrite-reply", number: item.number, style } },
+    });
+    if (result._tag === "Failure") setRewriteFrom((current) => (current === from ? null : current));
   };
   return (
     <div
@@ -127,23 +139,15 @@ export function ReviewReplyDraft({
         <div className="flex flex-wrap items-center gap-1.5 px-2.5 pb-2.5">
           <span className="me-0.5 flex items-center gap-1 text-xs text-muted-foreground">
             <SparklesIcon aria-hidden="true" className="size-3" />
-            Rewrite
+            {rewriting ? "Rewriting…" : "Rewrite"}
           </span>
           {REWRITES.map(([style, label]) => (
             <Button
               key={style}
               size="xs"
               variant="outline"
-              disabled={!canRequest}
-              onClick={() =>
-                void request({
-                  environmentId,
-                  input: {
-                    sessionId,
-                    request: { _tag: "rewrite-reply", number: item.number, style },
-                  },
-                })
-              }
+              disabled={!canRequest || rewriting}
+              onClick={() => void rewrite(style)}
             >
               {label}
             </Button>
