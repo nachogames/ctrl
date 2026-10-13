@@ -1,22 +1,33 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   ProjectId,
+  ProviderInstanceId,
   ReviewSessionId,
   ThreadGroupId,
   ThreadId,
+  type OrchestrationV2ThreadShell,
   type PullRequestActor,
   type ReviewItem,
   type ReviewRound,
   type ReviewSession,
+  type ReviewSource,
+  type ReviewSourceComment,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import type { ProviderChangeRequestReviewRound } from "@t3tools/source-control-core/server/PullRequestProvider";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as SqlClient from "effect/sql/SqlClient";
 
+import * as ThreadGroupLaunchService from "../orchestration-v2/ThreadGroupLaunchService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ReviewSessions from "../persistence/ReviewSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ReviewSessionChanges from "./ReviewSessionChanges.ts";
+import * as ReviewSessionService from "./ReviewSessionService.ts";
 import * as ReviewSyncService from "./ReviewSyncService.ts";
 
 export const at = "2026-10-13T10:00:00.000Z";
@@ -192,3 +203,175 @@ export const insertProjectionMessage = (
       ${JSON.stringify({ createdBy: "user", creationSource: "web", text: input.text, ...input.payload })}
     )
   `;
+
+export const openInput: ReviewSessionService.ReviewSessionOpenInput = {
+  key: prKey,
+  url: prUrl,
+  projectId,
+  groupId,
+  reviewThreadId,
+  headSha: "abc123",
+};
+
+export const importItem = (
+  key: string,
+  fields: Partial<ReviewSessionService.ReviewImportItem> = {},
+): ReviewSessionService.ReviewImportItem => ({
+  sourceKeys: [key],
+  sources: ["copilot"],
+  githubThreadIds: [],
+  path: "apps/server/src/auth.ts",
+  line: 12,
+  summary: `Point ${key}`,
+  shortName: `point ${key}`,
+  problem: "It breaks.",
+  impact: "Users see it.",
+  solution: "Fix it.",
+  skipReason: "No reason to skip.",
+  excerpt: null,
+  recommendation: null,
+  suggestedDecision: "fix",
+  alreadyFixedIn: null,
+  draftReply: null,
+  ...fields,
+});
+
+export const localSourceFixture = (
+  id: string,
+  fields: Partial<ReviewSource> = {},
+): ReviewSource => ({
+  id,
+  round: 1,
+  kind: "local",
+  state: "done",
+  author: null,
+  isBot: false,
+  commitSha: "abc123",
+  commentCount: 1,
+  triaged: false,
+  threadId: ThreadId.make(`thread:${id}`),
+  ranOn: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" },
+  url: null,
+  updatedAt: at,
+  ...fields,
+});
+
+export const sourceComment = (key: string, body: string): ReviewSourceComment => ({
+  key,
+  threadId: null,
+  path: "apps/server/src/auth.ts",
+  line: 12,
+  body,
+  url: null,
+  diffHunk: null,
+});
+
+export const prLink = (
+  number: number,
+  headBranch: string,
+  baseBranch: string,
+): ThreadPullRequestLink => ({
+  host: "github.com",
+  repository: "nachogames/ctrl",
+  number,
+  url: `https://github.com/nachogames/ctrl/pull/${number}`,
+  source: "manual",
+  linkedAt: at,
+  snapshot: {
+    state: "open",
+    title: `PR ${number}`,
+    headBranch,
+    baseBranch,
+    isDraft: false,
+    updatedAt: null,
+    syncedAt: at,
+  },
+  stack: null,
+});
+
+const providerInstanceId = ProviderInstanceId.make("claudeAgent");
+
+/** A live chat in the review group, running as the MCP caller tests expect. */
+export const chatShell = (
+  id: ThreadId,
+  fields: Partial<OrchestrationV2ThreadShell> = {},
+): OrchestrationV2ThreadShell =>
+  ({
+    id,
+    projectId,
+    title: "Review PR 23",
+    status: "idle",
+    groupId,
+    providerInstanceId,
+    modelSelection: { instanceId: providerInstanceId, model: "claude-opus-5-5" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    activeRunId: "run:active",
+    archivedAt: null,
+    deletedAt: null,
+    lineage: { relationshipToParent: null },
+    createdAt: DateTime.makeUnsafe(1),
+    ...fields,
+  }) as OrchestrationV2ThreadShell;
+
+export interface ReviewServiceHarness extends SyncHarness {
+  readonly launched: Array<ThreadGroupLaunchService.ThreadGroupNewThreadInput>;
+  readonly sent: Array<ThreadManagementService.ThreadManagementSendInput>;
+  readonly shells: Map<ThreadId, OrchestrationV2ThreadShell>;
+  readonly projectThreads: Array<OrchestrationV2ThreadShell>;
+  /** Provider instance id to driver kind, for the local review's prompt. */
+  readonly drivers: Map<string, string>;
+}
+
+export const newHarness = (): ReviewServiceHarness => ({
+  read: null,
+  launched: [],
+  sent: [],
+  shells: new Map([[reviewThreadId, chatShell(reviewThreadId)]]),
+  projectThreads: [],
+  drivers: new Map([["claudeAgent", "claudeAgent"]]),
+});
+
+/** The real service and sync on an in-memory database; threads, sends and launches go to `harness`. */
+export const makeReviewServiceLayer = (harness: ReviewServiceHarness) =>
+  ReviewSessionService.layer.pipe(
+    Layer.provideMerge(ReviewSyncService.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        ReviewSessions.layer,
+        ReviewSessionChanges.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          reviewRound: () => Effect.sync(() => harness.read),
+          watchFingerprint: () => Effect.succeed(null),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: (threadId) => Effect.succeed(harness.shells.get(threadId) ?? null),
+          listProjectThreads: () => Effect.sync(() => harness.projectThreads),
+          sendToThread: (input) =>
+            Effect.sync(() => {
+              harness.sent.push(input);
+              return {} as never;
+            }),
+        }),
+        Layer.mock(ThreadGroupLaunchService.ThreadGroupLaunchService)({
+          newThread: (input) => {
+            harness.launched.push(input);
+            const threadId = ThreadId.make(`thread:launched-${harness.launched.length}`);
+            harness.shells.set(threadId, chatShell(threadId));
+            return Effect.succeed({ group: {} as never, threadId });
+          },
+        }),
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          getInstance: (instanceId) =>
+            Effect.sync(() => {
+              const driverKind = harness.drivers.get(instanceId);
+              return driverKind === undefined
+                ? undefined
+                : ({ instanceId, driverKind, displayName: undefined } as never);
+            }),
+        }),
+      ),
+    ),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+  );
