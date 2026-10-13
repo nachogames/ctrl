@@ -11,6 +11,7 @@ import {
 import type { ProviderChangeRequestReviewRound } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type * as SqlClient from "effect/sql/SqlClient";
 
 import * as ReviewSessions from "../persistence/ReviewSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -169,3 +170,25 @@ export const makeSyncLayer = (harness: SyncHarness) =>
     ),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
+
+/** A row in the orchestration messages projection, shaped as the quote guard reads it. */
+export const insertProjectionMessage = (
+  sql: SqlClient.SqlClient,
+  input: {
+    readonly threadId: ThreadId | string;
+    readonly messageId: string;
+    readonly role?: "user" | "assistant" | "system";
+    readonly text: string;
+    readonly createdAt: string;
+    readonly payload?: Readonly<Record<string, unknown>>;
+  },
+) =>
+  sql`
+    INSERT INTO orchestration_v2_projection_messages
+      (message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json)
+    VALUES (
+      ${input.messageId}, ${input.threadId}, NULL, NULL, ${input.role ?? "user"}, 0,
+      ${input.createdAt}, ${input.createdAt},
+      ${JSON.stringify({ createdBy: "user", creationSource: "web", text: input.text, ...input.payload })}
+    )
+  `;
