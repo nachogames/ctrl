@@ -38,9 +38,8 @@ export function ReviewPointMessageTag({
         tone="muted"
         aria-label={`Open #${tag.number} in the Review tab`}
         onClick={() => {
-          const store = useReviewPointFocusStore.getState();
-          store.openPoint(threadKey, { number: tag.number, label: tag.label });
-          store.requestOpen(threadKey, tag.number);
+          // The Review tab opens the point once it sees it is live; nothing attaches before.
+          useReviewPointFocusStore.getState().requestOpen(threadKey, tag.number);
           useRightPanelStore.getState().openPullRequest(threadRef, {
             environmentId: target.environmentId,
             projectId: target.projectId,

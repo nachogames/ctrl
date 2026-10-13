@@ -3,10 +3,14 @@ export const REVIEW_POINT_LABEL_MAX = 40;
 
 const TAG_PATTERN = /^\[#(\d{1,5}) ([^\]\n]{1,40})\]\n/;
 
+// The label comes from review comments, not the user. A `$name` token in it would read as a
+// skill mention (any currency sigil after a space starts one) and could make the provider run a
+// skill the user never asked for, so a sigil that opens a word is dropped.
 const cleanLabel = (label: string) =>
   label
     .replace(/[\]\n\r]+/g, " ")
     .replace(/\s+/g, " ")
+    .replace(/(^| )\p{Sc}+/gu, "$1")
     .trim()
     .slice(0, REVIEW_POINT_LABEL_MAX)
     .trim();

@@ -31,4 +31,18 @@ describe("review point tag", () => {
     expect(parseReviewPointTag("#3 decline: out of scope")).toBeNull();
     expect(parseReviewPointTag("see [#2 build cache key]\nlater")).toBeNull();
   });
+
+  it("never carries a skill mention in the label", () => {
+    const text = formatReviewPointTag(
+      { number: 4, label: "run $deploy and £foo, $$twice" },
+      "why?",
+    );
+    expect(text).toBe("[#4 run deploy and foo, twice]\nwhy?");
+    expect(text).not.toMatch(/(^|\s)\p{Sc}/u);
+    expect(parseReviewPointTag(text)).toEqual({
+      number: 4,
+      label: "run deploy and foo, twice",
+      body: "why?",
+    });
+  });
 });

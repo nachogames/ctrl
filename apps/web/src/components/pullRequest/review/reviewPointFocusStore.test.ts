@@ -1,3 +1,4 @@
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -10,7 +11,12 @@ const key = "environment:thread:review";
 
 describe("review point focus", () => {
   beforeEach(() =>
-    useReviewPointFocusStore.setState({ focus: {}, reviewChats: {}, openRequest: null }),
+    useReviewPointFocusStore.setState({
+      focus: {},
+      reviewChats: {},
+      openRequest: null,
+      requestedPoints: {},
+    }),
   );
 
   it("attaches the open point, detaches on ×, and re-attaches when another opens", () => {
@@ -49,5 +55,24 @@ describe("review point focus", () => {
     expect(withAttachedReviewPoint(key, "$review-pr on this")).toBe(
       "[#2 build cache key]\n$review-pr on this",
     );
+  });
+
+  it("sends only the skills the user typed, never one named in the point's label", () => {
+    useReviewPointFocusStore.getState().openPoint(key, { number: 4, label: "use $deploy here" });
+    const skills = (text: string) =>
+      [...withAttachedReviewPoint(key, text).matchAll(SKILL_MENTION_PATTERN)].map(
+        (match) => match[2],
+      );
+    expect(skills("why?")).toEqual([]);
+    expect(skills("try $review-pr")).toEqual(["review-pr"]);
+  });
+
+  it("hands a tag's point to the Review tab without attaching it", () => {
+    const store = useReviewPointFocusStore.getState();
+    store.requestOpen(key, 3);
+    expect(readAttachedReviewPoint(key)).toBeNull();
+    expect(useReviewPointFocusStore.getState().requestedPoints[key]).toBe(3);
+    store.takeRequestedPoint(key);
+    expect(useReviewPointFocusStore.getState().requestedPoints[key]).toBeUndefined();
   });
 });

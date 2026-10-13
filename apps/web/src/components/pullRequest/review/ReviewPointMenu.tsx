@@ -1,10 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 import type { EnvironmentId, ReviewSessionId, ThreadId } from "@t3tools/contracts";
 import { EllipsisIcon, SplitIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 
-import { waitForThreadShell } from "~/state/entities";
+import { useThreadShell, waitForThreadShell } from "~/state/entities";
 import { reviewSessionEnvironment } from "~/state/reviewSessions";
 import { buildThreadRouteParams } from "~/threadRoutes";
 import { Button } from "../../ui/button";
@@ -82,8 +83,21 @@ export function ReviewPointMenu({
   );
 }
 
-/** Shown on a point that has a side chat; its conclusions land back on the point. */
-export function ReviewSideChatBanner({ onOpen }: { onOpen: () => void }) {
+/**
+ * Shown on a point that has a side chat; its conclusions land back on the point. A deleted side
+ * chat leaves no banner, and "Discuss in its own chat" starts a new one.
+ */
+export function ReviewSideChatBanner({
+  environmentId,
+  threadId,
+  onOpen,
+}: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  onOpen: () => void;
+}) {
+  const shell = useThreadShell(scopeThreadRef(environmentId, threadId));
+  if (shell === null) return null;
   return (
     <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/40 px-2.5 py-1.5 text-xs">
       <SplitIcon aria-hidden="true" className="size-3.5 shrink-0" />

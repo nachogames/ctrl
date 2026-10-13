@@ -2358,6 +2358,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     () => (userMessage.attribution === null ? parseReviewPointTag(resolvedContext.text) : null),
     [resolvedContext.text, userMessage.attribution],
   );
+  // What the user wrote: the bubble, copy and prompt links leave the tag line out, so pasting
+  // into the review chat never sends a second tag.
+  const messageBodyText = reviewTag === null ? resolvedContext.text : reviewTag.body;
   const previewImages = useMemo(
     () => userImages.filter((image) => image.name.startsWith("preview-annotation-")),
     [userImages],
@@ -2386,8 +2389,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   // Chips read as their labels outside a draft, so a shared link carries the prose alone.
   const plainText = useMemo(
-    () => replaceComposerContextReferences(resolvedContext.text, (reference) => reference.label),
-    [resolvedContext.text],
+    () => replaceComposerContextReferences(messageBodyText, (reference) => reference.label),
+    [messageBodyText],
   );
   const promptLink = useMemo(() => promptLinkFor(plainText), [plainText]);
   const contextClipboardFragment =
@@ -2651,7 +2654,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
         <div onCopyCapture={onBodyCopyCapture}>
           <CollapsibleUserMessageBody
-            text={reviewTag === null ? resolvedContext.text : reviewTag.body}
+            text={messageBodyText}
             renderContextReference={renderContextReference}
             skills={ctx.skills}
             markdownCwd={ctx.markdownCwd}
@@ -2685,7 +2688,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {resolvedContext.text && (
               <MessageCopyButton
                 // Structured paste needs the canonical links to retain their positions.
-                text={contextClipboardFragment ? resolvedContext.text : plainText}
+                text={contextClipboardFragment ? messageBodyText : plainText}
                 {...(contextClipboardFragment
                   ? {
                       extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },

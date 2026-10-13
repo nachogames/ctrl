@@ -28,8 +28,13 @@ interface ReviewPointFocusState {
   /** Keyed by the review chat's `scopedThreadKey`. */
   readonly focus: Readonly<Record<string, ReviewPointFocus>>;
   readonly reviewChats: Readonly<Record<string, ReviewChatTarget>>;
-  /** A message tag asked the panel to open this point on the Review tab. */
+  /** A message tag asked the panel to show this chat's Review tab. */
   readonly openRequest: { readonly threadKey: string; readonly number: number } | null;
+  /**
+   * The point a message tag asked to open, per review chat. The Review tab opens it once it can
+   * see the point is live, so a tag never attaches a point the tab is not showing.
+   */
+  readonly requestedPoints: Readonly<Record<string, number>>;
   readonly openPoint: (threadKey: string, point: { number: number; label: string }) => void;
   readonly closePoint: (threadKey: string) => void;
   readonly detach: (threadKey: string) => void;
@@ -37,12 +42,14 @@ interface ReviewPointFocusState {
   readonly registerReviewChat: (threadKey: string, target: ReviewChatTarget) => void;
   readonly requestOpen: (threadKey: string, number: number) => void;
   readonly clearOpenRequest: () => void;
+  readonly takeRequestedPoint: (threadKey: string) => void;
 }
 
 export const useReviewPointFocusStore = create<ReviewPointFocusState>()((set) => ({
   focus: {},
   reviewChats: {},
   openRequest: null,
+  requestedPoints: {},
   openPoint: (threadKey, point) =>
     set((state) => ({ focus: { ...state.focus, [threadKey]: { ...point, detached: false } } })),
   closePoint: (threadKey) =>
@@ -73,8 +80,18 @@ export const useReviewPointFocusStore = create<ReviewPointFocusState>()((set) =>
       }
       return { reviewChats: { ...state.reviewChats, [threadKey]: target } };
     }),
-  requestOpen: (threadKey, number) => set({ openRequest: { threadKey, number } }),
+  requestOpen: (threadKey, number) =>
+    set((state) => ({
+      openRequest: { threadKey, number },
+      requestedPoints: { ...state.requestedPoints, [threadKey]: number },
+    })),
   clearOpenRequest: () => set({ openRequest: null }),
+  takeRequestedPoint: (threadKey) =>
+    set((state) => {
+      if (state.requestedPoints[threadKey] === undefined) return state;
+      const { [threadKey]: _taken, ...requestedPoints } = state.requestedPoints;
+      return { requestedPoints };
+    }),
 }));
 
 /** The point a message sent from this chat's composer is about right now, if any. */

@@ -84,6 +84,7 @@ export function PullRequestReviewTab({
   // agent's turn, so Apply stays busy until the subscription shows the round has left
   // collecting, or the server refuses.
   const [applySent, setApplySent] = useState<string | null>(null);
+  const applyInFlightRef = useRef<string | null>(null);
   const openLink = useOpenLink(threadRef);
   const openNumber = useReviewPointFocusStore((state) =>
     reviewThreadKey === null ? null : (state.focus[reviewThreadKey]?.number ?? null),
@@ -151,6 +152,21 @@ export function PullRequestReviewTab({
     },
     [reviewThreadKey],
   );
+  // A message tag asked for a point: open it if this round lists it, and drop the ask either way.
+  const requestedPoint = useReviewPointFocusStore((state) =>
+    reviewThreadKey === null ? undefined : state.requestedPoints[reviewThreadKey],
+  );
+  useEffect(() => {
+    if (reviewThreadKey === null || requestedPoint === undefined) return;
+    const item = liveItems.find((candidate) => candidate.number === requestedPoint);
+    if (item !== undefined) focusPoint(item);
+    useReviewPointFocusStore.getState().takeRequestedPoint(reviewThreadKey);
+  }, [focusPoint, liveItems, requestedPoint, reviewThreadKey]);
+  // Apply may be sent again for this round once it is back to collecting (a failed send).
+  useEffect(() => {
+    if (currentRoundState !== "collecting") applyInFlightRef.current = null;
+  }, [currentRoundState]);
+
   const onOpenChange = useCallback(
     (item: ReviewItem, open: boolean) => focusPoint(open ? item : null),
     [focusPoint],
@@ -207,17 +223,30 @@ export function PullRequestReviewTab({
   }
 
   const startApply = async () => {
-    if (applyKey === null) return;
+    // One request per round: a second click (the dialog's Apply while it animates out) would
+    // be refused and read as a failed apply.
+    if (
+      applyKey === null ||
+      currentRoundState !== "collecting" ||
+      applyInFlightRef.current === applyKey
+    ) {
+      return;
+    }
+    const key = applyKey;
+    applyInFlightRef.current = key;
     setConfirmingApply(false);
-    focusPoint(null);
-    setApplySent(applyKey);
+    setApplySent(key);
     const result = await request({
       environmentId,
       input: { sessionId, request: { _tag: "apply" } },
     });
     if (result._tag === "Failure") {
-      setApplySent((current) => (current === applyKey ? null : current));
+      if (applyInFlightRef.current === key) applyInFlightRef.current = null;
+      setApplySent((current) => (current === key ? null : current));
+      return;
     }
+    // The point closes only once the apply has really started; a refusal leaves it open.
+    focusPoint(null);
   };
 
   const views = reviewRoundViews(snapshot);
@@ -281,7 +310,11 @@ export function PullRequestReviewTab({
                   }
                   banner={
                     open && sideThreadId !== null ? (
-                      <ReviewSideChatBanner onOpen={() => void sideChat.goToThread(sideThreadId)} />
+                      <ReviewSideChatBanner
+                        environmentId={environmentId}
+                        threadId={sideThreadId}
+                        onOpen={() => void sideChat.goToThread(sideThreadId)}
+                      />
                     ) : undefined
                   }
                 />
