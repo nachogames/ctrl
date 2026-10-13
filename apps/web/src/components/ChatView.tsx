@@ -287,6 +287,7 @@ import {
   threadPullRequestPanelTarget,
 } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
+import { withAttachedReviewPoint } from "./pullRequest/review/reviewPointFocusStore";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
@@ -380,6 +381,7 @@ import {
   markPromotedDraftThreadByRef,
   restoreFailedBackgroundDraftThread,
   composerDraftHasUserContent,
+  composerTargetKey,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -9422,13 +9424,19 @@ export default function ChatView(props: ChatViewProps) {
       compactBeforeSend ||
       sendQueuesBehindSetup ||
       (phase === "running" && dispatchMode === "queue");
-    const outgoingMessageText = formatOutgoingPrompt({
-      provider: ctxSelectedProvider,
-      model: ctxSelectedModel,
-      models: ctxSelectedProviderModels,
-      effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-    });
+    // A point attached in the review chat's composer rides on its own first line, so the agent,
+    // the decision guard and the timeline all know which point the message is about. It is read
+    // under the composer's own key, the same one its chip shows under.
+    const outgoingMessageText = withAttachedReviewPoint(
+      composerTargetKey(composerDraftTarget),
+      formatOutgoingPrompt({
+        provider: ctxSelectedProvider,
+        model: ctxSelectedModel,
+        models: ctxSelectedProviderModels,
+        effort: ctxSelectedPromptEffort,
+        text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      }),
+    );
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
       return;
     }

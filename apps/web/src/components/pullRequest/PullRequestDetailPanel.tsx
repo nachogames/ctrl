@@ -186,6 +186,7 @@ import {
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { PullRequestGuideTab } from "./PullRequestGuideTab";
 import { PullRequestReviewTab } from "./review/PullRequestReviewTab";
+import { useReviewPointFocusStore } from "./review/reviewPointFocusStore";
 import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
@@ -538,6 +539,23 @@ export function PullRequestDetailPanel({
   useEffect(() => {
     if (guideOpenRequested) useGuideRunStore.getState().requestOpen(null);
   }, [guideOpenRequested]);
+  // A message tag in the review chat asks for that chat's pull request on the Review tab.
+  const reviewChatKey = threadRef === null ? null : scopedThreadKey(threadRef);
+  const reviewOpenRequested = useReviewPointFocusStore((state) => {
+    const request = state.openRequest;
+    if (request === null || request.threadKey !== reviewChatKey) return false;
+    const target = state.reviewChats[request.threadKey];
+    return (
+      target !== undefined &&
+      target.environmentId === environmentId &&
+      target.number === reference.number &&
+      target.repository.toLowerCase() === reference.repository.toLowerCase()
+    );
+  });
+  if (reviewOpenRequested && tab !== "review") setTab("review");
+  useEffect(() => {
+    if (reviewOpenRequested) useReviewPointFocusStore.getState().clearOpenRequest();
+  }, [reviewOpenRequested]);
   // Every tab the reader has opened stays mounted behind the active one. The diff viewer
   // always needed this (it virtualizes against its own scroll position); the trace showed the
   // summary needs it too — a large description re-parses its whole markdown on every return

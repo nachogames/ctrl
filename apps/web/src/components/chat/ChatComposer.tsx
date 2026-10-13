@@ -282,6 +282,7 @@ import {
 } from "./ComposerControl";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
+import { ReviewPointComposerChip } from "../pullRequest/review/ReviewPointComposerChip";
 import {
   matchesPullRequestQuery,
   rankPullRequestMatches,
@@ -6933,6 +6934,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               />
             </ComposerBanner.Attachment>
           ) : null}
+          {/* A draft's key is a draft id, never a registered review chat. */}
+          <ReviewPointComposerChip threadKey={composerDraftTargetKey} />
         </ComposerBanner.Column>
         {!isComposerApprovalState ? (
           <ComposerStashBadge

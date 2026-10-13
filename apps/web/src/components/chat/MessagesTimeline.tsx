@@ -5,6 +5,7 @@ import { ComputerUseAppIcon } from "~/components/Icons";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import { ReviewPointMessageTag } from "../pullRequest/review/ReviewPointMessageTag";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -68,6 +69,7 @@ import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
+import { parseReviewPointTag } from "@t3tools/shared/reviewPointTag";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import {
@@ -2350,6 +2352,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   const userMessage = resolveUserMessagePresentation(row.message);
   const resolvedContext = useMemo(() => resolveUserMessageContext(row.message), [row.message]);
+  // The user's own message sent with a review point attached carries it as its first line;
+  // it shows as a label above the bubble, not as words the user typed.
+  const reviewTag = useMemo(
+    () => (userMessage.attribution === null ? parseReviewPointTag(resolvedContext.text) : null),
+    [resolvedContext.text, userMessage.attribution],
+  );
   const previewImages = useMemo(
     () => userImages.filter((image) => image.name.startsWith("preview-annotation-")),
     [userImages],
@@ -2534,6 +2542,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
+      {reviewTag === null ? null : (
+        <ReviewPointMessageTag threadRef={ctx.threadRef ?? null} tag={reviewTag} />
+      )}
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
         <MessageAuthorHeading>You</MessageAuthorHeading>
         {(regularImages.length > 0 || userVideos.length > 0) && (
@@ -2640,7 +2651,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
         <div onCopyCapture={onBodyCopyCapture}>
           <CollapsibleUserMessageBody
-            text={resolvedContext.text}
+            text={reviewTag === null ? resolvedContext.text : reviewTag.body}
             renderContextReference={renderContextReference}
             skills={ctx.skills}
             markdownCwd={ctx.markdownCwd}
