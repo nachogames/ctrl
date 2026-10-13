@@ -29,4 +29,44 @@ describe("checkDecisionQuote", () => {
       "message-names-other-items",
     );
   });
+
+  it("does not take a point tag's label for the user's words", () => {
+    // The label comes from the point, which comes from a reviewer or the agent.
+    expect(check("[#2 Fix: pin the version]\nwhat do you think?", "Fix: pin the version", 2)).toBe(
+      "quote-not-in-message",
+    );
+    expect(check("[#2 fix the cache]\nwhat do you think", "fix the cache", 2)).toBe(
+      "quote-not-in-message",
+    );
+    expect(check("[#2 fix the cache]\ndecline it", "decline it", 2)).toBeNull();
+    // The tag names #2, so a body about another point is about that point.
+    expect(check("[#2 x]\n#3 decline: out of scope", "decline: out of scope", 3)).toBeNull();
+    expect(check("[#2 x]\n#3 decline: out of scope", "decline: out of scope", 4)).toBe(
+      "message-names-other-items",
+    );
+    // A label that mentions #3 does not make the message about #3.
+    expect(check("[#2 see #3]\ndecline it", "decline it", 3)).toBe("message-names-other-items");
+  });
+
+  it("ties the quote to its own point when the message names several", () => {
+    const message = "ok fix #2. #3 decline: out of scope";
+    expect(check(message, "decline: out of scope", 3)).toBeNull();
+    expect(check(message, "#3 decline: out of scope", 3)).toBeNull();
+    expect(check(message, "fix #2", 2)).toBeNull();
+    expect(check(message, "fix #2", 3)).toBe("message-names-other-items");
+    expect(check(message, "fix", 3)).toBe("message-names-other-items");
+    expect(check(message, "ok fix", 3)).toBe("message-names-other-items");
+    // A sentence naming two points decides neither on its own words.
+    expect(check("#2 and #3: decline", "decline", 3)).toBe("message-names-other-items");
+    // A sentence naming no point is about the tagged one.
+    expect(check("[#2 x]\ndecline it. #3 fix it", "decline it", 2)).toBeNull();
+    expect(check("[#2 x]\ndecline it. #3 fix it", "decline it", 3)).toBe(
+      "message-names-other-items",
+    );
+    // The same words can appear twice; the one that names the point counts.
+    expect(check("#2 fix. #3 fix", "fix", 3)).toBeNull();
+    // One point named, however often: a plain tagged decision still passes.
+    expect(check("[#2 build cache key]\nok decline it", "ok decline it", 2)).toBeNull();
+    expect(check("ok decline it", "decline it", 2)).toBeNull();
+  });
 });
