@@ -60,7 +60,8 @@ it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })))(
         assert.deepEqual(yield* ledger("effect_sql_migrations"), upstreamManifest);
         assert.deepEqual(yield* ledger(CTRL_MIGRATIONS_TABLE), ctrlManifest);
         const moved = yield* sql<{ readonly created_at: string }>`
-          SELECT created_at FROM ${sql(CTRL_MIGRATIONS_TABLE)} ORDER BY migration_id
+          SELECT created_at FROM ${sql(CTRL_MIGRATIONS_TABLE)}
+          WHERE migration_id IN (1, 2) ORDER BY migration_id
         `;
         assert.deepEqual(
           moved.map((row) => row.created_at),
