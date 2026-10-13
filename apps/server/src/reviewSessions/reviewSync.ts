@@ -89,6 +89,9 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
   const removals: Array<string> = [];
   // Rounds each login has a filed review in, to retire their requests.
   const reviewedRounds = new Map<string, Array<number>>();
+  // Logins whose review landed while the round was held. It files after the round advances; until
+  // then their request must not read as withdrawn.
+  const heldReviewers = new Set<string>();
   const noteReview = (login: string | null, round: number) => {
     if (login === null) return;
     const key = login.toLowerCase();
@@ -100,7 +103,10 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
     if (login !== null && login.toLowerCase() === author) continue;
     if (review.state === "PENDING") continue;
     const stored = known.get(review.id);
-    if (stored === undefined && holding) continue;
+    if (stored === undefined && holding) {
+      if (login !== null) heldReviewers.add(login.toLowerCase());
+      continue;
+    }
     const round = stored?.round ?? sessionRound;
     noteReview(login, round);
     const comments = reviewComments(read, review);
@@ -169,7 +175,7 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
       removals.push(source.id);
       continue;
     }
-    if (!pending.has(key) && source.state !== "not-run") {
+    if (!pending.has(key) && !heldReviewers.has(key) && source.state !== "not-run") {
       upserts.push({ source: { ...source, state: "not-run", updatedAt: now }, comments: null });
     }
   }

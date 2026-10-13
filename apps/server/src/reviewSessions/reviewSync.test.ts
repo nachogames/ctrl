@@ -30,6 +30,36 @@ describe("planReviewSync", () => {
     expect(plan.removals).toEqual([]);
   });
 
+  it("holds a review that lands mid-apply and keeps its request as it was", () => {
+    const request = {
+      id: "request:1:dan",
+      round: 1,
+      kind: "human" as const,
+      state: "requested" as const,
+      author: "dan",
+      isBot: false,
+      commitSha: null,
+      commentCount: 0,
+      triaged: false,
+      threadId: null,
+      ranOn: null,
+      url: null,
+      updatedAt: at,
+    };
+    const plan = planReviewSync({
+      sessionRound: 1,
+      roundState: "applying",
+      existing: [request],
+      now: at,
+      read: reviewRoundRead({
+        reviews: [githubReview("PRR_dan", "dan")],
+        pendingReviewers: [],
+      }),
+    });
+    expect(plan.upserts).toEqual([]);
+    expect(plan.removals).toEqual([]);
+  });
+
   it("names Copilot under either login", () => {
     expect(isCopilotLogin("Copilot")).toBe(true);
     expect(isCopilotLogin("copilot-pull-request-reviewer[bot]")).toBe(true);

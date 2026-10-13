@@ -86,7 +86,10 @@ it.effect("syncs GitHub reviews without touching the user's decisions", () => {
     });
     yield* sync.syncSession(session.id);
     assert.equal((yield* repo.listItems(session.id))[0]?.githubState, "resolved");
-    assert.isFalse((yield* repo.listSources(session.id)).some((source) => source.id === "PRR_dan"));
+    const held = yield* repo.listSources(session.id);
+    assert.isFalse(held.some((source) => source.id === "PRR_dan"));
+    // Dan's review landed, only held: his request is not withdrawn.
+    assert.equal(held.find((source) => source.id === "request:1:dan")?.state, "requested");
 
     // Once the round advances, the held review lands in round 2 and replaces Dan's request.
     yield* repo.upsertRound(session.id, roundFixture(1, { state: "applied" }));
