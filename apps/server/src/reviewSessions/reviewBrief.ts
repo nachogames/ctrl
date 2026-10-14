@@ -22,6 +22,7 @@ This brief holds for every round of the review. "The current round" below is ses
 - A side chat works on its own point only. The local review chat only hands in findings.
 
 ## Triage (when asked, or when review_session_read shows finished reviews with triaged: false)
+Raw GitHub feedback is already visible as Needs a call points. Match its sourceKeys to enrich those same points; do not duplicate them.
 1. Read every finished, untriaged source of the current round in review_session_read: Copilot's review, your local review, human reviews. Their comments are exactly what each review said.
 2. Merge them into one list of distinct problems. One problem raised by two reviews is one point with both sourceKeys and both sources.
    - A GitHub comment's key is its comment key ("gh:<thread id>").

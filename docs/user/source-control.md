@@ -308,9 +308,12 @@ even when its changes look independent. Stack actions require an environment tha
 
 ## Conversational PR reviews
 
-For a GitHub PR you built, ask the agent to start a review with `review-pr` in a chat in
-the PR's group. Open the PR panel's **Review** tab to collect Copilot, human and independent
-local reviews, then triage them into numbered points, grouped by review round.
+Linked GitHub PRs automatically collect existing and future reviews. Open the PR panel’s
+**Review** tab to see feedback as numbered points, initially marked Needs a call. No agent
+request or project skill installation is needed. Discovery runs in the background; opening
+the tab discovers the PR immediately. GitHub feedback refreshes periodically.
+Ask the agent to triage when you want explanations and recommendations, or to run an
+independent local review.
 Ask about `#3` in the review chat, or open a point's own chat. Questions leave decisions alone;
 say `#3 fix` or `#3 decline` to decide. Conclusions and reply drafts stay with the point.
 

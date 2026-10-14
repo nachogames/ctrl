@@ -1,3 +1,4 @@
+import * as ThreadGroupService from "../orchestration-v2/ThreadGroupService.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
@@ -120,6 +121,7 @@ const layerTest = ReviewSessionService.layer.pipe(
       ReviewSessions.layer,
       ReviewSessionChanges.layer,
       NodeCrypto.layer,
+      Layer.mock(ThreadGroupService.ThreadGroupService)({}),
       layerLaunches,
       Layer.mock(PullRequestService.PullRequestService)({
         reviewRound: () => Effect.succeed(null),

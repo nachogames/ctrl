@@ -1,3 +1,4 @@
+import * as ThreadGroupService from "../orchestration-v2/ThreadGroupService.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   ProjectId,
@@ -350,6 +351,16 @@ export const makeReviewServiceLayer = (harness: ReviewServiceHarness) =>
         ReviewSessions.layer,
         ReviewSessionChanges.layer,
         NodeCrypto.layer,
+        Layer.mock(ThreadGroupService.ThreadGroupService)({
+          create: (input) =>
+            Effect.sync(() => {
+              for (const id of input.threadIds) {
+                const shell = harness.shells.get(id);
+                if (shell) harness.shells.set(id, { ...shell, groupId: input.groupId });
+              }
+              return { id: input.groupId } as never;
+            }),
+        }),
         Layer.mock(PullRequestService.PullRequestService)({
           reviewRound: () => Effect.sync(() => harness.read),
           watchFingerprint: () => Effect.succeed(null),

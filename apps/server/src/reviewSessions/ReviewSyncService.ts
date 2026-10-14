@@ -22,6 +22,7 @@ import * as ReviewSessionChanges from "./ReviewSessionChanges.ts";
 import {
   itemGithubState,
   planReviewSync,
+  rawReviewItems,
   shouldSyncReview,
   type ReviewSyncMark,
 } from "./reviewSync.ts";
@@ -82,14 +83,36 @@ const make = Effect.gen(function* () {
           const roundState = yield* currentRoundState(session);
           const read = yield* pullRequests.reviewRound(refOf(session));
           if (read === null) return false;
+          const sources = yield* repo.listSources(session.id);
+          const commentsBySource = new Map(
+            yield* Effect.forEach(sources, (source) =>
+              repo
+                .listSourceComments(session.id, source.id)
+                .pipe(Effect.map((comments) => [source.id, comments] as const)),
+            ),
+          );
           const plan = planReviewSync({
             sessionRound: session.round,
             roundState,
-            existing: yield* repo.listSources(session.id),
+            existing: sources,
+            commentsBySource,
             read,
             now: DateTime.formatIso(yield* DateTime.now),
           });
-          const githubStates = (yield* repo.listItems(session.id)).flatMap((item) => {
+          const rawSources = [
+            ...new Map([
+              ...sources.map(
+                (source) =>
+                  [source.id, { source, comments: commentsBySource.get(source.id) ?? [] }] as const,
+              ),
+              ...plan.upserts.map((entry) => [entry.source.id, entry] as const),
+            ]).values(),
+          ];
+          const existingItems = yield* repo.listItems(session.id);
+          const missingRaw =
+            roundState === "collecting" ? rawReviewItems(session, existingItems, rawSources) : [];
+          const headChanged = read.headSha !== null && session.headSha !== read.headSha;
+          const githubStates = existingItems.flatMap((item) => {
             const next = itemGithubState(item.githubThreadIds, plan.threads);
             return next !== null && next !== item.githubState
               ? [{ number: item.number, next }]
@@ -98,12 +121,14 @@ const make = Effect.gen(function* () {
           if (
             plan.upserts.length === 0 &&
             plan.removals.length === 0 &&
-            githubStates.length === 0
+            githubStates.length === 0 &&
+            !headChanged &&
+            missingRaw.length === 0
           ) {
             return false;
           }
-          // Sync writes only sources, their comments and each point's GitHub state. It never
-          // rewrites a point, so it cannot overwrite what the user or the review service decided.
+          // Allocate raw points inside the transaction, against the latest user/agent writes.
+          // Existing points retain their decisions, annotations and replies.
           const written = yield* sql.withTransaction(
             Effect.gen(function* () {
               // The round may have moved on while GitHub was read: the plan would file new
@@ -119,6 +144,53 @@ const make = Effect.gen(function* () {
               }
               for (const { source, comments } of plan.upserts) {
                 yield* repo.upsertSource(session.id, source, comments);
+              }
+              if (headChanged && session.headSha !== null) yield* repo.markItemsStale(session.id);
+              const items =
+                roundState === "collecting"
+                  ? rawReviewItems(latest.value, yield* repo.listItems(session.id), rawSources)
+                  : [];
+              for (const item of items) {
+                yield* repo.upsertItem(session.id, {
+                  ...item,
+                  githubState: itemGithubState(item.githubThreadIds, plan.threads),
+                });
+              }
+              if (items.length > 0 || headChanged)
+                yield* repo.updateSession({
+                  ...latest.value,
+                  nextNumber: Math.max(
+                    latest.value.nextNumber,
+                    ...items.map((item) => item.number + 1),
+                  ),
+                  headSha: read.headSha ?? latest.value.headSha,
+                  updatedAt: DateTime.formatIso(yield* DateTime.now),
+                });
+              // Refresh untouched raw text after a GitHub edit, while preserving triage and decisions.
+              for (const { source, comments } of plan.upserts) {
+                for (const before of commentsBySource.get(source.id) ?? []) {
+                  const after = comments?.find((comment) => comment.key === before.key);
+                  if (!after || after.body === before.body || !after.body.trim()) continue;
+                  const number = yield* repo.findItemNumberByKeys(session.id, [before.key]);
+                  if (Option.isNone(number)) continue;
+                  const found = yield* repo.getItem(session.id, number.value);
+                  if (Option.isNone(found)) continue;
+                  const item = found.value;
+                  if (item.problem !== before.body || item.impact !== "" || item.solution !== "")
+                    continue;
+                  const summary = after.body.trim().split("\n")[0]!.slice(0, 180);
+                  yield* repo.upsertItem(session.id, {
+                    ...item,
+                    summary,
+                    shortName: summary.slice(0, 60),
+                    problem: after.body,
+                    excerpt: after.diffHunk,
+                    path: after.path,
+                    line: after.line,
+                    viewed: false,
+                    updatedAt: source.updatedAt,
+                  });
+                }
               }
               for (const sourceId of plan.removals) yield* repo.deleteSource(session.id, sourceId);
               for (const { number, next } of githubStates) {

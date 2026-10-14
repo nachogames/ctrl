@@ -742,6 +742,7 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),
   ReviewSyncService.layerStart,
+  ReviewSessionService.layerStart,
 ).pipe(
   // Guides read through the same pull request service as every other surface.
   Layer.provide(

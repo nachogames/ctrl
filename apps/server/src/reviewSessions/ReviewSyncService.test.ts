@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -170,4 +171,91 @@ it.effect("keeps sweeping after a sweep dies", () => {
     yield* TestClock.adjust("2 minutes");
     assert.equal(fingerprints, 2);
   }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+it.effect("imports future author reviews once and keeps decisions when the head changes", () => {
+  const harness: SyncHarness = {
+    read: reviewRoundRead({
+      reviews: [githubReview("R1", "nach")],
+      threads: [githubThread("T1", [threadComment("R1", "First finding")])],
+    }),
+  };
+  return Effect.gen(function* () {
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const sync = yield* ReviewSyncService.ReviewSyncService;
+    const session = sessionFixture();
+    yield* repo.insertSession(session);
+    yield* repo.upsertRound(session.id, roundFixture(1));
+    yield* sync.syncSession(session.id);
+    const first = (yield* repo.listItems(session.id))[0]!;
+    yield* repo.upsertItem(session.id, {
+      ...first,
+      decision: "decline",
+      decidedBy: "panel",
+      draftReply: "Already covered",
+      draftReplyBy: "panel",
+      viewed: true,
+    });
+    harness.read = reviewRoundRead({
+      headSha: "new-head",
+      reviews: [githubReview("R1", "nach"), githubReview("R2", "dan")],
+      threads: [
+        githubThread("T1", [threadComment("R1", "First finding")]),
+        githubThread("T2", [threadComment("R2", "New finding")]),
+      ],
+    });
+    yield* sync.syncSession(session.id);
+    assert.isFalse(yield* sync.syncSession(session.id));
+    const items = yield* repo.listItems(session.id);
+    assert.equal(items.length, 2);
+    assert.deepEqual(
+      items.map((item) => [item.number, item.decision, item.stale]),
+      [
+        [1, "decline", true],
+        [2, "needs-call", false],
+      ],
+    );
+    assert.equal(items[0]?.draftReply, "Already covered");
+    assert.equal(items[0]?.viewed, true);
+  }).pipe(Effect.provide(makeSyncLayer(harness)));
+});
+
+it.effect("backfills stored sources and refreshes edited text without resetting a decision", () => {
+  const harness: SyncHarness = {
+    read: reviewRoundRead({
+      reviews: [githubReview("R", "dan")],
+      threads: [githubThread("T", [threadComment("R", "Old text")])],
+    }),
+  };
+  return Effect.gen(function* () {
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const sync = yield* ReviewSyncService.ReviewSyncService;
+    const sql = yield* SqlClient.SqlClient;
+    const session = sessionFixture();
+    yield* repo.insertSession(session);
+    yield* repo.upsertRound(session.id, roundFixture(1));
+    yield* sync.syncSession(session.id);
+    // Simulate an older install that has collected sources but no numbered points yet.
+    yield* sql`DELETE FROM review_item_keys WHERE session_id = ${session.id}`;
+    yield* sql`DELETE FROM review_items WHERE session_id = ${session.id}`;
+    yield* sync.syncSession(session.id);
+    const [item] = yield* repo.listItems(session.id);
+    assert.equal(item?.problem, "Old text");
+    yield* repo.upsertItem(session.id, {
+      ...item!,
+      decision: "decline",
+      decidedBy: "panel",
+      viewed: true,
+    });
+    harness.read = reviewRoundRead({
+      reviews: [githubReview("R", "dan")],
+      threads: [githubThread("T", [threadComment("R", "Edited text")])],
+    });
+    yield* sync.syncSession(session.id);
+    const [edited] = yield* repo.listItems(session.id);
+    assert.equal(edited?.number, item?.number);
+    assert.equal(edited?.problem, "Edited text");
+    assert.equal(edited?.decision, "decline");
+    assert.equal(edited?.viewed, false);
+  }).pipe(Effect.provide(makeSyncLayer(harness)));
 });

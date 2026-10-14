@@ -1,5 +1,7 @@
 import type {
   ReviewGithubState,
+  ReviewItem,
+  ReviewSession,
   ReviewRoundState,
   ReviewSource,
   ReviewSourceComment,
@@ -22,6 +24,7 @@ export interface ReviewSyncInput {
   readonly existing: ReadonlyArray<ReviewSource>;
   readonly read: ProviderChangeRequestReviewRound;
   readonly now: string;
+  readonly commentsBySource?: ReadonlyMap<string, ReadonlyArray<ReviewSourceComment>>;
 }
 
 export interface ReviewSyncPlan {
@@ -78,7 +81,7 @@ function reviewComments(
  * is stored plans nothing. New reviews and requests join the current round, except while it is
  * being applied; then they wait, and the first read after the round advances files them in the
  * next one. A known source keeps its round and triage mark. Reviews by the pull request's
- * author are what Ctrl posted (the self-review and thread replies) and are never sources.
+ * author are retained unless they are Ctrl apply summaries or reply-only reviews.
  */
 export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
   const { read, sessionRound, now } = input;
@@ -100,7 +103,14 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
 
   for (const review of read.reviews) {
     const login = review.author?.login ?? null;
-    if (login !== null && login.toLowerCase() === author) continue;
+    if (
+      login !== null &&
+      login.toLowerCase() === author &&
+      (/^Self-review, round \d+\b/.test(review.body.trim()) ||
+        (review.body.trim() === "" &&
+          !read.threads.some((thread) => thread.comments[0]?.reviewId === review.id)))
+    )
+      continue;
     if (review.state === "PENDING") continue;
     const stored = known.get(review.id);
     if (stored === undefined && holding) {
@@ -114,7 +124,9 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
       stored !== undefined &&
       stored.state === "done" &&
       stored.commentCount === comments.length &&
-      stored.commitSha === review.commitSha
+      stored.commitSha === review.commitSha &&
+      (input.commentsBySource === undefined ||
+        JSON.stringify(input.commentsBySource.get(review.id)) === JSON.stringify(comments))
     ) {
       continue;
     }
@@ -232,4 +244,59 @@ export function shouldSyncReview(
   if (next.fingerprint === null || next.fingerprint !== previous.fingerprint) return true;
   if (next.waiting) return true;
   return nowMs - previous.readAt >= QUIET_REREAD_MS;
+}
+
+/** Raw feedback is useful before optional AI triage; identity is the GitHub thread/review key. */
+export function rawReviewItems(
+  session: ReviewSession,
+  existing: ReadonlyArray<ReviewItem>,
+  sources: ReviewSyncPlan["upserts"],
+): ReadonlyArray<ReviewItem> {
+  const nextNumber = Math.max(session.nextNumber, ...existing.map((item) => item.number + 1));
+  const keys = new Set(existing.flatMap((item) => item.sourceKeys));
+  const items: Array<ReviewItem> = [];
+  for (const { source, comments } of sources) {
+    if (source.state !== "done" || source.round !== session.round) continue;
+    for (const comment of comments ?? []) {
+      if (keys.has(comment.key) || !comment.body.trim()) continue;
+      keys.add(comment.key);
+      const summary = comment.body.trim().split("\n")[0]!.slice(0, 180);
+      const login = source.author ?? "unknown";
+      items.push({
+        number: nextNumber + items.length,
+        round: session.round,
+        lastSeenRound: session.round,
+        sourceKeys: [comment.key],
+        sourceIds: [source.id],
+        sources: [source.kind === "copilot" ? "copilot" : `human:${login}`],
+        githubThreadIds: comment.threadId === null ? [] : [comment.threadId],
+        githubState: null,
+        path: comment.path,
+        line: comment.line,
+        summary,
+        shortName: summary.slice(0, 60),
+        problem: comment.body,
+        impact: "",
+        solution: "",
+        skipReason: "",
+        excerpt: comment.diffHunk,
+        recommendation: null,
+        suggestedDecision: null,
+        alreadyFixedIn: null,
+        decision: "needs-call",
+        decidedBy: null,
+        reason: null,
+        conclusion: null,
+        draftReply: null,
+        draftReplyRevision: 0,
+        draftReplyBy: null,
+        applyState: "pending",
+        stale: false,
+        viewed: false,
+        sideThreadId: null,
+        updatedAt: source.updatedAt,
+      });
+    }
+  }
+  return items;
 }

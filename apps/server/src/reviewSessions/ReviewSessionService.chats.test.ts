@@ -168,6 +168,7 @@ it.effect("sends Triage, Apply and rewrites to the review chat as the system", (
     });
     assert.match(harness.sent[1]?.text ?? "", /^\[#1 build cache key\]\n/);
 
+    yield* reviews.decide({ sessionId, number: 1, decision: "fix", authority: { _tag: "panel" } });
     yield* reviews.setViewed({ sessionId, number: 1, viewed: true });
     yield* reviews.requestTurn({ sessionId, request: { _tag: "apply" } });
     assert.include(harness.sent[2]?.text ?? "", "Apply round 1");

@@ -138,7 +138,7 @@ it.effect("merges one problem from both reviewers into one point", () => {
         }),
       ],
     });
-    assert.deepEqual(first.created, [1]);
+    assert.deepEqual(first.matched, [1]);
     const [point] = first.snapshot.items;
     assert.deepEqual(point?.sources, ["copilot", "local-review"]);
     assert.deepEqual(point?.sourceIds, ["PRR_1", "local:run-1"]);
@@ -353,7 +353,7 @@ it.effect("sends the Review tab a fresh snapshot after every change", () =>
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
 
-it.effect("shows a review started after the tab opened on a chat that had no group yet", () => {
+it.effect("follows a group change after discovering an ungrouped chat's review", () => {
   const harness = newHarness();
   const caller = ThreadId.make("thread:caller");
   harness.shells.set(caller, chatShell(caller, { groupId: null }));
@@ -375,7 +375,7 @@ it.effect("shows a review started after the tab opened on a chat that had no gro
     const emitted = Array.from(yield* Fiber.join(fiber));
     assert.deepEqual(
       emitted.map((result) => result.snapshot?.session.reviewThreadId ?? null),
-      [null, caller],
+      [caller, caller],
     );
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
@@ -674,3 +674,36 @@ it.effect("asks for a fresh reply when a replied point is raised again", () =>
     );
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
+
+it.effect("discovers a linked PR and displays author-posted feedback without an agent", () => {
+  const harness = newHarness();
+  const { groupId: _groupId, ...ungrouped } = chatShell(reviewThreadId);
+  harness.shells.set(reviewThreadId, ungrouped);
+  harness.read = reviewRoundRead({
+    reviews: [githubReview("PRR_owner_agent", "nach")],
+    threads: [githubThread("T_auto", [threadComment("PRR_owner_agent", "Corrections are lost")])],
+  });
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO orchestration_v2_projection_threads
+      (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+       created_at, updated_at, payload_json)
+      VALUES (${reviewThreadId}, ${openInput.projectId}, 'Linked PR', 'codex', 'full-access',
+       'default', ${at}, ${at}, ${JSON.stringify({ pullRequests: [prLink(prKey.number, "feature", "main")] })})`;
+    const reviews = yield* service;
+    yield* reviews.discoverLinked();
+    yield* reviews.discoverLinked();
+    const results = yield* reviews
+      .subscribe({ threadId: reviewThreadId, repository: prKey.repository, number: prKey.number })
+      .pipe(Stream.take(1), Stream.runCollect);
+    const snapshot = results[0]?.snapshot;
+    assert.equal(snapshot?.items.length, 1);
+    assert.equal(snapshot?.items[0]?.problem, "Corrections are lost");
+    assert.equal(snapshot?.items[0]?.decision, "needs-call");
+    assert.deepEqual(snapshot?.items[0]?.sourceKeys, ["gh:T_auto"]);
+    assert.equal(harness.sent.length, 0);
+    assert.equal(harness.launched.length, 0);
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    assert.equal((yield* repo.listLiveSessions()).length, 1);
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});

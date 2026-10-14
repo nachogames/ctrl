@@ -20,8 +20,8 @@ import {
   type ReviewSourceComment,
   type ReviewSuggestedDecision,
   type ReviewTurnRequest,
-  type ThreadGroupId,
-  type ThreadId,
+  ThreadGroupId,
+  ThreadId,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { parseReviewPointTag } from "@t3tools/shared/reviewPointTag";
@@ -35,6 +35,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as Schedule from "effect/Schedule";
+import { forkParked } from "../serverActivation.ts";
+import * as ThreadGroupService from "../orchestration-v2/ThreadGroupService.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ThreadGroupLaunchService from "../orchestration-v2/ThreadGroupLaunchService.ts";
@@ -144,6 +147,7 @@ type PointInput = { readonly sessionId: ReviewSessionId; readonly number: number
 export class ReviewSessionService extends Context.Service<
   ReviewSessionService,
   {
+    readonly discoverLinked: () => Effect.Effect<void, ReviewSessionError>;
     /** The live review of this pull request in this group, created when there is none. */
     readonly open: (
       input: ReviewSessionOpenInput,
@@ -303,6 +307,8 @@ export const make = Effect.gen(function* () {
   const changes = yield* ReviewSessionChanges.ReviewSessionChanges;
   const sync = yield* ReviewSyncService.ReviewSyncService;
   const threads = yield* ThreadManagementService.ThreadManagementService;
+  const groups = yield* ThreadGroupService.ThreadGroupService;
+  const discoveryLock = yield* Semaphore.make(1);
   const crypto = yield* Crypto.Crypto;
   const writeLock = yield* Semaphore.make(1);
   const launches = yield* ThreadGroupLaunchService.ThreadGroupLaunchService;
@@ -490,7 +496,7 @@ export const make = Effect.gen(function* () {
       );
       yield* changes.publish(result.session.id);
       yield* syncQuietly(result.session.id);
-      return { snapshot: yield* snapshotOf(result.session), created: result.created };
+      return { snapshot: yield* read(result.session.id), created: result.created };
     }).pipe(Effect.mapError(keepReviewErrors()));
 
   const read: ReviewSessionService["Service"]["read"] = (sessionId) =>
@@ -499,11 +505,74 @@ export const make = Effect.gen(function* () {
       Effect.mapError(keepReviewErrors(sessionId)),
     );
 
+  // Discovery never launches an agent. A group is allocated only for a PR-bearing chat.
+  const ensureDiscovered = (input: ReviewSessionSubscribeInput) =>
+    discoveryLock.withPermits(1)(
+      Effect.gen(function* () {
+        const shell = yield* liveThread(input.threadId);
+        if (shell === null || shell.lineage.relationshipToParent === "subagent") return;
+        if (!/^[a-z0-9-]+\/[a-z0-9_.-]+$/i.test(input.repository)) return;
+        const groupId = shell.groupId ?? ThreadGroupId.make(`review-group:${shell.id}`);
+        if (shell.groupId == null)
+          yield* groups.create({
+            commandId: CommandId.make(`review-group:${shell.id}:${yield* crypto.randomUUIDv4}`),
+            groupId,
+            projectId: shell.projectId,
+            threadIds: [shell.id],
+            title: shell.title,
+          });
+        const existing = yield* repo.findLatestSessionForPullRequest({
+          repository: input.repository.toLowerCase(),
+          number: input.number,
+          groupId,
+        });
+        if (Option.isSome(existing)) return;
+        yield* open({
+          key: { host: "github.com", repository: input.repository, number: input.number },
+          url: `https://github.com/${input.repository}/pull/${input.number}`,
+          projectId: shell.projectId,
+          groupId,
+          reviewThreadId: shell.id,
+          headSha: null,
+        });
+      }).pipe(Effect.mapError(keepReviewErrors())),
+    );
+
+  const discoverLinked: ReviewSessionService["Service"]["discoverLinked"] = () =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{ thread_id: string; repository: string; number: number }>`
+      SELECT t.thread_id, json_extract(link.value, '$.repository') AS repository,
+        json_extract(link.value, '$.number') AS number
+      FROM orchestration_v2_projection_threads t JOIN json_each(t.payload_json, '$.pullRequests') link
+      WHERE t.deleted_at IS NULL AND t.archived_at IS NULL
+        AND json_extract(link.value, '$.host') = 'github.com'
+        AND json_extract(link.value, '$.source') != 'stack-dismissed'
+      UNION
+      SELECT t.thread_id, json_extract(t.payload_json, '$.linkedPullRequest.repository'),
+        json_extract(t.payload_json, '$.linkedPullRequest.number')
+      FROM orchestration_v2_projection_threads t
+      WHERE t.deleted_at IS NULL AND t.archived_at IS NULL
+        AND json_type(t.payload_json, '$.pullRequests') IS NULL
+        AND json_type(t.payload_json, '$.linkedPullRequest') = 'object'
+    `;
+      for (const row of rows)
+        yield* ensureDiscovered({
+          threadId: ThreadId.make(row.thread_id),
+          repository: row.repository,
+          number: row.number,
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("review discovery failed", { cause: error.cause }),
+          ),
+        );
+    }).pipe(Effect.mapError(keepReviewErrors()));
+
   const subscribe: ReviewSessionService["Service"]["subscribe"] = (input) =>
     Stream.unwrap(
       Effect.gen(function* () {
         // Subscribe before the first read so a change landing between the two is not lost.
         const feed = yield* changes.subscribe;
+        yield* ensureDiscovered(input);
         // The chat's group is read on every lookup: the agent may group the chat (or move it)
         // after the tab opened, and the open tab must then show that group's review.
         const lookup: Effect.Effect<ReviewSessionSubscribeResult, ReviewSessionError> =
@@ -672,6 +741,28 @@ export const make = Effect.gen(function* () {
             const raisedAgain = item.lastSeenRound < session.round;
             yield* repo.upsertItem(session.id, {
               ...item,
+              // AI may enrich raw GitHub feedback, but never replaces a user's decision/reply.
+              ...(item.impact === "" && item.solution === "" && item.skipReason === ""
+                ? {
+                    summary: incoming.summary,
+                    shortName: incoming.shortName,
+                    problem: incoming.problem,
+                    impact: incoming.impact,
+                    solution: incoming.solution,
+                    skipReason: incoming.skipReason,
+                    excerpt: incoming.excerpt,
+                    recommendation: incoming.recommendation,
+                    suggestedDecision: incoming.suggestedDecision,
+                    alreadyFixedIn: incoming.alreadyFixedIn,
+                    ...(item.draftReply === null && incoming.draftReply !== null
+                      ? {
+                          draftReply: incoming.draftReply,
+                          draftReplyBy: "agent" as const,
+                          draftReplyRevision: item.draftReplyRevision + 1,
+                        }
+                      : {}),
+                  }
+                : {}),
               sourceKeys: union(item.sourceKeys, incoming.sourceKeys),
               sources: union(item.sources, incoming.sources),
               githubThreadIds: union(item.githubThreadIds, incoming.githubThreadIds),
@@ -1288,6 +1379,7 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
 
   return ReviewSessionService.of({
+    discoverLinked,
     open,
     read,
     subscribe,
@@ -1309,3 +1401,17 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ReviewSessionService, make);
+
+/** Discover links after restart and as chats acquire PRs, without starting provider turns. */
+export const layerStart = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const reviews = yield* ReviewSessionService;
+    yield* forkParked(
+      reviews.discoverLinked().pipe(
+        Effect.catchCause((cause) => Effect.logWarning("review discovery sweep failed", cause)),
+        Effect.repeat(Schedule.spaced("30 seconds")),
+        Effect.asVoid,
+      ),
+    );
+  }),
+);
