@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  type ReviewHistoryRound,
   reviewFindingTitle,
   reviewPointCounts,
   reviewResolutionLabel,
@@ -11,7 +12,7 @@ import type {
   ReviewSessionId,
   ServerProvider,
 } from "@t3tools/contracts";
-import { SparklesIcon } from "lucide-react";
+import { ChevronRightIcon, SparklesIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { reviewSessionEnvironment } from "~/state/reviewSessions";
@@ -141,19 +142,7 @@ export function ReviewRoundCard({
       {collapsed ? null : (
         <>
           {view.reviewHistory?.map((group) => (
-            <section
-              key={group.number}
-              aria-label={`Review round ${group.number}`}
-              className="flex flex-col gap-1 border-t border-border/60 pt-2"
-            >
-              <header className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs">
-                <h4 className="font-semibold">Review round {group.number}</h4>
-                <span>
-                  {group.sources.every((source) => source.failed)
-                    ? "Failed · no review produced"
-                    : reviewResolutionLabel(group.items)}
-                </span>
-              </header>
+            <ReviewHistoryGroup key={group.number} group={group}>
               <ul className="flex flex-col gap-0.5">
                 {group.sources
                   .filter(
@@ -178,7 +167,7 @@ export function ReviewRoundCard({
                     />
                   ))}
               </ul>
-            </section>
+            </ReviewHistoryGroup>
           ))}
           <ul>
             {offerLocal ? (
@@ -271,5 +260,48 @@ function ReviewHistoryItem({
         ) : null}
       </details>
     </li>
+  );
+}
+
+/** Follow resolution updates until the reader explicitly chooses to expand or collapse. */
+function ReviewHistoryGroup({
+  group,
+  children,
+}: {
+  group: ReviewHistoryRound;
+  children: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState<boolean | null>(null);
+  const fullyResolved =
+    group.items.length > 0 &&
+    group.items.every((item) => item.githubState === "resolved") &&
+    !group.sources.some((source) => source.state === "reviewing" || source.state === "requested");
+  const open = expanded ?? !fullyResolved;
+  return (
+    <section
+      aria-label={`Review round ${group.number}`}
+      className="flex flex-col gap-1 border-t border-border/60 pt-2"
+    >
+      <h4>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setExpanded(!open)}
+          className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-start text-xs hover:bg-accent/50"
+        >
+          <ChevronRightIcon
+            aria-hidden="true"
+            className={open ? "size-3 shrink-0 rotate-90" : "size-3 shrink-0"}
+          />
+          <span className="font-semibold">Review round {group.number}</span>
+          <span className="ml-auto">
+            {group.sources.every((source) => source.failed)
+              ? "Failed · no review produced"
+              : reviewResolutionLabel(group.items)}
+          </span>
+        </button>
+      </h4>
+      {open ? children : null}
+    </section>
   );
 }

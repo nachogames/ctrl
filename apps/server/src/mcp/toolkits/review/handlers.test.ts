@@ -348,3 +348,55 @@ it.effect("stores the pull request URL rebuilt from its parts, never as typed", 
     }),
   ),
 );
+
+it.effect(
+  "lets a sibling group chat import, annotate and decide in the existing shared panel",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { harness, provided, as } = yield* harnessed;
+        const siblingId = ThreadId.make("thread:sibling");
+        harness.shells.set(siblingId, chatShell(siblingId, { groupId }));
+        const original = yield* as(reviewThreadId);
+        yield* original("review_session_open", { url: prUrl, headSha: "abc123" });
+        const sibling = yield* as(siblingId);
+        expect(
+          yield* sibling("review_session_open", { url: prUrl, headSha: "abc123" }),
+        ).toMatchObject({
+          created: false,
+          session: { groupId, reviewThreadId },
+        });
+        expect(
+          yield* sibling("review_items_import", { sourceIds: [], items: [toolItem("gh:T1")] }),
+        ).toMatchObject({ created: [1] });
+        expect(
+          yield* sibling("review_items_annotate", {
+            number: 1,
+            conclusion: "Confirmed from the build chat.",
+            draftReply: "Will fix.",
+          }),
+        ).toMatchObject({ item: { number: 1, conclusion: "Confirmed from the build chat." } });
+        const sql = yield* provided(sqlClient);
+        yield* insertProjectionMessage(sql, {
+          threadId: siblingId,
+          messageId: "sibling-decision",
+          text: "#1 fix",
+          createdAt: "2026-10-13T10:00:00.000Z",
+        });
+        expect(
+          yield* sibling("review_items_decide", { number: 1, decision: "fix", quote: "#1 fix" }),
+        ).toMatchObject({ item: { number: 1, decision: "fix" } });
+        expect(yield* original("review_session_read", {})).toMatchObject({
+          session: { reviewThreadId },
+          items: [
+            {
+              number: 1,
+              decision: "fix",
+              conclusion: "Confirmed from the build chat.",
+              draftReply: "Will fix.",
+            },
+          ],
+        });
+      }),
+    ),
+);

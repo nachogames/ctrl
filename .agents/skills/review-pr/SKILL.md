@@ -9,7 +9,7 @@ The loop's rules live in the brief that `review_session_open` returns. This skil
 
 1. Find the pull request: `gh pr view --json number,url,headRefOid,state`, or use the number or URL the user gave. Stop if it is not open.
 2. Call `t3_group_read`. If it returns `group: null`, your chat is in no group: call `t3_group_create` with no arguments, so the pull request has a group.
-3. Call `review_session_open` with `url` and `headSha` set to `headRefOid`. If opening is refused (for example, in a side chat or independent review chat), tell the user and stop. If `session.reviewThreadId` is another chat (your chat is marked `isCaller` by `t3_group_read`), tell the user the review lives there and stop.
+3. Call `review_session_open` with `url` and `headSha` set to `headRefOid`. If opening is refused (for example, in a side chat or independent review chat), tell the user and stop. The review belongs to the group. Any ordinary chat in that group can update the same panel, even when `session.reviewThreadId` names another chat. That ID routes panel-triggered automation; it does not own write access. Continue here with the existing session, without creating a duplicate review.
 4. Follow the brief. When you are unsure of a rule, call `review_session_open` again; it returns the live review and the brief.
 
 ## Requesting Copilot

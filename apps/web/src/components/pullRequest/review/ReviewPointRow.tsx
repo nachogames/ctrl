@@ -90,7 +90,13 @@ export const ReviewPointRow = memo(function ReviewPointRow({
   const dim = item.viewed && !open;
   return (
     <li className={cn("rounded-xl border", open ? "border-border bg-card" : "border-border/50")}>
-      <div className="flex items-center gap-2 py-1.5 ps-1 pe-2">
+      <div
+        className={cn(
+          "flex items-center gap-2 py-1.5 ps-1 pe-2",
+          // Offset the Review tab's p-3 scroll padding so content cannot peek above the header.
+          open && "sticky -top-3 z-10 border-b border-border/60 bg-card shadow-sm",
+        )}
+      >
         <button
           type="button"
           aria-expanded={openable ? open : undefined}

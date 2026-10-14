@@ -318,7 +318,8 @@ commit grouped alongside it. Each round shows how many findings are still open o
 including resolutions made directly on GitHub.
 Ask the agent to triage when you want explanations and recommendations, or to run an
 independent local review.
-Ask about `#3` in the review chat, or open a point's own chat. Questions leave decisions alone;
+Any ordinary chat in the PR’s group can update the same review panel. Ask about `#3` in any
+of those chats, or open a point's own chat. Questions leave decisions alone;
 say `#3 fix` or `#3 decline` to decide. Conclusions and reply drafts stay with the point.
 
 Read each point and mark it viewed before applying. **Apply** shows the work and replies for
