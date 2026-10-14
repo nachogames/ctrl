@@ -271,6 +271,7 @@ export type ReviewTurnRequest = typeof ReviewTurnRequest.Type;
 
 export const ReviewRequestInput = Schema.Struct({
   sessionId: ReviewSessionId,
+  targetThreadId: Schema.optional(ThreadId),
   request: ReviewTurnRequest,
 });
 export type ReviewRequestInput = typeof ReviewRequestInput.Type;

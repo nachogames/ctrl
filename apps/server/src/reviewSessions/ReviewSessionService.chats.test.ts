@@ -542,3 +542,48 @@ it.effect("rechecks previously stale findings whose sources were already triaged
     assert.include(harness.sent[0]!.text, "Triage round 1");
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
+
+it.effect("triages in the current group chat without changing the shared review owner", () => {
+  const harness = newHarness();
+  const current = ThreadId.make("current-group-chat");
+  harness.shells.set(current, chatShell(current));
+  harness.read = reviewRoundRead({
+    reviews: [githubReview("R1", "copilot-pull-request-reviewer")],
+    threads: [githubThread("T1", [threadComment("R1", "Problem")])],
+  });
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    yield* reviews.requestTurn({
+      sessionId: snapshot.session.id,
+      targetThreadId: current,
+      request: { _tag: "triage" },
+    });
+    assert.equal(harness.sent.at(-1)?.threadId, current);
+    assert.include(harness.sent.at(-1)?.text ?? "", snapshot.session.id);
+    assert.equal((yield* reviews.read(snapshot.session.id)).session.reviewThreadId, reviewThreadId);
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("refuses triage in an unrelated or scoped chat before changing the review", () => {
+  const harness = newHarness();
+  const unrelated = ThreadId.make("unrelated-chat");
+  harness.shells.set(unrelated, chatShell(unrelated, { groupId: null }));
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const local = yield* reviews.runLocalReview({ sessionId: snapshot.session.id });
+    const sent = harness.sent.length;
+    for (const targetThreadId of [unrelated, local.threadId]) {
+      const error = yield* Effect.flip(
+        reviews.requestTurn({
+          sessionId: snapshot.session.id,
+          targetThreadId,
+          request: { _tag: "triage" },
+        }),
+      );
+      assert.match(error.message, /group|ordinary/);
+    }
+    assert.equal(harness.sent.length, sent);
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});

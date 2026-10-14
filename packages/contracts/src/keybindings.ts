@@ -34,6 +34,19 @@ export const MODEL_PICKER_JUMP_KEYBINDING_COMMANDS = [
 export type ModelPickerJumpKeybindingCommand =
   (typeof MODEL_PICKER_JUMP_KEYBINDING_COMMANDS)[number];
 
+export const ENVIRONMENT_PICKER_JUMP_KEYBINDING_COMMANDS = [
+  "environmentPicker.jump.0",
+  "environmentPicker.jump.1",
+  "environmentPicker.jump.2",
+  "environmentPicker.jump.3",
+  "environmentPicker.jump.4",
+  "environmentPicker.jump.5",
+  "environmentPicker.jump.6",
+  "environmentPicker.jump.7",
+  "environmentPicker.jump.8",
+  "environmentPicker.jump.9",
+] as const;
+
 const THREAD_KEYBINDING_COMMANDS = [
   "thread.stop",
   "thread.steerQueuedMessage",
@@ -58,6 +71,8 @@ export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMA
 
 export const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
+  "environmentPicker.toggle",
+  ...ENVIRONMENT_PICKER_JUMP_KEYBINDING_COMMANDS,
   "navigation.back",
   "navigation.forward",
   "terminal.toggle",

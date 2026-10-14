@@ -239,6 +239,7 @@ export class ReviewSessionService extends Context.Service<
     /** A Review tab button: a turn in the review chat, sent as the system. */
     readonly requestTurn: (input: {
       readonly sessionId: ReviewSessionId;
+      readonly targetThreadId?: ThreadId | undefined;
       readonly request: ReviewTurnRequest;
     }) => Effect.Effect<void, ReviewSessionError>;
   }
@@ -1311,8 +1312,33 @@ export const make = Effect.gen(function* () {
       const session = yield* loadSession(input.sessionId);
       yield* requireLive(session);
       yield* requireCollecting(session, yield* loadRound(session));
-      yield* reviewChatOf(session);
       const request = input.request;
+      let targetThreadId = session.reviewThreadId;
+      if (request._tag === "triage" && input.targetThreadId !== undefined) {
+        const target = yield* liveThread(input.targetThreadId);
+        if (
+          target === null ||
+          target.projectId !== session.projectId ||
+          target.groupId !== session.groupId
+        )
+          return yield* fail(
+            "Triage must run in an active chat in this review's group.",
+            session.id,
+          );
+        const access = yield* resolveForThread({
+          threadId: target.id,
+          groupId: target.groupId,
+          sessionId: session.id,
+        });
+        if (access.role !== "review")
+          return yield* fail(
+            "Use an ordinary group chat for triage, not an assigned review or point chat.",
+            session.id,
+          );
+        targetThreadId = target.id;
+      } else {
+        yield* reviewChatOf(session);
+      }
       let item: ReviewItem | null = null;
       let untriaged: ReadonlyArray<ReviewSource> = [];
       if (request._tag === "triage") {
@@ -1415,7 +1441,7 @@ export const make = Effect.gen(function* () {
         .sendToThread({
           projectId: session.projectId,
           commandId: CommandId.make(`review-request:${id}`),
-          threadId: session.reviewThreadId,
+          threadId: targetThreadId,
           messageId: MessageId.make(`message:review-request:${id}`),
           text: reviewRequestText({ session, request, item, sources: untriaged }),
           attachments: [],

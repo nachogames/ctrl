@@ -11,6 +11,7 @@ import type {
   ReviewItem,
   ReviewSessionId,
   ServerProvider,
+  ThreadId,
 } from "@t3tools/contracts";
 import { ChevronRightIcon, SparklesIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
@@ -36,6 +37,7 @@ const SECTION_LABEL =
 export function ReviewRoundCard({
   view,
   sessionId,
+  targetThreadId,
   environmentId,
   providers,
   discussed,
@@ -44,6 +46,7 @@ export function ReviewRoundCard({
 }: {
   view: ReviewRoundView;
   sessionId: ReviewSessionId;
+  targetThreadId: ThreadId;
   environmentId: EnvironmentId;
   providers: ReadonlyArray<ServerProvider>;
   /** Points the user talked about, here or in their own chat. */
@@ -91,7 +94,7 @@ export function ReviewRoundCard({
     setTriage(record);
     const result = await request({
       environmentId,
-      input: { sessionId, request: { _tag: "triage" } },
+      input: { sessionId, targetThreadId, request: { _tag: "triage" } },
     });
     if (result._tag === "Failure") {
       setTriage((current) => (current === record ? null : current));

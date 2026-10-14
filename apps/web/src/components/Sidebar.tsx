@@ -1,3 +1,4 @@
+import { ENVIRONMENT_PICKER_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import { EnvironmentBatteryIndicator } from "./EnvironmentBatteryIndicator";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
@@ -2698,6 +2699,48 @@ export default function Sidebar() {
     [environments],
   );
   const environmentMachineById = useEnvironmentMachines();
+  const [environmentPickerOpen, setEnvironmentPickerOpen] = useState(false);
+  const environmentPickerShortcut = shortcutLabelForCommand(
+    keybindings,
+    "environmentPicker.toggle",
+  );
+  const environmentJumpLabel = (index: number) => {
+    const command = ENVIRONMENT_PICKER_JUMP_KEYBINDING_COMMANDS[index];
+    return command === undefined
+      ? null
+      : shortcutLabelForCommand(keybindings, command, {
+          context: { environmentPickerOpen: true },
+        });
+  };
+  useEffect(() => {
+    if (environments.length <= 1) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen())
+        return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: { terminalFocus: isTerminalFocused(), environmentPickerOpen },
+      });
+      if (command === "environmentPicker.toggle") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setEnvironmentPickerOpen((open) => !open);
+        return;
+      }
+      if (!environmentPickerOpen) return;
+      const index = ENVIRONMENT_PICKER_JUMP_KEYBINDING_COMMANDS.findIndex(
+        (entry) => entry === command,
+      );
+      if (index < 0) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (index > 0 && environments[index - 1] === undefined) return;
+      setEnvironmentScopeId(index === 0 ? null : environments[index - 1]!.environmentId);
+      setEnvironmentPickerOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [environmentPickerOpen, environments, keybindings, setEnvironmentScopeId]);
+
   const orderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
@@ -5895,15 +5938,15 @@ export default function Sidebar() {
               hasProjects={projectGroups.length > 0}
               machineScope={
                 environments.length > 1 ? (
-                  <Menu>
+                  <Menu open={environmentPickerOpen} onOpenChange={setEnvironmentPickerOpen}>
                     <MenuTrigger
                       render={
                         <SidebarHeaderIconButton
-                          label={
+                          label={`${
                             environmentScopeId === null
                               ? "Show threads from: All machines"
                               : `Show threads from: ${environmentLabelById.get(environmentScopeId) ?? "Machine"}`
-                          }
+                          }${environmentPickerShortcut ? ` · ${environmentPickerShortcut}` : ""}`}
                         />
                       }
                     >
@@ -5920,8 +5963,10 @@ export default function Sidebar() {
                         value={environmentScopeId ?? ""}
                         onValueChange={(value) => setEnvironmentScopeId(value || null)}
                       >
-                        <MenuRadioItem value="">All machines</MenuRadioItem>
-                        {environments.map((environment) => (
+                        <MenuRadioItem value="">
+                          All machines<MenuShortcut>{environmentJumpLabel(0)}</MenuShortcut>
+                        </MenuRadioItem>
+                        {environments.map((environment, index) => (
                           <MenuRadioItem
                             key={environment.environmentId}
                             value={environment.environmentId}
@@ -5932,6 +5977,7 @@ export default function Sidebar() {
                                 environmentId={environment.environmentId}
                               />
                             </span>
+                            <MenuShortcut>{environmentJumpLabel(index + 1)}</MenuShortcut>
                           </MenuRadioItem>
                         ))}
                       </MenuRadioGroup>

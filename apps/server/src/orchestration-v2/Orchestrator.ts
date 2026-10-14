@@ -610,7 +610,7 @@ function delegatedTaskTerminalStatus(
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection)[0];
+  return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
 }
 
 function latestStableRun(
@@ -1285,8 +1285,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
-        projection.runs.some(isBlockingRun) ||
-        projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)
+        projection.runs.some(isBlockingRun)
       ) {
         return;
       }
@@ -5061,7 +5060,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           status: "queued",
           ...(worktreeMissingRun !== undefined ||
           projection.runs.some(
-            (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
+            // A new conversation turn can start while an older queue remains held
+            // after recovery. That old hold must not spread into this turn's queue.
+            (candidate) =>
+              candidate.status === "queued" &&
+              candidate.queueHeld === true &&
+              candidate.ordinal > queueBehindRun.ordinal,
           )
             ? { queueHeld: true }
             : {}),

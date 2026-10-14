@@ -1690,3 +1690,50 @@ describe("Usage shortcuts", () => {
     );
   });
 });
+
+describe("environment picker shortcuts", () => {
+  it("opens with mod+e outside terminals and gives number chords to the open picker", () => {
+    const context = { isDesktop: true, environmentPickerOpen: true };
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "e", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+      }),
+      "environmentPicker.toggle",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "e", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+    for (const key of ["0", "1", "9"]) {
+      assert.strictEqual(
+        resolveShortcutCommand(event({ key, metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform: "MacIntel",
+          context,
+        }),
+        `environmentPicker.jump.${key}`,
+      );
+    }
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "2", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { isDesktop: true },
+      }),
+      "thread.jump.2",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "2", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { isDesktop: false, environmentPickerOpen: true },
+      }),
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "environmentPicker.jump.2", {
+        platform: "MacIntel",
+        context,
+      }),
+      "⌘2",
+    );
+  });
+});

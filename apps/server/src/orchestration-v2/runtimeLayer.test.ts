@@ -4314,6 +4314,64 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("old recovery holds do not pause messages queued behind a new turn", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      const threadId = ThreadId.make("old-recovery-hold-new-turn");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Recovered queue",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const send = (name: string, queued: boolean, system = false) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:${name}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${name}`),
+          text: name,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: queued ? "queue_after_active" : "start_immediately" },
+          createdBy: system ? "system" : "user",
+          creationSource: system ? "server" : "web",
+        });
+      yield* send("original", false);
+      yield* send("background-command-completed", true, true);
+      yield* recovery.reconcile("shutdown");
+      const held = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+      assert.isTrue(held.queueHeld);
+      yield* send("new-conversation", false);
+      yield* send("follow-up", true);
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.isTrue(after.runs.find((run) => run.id === held.id)?.queueHeld);
+      const followUp = after.runs.at(-1)!;
+      assert.equal(followUp.status, "queued");
+      assert.notEqual(followUp.queueHeld, true);
+      // A normal completion can drain the new queue without releasing the old hold.
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make(`${threadId}:finish-current`),
+        threadId,
+        runId: after.runs.at(-2)!.id,
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const resumed = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(resumed.runs.find((run) => run.id === followUp.id)?.status, "starting");
+      assert.equal(resumed.runs.find((run) => run.id === held.id)?.status, "queued");
+    }),
+  );
+
   it.effect.each(["startup", "shutdown"] as const)(
     "preserves and holds queued messages across %s until explicitly resumed",
     (trigger) =>

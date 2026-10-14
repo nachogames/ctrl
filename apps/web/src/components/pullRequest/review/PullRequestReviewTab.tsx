@@ -350,6 +350,7 @@ function GroupPullRequestReview({
             key={`${view.round.round}:${view.current}`}
             view={view}
             sessionId={sessionId}
+            targetThreadId={threadRef.threadId}
             environmentId={environmentId}
             providers={providers}
             discussed={

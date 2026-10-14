@@ -138,6 +138,31 @@ describe("thread workflows", () => {
     expect(state.canPromoteToSteer).toBe(true);
   });
 
+  it("does not label a deliverable queue paused because an older notification is held", () => {
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: null },
+      runs: [
+        { id: "old", status: "queued", userMessageId: "old", ordinal: 1, queueHeld: true },
+        { id: "new", status: "queued", userMessageId: "new", ordinal: 3 },
+      ],
+      messages: [
+        {
+          id: "old",
+          text: "Background command completed",
+          createdBy: "system",
+          creationSource: "server",
+          providerContinuation: true,
+        },
+        { id: "new", text: "My follow-up", createdBy: "user", creationSource: "web" },
+      ],
+      providerThreads: [],
+      providerTurns: [],
+      providerSessions: [],
+    } as never);
+    expect(state.isHeld).toBe(false);
+    expect(state.queuedRuns.some(({ text }) => text === "My follow-up")).toBe(true);
+  });
+
   it("keeps held messages visible and clears the hold when they leave the queue", () => {
     for (const status of ["queued", "cancelled", "starting"] as const) {
       const state = deriveThreadQueueWorkflowState({

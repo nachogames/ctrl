@@ -3,6 +3,11 @@
 Customize shortcuts in **Settings → Keybindings** on web and desktop. That page
 also lists the command IDs and defaults available in your version.
 
+Use `mod+E` to open the sidebar's environment filter. In the desktop app, while
+it is open, `mod+0` selects All machines and `mod+1` through `mod+9` select the
+numbered environments. The menu shows each shortcut. Customize these under
+**Settings → Keybindings → Navigation**.
+
 ## Composer controls
 
 In **Settings → General → Send shortcut**, choose whether Enter sends, requires

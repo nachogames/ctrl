@@ -776,7 +776,7 @@ describe("V2 environment commands", () => {
                 commandId: expect.any(String),
                 threadId: v2ThreadId,
                 runId: waitingRunId,
-                holdQueue: true,
+                holdQueue: status === "waiting",
               },
             ],
       );

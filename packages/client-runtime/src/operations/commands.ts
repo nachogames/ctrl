@@ -929,6 +929,7 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
       subagentId: subagent.id,
     });
   }
+  let holdQueue = true;
   let runId = input.runId ?? (input.turnId as RunId | undefined);
   if (runId === undefined) {
     const projection = yield* getProjection(input.threadId);
@@ -953,6 +954,8 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
         }).length > 0
       ) {
         runId = latestRun?.id;
+        // Stopping a command left by a finished turn must not pause unrelated messages.
+        holdQueue = false;
       }
     }
     if (runId === undefined) {
@@ -978,7 +981,7 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     runId,
-    holdQueue: true,
+    holdQueue,
   });
 });
 
