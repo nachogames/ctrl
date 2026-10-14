@@ -2,6 +2,20 @@ import { describe, expect, it } from "vite-plus/test";
 import { buildRuntimeInstructions } from "./runtimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
+  it.each(["Codex", "Claude Code", "Cursor", "OpenCode", "Grok", "Antigravity", "Muse"])(
+    "routes PR reviews through persistent sessions for %s without project skills",
+    (harness) => {
+      const instructions = buildRuntimeInstructions({ harness });
+      expect(instructions).toContain("no repository-installed review-pr skill is required");
+      expect(instructions).toContain("call t3_group_create with no arguments");
+      expect(instructions).toContain("review_session_open with url and headSha");
+      expect(instructions).toContain("do not create a duplicate review");
+      expect(instructions).toContain("triage the imported feedback");
+      expect(instructions).toContain("Questions do not change decisions");
+      expect(instructions).toContain("If review tools are unavailable");
+    },
+  );
+
   it("requires explicit registration of every PR and stack layer", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
     expect(instructions).toContain("When the t3-code MCP server exposes link_pull_request");

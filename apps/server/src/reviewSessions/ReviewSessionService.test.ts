@@ -66,6 +66,47 @@ it.effect("keeps numbers and decisions when the same points are imported again",
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
 
+it.effect("recovers an already posted review without starting another local review", () => {
+  const harness = newHarness();
+  harness.read = reviewRoundRead({
+    reviews: [githubReview("PRR_existing", "project-owner")],
+    threads: [githubThread("T_existing", [threadComment("PRR_existing", "lost corrections")])],
+  });
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const opened = yield* reviews.open(openInput);
+    const sessionId = opened.snapshot.session.id;
+    assert.deepEqual(
+      opened.snapshot.sources.map((source) => source.id),
+      ["PRR_existing"],
+    );
+    const imported = yield* reviews.importItems({
+      sessionId,
+      sourceIds: ["PRR_existing"],
+      items: [
+        importItem("gh:T_existing", {
+          sources: ["human:project-owner"],
+          githubThreadIds: ["T_existing"],
+        }),
+      ],
+    });
+    assert.equal(imported.snapshot.items.length, 1);
+    yield* reviews.decide({
+      sessionId,
+      number: 1,
+      decision: "decline",
+      authority: { _tag: "panel" },
+    });
+    const reopened = yield* reviews.open(openInput);
+    assert.equal(reopened.snapshot.session.id, sessionId);
+    assert.equal(reopened.snapshot.items[0]?.decision, "decline");
+    assert.deepEqual(
+      reopened.snapshot.sources.map((source) => source.id),
+      ["PRR_existing"],
+    );
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
 it.effect("merges one problem from both reviewers into one point", () => {
   const harness = newHarness();
   harness.read = reviewRoundRead({

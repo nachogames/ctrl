@@ -1,8 +1,8 @@
 import type { ReviewSession } from "@t3tools/contracts";
 
 /**
- * The rules of the review loop, returned by review_session_open. The skills on every
- * provider only say "open the session and follow its brief", so these rules live here once.
+ * The rules of the review loop, returned by review_session_open. The shared provider instructions
+ * say "open the session and follow its brief", so these rules live here once.
  * The agent gets it once per review, so it names no round: each step reads the current one.
  */
 export function reviewBrief(session: ReviewSession): string {
@@ -63,7 +63,7 @@ If the round has no local review yet, offer to run one; review_local_review_star
    When every thread of a point is resolved, call review_items_record_apply with applyState "resolved".
 
 ## Next round
-1. Re-request Copilot on the new head (see the review-pr skill for the command).
+1. Re-request Copilot on the new head with \`gh api --method POST "repos/{owner}/{repo}/pulls/${pr}/requested_reviewers" -f 'reviewers[]=copilot-pull-request-reviewer[bot]'\`. Verify it appears in the requested_reviewers response. If GitHub refuses or does not list Copilot, ask the user to request it from the PR’s Reviewers menu and carry on.
 2. Call review_round_advance with headSha set to \`git rev-parse HEAD\`. It refuses while a fix point is not yet pushed, or while a point with a GitHub thread and a drafted reply is not yet recorded "replied" or "resolved".
 3. Tell the user the round is applied and that "Run your review" is offered for the new commit. New feedback lands in the new round by itself.
 4. When a round's triage creates no new points, call review_round_advance with finish: true and tell the user the self-review is clean. Merging waits for the user's approval and is not part of this loop.
