@@ -334,13 +334,12 @@ describe.each([
     expect(checkout).toHaveLength(thread === stackThread ? 0 : 1);
   });
 
-  it(`${target ? "shows" : "hides"} the Review tab`, async () => {
+  it("shows the Review tab", async () => {
     await act(async () => render());
     const reviewTab = renderer.root
       .findAllByType("button")
       .filter((node) => node.findAll((child) => child.children.includes("Review")).length > 0);
-    expect(reviewTab.length > 0).toBe(target !== undefined);
-    if (!target) return;
+    expect(reviewTab.length > 0).toBe(true);
     await click("Review");
     expect(
       renderer.root.findAll((node) => node.props["data-test-review-tab"] === "shown"),

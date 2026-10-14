@@ -15,8 +15,9 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
-import { useThreadProjection } from "~/state/entities";
+import { useThreadProjection, useThreadShells } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
+import { pullRequestEnvironment } from "~/state/pullRequests";
 import { reviewSessionEnvironment } from "~/state/reviewSessions";
 import { EMPTY_SERVER_PROVIDERS, environmentServerConfigsAtom } from "~/state/server";
 import { Button } from "../../ui/button";
@@ -37,11 +38,106 @@ const NO_MENTIONS: ReadonlyMap<number, number> = new Map();
 const NO_ITEMS: ReadonlyArray<ReviewItem> = [];
 const NO_LINES: ReadonlyArray<string> = [];
 
+/** Standalone PRs use an existing linked group, never create a separate review workspace. */
+export function PullRequestReviewTab({
+  environmentId,
+  threadRef,
+  reference,
+}: {
+  environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef | null;
+  reference: PullRequestRef;
+}) {
+  return threadRef === null ? (
+    <LinkedPullRequestReview
+      key={`${environmentId}:${reference.host}:${reference.repository}:${reference.number}`}
+      environmentId={environmentId}
+      reference={reference}
+    />
+  ) : (
+    <GroupPullRequestReview
+      environmentId={environmentId}
+      threadRef={threadRef}
+      reference={reference}
+    />
+  );
+}
+
+function LinkedPullRequestReview({
+  environmentId,
+  reference,
+}: {
+  environmentId: EnvironmentId;
+  reference: PullRequestRef;
+}) {
+  const query = useEnvironmentQuery(
+    pullRequestEnvironment.linkedThreads({ environmentId, input: reference }),
+  );
+  const shells = useThreadShells();
+  const [selected, setSelected] = useState<string | null>(null);
+  const groups = useMemo(() => {
+    const shellsById = new Map(
+      shells
+        .filter((thread) => thread.environmentId === environmentId)
+        .map((thread) => [thread.id, thread]),
+    );
+    const seen = new Set<string>();
+    return (query.data?.threads ?? []).filter((thread) => {
+      if (thread.archivedAt !== null) return false;
+      const key = shellsById.get(thread.id)?.groupId ?? thread.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [environmentId, query.data, shells]);
+  const chosen =
+    groups.find((thread) => thread.id === selected) ?? (groups.length === 1 ? groups[0] : null);
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {groups.length > 1 ? (
+        <div className="flex flex-wrap items-center gap-2 border-b p-3">
+          <span className="text-sm text-muted-foreground">Review group:</span>
+          {groups.map((thread) => (
+            <Button
+              key={thread.id}
+              size="sm"
+              variant={chosen?.id === thread.id ? "secondary" : "outline"}
+              onClick={() => setSelected(thread.id)}
+            >
+              {thread.title}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+      {chosen ? (
+        <div className="min-h-0 flex-1">
+          <GroupPullRequestReview
+            key={chosen.id}
+            environmentId={environmentId}
+            threadRef={scopeThreadRef(environmentId, chosen.id)}
+            reference={reference}
+          />
+        </div>
+      ) : (
+        <div className="p-4 text-sm text-muted-foreground">
+          {query.error !== null
+            ? "Linked review chats could not be loaded."
+            : !query.isSuccess
+              ? "Loading the review…"
+              : groups.length > 1
+                ? "Choose a group to see its review."
+                : "Link this pull request to a chat using the pull request menu to start its shared review."}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * The Review tab: the pull request's review in this chat's group, as a stack of rounds.
  * The server owns every decision and viewed mark; this only renders and sends the user's acts.
  */
-export function PullRequestReviewTab({
+function GroupPullRequestReview({
   environmentId,
   threadRef,
   reference,

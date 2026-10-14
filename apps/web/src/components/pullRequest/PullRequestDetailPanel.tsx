@@ -1582,9 +1582,7 @@ export function PullRequestDetailPanel({
   const visibleTabs = TABS.filter(
     (item) =>
       (item.value !== "code" || detail === null || detail.capabilities.diff) &&
-      (item.value !== "guide" || reviewGuidesEnabled) &&
-      // A review belongs to a chat's group, so the tab needs the chat the panel sits beside.
-      (item.value !== "review" || threadRef != null),
+      (item.value !== "guide" || reviewGuidesEnabled),
   );
   // The Code tab can be opened while the detail is still on its way, and the detail may then say
   // this host has no patch to show. The tab goes, so whoever was standing on it is moved back to
@@ -2962,7 +2960,7 @@ export function PullRequestDetailPanel({
                 />
               </div>
             ) : null}
-            {mountedTabs.has("review") && threadRef ? (
+            {mountedTabs.has("review") ? (
               <div className={cn("absolute inset-0", tab !== "review" && "invisible")}>
                 <PullRequestReviewTab
                   environmentId={environmentId}
