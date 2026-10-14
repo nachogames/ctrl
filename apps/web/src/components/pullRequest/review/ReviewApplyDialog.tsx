@@ -13,14 +13,12 @@ import { Button } from "../../ui/button";
 export function ReviewApplyDialog({
   open,
   onOpenChange,
-  round,
   pullRequestNumber,
   lines,
   onApply,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  round: number;
   pullRequestNumber: number;
   lines: ReadonlyArray<string>;
   onApply: () => void;
@@ -29,9 +27,7 @@ export function ReviewApplyDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>
-            Apply round {round} to PR #{pullRequestNumber}?
-          </AlertDialogTitle>
+          <AlertDialogTitle>Apply approved findings to PR #{pullRequestNumber}?</AlertDialogTitle>
           <ul className="flex list-disc flex-col gap-2 ps-5 text-sm">
             {lines.map((line) => (
               <li key={line}>{line}</li>

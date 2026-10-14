@@ -1,4 +1,9 @@
-import { reviewTriageLabel } from "@t3tools/client-runtime/state/review-sessions";
+import { isActiveReviewItem, isReviewOverview } from "@t3tools/contracts";
+import {
+  reviewHistoryRounds,
+  type ReviewHistoryRound,
+  reviewTriageLabel,
+} from "@t3tools/client-runtime/state/review-sessions";
 import type {
   ReviewDecision,
   ReviewItem,
@@ -18,6 +23,8 @@ export interface ReviewRoundView {
   readonly current: boolean;
   readonly sources: ReadonlyArray<ReviewSource>;
   readonly items: ReadonlyArray<ReviewItem>;
+  readonly reviewHistory?: ReadonlyArray<ReviewHistoryRound>;
+  readonly history?: ReadonlyArray<ReviewItem>;
 }
 
 /**
@@ -26,14 +33,29 @@ export interface ReviewRoundView {
  */
 export function reviewRoundViews(snapshot: ReviewSessionSnapshot): ReadonlyArray<ReviewRoundView> {
   const { session } = snapshot;
+  const history = reviewHistoryRounds(snapshot.sources, snapshot.items);
   return snapshot.rounds.map((round) => {
     const current = round.round === session.round && session.phase !== "done";
     return {
       round,
       current,
+      reviewHistory: history.filter((group) =>
+        group.sources.some((source) => source.round === round.round),
+      ),
       sources: snapshot.sources.filter((source) => source.round === round.round),
+      history: current
+        ? snapshot.items.filter(
+            (item) =>
+              item.lastSeenRound === round.round &&
+              !isReviewOverview(item) &&
+              !isActiveReviewItem(item),
+          )
+        : [],
       items: snapshot.items.filter(
-        (item) => item.lastSeenRound === round.round && (!current || !item.stale),
+        (item) =>
+          item.lastSeenRound === round.round &&
+          !isReviewOverview(item) &&
+          (!current || isActiveReviewItem(item)),
       ),
     };
   });

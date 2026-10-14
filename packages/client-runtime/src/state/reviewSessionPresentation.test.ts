@@ -3,6 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   effectiveDecision,
+  liveRoundItems,
+  reviewHistoryRounds,
+  reviewResolutionLabel,
   nextUnviewedNumber,
   reviewApplyBadges,
   reviewApplySummary,
@@ -40,6 +43,7 @@ const item = (number: number, fields: Partial<ReviewItem> = {}) =>
     applyState: "pending",
     githubThreadIds: ["T1"],
     sources: ["copilot"],
+    sourceKeys: ["gh:T1"],
     ...fields,
   }) as ReviewItem;
 
@@ -143,5 +147,73 @@ describe("review presentation", () => {
       1,
     );
     expect(summary).toEqual({ fixes: [1, 3], replies: 3, resolves: 2, findings: 4 });
+  });
+});
+
+it("keeps old overview records and resolved points out of apply while retaining open outdated feedback", () => {
+  const items = [
+    item(1, { sourceKeys: ["gh-review:R1"] }),
+    item(2, { githubState: "resolved" }),
+    item(3, { githubState: "outdated" }),
+    item(4, { stale: true }),
+  ];
+  expect(liveRoundItems({ items }, 1).map((item) => item.number)).toEqual([3]);
+  expect(items).toHaveLength(4);
+});
+
+describe("GitHub review rounds", () => {
+  const pass = (id: string, day: number, fields: Partial<ReviewSource> = {}) =>
+    source({ id, submittedAt: `2026-10-${day}T10:00:00.000Z`, commitSha: `sha${day}`, ...fields });
+  it("groups five attempts into four completed rounds, including a failed retry and matching human review", () => {
+    const sources = [
+      pass("failed", 10, { failed: true }),
+      pass("r1", 11),
+      pass("r2", 12),
+      pass("r3", 13),
+      pass("r4", 14),
+      pass("human", 14, { kind: "human", author: "alice" }),
+    ];
+    const items = Array.from({ length: 28 }, (_, i) =>
+      item(i + 1, {
+        sourceIds: [i < 22 ? "r1" : i < 26 ? "r2" : i === 26 ? "r3" : "r4"],
+        githubState: i < 27 ? "resolved" : "open",
+      }),
+    );
+    const rounds = reviewHistoryRounds(sources.toReversed(), items);
+    expect(rounds.map((round) => round.sources.map((source) => source.id))).toEqual([
+      ["failed", "r1"],
+      ["r2"],
+      ["r3"],
+      ["human", "r4"],
+    ]);
+    expect(rounds.map((round) => reviewResolutionLabel(round.items))).toEqual([
+      "All resolved · 22/22",
+      "All resolved · 4/4",
+      "All resolved · 1/1",
+      "1 open · 0 resolved",
+    ]);
+    const refreshed = reviewHistoryRounds(
+      sources,
+      items.map((item) => ({ ...item, githubState: "resolved" })),
+    );
+    expect(reviewResolutionLabel(refreshed[3]!.items)).toBe("All resolved · 1/1");
+  });
+  it("keeps retries with the next completed pass and repeated reviews on the same commit distinct", () => {
+    const rounds = reviewHistoryRounds(
+      [
+        pass("r1", 11),
+        pass("retry", 12, { failed: true }),
+        pass("r2", 13, { commitSha: "sha11" }),
+        pass("local", 13, { kind: "local", commitSha: "sha11" }),
+      ],
+      [],
+    );
+    expect(rounds.map((round) => round.sources.map((source) => source.id))).toEqual([
+      ["r1"],
+      ["retry", "local", "r2"],
+    ]);
+    expect(reviewResolutionLabel([item(1, { githubState: "outdated" })])).toBe(
+      "1 open · 0 resolved",
+    );
   });
 });

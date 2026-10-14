@@ -120,9 +120,24 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
     const round = stored?.round ?? sessionRound;
     noteReview(login, round);
     const comments = reviewComments(read, review);
+    const failed =
+      isCopilotLogin(login) &&
+      /Copilot encountered an error and was unable to review/i.test(review.body);
+    const reviewThreads = read.threads.filter(
+      (thread) => thread.comments[0]?.reviewId === review.id,
+    );
+    const triaged =
+      stored?.triaged === true ||
+      failed ||
+      (isCopilotLogin(login) &&
+        reviewThreads.length > 0 &&
+        reviewThreads.every((thread) => thread.isResolved));
     if (
       stored !== undefined &&
       stored.state === "done" &&
+      stored.submittedAt === review.submittedAt &&
+      stored.failed === failed &&
+      stored.triaged === triaged &&
       stored.commentCount === comments.length &&
       stored.commitSha === review.commitSha &&
       (input.commentsBySource === undefined ||
@@ -133,6 +148,8 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
     upserts.push({
       source: {
         id: review.id,
+        submittedAt: review.submittedAt,
+        failed,
         round,
         kind: isCopilotLogin(login) ? "copilot" : "human",
         state: "done",
@@ -140,7 +157,7 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
         isBot: review.author?.isBot === true,
         commitSha: review.commitSha,
         commentCount: comments.length,
-        triaged: stored?.triaged ?? false,
+        triaged,
         threadId: null,
         ranOn: null,
         url: review.url,
@@ -259,6 +276,7 @@ export function rawReviewItems(
     if (source.state !== "done" || source.round !== session.round) continue;
     for (const comment of comments ?? []) {
       if (keys.has(comment.key) || !comment.body.trim()) continue;
+      if (source.kind === "copilot" && comment.key.startsWith("gh-review:")) continue;
       keys.add(comment.key);
       const summary = comment.body.trim().split("\n")[0]!.slice(0, 180);
       const login = source.author ?? "unknown";

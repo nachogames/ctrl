@@ -1,3 +1,4 @@
+import { isActiveReviewItem } from "@t3tools/contracts";
 import {
   CommandId,
   MessageId,
@@ -282,7 +283,7 @@ const replyForNewRound = (item: ReviewItem, draftReply: string | null) =>
 
 /** The points the panel lists under the current round. */
 const liveItems = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>
-  items.filter((item) => item.lastSeenRound === session.round && !item.stale);
+  items.filter((item) => item.lastSeenRound === session.round && isActiveReviewItem(item));
 
 /** `#N` of each live point the user has not yet viewed and decided. */
 const unseenPoints = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>

@@ -707,3 +707,39 @@ it.effect("discovers a linked PR and displays author-posted feedback without an 
     assert.equal((yield* repo.listLiveSessions()).length, 1);
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
+
+it.effect(
+  "does not make resolved findings or legacy Copilot overviews block applying an open point",
+  () =>
+    Effect.gen(function* () {
+      const reviews = yield* service;
+      const repo = yield* ReviewSessions.ReviewSessionRepository;
+      const { snapshot } = yield* reviews.open(openInput);
+      const sessionId = snapshot.session.id;
+      yield* reviews.importItems({
+        sessionId,
+        sourceIds: [],
+        items: [
+          importItem("gh:T1"),
+          importItem("gh:T2"),
+          importItem("gh-review:R1", { sources: ["copilot"] }),
+        ],
+      });
+      yield* repo.setItemGithubState(sessionId, 2, "resolved");
+      yield* reviews.decide({
+        sessionId,
+        number: 1,
+        decision: "fix",
+        authority: { _tag: "panel" },
+      });
+      yield* reviews.setViewed({ sessionId, number: 1, viewed: true });
+      const result = yield* reviews.recordApply({ sessionId, number: 1, applyState: "working" });
+      assert.equal(result.applyState, "working");
+      const saved = yield* repo.listItems(sessionId);
+      assert.deepEqual(
+        saved.map((item) => item.number),
+        [1, 2, 3],
+      );
+      assert.equal(saved[1]?.decision, "needs-call");
+    }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);

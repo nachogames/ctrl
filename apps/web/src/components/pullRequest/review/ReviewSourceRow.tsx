@@ -12,6 +12,7 @@ import type {
 import { BotIcon, ChevronRightIcon, CircleXIcon, SparklesIcon } from "lucide-react";
 import { memo, useState } from "react";
 
+import ChatMarkdown from "../../ChatMarkdown";
 import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
 import { reviewSessionEnvironment } from "~/state/reviewSessions";
@@ -91,8 +92,10 @@ export const ReviewSourceRow = memo(function ReviewSourceRow({
   environmentId,
   sessionId,
   ranOn,
+  resolution,
 }: {
   source: ReviewSource;
+  resolution?: string | undefined;
   environmentId: EnvironmentId;
   sessionId: ReviewSessionId;
   /** The model a local review ran on, as `ranOnLabel` names it. */
@@ -123,10 +126,13 @@ export const ReviewSourceRow = memo(function ReviewSourceRow({
           <span className="text-sm font-medium">{reviewSourceTitle(source)}</span>
           <span className="truncate text-xs text-muted-foreground">
             {reviewSourceDetail(source, ranOn)}
+            {source.submittedAt ? ` · ${new Date(source.submittedAt).toLocaleString()}` : ""}
           </span>
         </span>
         <span className="shrink-0 text-xs text-muted-foreground">
-          {reviewSourceStateLabel(source)}
+          {source.failed
+            ? "Failed · no review produced"
+            : (resolution ?? reviewSourceStateLabel(source))}
         </span>
       </button>
       {expanded ? (
@@ -170,7 +176,12 @@ function ReviewSourceComments({
                 ? "Review summary"
                 : `${comment.path.split("/").at(-1)}${comment.line === null ? "" : `:${comment.line}`}`}
             </span>
-            <p className="whitespace-pre-wrap break-words">{comment.body}</p>
+            <ChatMarkdown
+              text={comment.body}
+              cwd={undefined}
+              environmentId={environmentId}
+              parseRawHtml
+            />
           </div>
         ))
       )}

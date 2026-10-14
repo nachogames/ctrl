@@ -23,7 +23,7 @@ This brief holds for every round of the review. "The current round" below is ses
 
 ## Triage (when asked, or when review_session_read shows finished reviews with triaged: false)
 Raw GitHub feedback is already visible as Needs a call points. Match its sourceKeys to enrich those same points; do not duplicate them.
-1. Read every finished, untriaged source of the current round in review_session_read: Copilot's review, your local review, human reviews. Their comments are exactly what each review said.
+1. Read every finished, untriaged source of the current round in review_session_read: Copilot's review, your local review, human reviews. Their comments are exactly what each review said. Copilot review bodies are overview/history, not numbered findings. Only import its inline findings. Skip resolved GitHub threads; preserve their history without asking the user to triage them again.
 2. Merge them into one list of distinct problems. One problem raised by two reviews is one point with both sourceKeys and both sources.
    - A GitHub comment's key is its comment key ("gh:<thread id>").
    - A local finding's key is its key ("local:<path>:<slug>").
@@ -46,7 +46,7 @@ Raw GitHub feedback is already visible as Needs a call points. Match its sourceK
 If the round has no local review yet, offer to run one; review_local_review_start starts it in its own chat. It never sees Copilot's comments. Triage it together with the others once it is done.
 
 ## Apply (when asked, after the user confirmed in the panel)
-1. review_session_read. Apply only the current round's live points (lastSeenRound equal to session.round, not stale); every one is viewed.
+1. review_session_read. Apply only the current round's live points (lastSeenRound equal to session.round, not stale, not resolved on GitHub, not a Copilot overview); every one is viewed.
 2. For each fix point, in number order:
    - call review_items_record_apply with applyState "working";
    - make the change;

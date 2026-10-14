@@ -1,3 +1,4 @@
+import { isActiveReviewItem } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -105,7 +106,7 @@ it.effect("syncs GitHub reviews without touching the user's decisions", () => {
     yield* sync.syncSession(session.id);
     const after = yield* repo.listSources(session.id);
     assert.deepEqual(after.map((source) => [source.id, source.round, source.triaged]).sort(), [
-      ["PRR_1", 1, false],
+      ["PRR_1", 1, true],
       ["PRR_dan", 2, false],
     ]);
     const [stillDecided] = yield* repo.listItems(session.id);
@@ -259,3 +260,65 @@ it.effect("backfills stored sources and refreshes edited text without resetting 
     assert.equal(edited?.viewed, false);
   }).pipe(Effect.provide(makeSyncLayer(harness)));
 });
+
+it.effect(
+  "imports five Copilot attempts as history and only one unresolved finding as active work",
+  () => {
+    const harness: SyncHarness = {
+      read: reviewRoundRead({
+        reviews: Array.from({ length: 5 }, (_, i) =>
+          githubReview(`R${i}`, "Copilot", {
+            body:
+              i === 0
+                ? "Copilot encountered an error and was unable to review this pull request."
+                : "<!-- ccr-overview-v2 -->\n### Changes recommended\n<details><summary>Findings</summary>\n\nSee the inline comments.\n</details>",
+            submittedAt: `2026-10-${10 + i}T10:00:00.000Z`,
+            commitSha: `commit${i}`,
+          }),
+        ),
+        threads: Array.from({ length: 28 }, (_, i) =>
+          githubThread(
+            `T${i}`,
+            [threadComment(i === 27 ? "R4" : `R${1 + (i % 3)}`, `Finding ${i}`)],
+            { isResolved: i < 27, isOutdated: i < 16 },
+          ),
+        ),
+      }),
+    };
+    return Effect.gen(function* () {
+      const repo = yield* ReviewSessions.ReviewSessionRepository;
+      const sync = yield* ReviewSyncService.ReviewSyncService;
+      const session = sessionFixture();
+      yield* repo.insertSession(session);
+      yield* repo.upsertRound(session.id, roundFixture(1));
+      yield* sync.syncSession(session.id);
+      const items = yield* repo.listItems(session.id);
+      assert.equal(items.length, 28);
+      assert.equal(items.filter(isActiveReviewItem).length, 1);
+      assert.equal(items.filter((item) => item.githubState === "resolved").length, 27);
+      const sources = yield* repo.listSources(session.id);
+      assert.deepEqual(
+        sources.map((source) => source.id),
+        ["R0", "R1", "R2", "R3", "R4"],
+      );
+      assert.isTrue(sources[0]!.failed);
+      assert.deepEqual(
+        sources.filter((source) => !source.triaged).map((source) => source.id),
+        ["R4"],
+      );
+      assert.equal(
+        (yield* repo.listSourceComments(session.id, "R4"))[0]?.body.startsWith(
+          "<!-- ccr-overview-v2 -->",
+        ),
+        true,
+      );
+      assert.isFalse(yield* sync.syncSession(session.id));
+      harness.read = {
+        ...harness.read!,
+        threads: harness.read!.threads.map((thread) => ({ ...thread, isResolved: true })),
+      };
+      yield* sync.syncSession(session.id);
+      assert.equal((yield* repo.listItems(session.id)).filter(isActiveReviewItem).length, 0);
+    }).pipe(Effect.provide(makeSyncLayer(harness)));
+  },
+);

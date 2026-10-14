@@ -50,6 +50,8 @@ interface RoundRow {
 }
 
 interface SourceRow {
+  readonly submitted_at: string | null;
+  readonly failed: number;
   readonly source_id: string;
   readonly round: number;
   readonly kind: string;
@@ -160,6 +162,8 @@ const sourceFromRow = (row: SourceRow) =>
   Effect.gen(function* () {
     return yield* decodeSource({
       id: row.source_id,
+      submittedAt: row.submitted_at,
+      failed: row.failed === 1,
       round: row.round,
       kind: row.kind,
       state: row.state,
@@ -449,15 +453,18 @@ const make = Effect.gen(function* () {
         yield* sql`
           INSERT INTO review_sources (
             session_id, source_id, round, kind, state, author, is_bot, commit_sha,
-            comment_count, triaged, thread_id, ran_on_json, url, updated_at
+            comment_count, triaged, thread_id, ran_on_json, url, updated_at, submitted_at, failed
           ) VALUES (
             ${sessionId}, ${source.id}, ${source.round}, ${source.kind}, ${source.state},
             ${source.author}, ${source.isBot ? 1 : 0}, ${source.commitSha},
             ${source.commentCount}, ${source.triaged ? 1 : 0}, ${source.threadId},
             ${source.ranOn === null ? null : encodeRanOn(source.ranOn)}, ${source.url},
-            ${source.updatedAt}
+            ${source.updatedAt}, ${source.submittedAt ?? null}, ${source.failed ? 1 : 0}
           )
           ON CONFLICT (session_id, source_id) DO UPDATE SET
+            submitted_at = excluded.submitted_at,
+            failed = excluded.failed,
+            triaged = MAX(review_sources.triaged, excluded.triaged),
             kind = excluded.kind,
             state = excluded.state,
             author = excluded.author,
@@ -487,7 +494,7 @@ const make = Effect.gen(function* () {
     listSources: (sessionId) =>
       sql<SourceRow>`
         SELECT * FROM review_sources WHERE session_id = ${sessionId}
-        ORDER BY round DESC, updated_at, source_id
+        ORDER BY round DESC, COALESCE(submitted_at, updated_at), source_id
       `.pipe(
         Effect.mapError(sqlError("listReviewSources")),
         Effect.flatMap((rows) => Effect.forEach(rows, sourceFromRow)),

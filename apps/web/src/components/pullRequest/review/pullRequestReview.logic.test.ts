@@ -30,9 +30,17 @@ const round = (n: number, state: "collecting" | "applying" | "applied") => ({
   updatedAt: "t",
 });
 const point = (number: number, lastSeenRound: number, stale: boolean) =>
-  ({ number, lastSeenRound, stale }) as ReviewItem;
+  ({
+    number,
+    lastSeenRound,
+    stale,
+    sources: [],
+    sourceKeys: [],
+    sourceIds: [],
+    githubState: null,
+  }) as unknown as ReviewItem;
 const source = (id: string, round: number, kind: ReviewSource["kind"], state = "done") =>
-  ({ id, round, kind, state }) as ReviewSource;
+  ({ id, round, kind, state, updatedAt: "2026-10-14T10:00:00.000Z" }) as ReviewSource;
 
 describe("reviewRoundViews", () => {
   it("lists rounds newest first, each with its own reviews and points", () => {

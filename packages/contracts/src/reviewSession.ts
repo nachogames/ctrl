@@ -114,6 +114,8 @@ export type ReviewRanOn = typeof ReviewRanOn.Type;
 export const ReviewSource = Schema.Struct({
   id: TrimmedNonEmptyString,
   round: PositiveInt,
+  submittedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  failed: Schema.optional(Schema.Boolean),
   kind: ReviewSourceKind,
   state: ReviewSourceState,
   author: Schema.NullOr(TrimmedNonEmptyString),
@@ -290,3 +292,12 @@ export class ReviewSessionError extends Schema.TaggedError<ReviewSessionError>()
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+/** Older imports numbered Copilot overviews; retain their records but never treat them as work. */
+export const isReviewOverview = (item: Pick<ReviewItem, "sources" | "sourceKeys">): boolean =>
+  item.sources.includes("copilot") &&
+  item.sourceKeys.length > 0 &&
+  item.sourceKeys.every((key) => key.startsWith("gh-review:"));
+
+export const isActiveReviewItem = (item: ReviewItem): boolean =>
+  !item.stale && item.githubState !== "resolved" && !isReviewOverview(item);

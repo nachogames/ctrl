@@ -1,4 +1,5 @@
 import {
+  reviewFindingTitle,
   effectiveDecision,
   reviewApplyBadges,
   reviewDecisionLabel,
@@ -13,6 +14,7 @@ import type {
 import { ChevronRightIcon, LayersIcon, MessageSquareIcon, SparklesIcon } from "lucide-react";
 import { memo, type ReactNode } from "react";
 
+import ChatMarkdown from "../../ChatMarkdown";
 import { ReadOnlySourcePreview } from "~/components/files/AttachmentFilePreview";
 import { cn } from "~/lib/utils";
 import { Badge } from "../../ui/badge";
@@ -109,7 +111,7 @@ export const ReviewPointRow = memo(function ReviewPointRow({
           </span>
           <ReviewItemSourceIcons sources={item.sources} />
           <span className={cn("min-w-0 flex-1 truncate text-sm", dim && "text-muted-foreground")}>
-            {item.summary}
+            {reviewFindingTitle(item.summary)}
           </span>
           {talked > 0 ? (
             <Tooltip>
@@ -191,17 +193,38 @@ export const ReviewPointRow = memo(function ReviewPointRow({
           <dl className="flex flex-col gap-2.5 text-sm">
             <div>
               <dt className="text-xs font-semibold text-muted-foreground">What's wrong</dt>
-              <dd>{item.problem}</dd>
+              <dd>
+                <ChatMarkdown
+                  text={item.problem}
+                  cwd={undefined}
+                  environmentId={environmentId}
+                  parseRawHtml
+                />
+              </dd>
             </div>
             <div>
               <dt className="text-xs font-semibold text-muted-foreground">Why it matters</dt>
-              <dd>{item.impact}</dd>
+              <dd>
+                <ChatMarkdown
+                  text={item.impact}
+                  cwd={undefined}
+                  environmentId={environmentId}
+                  parseRawHtml
+                />
+              </dd>
             </div>
             <div>
               <dt className="text-xs font-semibold text-muted-foreground">
                 {decision === "decline" ? "Why we'd skip it" : "What the fix does"}
               </dt>
-              <dd>{decision === "decline" ? item.skipReason : item.solution}</dd>
+              <dd>
+                <ChatMarkdown
+                  text={decision === "decline" ? item.skipReason : item.solution}
+                  cwd={undefined}
+                  environmentId={environmentId}
+                  parseRawHtml
+                />
+              </dd>
             </div>
           </dl>
           <div className="flex items-center gap-2">

@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  reviewFindingTitle,
   reviewPointCounts,
+  reviewResolutionLabel,
   reviewRoundStatusLine,
 } from "@t3tools/client-runtime/state/review-sessions";
 import type {
@@ -13,6 +15,7 @@ import { SparklesIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { reviewSessionEnvironment } from "~/state/reviewSessions";
+import ChatMarkdown from "../../ChatMarkdown";
 import { Button } from "../../ui/button";
 import {
   offersLocalReview,
@@ -48,6 +51,7 @@ export function ReviewRoundCard({
   /** The Apply row (Task 11). */
   footer?: ReactNode;
 }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(!view.current);
   // The reviews a Triage click covered. The request only queues the agent's turn; the triage
   // runs until the agent marks each of them triaged. Keyed so a new round or session drops it.
@@ -71,10 +75,6 @@ export function ReviewRoundCard({
     triage?.key === triageKey ? triage.ids : NO_SOURCE_IDS,
   );
   const offerLocal = offersLocalReview(view);
-  // The offer row stands in for a local review that was never run.
-  const sources = offerLocal
-    ? view.sources.filter((source) => !(source.kind === "local" && source.state === "not-run"))
-    : view.sources;
   const viewed = view.items.filter((item) => item.viewed).length;
 
   const startTriage = async () => {
@@ -101,11 +101,13 @@ export function ReviewRoundCard({
 
   return (
     <section
-      aria-label={`Round ${view.round.round}`}
+      aria-label="Review workspace"
       className="flex flex-col gap-2 rounded-xl border border-border/70 bg-background p-2.5 shadow-sm"
     >
       <header className="flex items-center gap-2.5 px-1">
-        <h3 className="text-sm font-semibold">Round {view.round.round}</h3>
+        <h3 className="text-sm font-semibold">
+          {view.current ? "Review workspace" : "Applied work"}
+        </h3>
         <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           {triageButtonState?.busy
             ? "Triaging the reviews…"
@@ -138,17 +140,47 @@ export function ReviewRoundCard({
       </header>
       {collapsed ? null : (
         <>
-          <p className={SECTION_LABEL}>Reviews in this round</p>
-          <ul className="flex flex-col gap-0.5">
-            {sources.map((source) => (
-              <ReviewSourceRow
-                key={source.id}
-                source={source}
-                environmentId={environmentId}
-                sessionId={sessionId}
-                ranOn={ranOnLabel(source.ranOn, providers)}
-              />
-            ))}
+          {view.reviewHistory?.map((group) => (
+            <section
+              key={group.number}
+              aria-label={`Review round ${group.number}`}
+              className="flex flex-col gap-1 border-t border-border/60 pt-2"
+            >
+              <header className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs">
+                <h4 className="font-semibold">Review round {group.number}</h4>
+                <span>
+                  {group.sources.every((source) => source.failed)
+                    ? "Failed · no review produced"
+                    : reviewResolutionLabel(group.items)}
+                </span>
+              </header>
+              <ul className="flex flex-col gap-0.5">
+                {group.sources
+                  .filter(
+                    (source) =>
+                      source.round === view.round.round &&
+                      !(offerLocal && source.kind === "local" && source.state === "not-run"),
+                  )
+                  .map((source) => (
+                    <ReviewSourceRow
+                      key={source.id}
+                      source={source}
+                      environmentId={environmentId}
+                      sessionId={sessionId}
+                      ranOn={ranOnLabel(source.ranOn, providers)}
+                      resolution={
+                        source.state === "done"
+                          ? reviewResolutionLabel(
+                              group.items.filter((item) => item.sourceIds.includes(source.id)),
+                            )
+                          : undefined
+                      }
+                    />
+                  ))}
+              </ul>
+            </section>
+          ))}
+          <ul>
             {offerLocal ? (
               <ReviewLocalOfferRow
                 disabled={!canRunLocal || startingLocal}
@@ -156,6 +188,25 @@ export function ReviewRoundCard({
               />
             ) : null}
           </ul>
+          {(view.history?.length ?? 0) > 0 ? (
+            <details
+              className="border-t border-border/60 px-1 py-2 text-xs"
+              onToggle={(event) => setHistoryOpen(event.currentTarget.open)}
+            >
+              <summary>Resolved or earlier-head findings ({view.history?.length})</summary>
+              {historyOpen ? (
+                <ul className="flex flex-col gap-1.5 pt-2">
+                  {view.history?.map((item) => (
+                    <ReviewHistoryItem
+                      key={item.number}
+                      item={item}
+                      environmentId={environmentId}
+                    />
+                  ))}
+                </ul>
+              ) : null}
+            </details>
+          ) : null}
           {view.items.length === 0 ? null : (
             <>
               <div className="flex items-center gap-2.5 border-t border-border/60 px-1 pt-2">
@@ -174,5 +225,51 @@ export function ReviewRoundCard({
         </>
       )}
     </section>
+  );
+}
+
+/** Historical bodies are rendered only when opened, even in sessions with hundreds of findings. */
+function ReviewHistoryItem({
+  item,
+  environmentId,
+}: {
+  item: ReviewItem;
+  environmentId: EnvironmentId;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li>
+      <details onToggle={(event) => setOpen(event.currentTarget.open)}>
+        <summary>
+          #{item.number} ·{" "}
+          {item.githubState === "resolved" ? "Resolved on GitHub" : "Needs reverification"} ·{" "}
+          {reviewFindingTitle(item.summary)}
+        </summary>
+        {open ? (
+          <div className="pt-2">
+            {item.path ? (
+              <p>
+                {item.path}
+                {item.line === null ? "" : `:${item.line}`}
+              </p>
+            ) : null}
+            <ChatMarkdown
+              text={item.problem}
+              cwd={undefined}
+              environmentId={environmentId}
+              parseRawHtml
+            />
+            {item.conclusion ? (
+              <ChatMarkdown
+                text={item.conclusion}
+                cwd={undefined}
+                environmentId={environmentId}
+                parseRawHtml
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </details>
+    </li>
   );
 }

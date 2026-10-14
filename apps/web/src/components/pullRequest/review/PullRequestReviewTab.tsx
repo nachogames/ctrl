@@ -271,7 +271,7 @@ export function PullRequestReviewTab({
               collecting ? (
                 <ApplyRow
                   left={view.items.filter((item) => !item.viewed).length}
-                  round={view.round.round}
+
                   sending={applySent === applyKey}
                   disabled={!canRequest}
                   onApply={() => setConfirmingApply(true)}
@@ -326,7 +326,7 @@ export function PullRequestReviewTab({
       <ReviewApplyDialog
         open={confirmingApply}
         onOpenChange={setConfirmingApply}
-        round={snapshot.session.round}
+
         pullRequestNumber={snapshot.session.pullRequest.number}
         lines={
           confirmingApply
@@ -344,13 +344,11 @@ export function PullRequestReviewTab({
 /** The footer of the round being collected: how many are left to view, and Apply once none are. */
 function ApplyRow({
   left,
-  round,
   sending,
   disabled,
   onApply,
 }: {
   left: number;
-  round: number;
   sending: boolean;
   disabled: boolean;
   onApply: () => void;
@@ -365,7 +363,7 @@ function ApplyRow({
             : `${left} left to view.`}
       </span>
       <Button size="sm" disabled={disabled || sending || left > 0} onClick={onApply}>
-        Apply round {round}
+        Apply approved findings
       </Button>
     </div>
   );
