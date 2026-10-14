@@ -174,6 +174,9 @@ export function triageButton(
     return { label: "Triaging…", busy: true, ready: false };
   }
   const untriaged = view.sources.filter((source) => source.state === "done" && !source.triaged);
+  if ((view.history ?? []).some((item) => item.stale && item.githubState !== "resolved")) {
+    return { label: "Recheck stale findings", busy: false, ready: true };
+  }
   const label = reviewTriageLabel(untriaged.length);
   if (label !== null) return { label, busy: false, ready: true };
   return view.sources.some((source) => source.state === "done")

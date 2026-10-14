@@ -654,6 +654,11 @@ export function PullRequestDetailPanel({
   // Which handoff is preparing, keyed so a per-finding button can say "Preparing..." on itself
   // alone. One at a time whatever the key: they all check the same pull request out.
   const [handoff, setHandoff] = useState<string | null>(null);
+  const [startedReview, setStartedReview] = useState<{
+    key: string;
+    thread: ScopedThreadRef;
+  } | null>(null);
+  const reviewKey = `${environmentId}:${reference.host}:${reference.repository}:${reference.number}`;
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: reference }),
@@ -2976,16 +2981,17 @@ export function PullRequestDetailPanel({
               <div className={cn("absolute inset-0", tab !== "review" && "invisible")}>
                 <PullRequestReviewTab
                   environmentId={environmentId}
-                  threadRef={threadRef}
+                  threadRef={
+                    threadRef ?? (startedReview?.key === reviewKey ? startedReview.thread : null)
+                  }
                   reference={reference}
                   fallback={
                     <HostPullRequestReview
                       detail={detail}
                       environmentId={environmentId}
-                      loading={activityPending}
-                      error={activityError}
-                      onRetry={activityQuery.refresh}
-                      onSetup={() => setThreadPickerOpen(true)}
+                      reference={reference}
+                      active={tab === "review"}
+                      onStarted={(thread) => setStartedReview({ key: reviewKey, thread })}
                     />
                   }
                 />

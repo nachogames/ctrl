@@ -52,7 +52,10 @@ export function ReviewRoundCard({
   /** The Apply row (Task 11). */
   footer?: ReactNode;
 }) {
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyExpanded, setHistoryOpen] = useState<boolean | null>(null);
+  const historyOpen =
+    historyExpanded ??
+    (view.history ?? []).some((item) => item.stale && item.githubState !== "resolved");
   const [collapsed, setCollapsed] = useState(!view.current);
   // The reviews a Triage click covered. The request only queues the agent's turn; the triage
   // runs until the agent marks each of them triaged. Keyed so a new round or session drops it.
@@ -181,6 +184,7 @@ export function ReviewRoundCard({
           {(view.history?.length ?? 0) > 0 ? (
             <details
               className="border-t border-border/60 px-1 py-2 text-xs"
+              open={historyOpen}
               onToggle={(event) => setHistoryOpen(event.currentTarget.open)}
             >
               <summary>Resolved or earlier-head findings ({view.history?.length})</summary>
@@ -265,7 +269,7 @@ function ReviewHistoryItem({
 }
 
 /** Follow resolution updates until the reader explicitly chooses to expand or collapse. */
-function ReviewHistoryGroup({
+export function ReviewHistoryGroup({
   group,
   children,
 }: {

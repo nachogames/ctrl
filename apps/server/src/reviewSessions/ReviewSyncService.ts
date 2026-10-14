@@ -145,7 +145,31 @@ const make = Effect.gen(function* () {
               for (const { source, comments } of plan.upserts) {
                 yield* repo.upsertSource(session.id, source, comments);
               }
-              if (headChanged && session.headSha !== null) yield* repo.markItemsStale(session.id);
+              if (headChanged && session.headSha !== null) {
+                yield* repo.markItemsStale(session.id);
+                if (roundState === "collecting") {
+                  const reverify = new Set(
+                    existingItems
+                      .filter(
+                        (item) =>
+                          item.lastSeenRound === session.round &&
+                          (itemGithubState(item.githubThreadIds, plan.threads) ??
+                            item.githubState) !== "resolved",
+                      )
+                      .flatMap((item) => item.sourceIds),
+                  );
+                  for (const source of yield* repo.listSources(session.id)) {
+                    if (
+                      source.round === session.round &&
+                      source.state === "done" &&
+                      !source.failed &&
+                      reverify.has(source.id)
+                    ) {
+                      yield* repo.resetSourcesTriage(session.id, [source.id]);
+                    }
+                  }
+                }
+              }
               const items =
                 roundState === "collecting"
                   ? rawReviewItems(latest.value, yield* repo.listItems(session.id), rawSources)

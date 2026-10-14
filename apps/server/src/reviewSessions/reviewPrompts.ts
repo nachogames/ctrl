@@ -91,7 +91,7 @@ export function localReviewPrompt(input: {
       ? "Run `/code-review` on this branch at high effort with `--max-findings all`."
       : `Review this branch's changes against the pull request's base branch (\`gh pr view ${session.url} --json baseRefName\`, then \`git diff origin/<base>...HEAD\`). Look for correctness bugs first, then risky or unclear code. Read the code around each change before judging it.`,
     "",
-    "When you are done, call review_source_submit once with headSha set to `git rev-parse HEAD` and one finding per problem: path (null when it is not about one file), line, title, body (what is wrong and the fix), and slug (short kebab-case naming the defect, not the wording, so the same defect gets the same slug next round). Submit an empty list when you found nothing.",
+    "When you are done, call review_source_submit once with headSha set to `git rev-parse HEAD` and one finding per problem: path (null when it is not about one file), line, title, body (two plain-language paragraphs labeled **Problem:** and **Solution:**; explain the concrete trigger, current behavior and consequence in Problem, then the specific change and behavior to preserve in Solution), and slug (short kebab-case naming the defect, not the wording, so the same defect gets the same slug next round). Submit an empty list when you found nothing.",
   ].join("\n");
 }
 
@@ -123,9 +123,9 @@ export function reviewRequestText(input: {
   const { session, request } = input;
   switch (request._tag) {
     case "triage":
-      return `Triage round ${session.round} of the review of ${session.url}: ${input.sources.map(reviewSourceName).join(", ")}. Use sessionId "${session.id}" on every review tool call. Read the list with review_session_read and follow the brief's triage steps.`;
+      return `Triage round ${session.round} of the review of ${session.url}: ${input.sources.map(reviewSourceName).join(", ")}. Use sessionId "${session.id}" on every review tool call. Call review_session_open with this URL to reload the brief, then read the list with review_session_read and follow the brief's triage steps.`;
     case "apply":
-      return `Apply round ${session.round} of the review of ${session.url}. Every point is viewed. Use sessionId "${session.id}" on every review tool call. Call review_session_open with this URL to reload the brief, then follow its apply steps.`;
+      return `Apply round ${session.round} of the review of ${session.url}. The user confirmed the displayed Fix/Decline choices. Viewed marks are not required. Use sessionId "${session.id}" on every review tool call. Call review_session_open with this URL to reload the brief, then follow its apply steps.`;
     case "rewrite-reply":
       return formatReviewPointTag(
         { number: request.number, label: input.item?.shortName ?? "point" },

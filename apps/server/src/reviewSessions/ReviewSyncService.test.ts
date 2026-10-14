@@ -322,3 +322,43 @@ it.effect(
     }).pipe(Effect.provide(makeSyncLayer(harness)));
   },
 );
+
+it.effect(
+  "a head change preserves review history and reopens unresolved findings for triage",
+  () => {
+    const harness: SyncHarness = {
+      read: reviewRoundRead({
+        reviews: [githubReview("R1", "copilot-pull-request-reviewer")],
+        threads: [githubThread("T1", [threadComment("R1", "Still needs a fix")])],
+      }),
+    };
+    return Effect.gen(function* () {
+      const repo = yield* ReviewSessions.ReviewSessionRepository;
+      const sync = yield* ReviewSyncService.ReviewSyncService;
+      const session = sessionFixture();
+      yield* repo.insertSession(session);
+      yield* repo.upsertRound(session.id, roundFixture(1));
+      yield* sync.syncSession(session.id);
+      const source = (yield* repo.listSources(session.id))[0]!;
+      yield* repo.upsertSource(session.id, { ...source, triaged: true }, null);
+      const item = (yield* repo.listItems(session.id))[0]!;
+      yield* repo.upsertItem(session.id, {
+        ...item,
+        decision: "fix",
+        draftReply: "Keep this reply",
+      });
+      harness.read = { ...harness.read!, headSha: "merged-stage" };
+      yield* sync.syncSession(session.id);
+      const after = (yield* repo.listSources(session.id))[0]!;
+      assert.equal(after.id, source.id);
+      assert.equal(after.round, 1);
+      assert.isFalse(after.triaged);
+      assert.equal((yield* repo.listRounds(session.id)).length, 1);
+      const preserved = (yield* repo.listItems(session.id))[0]!;
+      assert.isTrue(preserved.stale);
+      assert.equal(preserved.decision, "fix");
+      assert.equal(preserved.draftReply, "Keep this reply");
+      assert.isFalse(yield* sync.syncSession(session.id));
+    }).pipe(Effect.provide(makeSyncLayer(harness)));
+  },
+);

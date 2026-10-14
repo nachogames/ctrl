@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  effectiveDecision,
   liveRoundItems,
   nextUnviewedNumber,
   reviewApplySummary,
@@ -359,7 +360,7 @@ function GroupPullRequestReview({
             footer={
               collecting ? (
                 <ApplyRow
-                  left={view.items.filter((item) => !item.viewed).length}
+                  left={view.items.filter((item) => effectiveDecision(item) === null).length}
 
                   sending={applySent === applyKey}
                   disabled={!canRequest}
@@ -420,7 +421,14 @@ function GroupPullRequestReview({
         lines={
           confirmingApply
             ? reviewApplyLines(
-                reviewApplySummary(liveItems, snapshot.sources, snapshot.session.round),
+                reviewApplySummary(
+                  liveItems.map((item) => ({
+                    ...item,
+                    decision: effectiveDecision(item) ?? "needs-call",
+                  })),
+                  snapshot.sources,
+                  snapshot.session.round,
+                ),
               )
             : NO_LINES
         }
@@ -430,7 +438,7 @@ function GroupPullRequestReview({
   );
 }
 
-/** The footer of the round being collected: how many are left to view, and Apply once none are. */
+/** The footer of the round being collected: unresolved decisions block Apply; reading progress does not. */
 function ApplyRow({
   left,
   sending,
@@ -448,8 +456,8 @@ function ApplyRow({
         {sending
           ? "Starting the apply in the review chat…"
           : left === 0
-            ? "All viewed. Apply fixes, posts your review, replies and resolves."
-            : `${left} left to view.`}
+            ? "Apply approves the displayed Fix/Decline choices, posts your review, replies and resolves."
+            : `${left} need a Fix or Decline decision.`}
       </span>
       <Button size="sm" disabled={disabled || sending || left > 0} onClick={onApply}>
         Apply approved findings

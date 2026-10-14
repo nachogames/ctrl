@@ -15,7 +15,7 @@ import { ChevronRightIcon, LayersIcon, MessageSquareIcon, SparklesIcon } from "l
 import { memo, type ReactNode } from "react";
 
 import ChatMarkdown from "../../ChatMarkdown";
-import { ReadOnlySourcePreview } from "~/components/files/AttachmentFilePreview";
+import { ReviewPointExcerpt } from "./ReviewPointExcerpt";
 import { cn } from "~/lib/utils";
 import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
@@ -191,48 +191,29 @@ export const ReviewPointRow = memo(function ReviewPointRow({
             </p>
             {menu}
           </div>
-          {item.excerpt === null ? null : (
-            <div className="overflow-hidden rounded-lg border border-border/60">
-              <ReadOnlySourcePreview name="review.diff" text={item.excerpt} />
-            </div>
-          )}
-          <dl className="flex flex-col gap-2.5 text-sm">
-            <div>
-              <dt className="text-xs font-semibold text-muted-foreground">What's wrong</dt>
-              <dd>
-                <ChatMarkdown
-                  text={item.problem}
-                  cwd={undefined}
-                  environmentId={environmentId}
-                  parseRawHtml
-                />
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold text-muted-foreground">Why it matters</dt>
-              <dd>
-                <ChatMarkdown
-                  text={item.impact}
-                  cwd={undefined}
-                  environmentId={environmentId}
-                  parseRawHtml
-                />
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold text-muted-foreground">
-                {decision === "decline" ? "Why we'd skip it" : "What the fix does"}
-              </dt>
-              <dd>
-                <ChatMarkdown
-                  text={decision === "decline" ? item.skipReason : item.solution}
-                  cwd={undefined}
-                  environmentId={environmentId}
-                  parseRawHtml
-                />
-              </dd>
-            </div>
-          </dl>
+          <ReviewPointExcerpt path={item.path} line={item.line} excerpt={item.excerpt} />
+          <div className="flex flex-col gap-4 text-sm leading-relaxed">
+            <ChatMarkdown
+              text={`**Problem:** ${[item.problem, item.impact].filter(Boolean).join(" ")}`}
+              cwd={undefined}
+              environmentId={environmentId}
+              parseRawHtml
+            />
+            <ChatMarkdown
+              text={`**Solution:** ${item.solution}`}
+              cwd={undefined}
+              environmentId={environmentId}
+              parseRawHtml
+            />
+            {decision === "decline" && item.skipReason ? (
+              <ChatMarkdown
+                text={`**Reason to decline:** ${item.skipReason}`}
+                cwd={undefined}
+                environmentId={environmentId}
+                parseRawHtml
+              />
+            ) : null}
+          </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">Decision</span>
             <ToggleGroup

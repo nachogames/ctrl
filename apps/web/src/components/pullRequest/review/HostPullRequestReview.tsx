@@ -1,102 +1,124 @@
-import type { EnvironmentId, PullRequestDetailView } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  reviewHistoryRounds,
+  reviewResolutionLabel,
+} from "@t3tools/client-runtime/state/review-sessions";
+import type {
+  EnvironmentId,
+  PullRequestDetailView,
+  PullRequestRef,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
+import { useEffect, useState } from "react";
+import { useEnvironmentQuery } from "~/state/query";
+import { reviewSessionEnvironment } from "~/state/reviewSessions";
 import { Button } from "../../ui/button";
-import { PullRequestMarkdown } from "../PullRequestMarkdown";
+import { ReviewHistoryGroup } from "./ReviewRoundCard";
+import { ReviewLocalOfferRow, ReviewSourceRow } from "./ReviewSourceRow";
+import { useReviewCommand } from "./useReviewCommand";
 
-/** Host feedback is readable without creating a chat or starting an agent. */
+/** Uses the same GitHub normalization and round rows as chat reviews, without creating a chat. */
 export function HostPullRequestReview({
   detail,
+  reference,
   environmentId,
-  loading,
-  error,
-  onRetry,
-  onSetup,
+  active,
+  onStarted,
 }: {
   detail: PullRequestDetailView;
+  reference: PullRequestRef;
   environmentId: EnvironmentId;
-  loading: boolean;
-  error: string | null;
-  onRetry: () => void;
-  onSetup: () => void;
+  active: boolean;
+  onStarted: (thread: ScopedThreadRef) => void;
 }) {
-  const reviews = detail.comments.filter((comment) => comment.kind === "review");
-  const open = detail.reviewThreads.filter((thread) => !thread.isResolved);
-  const resolved = detail.reviewThreads.filter((thread) => thread.isResolved);
+  const query = useEnvironmentQuery(
+    reviewSessionEnvironment.host({ environmentId, input: reference }),
+  );
+  const canStart = useAtomValue(
+    reviewSessionEnvironment.startFromPullRequest.permissionAtom(environmentId),
+  );
+  const start = useReviewCommand(
+    reviewSessionEnvironment.startFromPullRequest,
+    "Could not start your review",
+  );
+  const [starting, setStarting] = useState(false);
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => query.refresh(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [active, query.refresh]);
+  const run = async () => {
+    if (starting) return;
+    setStarting(true);
+    const result = await start({ environmentId, input: reference });
+    setStarting(false);
+    if (result._tag === "Success") onStarted(scopeThreadRef(environmentId, result.value.threadId));
+  };
+  const data = query.data;
   return (
-    <div className="h-full overflow-auto p-4 space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <p className="flex-1 text-sm text-muted-foreground">
-          Read reviews here without a chat. Link a chat for AI triage and discussion.
+    <div className="h-full overflow-auto p-3">
+      <section
+        aria-label="Review workspace"
+        className="flex flex-col gap-2 rounded-xl border border-border/70 bg-background p-2.5 shadow-sm"
+      >
+        <h3 className="px-1 text-sm font-semibold">Review workspace</h3>
+        {data === null ? (
+          <div className="px-1 text-sm text-muted-foreground">
+            {query.error ? (
+              <>
+                <p>Could not load reviews.</p>
+                <Button size="sm" variant="outline" onClick={query.refresh}>
+                  Retry
+                </Button>
+              </>
+            ) : (
+              "Loading reviews…"
+            )}
+          </div>
+        ) : (
+          <>
+            {reviewHistoryRounds(data.sources, data.items).map((group) => (
+              <ReviewHistoryGroup key={group.number} group={group}>
+                <ul>
+                  {group.sources.map((source) => (
+                    <ReviewSourceRow
+                      key={source.id}
+                      source={source}
+                      environmentId={environmentId}
+                      sessionId={null}
+                      ranOn={null}
+                      comments={data.comments[source.id] ?? []}
+                      resolution={
+                        source.state === "done"
+                          ? reviewResolutionLabel(
+                              group.items.filter((item) => item.sourceIds.includes(source.id)),
+                              [source],
+                            )
+                          : undefined
+                      }
+                    />
+                  ))}
+                </ul>
+              </ReviewHistoryGroup>
+            ))}
+            {data.sources.length === 0 ? (
+              <p className="px-1 text-sm text-muted-foreground">No reviews requested yet.</p>
+            ) : null}
+          </>
+        )}
+        <ul>
+          <ReviewLocalOfferRow
+            disabled={!canStart || starting || detail.state !== "open"}
+            onRun={() => void run()}
+          />
+        </ul>
+        <p className="px-1 text-xs text-muted-foreground">
+          {starting
+            ? "Preparing the review chat and isolated checkout…"
+            : "Run your review creates a review chat and starts an independent review."}
         </p>
-        <Button size="sm" variant="outline" onClick={onSetup}>
-          Set up shared review
-        </Button>
-      </div>
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Loading reviews…</p>
-      ) : error ? (
-        <div className="space-y-2">
-          <p className="text-sm">{error}</p>
-          <Button size="sm" variant="outline" onClick={onRetry}>
-            Retry
-          </Button>
-        </div>
-      ) : (
-        <>
-          <p className="text-sm text-muted-foreground">
-            {open.length} open · {resolved.length} resolved
-          </p>
-          {detail.reviewThreadsTruncated || detail.commentsTruncated ? (
-            <p className="text-sm text-muted-foreground">
-              Some feedback is not loaded. Open the pull request on its host for the full history.
-            </p>
-          ) : null}
-          {reviews.length === 0 && detail.reviewThreads.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No reviews yet.</p>
-          ) : null}
-          {reviews.map((review) => (
-            <details key={review.id} className="rounded-md border p-3">
-              <summary className="cursor-pointer text-sm font-medium">
-                {review.author?.login ?? "Reviewer"} · {review.reviewState ?? "Review"} ·{" "}
-                {review.createdAt.slice(0, 10)}
-              </summary>
-              <div className="pt-3">
-                <PullRequestMarkdown
-                  text={review.body}
-                  cwd={detail.workspaceRoot}
-                  environmentId={environmentId}
-                />
-              </div>
-            </details>
-          ))}
-          {[...open, ...resolved].map((thread) => (
-            <details key={thread.id} open={!thread.isResolved} className="rounded-md border p-3">
-              <summary className="cursor-pointer break-all text-sm font-medium">
-                {thread.path}
-                {thread.line === null ? "" : `:${thread.line}`} ·{" "}
-                {thread.isResolved ? "Resolved" : "Open"}
-                {thread.isOutdated ? " · Outdated" : ""}
-              </summary>
-              {thread.comments.map((comment) => (
-                <div key={comment.id} className="space-y-2 border-t mt-3 pt-3">
-                  <p className="text-xs text-muted-foreground">
-                    {comment.author?.login ?? "Reviewer"} · {comment.createdAt.slice(0, 10)}
-                  </p>
-                  <PullRequestMarkdown
-                    text={comment.body}
-                    cwd={detail.workspaceRoot}
-                    environmentId={environmentId}
-                  />
-                </div>
-              ))}
-              {thread.nextCommentsCursor ? (
-                <p className="pt-2 text-xs text-muted-foreground">
-                  More replies are available on the pull request.
-                </p>
-              ) : null}
-            </details>
-          ))}
-        </>
-      )}
+      </section>
     </div>
   );
 }

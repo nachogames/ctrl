@@ -234,7 +234,7 @@ it.effect("keeps one live review per pull request per group", () =>
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
 
-it.effect("will not apply until every point in the round is viewed", () =>
+it.effect("applies decided points without requiring viewed marks", () =>
   Effect.gen(function* () {
     const reviews = yield* service;
     const { snapshot } = yield* reviews.open(openInput);
@@ -264,7 +264,7 @@ it.effect("will not apply until every point in the round is viewed", () =>
       decision: "decline",
       authority: { _tag: "panel" },
     });
-    yield* reviews.setViewed({ sessionId, number: 3, viewed: true });
+
     yield* reviews.setViewed({ sessionId, number: 2, viewed: true });
 
     // A changed suggestion is unseen again; a reply edit is not.
@@ -288,6 +288,7 @@ it.effect("will not apply until every point in the round is viewed", () =>
       [true, 3, "panel"],
     );
 
+    yield* reviews.setViewed({ sessionId, number: 1, viewed: false });
     const working = yield* reviews.recordApply({ sessionId, number: 1, applyState: "working" });
     assert.equal(working.applyState, "working");
     assert.equal((yield* reviews.read(sessionId)).rounds[0]?.state, "applying");
@@ -486,7 +487,7 @@ it.effect("leaves the GitHub state sync recorded when a point changes", () =>
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
 
-it.effect("will not move a collecting round on while a point in it is unseen or undecided", () =>
+it.effect("requires decisions but not viewed marks to advance a collecting round", () =>
   Effect.gen(function* () {
     const reviews = yield* service;
     const { snapshot } = yield* reviews.open(openInput);
@@ -511,7 +512,7 @@ it.effect("will not move a collecting round on while a point in it is unseen or 
     const refused = yield* Effect.flip(
       reviews.advanceRound({ sessionId, headSha: "abc123", finish: true }),
     );
-    assert.include(refused.message, "#2, #3 are not viewed yet");
+    assert.include(refused.message, "#2 needs a decision");
     assert.equal((yield* reviews.read(sessionId)).session.phase, "self-review");
 
     yield* reviews.decide({
@@ -521,7 +522,7 @@ it.effect("will not move a collecting round on while a point in it is unseen or 
       authority: { _tag: "panel" },
     });
     yield* reviews.setViewed({ sessionId, number: 2, viewed: true });
-    yield* reviews.setViewed({ sessionId, number: 3, viewed: true });
+
     const advanced = yield* reviews.advanceRound({ sessionId, headSha: "abc123", finish: false });
     assert.equal(advanced.session.round, 2);
     // Round 2 has no live points yet, so it can move on straight away.

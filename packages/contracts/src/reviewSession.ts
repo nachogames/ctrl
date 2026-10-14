@@ -11,6 +11,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { PullRequestRef } from "./pullRequest.ts";
 import { ThreadPullRequestKey } from "./threadPullRequest.ts";
 
 /** Where a review is in the loop. The first slice runs `self-review` and ends at `done`. */
@@ -301,3 +302,13 @@ export const isReviewOverview = (item: Pick<ReviewItem, "sources" | "sourceKeys"
 
 export const isActiveReviewItem = (item: ReviewItem): boolean =>
   !item.stale && item.githubState !== "resolved" && !isReviewOverview(item);
+
+/** Review history before the user has created a review chat. */
+export const ReviewHostInput = PullRequestRef;
+export type ReviewHostInput = typeof ReviewHostInput.Type;
+export const ReviewHostResult = Schema.Struct({
+  sources: Schema.Array(ReviewSource),
+  items: Schema.Array(ReviewItem),
+  comments: Schema.Record(Schema.String, Schema.Array(ReviewSourceComment)),
+});
+export type ReviewHostResult = typeof ReviewHostResult.Type;

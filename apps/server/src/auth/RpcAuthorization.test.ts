@@ -148,6 +148,15 @@ describe("RPC authorization scopes", () => {
       // Clients refuse these before sending when the grant lacks operate.
       expect(clientRpcRequiredScopes(method, undefined)).toEqual([AuthOrchestrationOperateScope]);
     }
+    expect(requiredScopeForRpcMethod(WS_METHODS.reviewSessionsReadHost)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.reviewSessionsStartFromPullRequest)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(
+      clientRpcRequiredScopes(WS_METHODS.reviewSessionsStartFromPullRequest, undefined),
+    ).toEqual([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]);
     expect(clientRpcRequiredScopes(WS_METHODS.reviewSessionsSubscribe, undefined)).toEqual([]);
     expect(clientRpcRequiredScopes(WS_METHODS.reviewSessionsReadSource, undefined)).toEqual([]);
   });

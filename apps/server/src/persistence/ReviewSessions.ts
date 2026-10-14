@@ -299,6 +299,10 @@ export class ReviewSessionRepository extends Context.Service<
       sessionId: ReviewSessionId,
       sourceIds: ReadonlyArray<string>,
     ) => Effect.Effect<void, E>;
+    readonly resetSourcesTriage: (
+      sessionId: ReviewSessionId,
+      sourceIds: ReadonlyArray<string>,
+    ) => Effect.Effect<void, E>;
     /** The live local review run a chat was started for. */
     readonly findLocalSourceByThread: (
       threadId: ThreadId,
@@ -524,6 +528,13 @@ const make = Effect.gen(function* () {
             UPDATE review_sources SET triaged = 1
             WHERE session_id = ${sessionId} AND source_id IN ${sql.in([...sourceIds])}
           `.pipe(Effect.asVoid, Effect.mapError(sqlError("markReviewSourcesTriaged"))),
+    resetSourcesTriage: (sessionId, sourceIds) =>
+      sourceIds.length === 0
+        ? Effect.void
+        : sql`
+      UPDATE review_sources SET triaged = 0
+      WHERE session_id = ${sessionId} AND source_id IN ${sql.in([...sourceIds])}
+    `.pipe(Effect.asVoid, Effect.mapError(sqlError("resetReviewSourcesTriage"))),
     findLocalSourceByThread: (threadId) =>
       sql<{ readonly session_id: string; readonly source_id: string }>`
         SELECT r.session_id, r.source_id

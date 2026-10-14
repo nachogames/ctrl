@@ -8,6 +8,7 @@ import type {
   ReviewItemSource,
   ReviewSessionId,
   ReviewSource,
+  ReviewSourceComment,
 } from "@t3tools/contracts";
 import { BotIcon, ChevronRightIcon, CircleXIcon, SparklesIcon } from "lucide-react";
 import { memo, useState } from "react";
@@ -93,11 +94,13 @@ export const ReviewSourceRow = memo(function ReviewSourceRow({
   sessionId,
   ranOn,
   resolution,
+  comments,
 }: {
   source: ReviewSource;
   resolution?: string | undefined;
   environmentId: EnvironmentId;
-  sessionId: ReviewSessionId;
+  sessionId: ReviewSessionId | null;
+  comments?: ReadonlyArray<ReviewSourceComment>;
   /** The model a local review ran on, as `ranOnLabel` names it. */
   ranOn: string | null;
 }) {
@@ -136,7 +139,12 @@ export const ReviewSourceRow = memo(function ReviewSourceRow({
         </span>
       </button>
       {expanded ? (
-        <ReviewSourceComments environmentId={environmentId} sessionId={sessionId} source={source} />
+        <ReviewSourceComments
+          environmentId={environmentId}
+          sessionId={sessionId}
+          source={source}
+          {...(comments ? { providedComments: comments } : {})}
+        />
       ) : null}
     </li>
   );
@@ -147,21 +155,25 @@ function ReviewSourceComments({
   environmentId,
   sessionId,
   source,
+  providedComments,
 }: {
   environmentId: EnvironmentId;
-  sessionId: ReviewSessionId;
+  sessionId: ReviewSessionId | null;
   source: ReviewSource;
+  providedComments?: ReadonlyArray<ReviewSourceComment>;
 }) {
   const query = useEnvironmentQuery(
-    reviewSessionEnvironment.sourceComments({
-      environmentId,
-      input: { sessionId, sourceId: source.id },
-    }),
+    sessionId === null || providedComments !== undefined
+      ? null
+      : reviewSessionEnvironment.sourceComments({
+          environmentId,
+          input: { sessionId, sourceId: source.id },
+        }),
   );
-  const comments = query.data?.comments ?? [];
+  const comments = providedComments ?? query.data?.comments ?? [];
   return (
     <div className="flex flex-col gap-2 ps-14 pe-2.5 pb-2.5">
-      {query.data === null ? (
+      {providedComments === undefined && query.data === null ? (
         <p className="text-xs text-muted-foreground">
           {query.error === null ? "Reading what it said…" : "Could not read this review."}
         </p>

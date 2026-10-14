@@ -316,13 +316,19 @@ Copilot overviews stay with their review summaries. Resolved findings remain in 
 need another decision. Each completed Copilot pass starts a review round, with failed retries and reviews of the same
 commit grouped alongside it. Each round shows how many findings are still open or resolved,
 including resolutions made directly on GitHub.
+On the Pull Requests page, the **Review** tab also shows requested and completed GitHub
+reviews before a chat exists. Choose **Run your review** under **Your review** to create
+the review chat and isolated checkout and start an independent review.
+When the PR head changes, unresolved findings become stale so they can be checked again.
+Their history, decisions, and reply drafts remain available; choose **Recheck stale findings**.
 Ask the agent to triage when you want explanations and recommendations, or to run an
 independent local review.
 Any ordinary chat in the PR’s group can update the same review panel. Ask about `#3` in any
 of those chats, or open a point's own chat. Questions leave decisions alone;
 say `#3 fix` or `#3 decline` to decide. Conclusions and reply drafts stay with the point.
 
-Read each point and mark it viewed before applying. **Apply** shows the work and replies for
-you to confirm, then runs in the review chat. It fixes accepted points, runs checks, commits
+Marking points viewed is optional. **Apply** shows the work and replies for
+you to confirm, including the displayed recommendations, then runs in the review chat.
+Points without a decision or recommendation still need your call. It fixes accepted points, runs checks, commits
 and pushes, and posts the approved replies. Human reviewers' threads stay open. New reviews
 arrive in the same session; after applying, the next round lets you check them again.

@@ -361,6 +361,8 @@ import {
   ReviewSessionError,
   ReviewSessionInput,
   ReviewSessionSubscribeInput,
+  ReviewHostInput,
+  ReviewHostResult,
   ReviewSessionSubscribeResult,
   ReviewSideChatInput,
   ReviewSourceReadInput,
@@ -556,6 +558,8 @@ export const WS_METHODS = {
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
   // Ctrl: pull request review loop.
+  reviewSessionsReadHost: "reviewSessions.readHost",
+  reviewSessionsStartFromPullRequest: "reviewSessions.startFromPullRequest",
   reviewSessionsSubscribe: "reviewSessions.subscribe",
   reviewSessionsReadSource: "reviewSessions.readSource",
   reviewSessionsDecide: "reviewSessions.decide",
@@ -1861,6 +1865,20 @@ const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe
 const ReviewRpcError = Schema.Union([ReviewSessionError, EnvironmentAuthorizationError]);
 
 /** The review of a pull request in a chat's group: one snapshot on subscribe, then one per change. */
+const WsReviewSessionsReadHostRpc = Rpc.make(WS_METHODS.reviewSessionsReadHost, {
+  payload: ReviewHostInput,
+  success: ReviewHostResult,
+  error: ReviewRpcError,
+});
+const WsReviewSessionsStartFromPullRequestRpc = Rpc.make(
+  WS_METHODS.reviewSessionsStartFromPullRequest,
+  {
+    payload: ReviewHostInput,
+    success: ReviewThreadResult,
+    error: ReviewRpcError,
+  },
+);
+
 const WsReviewSessionsSubscribeRpc = Rpc.make(WS_METHODS.reviewSessionsSubscribe, {
   payload: ReviewSessionSubscribeInput,
   success: ReviewSessionSubscribeResult,
@@ -2008,6 +2026,8 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 
 /** The review loop's RPCs, a group of their own so the server builds their handlers apart. */
 export const WsReviewSessionsRpcGroup = RpcGroup.make(
+  WsReviewSessionsReadHostRpc,
+  WsReviewSessionsStartFromPullRequestRpc,
   WsReviewSessionsSubscribeRpc,
   WsReviewSessionsReadSourceRpc,
   WsReviewSessionsDecideRpc,

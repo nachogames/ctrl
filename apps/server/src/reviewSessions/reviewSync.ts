@@ -265,7 +265,7 @@ export function shouldSyncReview(
 
 /** Raw feedback is useful before optional AI triage; identity is the GitHub thread/review key. */
 export function rawReviewItems(
-  session: ReviewSession,
+  session: Pick<ReviewSession, "round" | "nextNumber">,
   existing: ReadonlyArray<ReviewItem>,
   sources: ReviewSyncPlan["upserts"],
 ): ReadonlyArray<ReviewItem> {

@@ -97,6 +97,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.scheduledTasksRotateWebhookToken]: "scheduledTasks",
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: "scheduledTasks",
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: "scheduledTasks",
+  [WS_METHODS.reviewSessionsReadHost]: "review-sessions",
+  [WS_METHODS.reviewSessionsStartFromPullRequest]: "review-sessions",
   [WS_METHODS.reviewSessionsSubscribe]: "review-sessions",
   [WS_METHODS.reviewSessionsReadSource]: "review-sessions",
   [WS_METHODS.reviewSessionsDecide]: "review-sessions",

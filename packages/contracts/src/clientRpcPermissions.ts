@@ -51,6 +51,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.reviewSessionsSetViewed]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewSessionsEditReply]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewSessionsRequest]: AuthOrchestrationOperateScope,
+  [WS_METHODS.reviewSessionsStartFromPullRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewSessionsRunLocalReview]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewSessionsDiscussInSideChat]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
@@ -63,6 +64,8 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === WS_METHODS.reviewSessionsStartFromPullRequest)
+    return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)

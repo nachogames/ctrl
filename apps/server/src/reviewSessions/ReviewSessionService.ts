@@ -202,7 +202,7 @@ export class ReviewSessionService extends Context.Service<
     readonly editReply: (
       input: PointInput & { readonly draftReply: string },
     ) => Effect.Effect<ReviewItem, ReviewSessionError>;
-    /** The first result of a round's apply moves the round to `applying`; needs every point viewed. */
+    /** The first result of a round's apply moves the round to `applying`; needs every point decided. */
     readonly recordApply: (
       input: PointInput & {
         readonly applyState: ReviewApplyState;
@@ -287,10 +287,10 @@ const replyForNewRound = (item: ReviewItem, draftReply: string | null) =>
 const liveItems = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>
   items.filter((item) => item.lastSeenRound === session.round && isActiveReviewItem(item));
 
-/** `#N` of each live point the user has not yet viewed and decided. */
-const unseenPoints = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>
+/** `#N` of each live point the user has not yet decided. */
+const undecidedPoints = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>
   liveItems(session, items)
-    .filter((item) => !item.viewed || item.decision === "needs-call")
+    .filter((item) => item.decision === "needs-call")
     .map((item) => `#${item.number}`);
 
 const isOpen = (applyState: ReviewApplyState) =>
@@ -404,14 +404,11 @@ export const make = Effect.gen(function* () {
         );
 
   const applyGate = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) => {
-    const waiting = unseenPoints(session, items);
+    const waiting = undecidedPoints(session, items);
     return waiting.length === 0
       ? Effect.void
       : Effect.fail(
-          fail(
-            `View ${waiting.join(", ")} first: a round is applied only once every point in it is viewed.`,
-            session.id,
-          ),
+          fail(`Choose Fix or Decline for ${waiting.join(", ")} before applying.`, session.id),
         );
   };
 
@@ -1022,10 +1019,10 @@ export const make = Effect.gen(function* () {
           const round = yield* loadRound(session);
           const items = yield* repo.listItems(session.id);
           if (round.state === "collecting") {
-            const unseen = unseenPoints(session, items);
+            const unseen = undecidedPoints(session, items);
             if (unseen.length > 0) {
               return yield* fail(
-                `${unseen.join(", ")} ${unseen.length === 1 ? "is" : "are"} not viewed yet: a round moves on only once every point in it is viewed and decided.`,
+                `${unseen.join(", ")} ${unseen.length === 1 ? "needs" : "need"} a decision before the round moves on.`,
                 session.id,
               );
             }
@@ -1319,8 +1316,35 @@ export const make = Effect.gen(function* () {
       let item: ReviewItem | null = null;
       let untriaged: ReadonlyArray<ReviewSource> = [];
       if (request._tag === "triage") {
-        untriaged = (yield* repo.listSources(session.id)).filter(
-          (source) => source.round === session.round && source.state === "done" && !source.triaged,
+        // A merge can make already-triaged findings stale without producing a new review.
+        // Offer their original sources again, retaining rounds, decisions and reply drafts.
+        untriaged = yield* write(
+          session.id,
+          Effect.gen(function* () {
+            const current = yield* loadSession(session.id);
+            yield* requireCollecting(current, yield* loadRound(current));
+            const staleSourceIds = new Set(
+              (yield* repo.listItems(session.id))
+                .filter(
+                  (point) =>
+                    point.lastSeenRound === current.round &&
+                    point.stale &&
+                    point.githubState !== "resolved",
+                )
+                .flatMap((point) => point.sourceIds),
+            );
+            const ready = (yield* repo.listSources(session.id)).filter(
+              (source) =>
+                source.round === current.round &&
+                source.state === "done" &&
+                !source.failed &&
+                (!source.triaged || staleSourceIds.has(source.id)),
+            );
+            for (const source of ready) {
+              if (source.triaged) yield* repo.resetSourcesTriage(session.id, [source.id]);
+            }
+            return ready.map((source) => ({ ...source, triaged: false }));
+          }),
         );
         if (untriaged.length === 0) {
           return yield* fail("No finished review is waiting for triage in this round.", session.id);
@@ -1340,7 +1364,29 @@ export const make = Effect.gen(function* () {
             yield* requireLive(current);
             const round = yield* loadRound(current);
             yield* requireCollecting(current, round);
-            yield* applyGate(current, yield* repo.listItems(current.id));
+            const items = yield* repo.listItems(current.id);
+            // Confirming the panel's Apply approves its displayed recommendations. Reading
+            // progress is independent, and an explicit user decision always wins.
+            const approved = items.map((item) =>
+              item.lastSeenRound === current.round &&
+              isActiveReviewItem(item) &&
+              item.decision === "needs-call" &&
+              item.suggestedDecision !== null
+                ? { ...item, decision: item.suggestedDecision, decidedBy: "panel" as const }
+                : item,
+            );
+            yield* applyGate(current, approved);
+            const at = yield* now;
+            for (let index = 0; index < items.length; index++) {
+              const item = approved[index]!;
+              if (item !== items[index]) {
+                yield* repo.upsertItem(current.id, {
+                  ...item,
+                  applyState: "pending",
+                  updatedAt: at,
+                });
+              }
+            }
             yield* repo.upsertRound(current.id, {
               ...round,
               state: "applying",

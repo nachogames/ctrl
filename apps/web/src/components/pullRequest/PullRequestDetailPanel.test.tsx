@@ -132,6 +132,10 @@ vi.mock("./PullRequestSummaryTab", () => ({
 }));
 // The guide renders diffs, which start the diff worker; this suite never opens it.
 vi.mock("./PullRequestGuideTab", () => ({ PullRequestGuideTab: () => null }));
+vi.mock("./review/HostPullRequestReview", () => ({
+  HostPullRequestReview: () => <div data-test-host-review="shown" />,
+}));
+
 vi.mock("./review/PullRequestReviewTab", () => ({
   PullRequestReviewTab: () => <div data-test-review-tab="shown" />,
 }));

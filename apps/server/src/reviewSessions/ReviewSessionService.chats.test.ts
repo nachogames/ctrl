@@ -3,6 +3,7 @@ import { ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
+import * as ReviewSessions from "../persistence/ReviewSessions.ts";
 import * as ReviewSessionService from "./ReviewSessionService.ts";
 import {
   actor,
@@ -151,7 +152,7 @@ it.effect("sends Triage, Apply and rewrites to the review chat as the system", (
     yield* reviews.importItems({
       sessionId,
       sourceIds: ["PRR_1"],
-      items: [importItem("gh:T1", { shortName: "build cache key" })],
+      items: [importItem("gh:T1", { shortName: "build cache key", suggestedDecision: null })],
     });
     const nothingNew = yield* Effect.flip(
       reviews.requestTurn({ sessionId, request: { _tag: "triage" } }),
@@ -160,7 +161,7 @@ it.effect("sends Triage, Apply and rewrites to the review chat as the system", (
     const unseen = yield* Effect.flip(
       reviews.requestTurn({ sessionId, request: { _tag: "apply" } }),
     );
-    assert.include(unseen.message, "View #1");
+    assert.include(unseen.message, "Choose Fix or Decline for #1");
 
     yield* reviews.requestTurn({
       sessionId,
@@ -169,7 +170,6 @@ it.effect("sends Triage, Apply and rewrites to the review chat as the system", (
     assert.match(harness.sent[1]?.text ?? "", /^\[#1 build cache key\]\n/);
 
     yield* reviews.decide({ sessionId, number: 1, decision: "fix", authority: { _tag: "panel" } });
-    yield* reviews.setViewed({ sessionId, number: 1, viewed: true });
     yield* reviews.requestTurn({ sessionId, request: { _tag: "apply" } });
     assert.include(harness.sent[2]?.text ?? "", "Apply round 1");
     assert.equal((yield* reviews.read(sessionId)).rounds[0]?.state, "applying");
@@ -466,5 +466,79 @@ it.effect("can retry a review chat whose seed could not be sent", () => {
     yield* reviews.openSideChat({ sessionId, number: 1 });
     yield* reviews.runLocalReview({ sessionId });
     assert.equal(harness.sent.length, 2);
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("Apply confirms displayed recommendations without marking points viewed", () => {
+  const harness = newHarness();
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({
+      sessionId,
+      sourceIds: [],
+      items: [
+        importItem("gh:T1", { suggestedDecision: "fix" }),
+        importItem("gh:T2", { suggestedDecision: "fix" }),
+        importItem("gh:T3", { suggestedDecision: null }),
+      ],
+    });
+    yield* reviews.decide({
+      sessionId,
+      number: 2,
+      decision: "decline",
+      authority: { _tag: "panel" },
+    });
+    const blocked = yield* Effect.flip(
+      reviews.requestTurn({ sessionId, request: { _tag: "apply" } }),
+    );
+    assert.include(blocked.message, "#3");
+    assert.equal((yield* reviews.read(sessionId)).items[0]?.decision, "needs-call");
+    yield* reviews.decide({
+      sessionId,
+      number: 3,
+      decision: "decline",
+      authority: { _tag: "panel" },
+    });
+    yield* reviews.requestTurn({ sessionId, request: { _tag: "apply" } });
+    const applied = yield* reviews.read(sessionId);
+    assert.deepEqual(
+      applied.items.map((item) => [item.decision, item.viewed, item.decidedBy]),
+      [
+        ["fix", false, "panel"],
+        ["decline", false, "panel"],
+        ["decline", false, "panel"],
+      ],
+    );
+    assert.equal(applied.rounds[0]?.state, "applying");
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("rechecks previously stale findings whose sources were already triaged", () => {
+  const harness = newHarness();
+  harness.read = reviewRoundRead({
+    reviews: [githubReview("R1", "copilot-pull-request-reviewer")],
+    threads: [githubThread("T1", [threadComment("R1", "Problem")])],
+  });
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({ sessionId, sourceIds: ["R1"], items: [importItem("gh:T1")] });
+    yield* reviews.decide({
+      sessionId,
+      number: 1,
+      decision: "decline",
+      authority: { _tag: "panel" },
+    });
+    yield* repo.markItemsStale(sessionId);
+    yield* reviews.requestTurn({ sessionId, request: { _tag: "triage" } });
+    const after = yield* reviews.read(sessionId);
+    assert.isFalse(after.sources.find((source) => source.id === "R1")!.triaged);
+    assert.equal(after.items[0]!.decision, "decline");
+    assert.isTrue(after.items[0]!.stale);
+    assert.include(harness.sent[0]!.text, "Triage round 1");
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });

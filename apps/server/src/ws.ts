@@ -234,6 +234,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
+import * as ReviewHostService from "./reviewSessions/ReviewHostService.ts";
 import * as ReviewSessionService from "./reviewSessions/ReviewSessionService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -1213,7 +1214,10 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
 const layerReviewSessionsRpc = ServerReviewSessionsRpcGroup.toLayer(
   Effect.gen(function* () {
     const reviewSessions = yield* ReviewSessionService.ReviewSessionService;
+    const reviewHost = yield* ReviewHostService.ReviewHostService;
     return ServerReviewSessionsRpcGroup.of({
+      [WS_METHODS.reviewSessionsReadHost]: (input) => reviewHost.read(input),
+      [WS_METHODS.reviewSessionsStartFromPullRequest]: (input) => reviewHost.start(input),
       [WS_METHODS.reviewSessionsSubscribe]: (input) => reviewSessions.subscribe(input),
       [WS_METHODS.reviewSessionsReadSource]: (input) =>
         reviewSessions.readSourceComments(input).pipe(Effect.map((comments) => ({ comments }))),
@@ -3304,6 +3308,7 @@ export const layer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const reviewSessions = yield* ReviewSessionService.ReviewSessionService;
+    const reviewHost = yield* ReviewHostService.ReviewHostService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3383,7 +3388,10 @@ export const layer = Layer.unwrap(
               ),
               // One server-lifetime instance, so Review tab subscribers hear MCP and sync writes.
               Layer.provide(
-                Layer.succeed(ReviewSessionService.ReviewSessionService, reviewSessions),
+                Layer.mergeAll(
+                  Layer.succeed(ReviewSessionService.ReviewSessionService, reviewSessions),
+                  Layer.succeed(ReviewHostService.ReviewHostService, reviewHost),
+                ),
               ),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(

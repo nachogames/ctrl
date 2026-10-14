@@ -222,3 +222,29 @@ describe("reviewApplyLines", () => {
     ]);
   });
 });
+
+it("keeps stale round history and offers reverification after a base merge", () => {
+  const prior = source("R1", 1, "copilot");
+  const current = { ...source("R2", 2, "copilot"), triaged: true };
+  const snapshot = {
+    session: { round: 2, phase: "self-review" },
+    rounds: [round(2, "collecting"), round(1, "applied")],
+    sources: [prior, current],
+    items: [point(1, 1, true), point(2, 2, true)],
+  } as unknown as ReviewSessionSnapshot;
+  const views = reviewRoundViews(snapshot);
+  expect(views).toHaveLength(2);
+  expect(views[0]!.history?.map((item) => item.number)).toEqual([2]);
+  expect(views[1]!.items.map((item) => item.number)).toEqual([1]);
+  expect(triageButton(views[0]!, [])).toEqual({
+    label: "Recheck stale findings",
+    ready: true,
+    busy: false,
+  });
+  expect(
+    triageButton(
+      { ...views[0]!, history: [{ ...point(2, 2, true), githubState: "resolved" }] },
+      [],
+    ),
+  ).toBeNull();
+});
