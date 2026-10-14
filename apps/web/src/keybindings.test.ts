@@ -1737,3 +1737,31 @@ describe("environment picker shortcuts", () => {
     );
   });
 });
+
+it("environment picker overrides saved thread-number bindings from older versions", () => {
+  const bindings = mergeWithDefaultKeybindings(
+    compileResolvedKeybindingsConfig([
+      { key: "mod+1", command: "thread.jump.1", when: "!modelPickerOpen && isDesktop" },
+      { key: "mod+2", command: "thread.jump.2", when: "!modelPickerOpen && isDesktop" },
+    ]),
+  );
+  const options = {
+    platform: "MacIntel",
+    context: { isDesktop: true, environmentPickerOpen: true },
+  };
+  for (const key of ["1", "2"]) {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key, metaKey: true }), bindings, options),
+      `environmentPicker.jump.${key}`,
+    );
+  }
+  assert.strictEqual(shortcutLabelForCommand(bindings, "environmentPicker.jump.1", options), "⌘1");
+  assert.strictEqual(shortcutLabelForCommand(bindings, "environmentPicker.jump.2", options), "⌘2");
+  assert.strictEqual(
+    resolveShortcutCommand(event({ key: "1", metaKey: true }), bindings, {
+      platform: "MacIntel",
+      context: { isDesktop: true },
+    }),
+    "thread.jump.1",
+  );
+});

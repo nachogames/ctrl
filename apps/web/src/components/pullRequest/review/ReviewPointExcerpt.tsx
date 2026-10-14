@@ -59,7 +59,22 @@ export function ReviewPointExcerpt({
           ))}
         </DiffWorkerPoolProvider>
       ) : excerpt ? (
-        <pre className="overflow-x-auto p-3 text-xs">{excerpt}</pre>
+        <pre className="overflow-x-auto py-3 text-xs">
+          {excerpt.split("\n").map((text, index) => (
+            <span
+              key={`${index}:${text}`}
+              className={`block min-w-max px-3 ${
+                text.startsWith("+") && !text.startsWith("+++")
+                  ? "bg-diff-addition/15 text-diff-addition-foreground"
+                  : text.startsWith("-") && !text.startsWith("---")
+                    ? "bg-diff-deletion/15 text-diff-deletion-foreground"
+                    : ""
+              }`}
+            >
+              {text || " "}
+            </span>
+          ))}
+        </pre>
       ) : null}
     </div>
   );

@@ -5866,6 +5866,7 @@ export default function Sidebar() {
         terminalFocus: terminalFocused,
         terminalOpen: routeTerminalOpen,
         modelPickerOpen: isModelPickerOpen(),
+        environmentPickerOpen,
         isWeb: !isElectron,
         isDesktop: isElectron,
       },
@@ -5964,7 +5965,10 @@ export default function Sidebar() {
                         onValueChange={(value) => setEnvironmentScopeId(value || null)}
                       >
                         <MenuRadioItem value="">
-                          All machines<MenuShortcut>{environmentJumpLabel(0)}</MenuShortcut>
+                          <span className="flex min-w-0 items-center justify-between gap-4">
+                            <span>All machines</span>
+                            <MenuShortcut>{environmentJumpLabel(0)}</MenuShortcut>
+                          </span>
                         </MenuRadioItem>
                         {environments.map((environment, index) => (
                           <MenuRadioItem
@@ -5976,8 +5980,8 @@ export default function Sidebar() {
                               <EnvironmentBatteryIndicator
                                 environmentId={environment.environmentId}
                               />
+                              <MenuShortcut>{environmentJumpLabel(index + 1)}</MenuShortcut>
                             </span>
-                            <MenuShortcut>{environmentJumpLabel(index + 1)}</MenuShortcut>
                           </MenuRadioItem>
                         ))}
                       </MenuRadioGroup>
