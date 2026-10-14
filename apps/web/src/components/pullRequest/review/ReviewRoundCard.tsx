@@ -161,6 +161,7 @@ export function ReviewRoundCard({
                         source.state === "done"
                           ? reviewResolutionLabel(
                               group.items.filter((item) => item.sourceIds.includes(source.id)),
+                              [source],
                             )
                           : undefined
                       }
@@ -275,7 +276,16 @@ function ReviewHistoryGroup({
   const fullyResolved =
     group.items.length > 0 &&
     group.items.every((item) => item.githubState === "resolved") &&
-    !group.sources.some((source) => source.state === "reviewing" || source.state === "requested");
+    !group.sources.some(
+      (source) =>
+        source.state === "reviewing" ||
+        source.state === "requested" ||
+        (source.kind === "local" &&
+          source.state === "done" &&
+          !source.failed &&
+          !source.triaged &&
+          source.commentCount > 0),
+    );
   const open = expanded ?? !fullyResolved;
   return (
     <section
@@ -297,7 +307,7 @@ function ReviewHistoryGroup({
           <span className="ml-auto">
             {group.sources.every((source) => source.failed)
               ? "Failed · no review produced"
-              : reviewResolutionLabel(group.items)}
+              : reviewResolutionLabel(group.items, group.sources)}
           </span>
         </button>
       </h4>

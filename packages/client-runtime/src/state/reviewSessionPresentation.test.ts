@@ -79,6 +79,22 @@ describe("review presentation", () => {
     );
   });
 
+  it("keeps raw local findings visible while they await triage", () => {
+    const local = source({ kind: "local", commentCount: 3 });
+    expect(reviewResolutionLabel([], [local])).toBe("3 findings awaiting triage");
+    expect(reviewResolutionLabel([], [{ ...local, commentCount: 1 }])).toBe(
+      "1 finding awaiting triage",
+    );
+    expect(reviewResolutionLabel([], [{ ...local, commentCount: 0 }])).toBe("No findings");
+    expect(reviewResolutionLabel([item(1, { githubState: "resolved" })], [local])).toBe(
+      "All resolved · 1/1 · 3 findings awaiting triage",
+    );
+    expect(
+      reviewResolutionLabel([item(1, { githubState: "open" })], [{ ...local, triaged: true }]),
+    ).toBe("1 open · 0 resolved");
+    expect(reviewResolutionLabel([], [source({})])).toBe("No findings");
+  });
+
   it("follows each point through the apply", () => {
     const fix = item(1, { decision: "fix" });
     expect(reviewApplyBadges(fix, "collecting")).toEqual([]);

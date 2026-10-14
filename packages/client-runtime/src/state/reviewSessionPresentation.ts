@@ -244,7 +244,21 @@ export function reviewHistoryRounds(
 }
 
 /** Resolution comes from GitHub, independently of decisions or whether Ctrl applied them. */
-export function reviewResolutionLabel(items: ReadonlyArray<ReviewItem>): string {
+export function reviewResolutionLabel(
+  items: ReadonlyArray<ReviewItem>,
+  sources: ReadonlyArray<ReviewSource> = [],
+): string {
+  // Local submissions contain raw findings before triage creates normalized points.
+  const awaitingTriage = sources
+    .filter(
+      (source) =>
+        source.kind === "local" && source.state === "done" && !source.failed && !source.triaged,
+    )
+    .reduce((count, source) => count + source.commentCount, 0);
+  if (awaitingTriage > 0) {
+    const pending = `${quantity(awaitingTriage, "finding")} awaiting triage`;
+    return items.length === 0 ? pending : `${reviewResolutionLabel(items)} · ${pending}`;
+  }
   if (items.length === 0) return "No findings";
   const resolved = items.filter((item) => item.githubState === "resolved").length;
   return resolved === items.length
