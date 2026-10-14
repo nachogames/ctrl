@@ -12,7 +12,7 @@ import type {
   ReviewItem,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { useThreadProjection, useThreadShells } from "~/state/entities";
@@ -43,22 +43,26 @@ export function PullRequestReviewTab({
   environmentId,
   threadRef,
   reference,
+  fallback,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
   reference: PullRequestRef;
+  fallback: ReactNode;
 }) {
   return threadRef === null ? (
     <LinkedPullRequestReview
       key={`${environmentId}:${reference.host}:${reference.repository}:${reference.number}`}
       environmentId={environmentId}
       reference={reference}
+      fallback={fallback}
     />
   ) : (
     <GroupPullRequestReview
       environmentId={environmentId}
       threadRef={threadRef}
       reference={reference}
+      fallback={fallback}
     />
   );
 }
@@ -66,9 +70,11 @@ export function PullRequestReviewTab({
 function LinkedPullRequestReview({
   environmentId,
   reference,
+  fallback,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  fallback: ReactNode;
 }) {
   const query = useEnvironmentQuery(
     pullRequestEnvironment.linkedThreads({ environmentId, input: reference }),
@@ -116,18 +122,11 @@ function LinkedPullRequestReview({
             environmentId={environmentId}
             threadRef={scopeThreadRef(environmentId, chosen.id)}
             reference={reference}
+            fallback={fallback}
           />
         </div>
       ) : (
-        <div className="p-4 text-sm text-muted-foreground">
-          {query.error !== null
-            ? "Linked review chats could not be loaded."
-            : !query.isSuccess
-              ? "Loading the review…"
-              : groups.length > 1
-                ? "Choose a group to see its review."
-                : "Link this pull request to a chat using the pull request menu to start its shared review."}
-        </div>
+        fallback
       )}
     </div>
   );
@@ -141,10 +140,12 @@ function GroupPullRequestReview({
   environmentId,
   threadRef,
   reference,
+  fallback,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
   reference: PullRequestRef;
+  fallback: ReactNode;
 }) {
   const query = useEnvironmentQuery(
     reviewSessionEnvironment.session({
@@ -307,15 +308,7 @@ function GroupPullRequestReview({
   );
 
   if (snapshot === null || sessionId === null) {
-    return (
-      <div className="p-4 text-sm text-muted-foreground">
-        {query.error !== null
-          ? "The review could not be loaded."
-          : query.isSuccess
-            ? "No review of this pull request in this group yet. Ask the agent in one of the group's chats to review it."
-            : "Loading the review…"}
-      </div>
-    );
+    return fallback;
   }
 
   const startApply = async () => {

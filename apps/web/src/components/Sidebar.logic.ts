@@ -1259,10 +1259,12 @@ export function partitionThreadsByGroup<
     readonly id: ThreadId;
     readonly projectId: string;
     readonly groupId: ThreadGroupId | null;
+    readonly settledOverride?: string | null;
   },
 >(input: {
   readonly threads: ReadonlyArray<T>;
   readonly groups: ReadonlyMap<string, EnvironmentThreadGroup>;
+  readonly showSingleThreadGroups?: boolean;
 }): {
   readonly ungrouped: ReadonlyArray<T>;
   readonly byGroup: ReadonlyMap<string, ReadonlyArray<T>>;
@@ -1276,9 +1278,19 @@ export function partitionThreadsByGroup<
     }
     const key = threadGroupKey({ environmentId: thread.environmentId, groupId: thread.groupId });
     const group = input.groups.get(key);
+    // Individual settlement changes sidebar placement, not durable membership.
+    // An explicitly settled group retains its children so it can reopen as a unit.
+    if (thread.settledOverride === "settled" && group?.settledAt == null) {
+      ungrouped.push(thread);
+      continue;
+    }
     // An unknown group, one from another project, or a hidden group (one
     // live chat) never hides the chat: it places itself by its own state.
-    if (group === undefined || !group.visible || group.projectId !== thread.projectId) {
+    if (
+      group === undefined ||
+      (!group.visible && !input.showSingleThreadGroups) ||
+      group.projectId !== thread.projectId
+    ) {
       ungrouped.push(thread);
       continue;
     }
@@ -1316,8 +1328,7 @@ export type SidebarTreeEntry<T> =
 
 type SidebarActivityInput = Parameters<typeof sidebarActivityMs>[0];
 
-/** Active tree: projects by newest item, then their groups and ungrouped chats by activity.
- *  Group members follow their group row only when the group is expanded. */
+/** Projects and groups keep their placement; activity only orders chats within them. */
 export function buildSidebarActiveTree<T extends SidebarActivityInput>(input: {
   readonly ungrouped: ReadonlyArray<T>;
   readonly groups: ReadonlyArray<{
@@ -1325,55 +1336,43 @@ export function buildSidebarActiveTree<T extends SidebarActivityInput>(input: {
     readonly group: EnvironmentThreadGroup;
     readonly members: ReadonlyArray<T>;
   }>;
+  readonly projectOrder?: ReadonlyArray<string>;
+  readonly groupOrder?: ReadonlyArray<string>;
   readonly projectKeyOf: (item: T | EnvironmentThreadGroup) => string;
   readonly isExpanded: (groupKey: string) => boolean;
 }): ReadonlyArray<SidebarTreeEntry<T>> {
-  type Node =
-    | { readonly kind: "thread"; readonly thread: T; readonly activity: number }
-    | {
-        readonly kind: "group";
-        readonly key: string;
-        readonly group: EnvironmentThreadGroup;
-        readonly members: ReadonlyArray<T>;
-        readonly activity: number;
-      };
-  const projects = new Map<string, { nodes: Node[]; activity: number }>();
-  const add = (projectKey: string, node: Node) => {
-    const project = projects.get(projectKey) ?? { nodes: [], activity: Number.NEGATIVE_INFINITY };
-    project.nodes.push(node);
-    project.activity = Math.max(project.activity, node.activity);
-    projects.set(projectKey, project);
-  };
-  for (const thread of input.ungrouped) {
-    add(input.projectKeyOf(thread), {
-      kind: "thread",
-      thread,
-      activity: sidebarActivityMs(thread),
-    });
-  }
-  for (const { key, group, members } of input.groups) {
-    // A group with no visible member renders nothing.
-    if (members.length === 0) continue;
-    const activity = Math.max(...members.map(sidebarActivityMs));
-    add(input.projectKeyOf(group), { kind: "group", key, group, members, activity });
-  }
+  const projectKeys = new Set([
+    ...input.groups
+      .filter((entry) => entry.members.length > 0)
+      .map((entry) => input.projectKeyOf(entry.group)),
+    ...input.ungrouped.map(input.projectKeyOf),
+  ]);
+  const projectRank = new Map((input.projectOrder ?? []).map((key, index) => [key, index]));
+  const groupRank = new Map((input.groupOrder ?? []).map((key, index) => [key, index]));
+  const groups = input.groups.toSorted(
+    (a, b) =>
+      (groupRank.get(a.key) ?? Infinity) - (groupRank.get(b.key) ?? Infinity) ||
+      String(a.group.createdAt).localeCompare(String(b.group.createdAt)) ||
+      a.key.localeCompare(b.key),
+  );
   const entries: SidebarTreeEntry<T>[] = [];
-  const byActivity = <N extends { readonly activity: number }>(left: N, right: N) =>
-    right.activity - left.activity;
-  for (const [projectKey, project] of [...projects].toSorted(([, left], [, right]) =>
-    byActivity(left, right),
+  for (const projectKey of [...projectKeys].toSorted(
+    (a, b) =>
+      (projectRank.get(a) ?? Infinity) - (projectRank.get(b) ?? Infinity) || a.localeCompare(b),
   )) {
     entries.push({ kind: "project-heading", projectKey });
-    for (const node of project.nodes.toSorted(byActivity)) {
-      if (node.kind === "thread") {
-        entries.push({ kind: "thread", thread: node.thread, groupKey: null });
-        continue;
+    for (const entry of groups) {
+      if (input.projectKeyOf(entry.group) !== projectKey || entry.members.length === 0) continue;
+      const members = entry.members.toSorted((a, b) => sidebarActivityMs(b) - sidebarActivityMs(a));
+      entries.push({ kind: "group", groupKey: entry.key, group: entry.group, members });
+      if (input.isExpanded(entry.key)) {
+        for (const thread of members) entries.push({ kind: "thread", thread, groupKey: entry.key });
       }
-      entries.push({ kind: "group", groupKey: node.key, group: node.group, members: node.members });
-      if (!input.isExpanded(node.key)) continue;
-      for (const member of node.members) {
-        entries.push({ kind: "thread", thread: member, groupKey: node.key });
-      }
+    }
+    for (const thread of input.ungrouped
+      .filter((thread) => input.projectKeyOf(thread) === projectKey)
+      .toSorted((a, b) => sidebarActivityMs(b) - sidebarActivityMs(a))) {
+      entries.push({ kind: "thread", thread, groupKey: null });
     }
   }
   return entries;

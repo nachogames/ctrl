@@ -1,3 +1,6 @@
+import * as Schema from "effect/Schema";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { HostPullRequestReview } from "./review/HostPullRequestReview";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
@@ -191,7 +194,8 @@ import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
-type DetailTab = "summary" | "review" | "guide" | "timeline" | "code";
+const DetailTabSchema = Schema.Literals(["summary", "review", "guide", "timeline", "code"]);
+type DetailTab = typeof DetailTabSchema.Type;
 
 /** Said as the thing that did not happen, rather than as the operation that returned an error. */
 const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
@@ -505,7 +509,11 @@ export function PullRequestDetailPanel({
   const [threadPickerOpen, setThreadPickerOpen] = useState(false);
   // Counted up by the guide's last stop to open the composer on the review.
   const [openReviewRequest, setOpenReviewRequest] = useState(0);
-  const [tab, setTab] = useState<DetailTab>("summary");
+  const [tab, setTab] = useLocalStorage<DetailTab, DetailTab>(
+    `t3code:pr-detail-tab:${JSON.stringify([environmentId, reference.host?.toLowerCase() ?? "", reference.repository.toLowerCase(), reference.number])}`,
+    "summary",
+    DetailTabSchema,
+  );
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
@@ -535,7 +543,9 @@ export function PullRequestDetailPanel({
   const guideOpenRequested = useGuideRunStore(
     (state) => state.openRequestKey === guideRunKey(environmentId, reference),
   );
-  if (guideOpenRequested && tab !== "guide") setTab("guide");
+  useEffect(() => {
+    if (guideOpenRequested && tab !== "guide") setTab("guide");
+  }, [guideOpenRequested, tab, setTab]);
   useEffect(() => {
     if (guideOpenRequested) useGuideRunStore.getState().requestOpen(null);
   }, [guideOpenRequested]);
@@ -552,7 +562,9 @@ export function PullRequestDetailPanel({
       target.repository.toLowerCase() === reference.repository.toLowerCase()
     );
   });
-  if (reviewOpenRequested && tab !== "review") setTab("review");
+  useEffect(() => {
+    if (reviewOpenRequested && tab !== "review") setTab("review");
+  }, [reviewOpenRequested, tab, setTab]);
   useEffect(() => {
     if (reviewOpenRequested) useReviewPointFocusStore.getState().clearOpenRequest();
   }, [reviewOpenRequested]);
@@ -1589,7 +1601,7 @@ export function PullRequestDetailPanel({
   // the summary rather than left looking at a panel that is no longer reachable.
   useEffect(() => {
     if (!visibleTabs.some((item) => item.value === tab)) setTab("summary");
-  }, [tab, visibleTabs]);
+  }, [tab, visibleTabs, setTab]);
   // Two questions, both of which have to say yes: whether this host can do it at all, and
   // whether this account may. A reader with read access on someone else's project sees the pull
   // request and none of the buttons that would only ever be refused.
@@ -2966,6 +2978,16 @@ export function PullRequestDetailPanel({
                   environmentId={environmentId}
                   threadRef={threadRef}
                   reference={reference}
+                  fallback={
+                    <HostPullRequestReview
+                      detail={detail}
+                      environmentId={environmentId}
+                      loading={activityPending}
+                      error={activityError}
+                      onRetry={activityQuery.refresh}
+                      onSetup={() => setThreadPickerOpen(true)}
+                    />
+                  }
                 />
               </div>
             ) : null}

@@ -9,7 +9,7 @@ export function reviewBrief(session: ReviewSession): string {
   const pr = session.pullRequest.number;
   return `# Review brief: ${session.url}
 
-The review list is the memory, not the chat. Call review_session_read at the start of every turn and write every conclusion to the list. The user works through it in the Review tab of the pull request panel: each point has a Viewed box, a Fix/Decline toggle and the reply you drafted.
+The review list is the memory, not the chat. Pass sessionId "${session.id}" on every review tool call so other PR reviews in the group remain separate. Call review_session_read at the start of every turn and write every conclusion to the list. The user works through it in the Review tab of the pull request panel: each point has a Viewed box, a Fix/Decline toggle and the reply you drafted.
 
 This brief holds for every round of the review. "The current round" below is session.round as review_session_read returns it at the start of the turn; a Triage or Apply request names the same round. Wherever a step shows <session.round>, put that number.
 
@@ -48,21 +48,28 @@ If the round has no local review yet, offer to run one; review_local_review_star
 
 ## Apply (when asked, after the user confirmed in the panel)
 1. review_session_read. Apply only the current round's live points (lastSeenRound equal to session.round, not stale, not resolved on GitHub, not a Copilot overview); every one is viewed.
-2. For each fix point, in number order:
+2. Before any GitHub write, call review_items_record_apply with applyState "working" on the first selected point to enforce the apply gate; stop if refused. Before editing or pushing, publish local findings as inline GitHub review threads on the reviewed head. The user's Apply authorizes this for their own PR. For an external PR, do not edit or push; prepare a pending review and leave submission to the user unless explicitly authorized.
+   - For every point whose sources include local-review, first reuse its existing githubThreadIds. A problem already raised by Copilot or a human gets a reply on that existing thread, not a duplicate self-review thread.
+   - For local-only points without a thread, verify path, line and LEFT/RIGHT side against the PR diff at session.headSha. Confirm the remote head still matches; if it changed, stop and reverify. Do this before fixes move or remove the referenced lines.
+   - The review body is only "Self-review, round <session.round>". The findings belong in its comments array, each with path, line, side and body. Use event COMMENT on the user's own PR, never approve or request changes. Do not publish an empty review or a summary-only substitute.
+   - Each inline comment uses this Markdown structure: a descriptive title, **Problem**, **Impact**, **Proposed solution**. Copy the point's verified explanation into those sections. Include a hidden marker \`<!-- ctrl-review:<session.id>:<session.round>:<item.number> -->\` for retry recovery. Do not use bare #N labels on GitHub: GitHub treats them as issue links, not Ctrl finding numbers.
+   - Before posting, read all review-thread/comment pages and look for those markers. After an ambiguous API failure, read them again before retrying. Reuse matching threads instead of posting twice.
+   - Build a JSON file with commit_id set to the reviewed SHA, event "COMMENT", the short review body, and comments: [{path, line, side, body}]. Send it with \`gh api --method POST "repos/{owner}/{repo}/pulls/${pr}/reviews" --input /path/to/review.json\`. An external pending review omits event. For external PRs, stop after preparing the pending review; do not continue to the editing, pushing, replying or resolving steps below.
+   - Fetch the review threads and match the markers to their GraphQL thread node IDs (not numeric comment IDs). Persist each mapping immediately with review_items_record_apply, githubThreadIds and applyState "working", preserving the point's decision and drafted reply. On retries use the saved IDs or recover the markers.
+   - If GitHub cannot anchor a point to its referenced diff, report which point and why. Do not invent a nearby line, silently replace it with a summary, or mark it replied/resolved. Leave it pending for the user.
+3. For each fix point, in number order:
    - call review_items_record_apply with applyState "working";
    - make the change;
    - call review_items_annotate with a conclusion (what changed, one or two sentences) and update draftReply if the fix differs from it.
-3. Run the smallest proof the repository's AGENTS.md asks for. Never run repo-wide checks.
-4. Commit with a conventional message naming the points, for example \`fix: review round <session.round> (#1, #4)\`, then git push. Never push with --force or --force-with-lease. If a check fails or the push is rejected, stop, record nothing as fixed, and tell the user.
-5. Call review_items_record_apply with applyState "fixed" for each fix point.
-6. Post the user's own review as a record. Use event COMMENT, never approve or request changes. The body starts "Self-review, round <session.round>" and has one line per point whose sources include local-review: "#N summary: Fixed in <short sha>. <conclusion>" or "#N summary: Not changing. <reason or skipReason>".
-   \`jq -n --arg commit "$(git rev-parse HEAD)" --arg body "$BODY" '{commit_id: $commit, event: "COMMENT", body: $body}' | gh api --method POST "repos/{owner}/{repo}/pulls/${pr}/reviews" --input -\`
-7. Reply on every GitHub thread of every point with its draftReply:
+4. Run the smallest proof the repository's AGENTS.md asks for. Never run repo-wide checks.
+5. Commit with a conventional message naming the points, for example \`fix: review round <session.round> (#1, #4)\`, then git push. Never push with --force or --force-with-lease. If a check fails or the push is rejected, stop, record nothing as fixed, and tell the user.
+6. Call review_items_record_apply with applyState "fixed" for each fix point only after the push succeeds.
+7. Reply on every GitHub thread of every triaged point, including newly published self-review threads and declined points. The reply states "Fixed in <short sha>" with the actual change and verification, or "Not changing" with the agreed reason. Use the saved conclusion and draftReply; replace Ctrl #N references with descriptive names or actual thread links. Check existing replies before retrying so an already-posted reply is not duplicated.
    \`gh api graphql -f query='mutation($thread: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $thread, body: $body}) { comment { url } } }' -f thread="$THREAD_ID" -f body="$REPLY"\`
-   When every thread of a point has its reply, call review_items_record_apply with applyState "replied". A point with no thread gets "replied" once it is listed in the posted review.
-8. Resolve a thread only when its first comment's author is the pull request's author, Copilot (copilot-pull-request-reviewer or Copilot) or Claude (claude or claude[bot]). Never resolve a human reviewer's thread: a reply is all it gets.
+   When every thread of a point has its verified reply, call review_items_record_apply with applyState "replied". Publishing the finding itself does not count as replying.
+8. Resolve a thread only when its first comment's author is the pull request's author, Copilot (copilot-pull-request-reviewer or Copilot) or Claude (claude or claude[bot]), and repository policy permits it. Never resolve a human reviewer's thread: a reply is all it gets. Resolve newly created self-review threads after their fixed/declined reply, not before.
    \`gh api graphql -f query='mutation($thread: ID!) { resolveReviewThread(input: {threadId: $thread}) { thread { isResolved } } }' -f thread="$THREAD_ID"\`
-   When every thread of a point is resolved, call review_items_record_apply with applyState "resolved".
+   Verify the response. When every thread of a point is resolved, call review_items_record_apply with applyState "resolved". Refresh from GitHub before advancing; a failed publication, reply or resolution stays incomplete.
 
 ## Next round
 1. Re-request Copilot on the new head with \`gh api --method POST "repos/{owner}/{repo}/pulls/${pr}/requested_reviewers" -f 'reviewers[]=copilot-pull-request-reviewer[bot]'\`. Verify it appears in the requested_reviewers response. If GitHub refuses or does not list Copilot, ask the user to request it from the PR’s Reviewers menu and carry on.

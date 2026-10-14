@@ -6,6 +6,8 @@ const state = vi.hoisted(() => ({
   workflow: null as unknown,
 }));
 
+vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+
 vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeThreadRef: () => ({}) as never,
 }));
@@ -20,6 +22,7 @@ vi.mock("../../state/entities", () => ({
 
 vi.mock("../../state/threads", () => ({
   threadEnvironment: {
+    resumeThreadQueue: { permissionAtom: () => ({}) },
     cancelQueuedRun: Symbol("cancelQueuedRun"),
     promoteQueuedRun: Symbol("promoteQueuedRun"),
     reorderQueuedRun: Symbol("reorderQueuedRun"),

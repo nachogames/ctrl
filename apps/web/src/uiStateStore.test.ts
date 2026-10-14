@@ -24,6 +24,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    groupOrder: [],
     groupExpandedById: {},
     sidebarProjectScopeKey: null,
     sidebarEnvironmentScopeId: null,
@@ -197,6 +198,7 @@ describe("parsePersistedState", () => {
     });
 
     expect(parsed).toEqual({
+      groupOrder: [],
       projectExpandedById: {
         logical: false,
       },
@@ -329,6 +331,14 @@ describe("uiStateStore persistence", () => {
     vi.unstubAllGlobals();
   });
 
+  it("persists and restores manual group placement", () => {
+    const state = makeUiState({ groupOrder: ["env:group-b", "env:group-a"] });
+    persistState(state);
+    expect(
+      parsePersistedState(JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY)!))?.groupOrder,
+    ).toEqual(state.groupOrder);
+  });
+
   it("persists raw UI preferences including thread visit markers", () => {
     const state = makeUiState({
       projectExpandedById: {
@@ -354,6 +364,7 @@ describe("uiStateStore persistence", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(persisted).toEqual({
+      groupOrder: [],
       projectExpandedById: {
         logical: false,
       },

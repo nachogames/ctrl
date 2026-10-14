@@ -940,7 +940,9 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
         run.status === "waiting",
     )?.id;
     if (runId === undefined) {
-      const latestRun = projection.runs.at(-1);
+      // Queued messages have no provider turn to interrupt. Target the last
+      // started run, which owns the background work shown beside the queue.
+      const latestRun = projection.runs.findLast((run) => run.status !== "queued");
       if (
         derivePendingBackgroundWork({
           latestRun,

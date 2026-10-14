@@ -576,6 +576,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
         ? ["Project order"]
         : []),
+      ...(settings.sidebarSoloGroupsEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarSoloGroupsEnabled
+        ? ["Show single chats as groups"]
+        : []),
       ...(settings.sidebarWorkingShelfEnabled !==
       DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
         ? ["Working section"]
@@ -716,6 +719,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.snoozeLimitedThreads,
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
+      settings.sidebarSoloGroupsEnabled,
       settings.sidebarWorkingShelfEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -817,6 +821,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      sidebarSoloGroupsEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarSoloGroupsEnabled,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -2396,6 +2401,33 @@ export function GeneralSettingsPanel() {
                 updateSettings({ snoozeLimitedThreads: Boolean(checked) })
               }
               aria-label="Snooze limited threads"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("solo-groups")}
+          description="Show an expandable group even when it contains only one chat in the web and desktop sidebar."
+          resetAction={
+            settings.sidebarSoloGroupsEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarSoloGroupsEnabled ? (
+              <SettingResetButton
+                label="single-chat groups"
+                onClick={() =>
+                  updateSettings({
+                    sidebarSoloGroupsEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarSoloGroupsEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarSoloGroupsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarSoloGroupsEnabled: Boolean(checked) })
+              }
+              aria-label="Show single chats as groups"
             />
           }
         />

@@ -1,4 +1,8 @@
-import { OrchestratorMcpFailure, type ReviewSessionError } from "@t3tools/contracts";
+import {
+  OrchestratorMcpFailure,
+  type ReviewSessionId,
+  type ReviewSessionError,
+} from "@t3tools/contracts";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 import * as Effect from "effect/Effect";
@@ -56,14 +60,15 @@ const callingChat = Effect.gen(function* () {
 });
 
 /** The review this chat works on, and its role in it. */
-const reviewAccess = Effect.gen(function* () {
-  const caller = yield* callingChat;
-  const sessions = yield* ReviewSessionService.ReviewSessionService;
-  const access = yield* sessions
-    .resolveForThread({ threadId: caller.id, groupId: caller.groupId ?? null })
-    .pipe(Effect.catch(reviewFailure));
-  return { ...access, caller };
-});
+const reviewAccess = (input: { readonly sessionId?: ReviewSessionId | undefined }) =>
+  Effect.gen(function* () {
+    const caller = yield* callingChat;
+    const sessions = yield* ReviewSessionService.ReviewSessionService;
+    const access = yield* sessions
+      .resolveForThread({ threadId: caller.id, groupId: caller.groupId ?? null, ...input })
+      .pipe(Effect.catch(reviewFailure));
+    return { ...access, caller };
+  });
 
 const LOCAL_ONLY =
   "This chat runs your independent review: it may not read the list (it holds the other reviews' comments) and may only hand in findings with review_source_submit.";
@@ -131,9 +136,9 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
       };
     }),
   ),
-  review_session_read: McpToolAccess.readsAsCaller(() =>
+  review_session_read: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
-      const access = yield* reviewAccess;
+      const access = yield* reviewAccess(input);
       if (access.role === "local") return yield* invalid(LOCAL_ONLY);
       const sessions = yield* ReviewSessionService.ReviewSessionService;
       const view = yield* sessions
@@ -154,7 +159,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
   ),
   review_source_submit: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const access = yield* reviewAccess;
+      const access = yield* reviewAccess(input);
       if (access.role !== "local" || access.localSourceId === null) {
         return yield* invalid("Only the chat your local review runs in hands in its findings.");
       }
@@ -176,9 +181,9 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
       return { source };
     }),
   ),
-  review_local_review_start: McpToolAccess.actsAsCaller(() =>
+  review_local_review_start: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const access = yield* reviewAccess;
+      const access = yield* reviewAccess(input);
       yield* requireReviewChat(access, "starting a review");
       const sessions = yield* ReviewSessionService.ReviewSessionService;
       return yield* sessions
@@ -188,7 +193,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
   ),
   review_items_import: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const access = yield* reviewAccess;
+      const access = yield* reviewAccess(input);
       yield* requireReviewChat(access, "triage");
       const sessions = yield* ReviewSessionService.ReviewSessionService;
       const result = yield* sessions
@@ -220,7 +225,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
   ),
   review_items_annotate: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const access = yield* reviewAccess;
+      const access = yield* reviewAccess(input);
       yield* requireItemInScope(access, input.number);
       const sessions = yield* ReviewSessionService.ReviewSessionService;
       const { number, ...annotation } = input;
@@ -232,7 +237,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
   ),
   review_items_decide: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const access = yield* reviewAccess;
+      const access = yield* reviewAccess(input);
       yield* requireItemInScope(access, input.number);
       const sessions = yield* ReviewSessionService.ReviewSessionService;
       const item = yield* sessions
@@ -249,7 +254,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
   ),
   review_items_record_apply: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const access = yield* reviewAccess;
+      const access = yield* reviewAccess(input);
       yield* requireReviewChat(access, "applying");
       const sessions = yield* ReviewSessionService.ReviewSessionService;
       const item = yield* sessions
@@ -257,6 +262,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           sessionId: access.session.id,
           number: input.number,
           applyState: input.applyState,
+          githubThreadIds: input.githubThreadIds,
           conclusion: input.conclusion,
           draftReply: input.draftReply,
         })
@@ -266,7 +272,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
   ),
   review_round_advance: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const access = yield* reviewAccess;
+      const access = yield* reviewAccess(input);
       yield* requireReviewChat(access, "running rounds");
       const sessions = yield* ReviewSessionService.ReviewSessionService;
       return yield* sessions

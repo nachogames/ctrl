@@ -745,8 +745,22 @@ describe("V2 environment commands", () => {
           },
         ],
       };
+      // A later queued message must not steal Stop from the command owner.
+      const withQueue = {
+        ...projection,
+        runs: [
+          ...projection.runs,
+          {
+            ...projection.runs[0]!,
+            id: RunId.make("queued-after-background"),
+            ordinal: 2,
+            status: "queued" as const,
+            startedAt: null,
+          },
+        ],
+      };
       const commands: OrchestrationV2Command[] = [];
-      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projection: withQueue });
 
       const result = yield* interruptThreadTurn({ threadId: v2ThreadId }).pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),

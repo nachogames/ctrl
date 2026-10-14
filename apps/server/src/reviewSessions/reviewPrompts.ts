@@ -123,13 +123,13 @@ export function reviewRequestText(input: {
   const { session, request } = input;
   switch (request._tag) {
     case "triage":
-      return `Triage round ${session.round} of the review of ${session.url}: ${input.sources.map(reviewSourceName).join(", ")}. Read the list with review_session_read and follow the brief's triage steps.`;
+      return `Triage round ${session.round} of the review of ${session.url}: ${input.sources.map(reviewSourceName).join(", ")}. Use sessionId "${session.id}" on every review tool call. Read the list with review_session_read and follow the brief's triage steps.`;
     case "apply":
-      return `Apply round ${session.round} of the review of ${session.url}. Every point is viewed. Call review_session_open with this URL to reload the brief, then follow its apply steps.`;
+      return `Apply round ${session.round} of the review of ${session.url}. Every point is viewed. Use sessionId "${session.id}" on every review tool call. Call review_session_open with this URL to reload the brief, then follow its apply steps.`;
     case "rewrite-reply":
       return formatReviewPointTag(
         { number: request.number, label: input.item?.shortName ?? "point" },
-        `Rewrite the reply draft on #${request.number}: ${REWRITE_STYLE[request.style]}. Save it with review_items_annotate (draftReply) and change nothing else.`,
+        `Rewrite the reply draft on #${request.number}: ${REWRITE_STYLE[request.style]}. Save it with review_items_annotate (draftReply), passing sessionId "${session.id}" on every review tool call, and change nothing else.`,
       );
   }
 }

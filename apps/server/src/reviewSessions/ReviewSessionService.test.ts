@@ -743,3 +743,50 @@ it.effect(
       assert.equal(saved[1]?.decision, "needs-call");
     }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
+
+it.effect("persists inline self-review thread IDs during apply and merges retries", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({
+      sessionId,
+      sourceIds: [],
+      items: [
+        importItem("local:file:issue", {
+          githubThreadIds: ["PRRT_existing"],
+          suggestedDecision: "fix",
+          draftReply: "Fixed with a guard.",
+        }),
+      ],
+    });
+    yield* reviews.setViewed({ sessionId, number: 1, viewed: true });
+    yield* reviews.recordApply({
+      sessionId,
+      number: 1,
+      applyState: "working",
+      githubThreadIds: ["PRRT_self"],
+    });
+    yield* reviews.recordApply({
+      sessionId,
+      number: 1,
+      applyState: "working",
+      githubThreadIds: ["PRRT_self"],
+    });
+    const item = (yield* reviews.read(sessionId)).items[0]!;
+    assert.deepEqual(item.githubThreadIds, ["PRRT_existing", "PRRT_self"]);
+    assert.equal(item.decision, "fix");
+    assert.equal(item.draftReply, "Fixed with a guard.");
+    yield* reviews.recordApply({ sessionId, number: 1, applyState: "fixed" });
+    const blocked = yield* Effect.flip(
+      reviews.advanceRound({ sessionId, headSha: "fixed-sha", finish: false }),
+    );
+    assert.include(blocked.message, "#1");
+    yield* reviews.recordApply({ sessionId, number: 1, applyState: "replied" });
+    yield* reviews.recordApply({ sessionId, number: 1, applyState: "resolved" });
+    assert.deepEqual((yield* reviews.read(sessionId)).items[0]!.githubThreadIds, [
+      "PRRT_existing",
+      "PRRT_self",
+    ]);
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);

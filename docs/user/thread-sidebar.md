@@ -81,8 +81,10 @@ thread is over takes the accent color. Section labels also
 identify empty sections and a collapsed settled shelf.
 
 Drag within the pinned section to change its order. Other rows slide aside to show the spot
-where the thread will land. On web and desktop, the active list is grouped by project and
-sorted by recent activity, so a thread dropped there lands at its place in that order. On
+where the thread will land. On web and desktop, projects and chat groups keep their placement.
+Use **Move project up/down** or **Move group up/down** in their context menus to arrange them;
+that placement is saved on this client. Chats within each group, and ungrouped chats within a
+project, sort by recent conversation activity. On
 mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
@@ -132,10 +134,10 @@ A chat group holds the chats that work toward one goal, such as a planning chat 
 that build and review its work. Chats in a group share a project and a workspace: the group's
 branch, worktree, and pull request. Groups are available on web and desktop.
 
-Every chat has a **Group** panel, even one on its own (see below). A group shows up in the sidebar
-only once it holds two chats. Until then the chat looks like any other, and setting a goal or
-linking a ticket on it still works. If a group drops back to one chat, that chat becomes a plain
-chat again and the group's pin, snooze, or settled state is cleared.
+Every chat has a **Group** panel, even one on its own (see below). By default, single chats
+also appear as expandable groups in the sidebar. Turn off **Settings → General → Show single
+chats as groups** to keep a plain chat row until a second chat joins. This changes presentation
+only and does not change saved group membership.
 
 Groups only form when you ask for one:
 
@@ -159,9 +161,10 @@ the chat to the group's branch and worktree. A busy chat cannot switch.
 
 Chats in a group sit under the group's row: in the active list beneath their project, or in
 **Pinned**, **Snoozed**, or **Settled** wherever the group is. Click the row to show or hide its
-chats; the group with the open chat stays open. Drag a chat within an expanded group to reorder
-it; the order is saved and follows you across devices. New chats and chats joining a group go to
-the top. A collapsed group shows its pull request number
+chats; the group with the open chat stays open. On web and desktop, the chat with the most
+recent activity appears first without moving the group itself. On mobile, drag chats within an
+expanded group to arrange them manually; that saved member order follows other mobile clients.
+New chats appear at the top. A collapsed group shows its pull request number
 and its most urgent status, and hovering it shows how many chats it holds. A chat that was handed
 off is dimmed.
 
@@ -188,7 +191,7 @@ same worktree, the panel says so and offers **Group them**. Nothing is grouped a
 Right-click a group to rename, pin, snooze, settle, or ungroup it. Settling a group settles its
 chats, and un-settling it brings them back. A group also settles on its own once every chat in it
 is settled. In a grouped chat's menu, **Pin group** and **Snooze group** act on the whole group,
-while **Settle thread** still acts on that chat. **Remove from group** takes one chat out and
+while **Settle thread** moves just that chat into **Settled**. Reopening it returns it to its group. **Remove from group** takes one chat out and
 leaves it on its current branch and worktree. **Ungroup** removes the group and keeps every chat
 where it is.
 

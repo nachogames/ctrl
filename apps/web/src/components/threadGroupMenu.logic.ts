@@ -3,6 +3,8 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 
 /** Ids for a chat group's right-click menu. Snooze presets dispatch as `snooze-group:<presetId>`. */
 export type ThreadGroupMenuId =
+  | "move-group-up"
+  | "move-group-down"
   | "new-chat-in-group"
   | "rename-group"
   | "pin-group"

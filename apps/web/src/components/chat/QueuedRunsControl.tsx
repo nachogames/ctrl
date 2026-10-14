@@ -1,3 +1,5 @@
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { useEnvironmentScope } from "../../state/session";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -70,6 +72,9 @@ export function QueuedRunsControl({
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
+  const canResume = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
+  const [resuming, setResuming] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -263,12 +268,39 @@ export function QueuedRunsControl({
           <ComposerBanner.Icon>
             <ListOrderedIcon />
           </ComposerBanner.Icon>
-          <ComposerBanner.Content className="text-muted-foreground">Queued</ComposerBanner.Content>
+          <ComposerBanner.Content className="text-muted-foreground">
+            {workflow?.isHeld ? "Queue paused" : "Queued"}
+          </ComposerBanner.Content>
           <ComposerBanner.Actions>
             <ComposerBanner.Count>{items.length}</ComposerBanner.Count>
             <ComposerBanner.ToggleIcon expanded={expanded} />
           </ComposerBanner.Actions>
         </ComposerBanner.Row>
+        {workflow?.isHeld && (
+          <ComposerBanner.Row>
+            <ComposerBanner.Content>Paused after a stop or interruption.</ComposerBanner.Content>
+            <ComposerBanner.Actions>
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={!canResume || resuming}
+                onClick={async () => {
+                  setResuming(true);
+                  try {
+                    await resume({
+                      environmentId: props.environmentId,
+                      input: { threadId: props.threadId },
+                    });
+                  } finally {
+                    setResuming(false);
+                  }
+                }}
+              >
+                {resuming ? "Resuming…" : "Resume queue"}
+              </Button>
+            </ComposerBanner.Actions>
+          </ComposerBanner.Row>
+        )}
         <ComposerBanner.Scroll className={cn("max-h-32", !expanded && "hidden")}>
           <ComposerBanner.Children render={<ol />} id={queueListId}>
             {items.map((item) => {

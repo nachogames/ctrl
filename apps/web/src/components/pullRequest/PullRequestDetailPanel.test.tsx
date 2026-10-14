@@ -230,7 +230,18 @@ let renderer: ReactTestRenderer;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+  const events = new EventTarget();
+  const storage = new Map<string, string>();
+  vi.stubGlobal("window", {
+    addEventListener: events.addEventListener.bind(events),
+    removeEventListener: events.removeEventListener.bind(events),
+    dispatchEvent: events.dispatchEvent.bind(events),
+    localStorage: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    },
+  });
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
   newThread
     .mockReset()
@@ -344,6 +355,21 @@ describe.each([
     expect(
       renderer.root.findAll((node) => node.props["data-test-review-tab"] === "shown"),
     ).toHaveLength(1);
+  });
+
+  it("restores the selected Review tab after leaving and reopening the panel", async () => {
+    await act(async () => render());
+    await click("Review");
+    await act(async () => renderer.unmount());
+    await act(async () => render());
+    const selected = renderer.root
+      .findAllByType("button")
+      .find(
+        (node) =>
+          node.props["aria-pressed"] === true &&
+          node.findAll((child) => child.children.includes("Review")).length > 0,
+      );
+    expect(selected).toBeDefined();
   });
 
   it.each(actions)("%s writes to the correct composer", async (action) => {

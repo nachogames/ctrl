@@ -2615,6 +2615,60 @@ describe("partitionThreadsByGroup", () => {
     expect(result.byGroup.get(remoteKey)).toEqual([remote]);
   });
 
+  it("moves an individually settled member out of its group and restores it when reopened", () => {
+    const active = makeThread({ id: ThreadId.make("active-member"), groupId });
+    const settled = makeThread({
+      id: ThreadId.make("settled-member"),
+      groupId,
+      settledOverride: "settled",
+    });
+    const key = threadGroupKey({ environmentId: localEnvironmentId, groupId });
+    const groups = new Map([
+      [key, makeGroup({ threadIds: [active.id, settled.id], visible: true })],
+    ]);
+    const result = partitionThreadsByGroup({ threads: [active, settled], groups });
+    expect(result.byGroup.get(key)).toEqual([active]);
+    expect(result.ungrouped).toEqual([settled]);
+    const reopened = { ...settled, settledOverride: "active" as const };
+    expect(
+      partitionThreadsByGroup({ threads: [active, reopened], groups }).byGroup.get(key),
+    ).toEqual([active, reopened]);
+    expect(partitionThreadsByGroup({ threads: [settled], groups }).byGroup.size).toBe(0);
+  });
+
+  it("keeps an explicitly settled group together in the settled shelf", () => {
+    const member = makeThread({ groupId, settledOverride: "settled" });
+    const key = threadGroupKey({ environmentId: localEnvironmentId, groupId });
+    const group = makeGroup({
+      threadIds: [member.id],
+      visible: true,
+      settledAt: "2026-03-09T10:00:00.000Z",
+    });
+    const result = partitionThreadsByGroup({ threads: [member], groups: new Map([[key, group]]) });
+    expect(result.byGroup.get(key)).toEqual([member]);
+    expect(result.ungrouped).toEqual([]);
+  });
+
+  it("shows a singleton group when enabled without losing its member", () => {
+    const lone = makeThread({ groupId });
+    const key = threadGroupKey({ environmentId: localEnvironmentId, groupId });
+    const groups = new Map([[key, makeGroup({ threadIds: [lone.id] })]]);
+    const shown = partitionThreadsByGroup({
+      threads: [lone],
+      groups,
+      showSingleThreadGroups: true,
+    });
+    expect(shown.byGroup.get(key)).toEqual([lone]);
+    expect(shown.ungrouped).toEqual([]);
+    const hidden = partitionThreadsByGroup({
+      threads: [lone],
+      groups,
+      showSingleThreadGroups: false,
+    });
+    expect(hidden.ungrouped).toEqual([lone]);
+    expect(hidden.byGroup.size).toBe(0);
+  });
+
   it("renders a hidden group's lone chat ungrouped, in the chat's own section", () => {
     const lone = makeThread({ groupId, pinnedAt: null });
     const key = threadGroupKey({ environmentId: localEnvironmentId, groupId });
@@ -2683,7 +2737,7 @@ describe("buildSidebarActiveTree", () => {
           : `thread:${entry.thread.id}${entry.groupKey === null ? "" : `@${entry.groupKey}`}`,
     );
 
-  it("orders projects by their newest item", () => {
+  it("keeps projects in manual order regardless of activity", () => {
     const tree = buildSidebarActiveTree({
       ungrouped: [
         item("old", "a", "2026-03-09T10:00:00.000Z"),
@@ -2693,7 +2747,7 @@ describe("buildSidebarActiveTree", () => {
       projectKeyOf,
       isExpanded: () => false,
     });
-    expect(describeTree(tree)).toEqual(["project:b", "thread:new", "project:a", "thread:old"]);
+    expect(describeTree(tree)).toEqual(["project:a", "thread:old", "project:b", "thread:new"]);
   });
 
   it("puts a group with a newer member above an older ungrouped chat", () => {
@@ -2712,7 +2766,7 @@ describe("buildSidebarActiveTree", () => {
     expect(describeTree(tree)).toEqual(["project:a", "group:g1", "thread:loose"]);
   });
 
-  it("emits members after an expanded group in threadIds order, and none for a collapsed one", () => {
+  it("emits members after an expanded group by latest chat activity, and none for a collapsed one", () => {
     const members = [
       item("first", "a", "2026-03-09T10:00:00.000Z"),
       item("second", "a", "2026-03-09T12:00:00.000Z"),
@@ -2725,14 +2779,51 @@ describe("buildSidebarActiveTree", () => {
     expect(describeTree(buildSidebarActiveTree({ ...input, isExpanded: () => true }))).toEqual([
       "project:a",
       "group:g1",
-      "thread:first@g1",
       "thread:second@g1",
+      "thread:first@g1",
       "thread:loose",
     ]);
     expect(describeTree(buildSidebarActiveTree({ ...input, isExpanded: () => false }))).toEqual([
       "project:a",
       "group:g1",
       "thread:loose",
+    ]);
+  });
+
+  it("keeps manual project and group positions when a member chats", () => {
+    const input = {
+      ungrouped: [item("b", "b", "2026-03-09T10:00:00.000Z")],
+      groups: [
+        {
+          key: "g1",
+          group: group("g1", "a"),
+          members: [item("one", "a", "2026-03-09T10:00:00.000Z")],
+        },
+        {
+          key: "g2",
+          group: group("g2", "a"),
+          members: [item("two", "a", "2026-03-09T12:00:00.000Z")],
+        },
+      ],
+      projectOrder: ["b", "a"],
+      groupOrder: ["g1", "g2"],
+      projectKeyOf,
+      isExpanded: () => true,
+    };
+    const before = describeTree(buildSidebarActiveTree(input));
+    input.groups[1]!.members[0] = {
+      ...input.groups[1]!.members[0]!,
+      latestUserMessageAt: "2026-03-10T12:00:00.000Z",
+    };
+    expect(describeTree(buildSidebarActiveTree(input))).toEqual(before);
+    expect(before).toEqual([
+      "project:b",
+      "thread:b",
+      "project:a",
+      "group:g1",
+      "thread:one@g1",
+      "group:g2",
+      "thread:two@g2",
     ]);
   });
 

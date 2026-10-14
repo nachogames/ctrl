@@ -362,6 +362,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
+    id: "solo-groups",
+    title: "Show single chats as groups",
+    to: "/settings/general",
+    searchTerms: ["sidebar individual solo single thread expandable group"],
+  },
+  {
     id: "working-shelf",
     title: "Working section (beta)",
     to: "/settings/general",

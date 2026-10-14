@@ -1,3 +1,4 @@
+import { EnvironmentBatteryIndicator } from "./EnvironmentBatteryIndicator";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
@@ -196,6 +197,7 @@ import {
   isThreadGroupSnoozed,
   type ThreadGroupMenuId,
 } from "./threadGroupMenu.logic";
+import { SidebarSoloGroupRow } from "./sidebar/SidebarSoloGroupRow";
 import { SidebarGroupNewChatRow, SidebarGroupRow } from "./sidebar/SidebarGroupRow";
 import { SidebarProjectHeading } from "./sidebar/SidebarProjectHeading";
 import { indexThreadGroups, useThreadGroups } from "../state/threadGroups";
@@ -251,7 +253,6 @@ import {
   sidebarThreadKeyAtY,
   sortInboxThreadsByReturn,
   sortPinnedThreadsForSidebar,
-  sortSidebarV2ProjectGroups,
   sortThreadsForSidebar,
   sortWorkingThreadsBySend,
   useThreadJumpHintVisibility,
@@ -1738,13 +1739,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               )
             : cn(
                 "truncate group-focus-within/sidebar-row:text-foreground group-hover/sidebar-row:text-foreground",
-                shouldRecede
-                  ? "text-secondary-label/70"
+                variantAction === "unsettle" ||
+                  (props.tree === "member" && thread.handedOffTo != null && !props.isActive)
+                  ? "text-muted-foreground"
                   : props.isActive || isWoke || status === "input"
                     ? "text-foreground"
                     : isUnread
-                      ? "text-muted-foreground"
-                      : "text-secondary-label/70",
+                      ? "text-foreground"
+                      : "text-foreground/90",
               ),
           isRegeneratingTitle && "opacity-55",
         )}
@@ -1861,6 +1863,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             )}
           >
             {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
+          </span>
+        ) : null}
+        {topStatus && topStatus.icon !== "woke" ? (
+          <span
+            role="img"
+            aria-label={topStatus.label}
+            className={cn("inline-flex shrink-0", topStatus.className)}
+          >
+            {topStatus.icon === "working" ? (
+              <CircleDashedIcon className="size-4" />
+            ) : topStatus.icon === "input" ? (
+              <MessageCircleQuestionIcon className="size-4" />
+            ) : topStatus.icon === "approval" ? (
+              <ShieldQuestionIcon className="size-4" />
+            ) : topStatus.icon === "failed" ? (
+              <CircleAlertIcon className="size-4" />
+            ) : topStatus.icon === "done" ? (
+              <CircleCheckIcon className="size-4" />
+            ) : (
+              <ClockIcon className="size-4" />
+            )}
           </span>
         ) : null}
         {draftIndicator}
@@ -2520,6 +2543,7 @@ interface SidebarGroupEntry {
 export default function Sidebar() {
   const allProjects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const groupOrder = useUiStateStore((store) => store.groupOrder);
   const allThreads = useThreadShells();
   const allThreadGroups = useThreadGroups();
   const environments = useEnvironmentIdentities();
@@ -2553,8 +2577,8 @@ export default function Sidebar() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
-  const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
+  const soloGroupsEnabled = useClientSettings((s) => s.sidebarSoloGroupsEnabled);
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
@@ -2694,25 +2718,15 @@ export default function Sidebar() {
   const unsortedProjectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
+        projects: orderedProjects,
         groupScratchProjects: true,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
       }),
-    [
-      environmentLabelById,
-      orderedProjects,
-      primaryEnvironmentId,
-      projectGroupingSettings,
-      projects,
-      sidebarProjectSortOrder,
-    ],
+    [environmentLabelById, orderedProjects, primaryEnvironmentId, projectGroupingSettings],
   );
-  const projectGroups = useMemo(
-    () => sortSidebarV2ProjectGroups(unsortedProjectGroups, threads, sidebarProjectSortOrder),
-    [sidebarProjectSortOrder, threads, unsortedProjectGroups],
-  );
+  const projectGroups = unsortedProjectGroups;
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
@@ -3006,6 +3020,7 @@ export default function Sidebar() {
     const { ungrouped, byGroup } = partitionThreadsByGroup({
       threads: visible,
       groups: threadGroupByKey,
+      showSingleThreadGroups: soloGroupsEnabled,
     });
     // Returns are tracked across every machine so a filter flip does not
     // read hidden threads as gone.
@@ -3020,7 +3035,7 @@ export default function Sidebar() {
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
     const draggable = new Set<string>();
-    // The Active tree is time-ordered, so no Active row has a manual slot.
+    // Chats use activity order inside their project or group, so they have no manual slot.
     const activeReorderable = new Set<string>();
     for (const thread of ungrouped) {
       const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
@@ -3086,7 +3101,7 @@ export default function Sidebar() {
               preferredIds: optimisticGroupOrder.order,
               getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
             })
-          : canonicalMembers;
+          : canonicalMembers.toSorted((a, b) => sidebarActivityMs(b) - sidebarActivityMs(a));
       const section = resolveSidebarGroupSection({ group, members, now: preciseNow });
       sectionGroups[section].push({ key, group, members, section });
       for (const member of members) {
@@ -3166,6 +3181,7 @@ export default function Sidebar() {
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
+    soloGroupsEnabled,
     threadGroupByKey,
     threads,
     workingShelfEnabled,
@@ -3419,10 +3435,12 @@ export default function Sidebar() {
       buildSidebarActiveTree({
         ungrouped: activeThreads,
         groups: activeGroups,
+        projectOrder: projectGroups.map((project) => project.projectKey),
+        groupOrder,
         projectKeyOf: treeProjectKeyOf,
         isExpanded: isGroupExpanded,
       }),
-    [activeGroups, activeThreads, isGroupExpanded, treeProjectKeyOf],
+    [activeGroups, activeThreads, isGroupExpanded, treeProjectKeyOf, projectGroups, groupOrder],
   );
   // Rendered thread rows of the Active tree, in tree order.
   const activeTreeThreads = useMemo(
@@ -4331,9 +4349,8 @@ export default function Sidebar() {
       return resolveSidebarGroupReorder({
         activeItem: sidebarListItemById.get(activeKey),
         overItem: sidebarListItemById.get(overId),
-        supportsReorder:
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadGroupReorder ===
-          true,
+        // Activity owns member order; dragging still supports moving between groups.
+        supportsReorder: false,
       });
     },
     [serverConfigs, sidebarListItemById, threadByKey],
@@ -4411,7 +4428,7 @@ export default function Sidebar() {
       applySidebarThreadDrop(thread, "settled", dragState.occurredAt),
     ]).map(key);
   }, [dragState, settledThreads, threadByKey]);
-  // The Active tree is time-ordered, so the preview shows the slot a drop
+  // Chats use activity order, so the preview shows the slot a drop
   // will land in (the tree rebuilt with the lifted row), not the slot under
   // the pointer. Ids may include a project heading the drop would create.
   const draggedActiveOrder = useMemo(() => {
@@ -4425,10 +4442,21 @@ export default function Sidebar() {
         applySidebarThreadDrop(thread, "active", dragState.occurredAt),
       ],
       groups: activeGroups,
+      projectOrder: projectGroups.map((project) => project.projectKey),
+      groupOrder,
       projectKeyOf: treeProjectKeyOf,
       isExpanded: isGroupExpanded,
     }).map((entry) => sidebarListItemId(sidebarTreeEntryItem(entry)));
-  }, [activeGroups, activeThreads, dragState, isGroupExpanded, threadByKey, treeProjectKeyOf]);
+  }, [
+    activeGroups,
+    activeThreads,
+    dragState,
+    isGroupExpanded,
+    threadByKey,
+    treeProjectKeyOf,
+    projectGroups,
+    groupOrder,
+  ]);
   const sidebarSortingStrategy = useMemo(
     () =>
       createSidebarSortingStrategy({
@@ -4635,7 +4663,7 @@ export default function Sidebar() {
         activeOrder: activeKeys,
         activeKeysById,
         activeReorderableKeys: activeReorderableThreadKeys,
-        // The Active tree sorts by activity: drops change lifecycle only.
+        // Chat drops change lifecycle; project and group placement stays fixed.
         activeTimeOrdered: true,
       });
       if (plan.kind === "none") return;
@@ -5566,23 +5594,54 @@ export default function Sidebar() {
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            buildThreadGroupMenuItems({
-              canOperate: readEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope),
-              isPinned: group.pinnedAt !== null,
-              isSnoozed: isThreadGroupSnoozed(group, Date.now()),
-              isSettled: section === "settled",
-              supports: {
-                settlement: capabilities?.threadSettlement === true,
-                snooze: capabilities?.threadSnooze === true,
-                threadGroups: capabilities?.threadGroups === true,
-              },
-              snoozePresets,
-            }),
+            [
+              ...buildThreadGroupMenuItems({
+                canOperate: readEnvironmentScope(
+                  group.environmentId,
+                  AuthOrchestrationOperateScope,
+                ),
+                isPinned: group.pinnedAt !== null,
+                isSnoozed: isThreadGroupSnoozed(group, Date.now()),
+                isSettled: section === "settled",
+                supports: {
+                  settlement: capabilities?.threadSettlement === true,
+                  snooze: capabilities?.threadSnooze === true,
+                  threadGroups: capabilities?.threadGroups === true,
+                },
+                snoozePresets,
+              }),
+              ...(section === "active"
+                ? [
+                    { id: "move-group-up" as const, label: "Move group up" },
+                    { id: "move-group-down" as const, label: "Move group down" },
+                  ]
+                : []),
+            ],
             position,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         const action: ThreadGroupMenuId = clicked.value;
+        if (action === "move-group-up" || action === "move-group-down") {
+          const keys = activeTree
+            .filter(
+              (node) =>
+                node.kind === "group" && treeProjectKeyOf(node.group) === treeProjectKeyOf(group),
+            )
+            .map((node) => (node.kind === "group" ? node.groupKey : ""));
+          const index = keys.indexOf(groupKey);
+          const target = index + (action === "move-group-up" ? -1 : 1);
+          if (index >= 0 && target >= 0 && target < keys.length) {
+            [keys[index], keys[target]] = [keys[target]!, keys[index]!];
+            useUiStateStore
+              .getState()
+              .setGroupOrder([
+                ...keys,
+                ...useUiStateStore.getState().groupOrder.filter((key) => !keys.includes(key)),
+              ]);
+          }
+          return;
+        }
         if (action !== "open-group-panel" && !checkThreadOperations([group])) return;
         if (action.startsWith("snooze-group:")) {
           const preset =
@@ -5632,7 +5691,7 @@ export default function Sidebar() {
         }
       })();
     },
-    [groupActions, serverConfigs, timestampFormat],
+    [groupActions, serverConfigs, timestampFormat, activeTree, treeProjectKeyOf],
   );
   const handleProjectHeadingContextMenu = useCallback(
     (projectKey: string, position: { x: number; y: number }) => {
@@ -5649,16 +5708,48 @@ export default function Sidebar() {
                 label: isScoped ? "Show all projects" : `Filter by ${project.displayName}`,
                 icon: "folder-tree",
               },
+              { id: "move-project-up" as const, label: "Move project up" },
+              { id: "move-project-down" as const, label: "Move project down" },
             ],
             position,
           ),
         );
+        if (
+          clicked._tag === "Success" &&
+          (clicked.value === "move-project-up" || clicked.value === "move-project-down")
+        ) {
+          const visibleKeys = new Set(
+            activeTree
+              .filter((entry) => entry.kind === "project-heading")
+              .map((entry) => (entry.kind === "project-heading" ? entry.projectKey : "")),
+          );
+          const visibleProjects = projectGroups.filter((entry) =>
+            visibleKeys.has(entry.projectKey),
+          );
+          const index = visibleProjects.findIndex((entry) => entry.projectKey === projectKey);
+          const target = visibleProjects[index + (clicked.value === "move-project-up" ? -1 : 1)];
+          if (target)
+            useUiStateStore
+              .getState()
+              .reorderProjects(
+                orderedProjects.map(getProjectOrderKey),
+                project.memberProjects.map(getProjectOrderKey),
+                target.memberProjects.map(getProjectOrderKey),
+              );
+        }
         if (clicked._tag === "Success" && clicked.value === "filter-by-project") {
           setProjectScopeKey(isScoped ? null : projectKey);
         }
       })();
     },
-    [projectGroupByScopeKey, projectScopeKey, setProjectScopeKey],
+    [
+      projectGroupByScopeKey,
+      projectScopeKey,
+      setProjectScopeKey,
+      projectGroups,
+      orderedProjects,
+      activeTree,
+    ],
   );
 
   // Thread jump (cmd+1..9) and prev/next traversal reuse the same commands as
@@ -5835,7 +5926,12 @@ export default function Sidebar() {
                             key={environment.environmentId}
                             value={environment.environmentId}
                           >
-                            {environment.label}
+                            <span className="flex flex-1 items-center justify-between gap-3">
+                              <span>{environment.label}</span>
+                              <EnvironmentBatteryIndicator
+                                environmentId={environment.environmentId}
+                              />
+                            </span>
                           </MenuRadioItem>
                         ))}
                       </MenuRadioGroup>
@@ -6117,10 +6213,16 @@ export default function Sidebar() {
                         // their live status shows. The Active tree, group members and
                         // parked shelves are single-line rows.
                         const isCard =
-                          groupKey === null && (section === "pinned" || section === "working");
+                          !soloGroupsEnabled &&
+                          groupKey === null &&
+                          (section === "pinned" || section === "working");
                         const rowVariant = isCard ? "card" : "slim";
                         const tree =
-                          groupKey !== null ? "member" : section === "active" ? "root" : undefined;
+                          groupKey !== null || (soloGroupsEnabled && section !== "settled")
+                            ? "member"
+                            : section === "active"
+                              ? "root"
+                              : undefined;
                         return (
                           <SidebarThreadRow
                             // Fade between card and compact rows while the outer
@@ -6300,6 +6402,32 @@ export default function Sidebar() {
                       for (const [index, item] of sidebarListItems.entries()) {
                         pushNewChatRowAfter(index - 1);
                         if (item.kind === "thread") {
+                          const thread = threadByKey.get(item.key)!;
+                          if (
+                            soloGroupsEnabled &&
+                            item.groupKey == null &&
+                            item.section !== "settled"
+                          ) {
+                            const soloKey = `solo:${item.key}`;
+                            const expanded = groupExpandedById[soloKey] ?? true;
+                            items.push(
+                              <SidebarSoloGroupRow
+                                key={sidebarListItemId(item)}
+                                title={thread.title}
+                                expanded={expanded}
+                                onToggle={() => setGroupExpanded(soloKey, !expanded)}
+                                onContextMenu={(position) =>
+                                  handleThreadContextMenu(
+                                    scopeThreadRef(thread.environmentId, thread.id),
+                                    position,
+                                  )
+                                }
+                              >
+                                {renderThreadRow(thread, item.section, null)}
+                              </SidebarSoloGroupRow>,
+                            );
+                            continue;
+                          }
                           items.push(
                             renderThreadRow(
                               threadByKey.get(item.key)!,

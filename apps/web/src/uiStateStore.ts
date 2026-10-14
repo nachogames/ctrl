@@ -22,6 +22,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  groupOrder?: string[];
   groupExpandedById?: Record<string, boolean>;
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
@@ -49,6 +50,7 @@ export interface UiProjectState {
 
 export interface UiThreadState {
   // Keyed by threadGroupKey. Holds only open groups; collapsed is the default.
+  groupOrder: string[];
   groupExpandedById: Record<string, boolean>;
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
@@ -69,6 +71,7 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   sidebarProjectScopeKey: null,
+  groupOrder: [],
   groupExpandedById: {},
   sidebarEnvironmentScopeId: null,
   threadLastVisitedAtById: {},
@@ -157,6 +160,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    groupOrder: sanitizeStringArray(parsed.groupOrder),
     groupExpandedById: sanitizeBooleanRecord(parsed.groupExpandedById),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
@@ -237,6 +241,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        groupOrder: state.groupOrder,
         groupExpandedById: state.groupExpandedById,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
@@ -482,6 +487,7 @@ interface UiStateStore extends UiState {
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   setGroupExpanded: (key: string, expanded: boolean) => void;
+  setGroupOrder: (order: string[]) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
@@ -507,6 +513,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   setGroupExpanded: (key, expanded) => set((state) => setGroupExpanded(state, key, expanded)),
+  setGroupOrder: (order) => set({ groupOrder: order }),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),

@@ -169,6 +169,7 @@ export class ReviewSessionService extends Context.Service<
     }) => Effect.Effect<ReadonlyArray<ReviewSourceComment>, ReviewSessionError>;
     /** The review a chat acts on, and in which role. */
     readonly resolveForThread: (input: {
+      readonly sessionId?: ReviewSessionId | undefined;
       readonly threadId: ThreadId;
       readonly groupId: ThreadGroupId | null;
     }) => Effect.Effect<ReviewSessionAccess, ReviewSessionError>;
@@ -205,6 +206,7 @@ export class ReviewSessionService extends Context.Service<
     readonly recordApply: (
       input: PointInput & {
         readonly applyState: ReviewApplyState;
+        readonly githubThreadIds?: ReadonlyArray<string> | undefined;
         readonly conclusion?: string | undefined;
         readonly draftReply?: string | undefined;
       },
@@ -639,6 +641,8 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const local = yield* repo.findLocalSourceByThread(input.threadId);
       if (Option.isSome(local)) {
+        if (input.sessionId !== undefined && input.sessionId !== local.value.sessionId)
+          return yield* fail("This local review chat is scoped to its assigned review.");
         return {
           session: yield* loadSession(local.value.sessionId),
           role: "local" as const,
@@ -648,6 +652,8 @@ export const make = Effect.gen(function* () {
       }
       const side = yield* repo.findSideChatItem(input.threadId);
       if (Option.isSome(side)) {
+        if (input.sessionId !== undefined && input.sessionId !== side.value.sessionId)
+          return yield* fail("This side chat is scoped to its assigned review.");
         return {
           session: yield* loadSession(side.value.sessionId),
           role: "side" as const,
@@ -662,18 +668,23 @@ export const make = Effect.gen(function* () {
         localSourceId: null,
       });
       const own = yield* repo.listLiveSessionsForThread(input.threadId);
-      if (own.length === 1) return asReview(own[0]!);
-      if (own.length > 1) {
-        return yield* fail("This chat drives several reviews; finish one before using the tools.");
+      const inGroup =
+        input.groupId === null ? [] : yield* repo.listLiveSessionsForGroup(input.groupId);
+      const candidates = [
+        ...new Map([...own, ...inGroup].map((session) => [session.id, session])).values(),
+      ];
+      if (input.sessionId !== undefined) {
+        const selected = candidates.find((session) => session.id === input.sessionId);
+        if (selected) return asReview(selected);
+        return yield* fail(
+          "That review is not live in this chat's group. Open the PR with review_session_open first.",
+        );
       }
-      if (input.groupId !== null) {
-        const inGroup = yield* repo.listLiveSessionsForGroup(input.groupId);
-        if (inGroup.length === 1) return asReview(inGroup[0]!);
-        if (inGroup.length > 1) {
-          return yield* fail(
-            "This group has several live reviews; continue in the review chat of the one you mean.",
-          );
-        }
+      if (candidates.length === 1) return asReview(candidates[0]!);
+      if (candidates.length > 1) {
+        return yield* fail(
+          `This group has several reviews. Pass sessionId on each review tool call; review_session_open with the PR URL returns it. Available reviews: ${candidates.map((session) => `${session.url} (sessionId: ${session.id})`).join(", ")}`,
+        );
       }
       return yield* fail("No review is open for this chat. Start one with review_session_open.");
     }).pipe(Effect.mapError(keepReviewErrors()));
@@ -956,6 +967,7 @@ export const make = Effect.gen(function* () {
         const next: ReviewItem = {
           ...item,
           applyState: input.applyState,
+          githubThreadIds: union(item.githubThreadIds, input.githubThreadIds ?? []),
           conclusion: input.conclusion ?? item.conclusion,
           ...(input.draftReply === undefined ? {} : nextDraft(item, input.draftReply, "agent")),
           updatedAt: at,

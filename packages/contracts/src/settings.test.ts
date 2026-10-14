@@ -1225,3 +1225,14 @@ describe("server model preferences", () => {
     });
   });
 });
+
+describe("single-chat group presentation", () => {
+  it("defaults on for existing settings and preserves an explicit opt-out", () => {
+    expect(decodeClientSettings({}).sidebarSoloGroupsEnabled).toBe(true);
+    const settings = decodeClientSettings({ sidebarSoloGroupsEnabled: false });
+    expect(encodeClientSettings(settings).sidebarSoloGroupsEnabled).toBe(false);
+    expect(decodeClientSettingsPatch({ sidebarSoloGroupsEnabled: false })).toEqual({
+      sidebarSoloGroupsEnabled: false,
+    });
+  });
+});

@@ -30,3 +30,14 @@ describe("reviewBrief", () => {
     expect(brief).toContain("You never mark a point viewed");
   });
 });
+
+it("publishes inline findings before fixing, then replies and resolves their saved threads", () => {
+  const brief = reviewBrief(sessionFixture());
+  expect(brief).toContain("comments: [{path, line, side, body}]");
+  expect(brief).toContain("**Problem**, **Impact**, **Proposed solution**");
+  expect(brief).toContain("githubThreadIds and applyState");
+  expect(brief).toContain("Do not use bare #N labels on GitHub");
+  expect(brief).toContain("Publishing the finding itself does not count as replying");
+  expect(brief).toContain("read them again before retrying");
+  expect(brief).not.toContain("one line per point whose sources include local-review");
+});

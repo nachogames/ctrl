@@ -400,3 +400,59 @@ it.effect(
       }),
     ),
 );
+
+it.effect("targets each PR independently when one group has multiple reviews", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { as, provided, harness } = yield* harnessed;
+      const caller = yield* as(reviewThreadId);
+      yield* caller("review_session_open", { url: prUrl });
+      const reviews = yield* provided(reviewService);
+      const first = yield* provided(
+        reviews.resolveForThread({ threadId: reviewThreadId, groupId }),
+      );
+      yield* caller("review_session_open", { url: "https://github.com/nachogames/ctrl/pull/24" });
+      expect(yield* caller("review_session_read", {})).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("Pass sessionId"),
+      });
+      const selected = { sessionId: first.session.id };
+      expect(
+        yield* caller("review_items_import", {
+          ...selected,
+          sourceIds: [],
+          items: [toolItem("gh:chosen")],
+        }),
+      ).toMatchObject({ created: [1] });
+      expect(
+        yield* caller("review_items_annotate", {
+          ...selected,
+          number: 1,
+          conclusion: "Selected PR only",
+        }),
+      ).toMatchObject({ item: { conclusion: "Selected PR only" } });
+      expect(yield* caller("review_session_read", selected)).toMatchObject({
+        session: { id: first.session.id },
+        items: [{ conclusion: "Selected PR only" }],
+      });
+      const siblingId = ThreadId.make("sibling-multi");
+      harness.shells.set(siblingId, chatShell(siblingId, { groupId }));
+      const sibling = yield* as(siblingId);
+      expect(yield* sibling("review_session_read", selected)).toMatchObject({
+        session: { id: first.session.id },
+      });
+      const outsiderId = ThreadId.make("outsider-multi");
+      harness.shells.set(outsiderId, chatShell(outsiderId, { groupId: null }));
+      const outsider = yield* as(outsiderId);
+      expect(yield* outsider("review_session_read", selected)).toMatchObject({
+        code: "invalid_request",
+      });
+      const local = yield* provided(reviews.runLocalReview({ sessionId: first.session.id }));
+      const localTools = yield* as(local.threadId);
+      expect(yield* localTools("review_session_read", selected)).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("independent review"),
+      });
+    }),
+  ),
+);
