@@ -455,16 +455,30 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               (error) =>
                 Effect.gen(function* () {
                   abandonedRunRecoveryAvailable = false;
-                  const latestRun = yield* Effect.tryPromise({
-                    try: () => Agent.listRuns(agent.agentId, { ...runOptions, limit: 1 }),
-                    catch: (cause) => runnerError(cause, "agent.listRuns"),
+                  // Local SDK history is oldest-first. Follow pages rather than
+                  // assuming the first run is the one abandoned by the restart.
+                  const activeRun = yield* Effect.gen(function* () {
+                    let cursor: string | undefined;
+                    const visited = new Set<string>();
+                    while (true) {
+                      const page = yield* Effect.tryPromise({
+                        try: () =>
+                          Agent.listRuns(agent.agentId, {
+                            ...runOptions,
+                            limit: 100,
+                            ...(cursor === undefined ? {} : { cursor }),
+                          }),
+                        catch: (cause) => runnerError(cause, "agent.listRuns"),
+                      });
+                      const active = page.items.find((candidate) => candidate.status === "running");
+                      if (active !== undefined) return active;
+                      if (page.nextCursor === undefined || visited.has(page.nextCursor)) {
+                        return yield* error;
+                      }
+                      cursor = page.nextCursor;
+                      visited.add(cursor);
+                    }
                   });
-                  const activeRun = latestRun.items.find(
-                    (candidate) => candidate.status === "running",
-                  );
-                  if (activeRun === undefined) {
-                    return yield* error;
-                  }
                   yield* log({
                     direction: "outgoing",
                     stage: "decoded",

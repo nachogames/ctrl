@@ -328,7 +328,7 @@ function GroupPullRequestReview({
     setApplySent(key);
     const result = await request({
       environmentId,
-      input: { sessionId, request: { _tag: "apply" } },
+      input: { sessionId, targetThreadId: threadRef.threadId, request: { _tag: "apply" } },
     });
     if (result._tag === "Failure") {
       if (applyInFlightRef.current === key) applyInFlightRef.current = null;

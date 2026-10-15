@@ -3748,6 +3748,32 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
   }),
 );
 
+it.effect("settles an intentional workspace detach without a provider error", () =>
+  Effect.gen(function* () {
+    const { written, observed, committedEffects } = yield* captureRootRunTermination({
+      key: "workspace-detach",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () =>
+        Stream.fail(
+          new ProviderAdapter.ProviderAdapterEventStreamError({
+            driver,
+            providerSessionId: ProviderSessionId.make("session:detached"),
+            intentionalDetach: true,
+          }),
+        ),
+    });
+    assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
+    assert.deepEqual(
+      written.map((item) => item.type),
+      ["run_interrupt_result"],
+    );
+    assert.deepEqual(
+      committedEffects.map((effect) => effect.request.type),
+      ["checkpoint.capture"],
+    );
+  }),
+);
+
 it.effect("refreshes pull requests after a provider stream exits with an error", () =>
   Effect.gen(function* () {
     const { written, observed } = yield* captureRootRunTermination({

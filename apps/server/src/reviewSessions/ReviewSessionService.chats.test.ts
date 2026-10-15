@@ -565,25 +565,50 @@ it.effect("triages in the current group chat without changing the shared review 
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
 
-it.effect("refuses triage in an unrelated or scoped chat before changing the review", () => {
+it.effect("applies in the current group chat without changing the shared review owner", () => {
   const harness = newHarness();
-  const unrelated = ThreadId.make("unrelated-chat");
-  harness.shells.set(unrelated, chatShell(unrelated, { groupId: null }));
+  const current = ThreadId.make("current-apply-chat");
+  harness.shells.set(current, chatShell(current));
   return Effect.gen(function* () {
     const reviews = yield* service;
     const { snapshot } = yield* reviews.open(openInput);
-    const local = yield* reviews.runLocalReview({ sessionId: snapshot.session.id });
-    const sent = harness.sent.length;
-    for (const targetThreadId of [unrelated, local.threadId]) {
-      const error = yield* Effect.flip(
-        reviews.requestTurn({
-          sessionId: snapshot.session.id,
-          targetThreadId,
-          request: { _tag: "triage" },
-        }),
-      );
-      assert.match(error.message, /group|ordinary/);
-    }
-    assert.equal(harness.sent.length, sent);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("local:apply")] });
+    yield* reviews.decide({ sessionId, number: 1, decision: "fix", authority: { _tag: "panel" } });
+    yield* reviews.requestTurn({ sessionId, targetThreadId: current, request: { _tag: "apply" } });
+    assert.equal(harness.sent.at(-1)?.threadId, current);
+    assert.include(harness.sent.at(-1)?.text ?? "", "Apply round 1");
+    const after = yield* reviews.read(sessionId);
+    assert.equal(after.session.reviewThreadId, reviewThreadId);
+    assert.equal(after.rounds[0]?.state, "applying");
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
+
+it.effect(
+  "refuses triage and apply in unrelated or scoped chats before changing the review",
+  () => {
+    const harness = newHarness();
+    const unrelated = ThreadId.make("unrelated-chat");
+    harness.shells.set(unrelated, chatShell(unrelated, { groupId: null }));
+    return Effect.gen(function* () {
+      const reviews = yield* service;
+      const { snapshot } = yield* reviews.open(openInput);
+      const local = yield* reviews.runLocalReview({ sessionId: snapshot.session.id });
+      const sent = harness.sent.length;
+      for (const targetThreadId of [unrelated, local.threadId]) {
+        for (const action of ["triage", "apply"] as const) {
+          const error = yield* Effect.flip(
+            reviews.requestTurn({
+              sessionId: snapshot.session.id,
+              targetThreadId,
+              request: { _tag: action },
+            }),
+          );
+          assert.match(error.message, /group|ordinary/);
+          assert.equal((yield* reviews.read(snapshot.session.id)).rounds[0]?.state, "collecting");
+        }
+      }
+      assert.equal(harness.sent.length, sent);
+    }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+  },
+);

@@ -574,12 +574,17 @@ export const layerWithOptions = (
           ),
         );
 
-      const failSubscribers = (entry: LiveSessionEntry, detail: string) =>
+      const failSubscribers = (
+        entry: LiveSessionEntry,
+        detail: string,
+        intentionalDetach = false,
+      ) =>
         Effect.gen(function* () {
           const error = new ProviderAdapter.ProviderAdapterEventStreamError({
             driver: entry.runtime.driver,
             providerSessionId: entry.runtime.providerSessionId,
             cause: detail,
+            ...(intentionalDetach ? { intentionalDetach: true } : {}),
           });
           const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
           yield* Effect.forEach(
@@ -1057,6 +1062,7 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
+        readonly intentionalDetach?: boolean;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1083,6 +1089,7 @@ export const layerWithOptions = (
                     yield* failSubscribers(
                       entry,
                       input.detail ?? `Provider session released: ${input.reason}.`,
+                      input.intentionalDetach,
                     );
                   }
                   const closeExit = yield* closeScopeWithin(entry.scope, {
@@ -2534,6 +2541,7 @@ export const layerWithOptions = (
               yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
                 reason: "manual_shutdown",
+                intentionalDetach: true,
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
                 detachedThreadId: input.threadId,
               });

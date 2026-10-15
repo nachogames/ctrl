@@ -1314,7 +1314,7 @@ export const make = Effect.gen(function* () {
       yield* requireCollecting(session, yield* loadRound(session));
       const request = input.request;
       let targetThreadId = session.reviewThreadId;
-      if (request._tag === "triage" && input.targetThreadId !== undefined) {
+      if (request._tag !== "rewrite-reply" && input.targetThreadId !== undefined) {
         const target = yield* liveThread(input.targetThreadId);
         if (
           target === null ||
@@ -1322,7 +1322,7 @@ export const make = Effect.gen(function* () {
           target.groupId !== session.groupId
         )
           return yield* fail(
-            "Triage must run in an active chat in this review's group.",
+            "Review actions must run in an active chat in this review's group.",
             session.id,
           );
         const access = yield* resolveForThread({
@@ -1332,7 +1332,7 @@ export const make = Effect.gen(function* () {
         });
         if (access.role !== "review")
           return yield* fail(
-            "Use an ordinary group chat for triage, not an assigned review or point chat.",
+            "Use an ordinary group chat for review actions, not an assigned review or point chat.",
             session.id,
           );
         targetThreadId = target.id;

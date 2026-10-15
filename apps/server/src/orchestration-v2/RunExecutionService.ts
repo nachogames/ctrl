@@ -1225,6 +1225,33 @@ export const layer: Layer.Layer<
           });
           const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
           const providerEventFiber = yield* eventSubscription.events.pipe(
+            // A workspace handoff deliberately closes an exclusive provider process.
+            // Settle its turn through the normal terminal path so queued work can resume.
+            Stream.catchTags({
+              ProviderAdapterEventStreamError: (error) =>
+                error.intentionalDetach
+                  ? Stream.fromEffect(
+                      Ref.get(eventRouting).pipe(
+                        Effect.map((routing): ProviderTerminalEvent => ({
+                          type: "turn.terminal",
+                          driver: input.providerThread.driver,
+                          providerThreadId: input.providerThread.id,
+                          providerTurnId:
+                            routing.rootProviderTurnId ??
+                            input.attempt.providerTurnId ??
+                            idAllocator.derive.providerTurn({
+                              driver: input.providerThread.driver,
+                              nativeTurnId: `detach:${input.attempt.id}`,
+                            }),
+                          runOrdinal: input.run.ordinal,
+                          status: "interrupted",
+                          failure: null,
+                          threadDisposition: "reusable",
+                        })),
+                      ),
+                    )
+                  : Stream.fail(error),
+            }),
             Stream.filterEffect((event) =>
               Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
             ),

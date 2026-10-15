@@ -1746,6 +1746,45 @@ it.effect("ProviderSessionManagerV2 releases sessions in parallel on server shut
   }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 marks workspace detach as intentional for exclusive runtimes",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:workspace-detach");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const subscription = yield* runtime.subscribeEvents!;
+        yield* manager.detach({ threadId, providerSessionId, detail: "Workspace changed." });
+        const error = yield* subscription.events.pipe(Stream.runDrain, Effect.flip);
+        assert.equal(error._tag, "ProviderAdapterEventStreamError");
+        if (error._tag === "ProviderAdapterEventStreamError")
+          assert.isTrue(error.intentionalDetach);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 closes event subscriptions normally on server shutdown", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
