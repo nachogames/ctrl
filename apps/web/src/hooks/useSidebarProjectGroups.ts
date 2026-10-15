@@ -9,6 +9,25 @@ import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore"
 import { useClientSettings } from "./useSettings";
 
 /**
+ * Ctrl's sidebar project order: the manual order, matching projects saved
+ * under their old cwd key too. The sidebar and the PR filter both use it.
+ */
+export function orderSidebarProjects<Project extends Parameters<typeof getProjectOrderKey>[0]>(
+  projects: ReadonlyArray<Project>,
+  projectOrder: ReadonlyArray<string>,
+): Project[] {
+  return orderItemsByPreferredIds({
+    items: projects,
+    preferredIds: projectOrder,
+    getId: getProjectOrderKey,
+    getPreferenceIds: (project) => [
+      getProjectOrderKey(project),
+      legacyProjectCwdPreferenceKey(project.workspaceRoot),
+    ],
+  });
+}
+
+/**
  * The sidebar's project groups, in the order the sidebar shows them.
  * Ctrl: the sidebar always uses the manual project order (no sort setting),
  * so this mirrors that instead of upstream's sorted order.
@@ -20,16 +39,7 @@ export function useSidebarProjectGroups() {
   const environments = useEnvironmentIdentities();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const orderedProjects = useMemo(
-    () =>
-      orderItemsByPreferredIds({
-        items: projects,
-        preferredIds: projectOrder,
-        getId: getProjectOrderKey,
-        getPreferenceIds: (project) => [
-          getProjectOrderKey(project),
-          legacyProjectCwdPreferenceKey(project.workspaceRoot),
-        ],
-      }),
+    () => orderSidebarProjects(projects, projectOrder),
     [projectOrder, projects],
   );
   return useMemo(() => {

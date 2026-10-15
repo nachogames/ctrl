@@ -141,17 +141,14 @@ import {
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import {
-  legacyProjectCwdPreferenceKey,
-  resolveGroupExpanded,
-  useUiStateStore,
-} from "../uiStateStore";
+import { resolveGroupExpanded, useUiStateStore } from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
 } from "../threadSelectionStore";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { orderSidebarProjects } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
@@ -2748,16 +2745,7 @@ export default function Sidebar() {
   }, [environmentPickerOpen, environments, keybindings, setEnvironmentScopeId]);
 
   const orderedProjects = useMemo(
-    () =>
-      orderItemsByPreferredIds({
-        items: projects,
-        preferredIds: projectOrder,
-        getId: getProjectOrderKey,
-        getPreferenceIds: (project) => [
-          getProjectOrderKey(project),
-          legacyProjectCwdPreferenceKey(project.workspaceRoot),
-        ],
-      }),
+    () => orderSidebarProjects(projects, projectOrder),
     [projectOrder, projects],
   );
   // Read at click time by New thread, which defaults to the top project of
