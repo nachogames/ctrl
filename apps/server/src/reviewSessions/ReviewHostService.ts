@@ -173,7 +173,7 @@ export const make = Effect.gen(function* () {
             // group creation and start the independent reviewer in the project root.
             yield* threads.dispatch({
               type: "thread.metadata.update",
-              commandId: CommandId.make(`review-checkout:${yield* crypto.randomUUIDv4}`),
+              commandId: CommandId.make(`review-checkout:${yield* crypto.randomUUIDv4()}`),
               threadId: id,
               expectedEmpty: true,
               worktreePath: prepared.worktreePath,
@@ -188,7 +188,7 @@ export const make = Effect.gen(function* () {
             thread = created;
             yield* threads.dispatch({
               type: "thread.pull-request.link",
-              commandId: CommandId.make(`review-link:${yield* crypto.randomUUIDv4}`),
+              commandId: CommandId.make(`review-link:${yield* crypto.randomUUIDv4()}`),
               threadId: id,
               ...key,
               url: detail.url,
@@ -198,7 +198,7 @@ export const make = Effect.gen(function* () {
           const groupId = thread.groupId ?? ThreadGroupId.make(`review-group:${thread.id}`);
           if (thread.groupId == null)
             yield* groups.create({
-              commandId: CommandId.make(`review-group:${yield* crypto.randomUUIDv4}`),
+              commandId: CommandId.make(`review-group:${yield* crypto.randomUUIDv4()}`),
               groupId,
               projectId: thread.projectId,
               threadIds: [thread.id],

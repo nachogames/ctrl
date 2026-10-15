@@ -13,6 +13,7 @@ import {
   OrchestrationProjectShell as ProjectShellSchema,
   OrchestrationV2ThreadShell as ThreadShellSchema,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -50,14 +51,17 @@ export const loadShellSnapshotParts = <E1, E2, E3, E4, E5>(input: {
   readonly latestSequence: Effect.Effect<number, E4>;
 }) =>
   Effect.gen(function* () {
-    const read = yield* input.sql.withTransaction(
-      Effect.all({
-        decodeThreads: input.readThreads,
-        projects: input.listProjects,
-        groups: input.listGroups,
-        snapshotSequence: input.latestSequence,
-      }),
-    );
+    // Read on the reader worker, off the event loop and the writer.
+    const read = yield* input.sql
+      .withTransaction(
+        Effect.all({
+          decodeThreads: input.readThreads,
+          projects: input.listProjects,
+          groups: input.listGroups,
+          snapshotSequence: input.latestSequence,
+        }),
+      )
+      .pipe(NodeSqliteClient.readOnly);
     return {
       projects: read.projects,
       groups: read.groups,
