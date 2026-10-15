@@ -81,7 +81,7 @@ const commandIdFor = (operation: string, clientRequestId: string | undefined) =>
 const newGroupId = (commandId: CommandId, clientRequestId: string | undefined) =>
   clientRequestId === undefined
     ? Crypto.Crypto.pipe(
-        Effect.flatMap((crypto) => crypto.randomUUIDv4),
+        Effect.flatMap((crypto) => crypto.randomUUIDv4()),
         Effect.orDie,
         Effect.map((uuid) => ThreadGroupId.make(`group:${uuid}`)),
       )
@@ -391,7 +391,7 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
         if (input.links !== undefined) {
           const ids = yield* Effect.forEach(adds, () =>
             Crypto.Crypto.pipe(
-              Effect.flatMap((crypto) => crypto.randomUUIDv4),
+              Effect.flatMap((crypto) => crypto.randomUUIDv4()),
               Effect.orDie,
             ),
           );
@@ -548,7 +548,7 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
           id:
             input.id ??
             `res:${yield* Crypto.Crypto.pipe(
-              Effect.flatMap((crypto) => crypto.randomUUIDv4),
+              Effect.flatMap((crypto) => crypto.randomUUIDv4()),
               Effect.orDie,
             )}`,
           name: input.name,

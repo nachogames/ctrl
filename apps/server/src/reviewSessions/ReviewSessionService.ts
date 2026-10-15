@@ -469,7 +469,7 @@ export const make = Effect.gen(function* () {
             }
             const at = yield* now;
             const session: ReviewSession = {
-              id: ReviewSessionId.make(`review:${yield* crypto.randomUUIDv4}`),
+              id: ReviewSessionId.make(`review:${yield* crypto.randomUUIDv4()}`),
               projectId: input.projectId,
               pullRequest: key,
               url: input.url,
@@ -516,7 +516,7 @@ export const make = Effect.gen(function* () {
         const groupId = shell.groupId ?? ThreadGroupId.make(`review-group:${shell.id}`);
         if (shell.groupId == null)
           yield* groups.create({
-            commandId: CommandId.make(`review-group:${shell.id}:${yield* crypto.randomUUIDv4}`),
+            commandId: CommandId.make(`review-group:${shell.id}:${yield* crypto.randomUUIDv4()}`),
             groupId,
             projectId: shell.projectId,
             threadIds: [shell.id],
@@ -1113,7 +1113,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       return yield* launches
         .newThread({
-          commandId: CommandId.make(`review-chat:${yield* crypto.randomUUIDv4}`),
+          commandId: CommandId.make(`review-chat:${yield* crypto.randomUUIDv4()}`),
           groupId: session.groupId,
           title,
           modelSelection: reviewChat.modelSelection,
@@ -1133,7 +1133,7 @@ export const make = Effect.gen(function* () {
   // Record the review association before dispatching the seed: the first turn can call tools.
   const seedChat = (session: ReviewSession, threadId: ThreadId, text: string) =>
     Effect.gen(function* () {
-      const id = yield* crypto.randomUUIDv4;
+      const id = yield* crypto.randomUUIDv4();
       yield* threads.sendToThread({
         projectId: session.projectId,
         threadId,
@@ -1221,7 +1221,7 @@ export const make = Effect.gen(function* () {
             reviewChat,
             `Your review · round ${session.round}`,
           );
-          const sourceId = `local:${yield* crypto.randomUUIDv4}`;
+          const sourceId = `local:${yield* crypto.randomUUIDv4()}`;
           yield* write(
             session.id,
             Effect.gen(function* () {
@@ -1436,7 +1436,7 @@ export const make = Effect.gen(function* () {
           }
         }),
       );
-      const id = yield* crypto.randomUUIDv4;
+      const id = yield* crypto.randomUUIDv4();
       yield* threads
         .sendToThread({
           projectId: session.projectId,

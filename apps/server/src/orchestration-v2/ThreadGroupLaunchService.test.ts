@@ -193,6 +193,7 @@ function makeLayer(
           }),
         checkWorktreeBase: () => Effect.void,
         retryPreparation: () => Effect.die("unused"),
+        prepareRun: () => Effect.die("unused"),
       });
     }),
   );
