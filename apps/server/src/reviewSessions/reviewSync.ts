@@ -334,19 +334,21 @@ export function rawReviewItems(
       keys.add(comment.key);
       const summary = comment.body.trim().split("\n")[0]!.slice(0, 180);
       const login = source.author ?? "unknown";
+      const raisedBy: ReviewItem["sources"][number] =
+        source.kind === "copilot"
+          ? "copilot"
+          : source.kind === "local"
+            ? "local-review"
+            : viewer !== null && login.toLowerCase() === viewer
+              ? "you"
+              : `human:${login}`;
       items.push({
         number: nextNumber + items.length,
         round: session.round,
         lastSeenRound: session.round,
         sourceKeys: [comment.key],
         sourceIds: [source.id],
-        sources: [
-          source.kind === "copilot"
-            ? "copilot"
-            : viewer !== null && login.toLowerCase() === viewer
-              ? "you"
-              : `human:${login}`,
-        ],
+        sources: [raisedBy],
         githubThreadIds: comment.threadId === null ? [] : [comment.threadId],
         githubState: null,
         path: comment.path,
@@ -377,4 +379,40 @@ export function rawReviewItems(
     }
   }
   return items;
+}
+
+/**
+ * Points whose raw import named the local review `human:unknown` (it has no login). Merged with
+ * the local review's own finding, they read as raised by a second, nameless reviewer. Returns
+ * each such point with that name replaced by `local-review`, and without a reply drafted for a
+ * thread it does not have.
+ */
+export function repairUnknownLocalSources(
+  items: ReadonlyArray<ReviewItem>,
+): ReadonlyArray<ReviewItem> {
+  return items.flatMap((item) =>
+    item.sources.includes("human:unknown") &&
+    item.sourceKeys.some((key) => key.startsWith("local:"))
+      ? [
+          {
+            ...item,
+            sources: [
+              ...new Set(
+                item.sources.map((source) =>
+                  source === "human:unknown" ? ("local-review" as const) : source,
+                ),
+              ),
+            ],
+            // A +1 drafted for the nameless reviewer has no thread to go on.
+            ...(item.githubThreadIds.length === 0 && item.draftReply !== null
+              ? {
+                  draftReply: null,
+                  draftReplyRevision: item.draftReplyRevision + 1,
+                  draftReplyBy: null,
+                }
+              : {}),
+          },
+        ]
+      : [],
+  );
 }
