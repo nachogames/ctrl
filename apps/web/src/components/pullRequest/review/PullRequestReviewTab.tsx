@@ -18,6 +18,8 @@ import {
   type PullRequestRef,
   type ReviewDecision,
   type ReviewItem,
+  type ReviewPendingChoice,
+  type ReviewPostAs,
   type ReviewSessionSnapshot,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -184,6 +186,10 @@ function GroupPullRequestReview({
   const decide = useReviewCommand(reviewSessionEnvironment.decide, "Could not save the decision");
   const canRequest = useAtomValue(reviewSessionEnvironment.request.permissionAtom(environmentId));
   const request = useReviewCommand(reviewSessionEnvironment.request, "Could not apply");
+  const prepare = useReviewCommand(
+    reviewSessionEnvironment.request,
+    "Could not prepare your pending review",
+  );
   const continueReview = useReviewCommand(
     reviewSessionEnvironment.request,
     "Could not continue the review",
@@ -304,9 +310,12 @@ function GroupPullRequestReview({
     [environmentId, focusPoint, reviewThreadKey, sessionId, setViewed],
   );
   const onDecide = useCallback(
-    (item: ReviewItem, decision: ReviewDecision) => {
+    (item: ReviewItem, decision: ReviewDecision, postAs?: ReviewPostAs) => {
       if (sessionId === null) return;
-      void decide({ environmentId, input: { sessionId, number: item.number, decision } });
+      void decide({
+        environmentId,
+        input: { sessionId, number: item.number, decision, ...(postAs ? { postAs } : {}) },
+      });
     },
     [decide, environmentId, sessionId],
   );
@@ -324,7 +333,15 @@ function GroupPullRequestReview({
     return fallback;
   }
 
-  const startApply = async () => {
+  const reviewing = reviewRole(snapshot.session) === "reviewer";
+  // GitHub keeps one pending review per person; the dialog asks whether to add to it.
+  const existingPending = reviewing
+    ? snapshot.sources.find(
+        (source) =>
+          source.state === "pending" && isViewerSource(source, snapshot.session.viewerLogin),
+      )
+    : undefined;
+  const startApply = async (pendingReview?: ReviewPendingChoice) => {
     // One request per round: a second click (the dialog's Apply while it animates out) would
     // be refused and read as a failed apply.
     if (
@@ -338,9 +355,13 @@ function GroupPullRequestReview({
     applyInFlightRef.current = key;
     setConfirmingApply(false);
     setApplySent(key);
-    const result = await request({
+    const result = await (reviewing ? prepare : request)({
       environmentId,
-      input: { sessionId, targetThreadId: threadRef.threadId, request: { _tag: "apply" } },
+      input: {
+        sessionId,
+        targetThreadId: threadRef.threadId,
+        request: { _tag: "apply", ...(pendingReview ? { pendingReview } : {}) },
+      },
     });
     if (result._tag === "Failure") {
       if (applyInFlightRef.current === key) applyInFlightRef.current = null;
@@ -431,7 +452,7 @@ function GroupPullRequestReview({
                   canView={canView}
                   canDecide={canDecide}
                   talked={mentions.get(item.number) ?? 0}
-                  kind={pointKindFor(item, snapshot.session, reviewer)}
+                  reviewerRound={reviewer ? snapshot.session.round : null}
                   onOpenChange={onOpenChange}
                   onViewed={onViewed}
                   onDecide={onDecide}
@@ -476,7 +497,10 @@ function GroupPullRequestReview({
                   reviewApplySummary(decidedItems, snapshot.sources, snapshot.session.round),
                 )
         }
-        onApply={() => void startApply()}
+        onApply={(pendingReview) => void startApply(pendingReview)}
+        existingPending={
+          existingPending === undefined ? null : { comments: existingPending.commentCount }
+        }
       />
     </div>
   );
@@ -508,7 +532,7 @@ function ApplyRow({
               : "Apply approves the displayed Fix/Decline choices, posts your review, replies and resolves."}
       </span>
       <Button size="sm" disabled={disabled || sending || left > 0} onClick={onApply}>
-        {reviewer ? "Post pending review" : "Apply approved findings"}
+        {reviewer ? "Prepare pending review" : "Apply approved findings"}
       </Button>
     </div>
   );

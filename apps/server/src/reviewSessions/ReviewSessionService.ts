@@ -16,6 +16,7 @@ import {
   type ReviewAlreadyFixedIn,
   type ReviewApplyState,
   type ReviewDecision,
+  type ReviewPostAs,
   type ReviewEditor,
   type ReviewItem,
   type ReviewItemSource,
@@ -198,6 +199,8 @@ export class ReviewSessionService extends Context.Service<
       input: PointInput & {
         readonly decision: ReviewDecision;
         readonly reason?: string | undefined;
+        /** A point someone else already raised: +1 on their thread, or your own comment. */
+        readonly postAs?: ReviewPostAs | undefined;
         readonly authority: ReviewDecisionAuthority;
       },
     ) => Effect.Effect<ReviewItem, ReviewSessionError>;
@@ -442,7 +445,12 @@ export const make = Effect.gen(function* () {
     return waiting.length === 0
       ? Effect.void
       : Effect.fail(
-          fail(`Choose Fix or Decline for ${waiting.join(", ")} before applying.`, session.id),
+          fail(
+            isReviewer(session)
+              ? `Choose what to do with ${waiting.join(", ")} before preparing your pending review.`
+              : `Choose Fix or Decline for ${waiting.join(", ")} before applying.`,
+            session.id,
+          ),
         );
   };
 
@@ -936,10 +944,12 @@ export const make = Effect.gen(function* () {
         input.sessionId,
         Effect.gen(function* () {
           const { session, item } = yield* loadEditable(input);
-          const changed = input.decision !== item.decision;
+          const postAs = input.postAs ?? item.postAs ?? null;
+          const changed = input.decision !== item.decision || postAs !== (item.postAs ?? null);
           const next: ReviewItem = {
             ...item,
             decision: input.decision,
+            postAs,
             decidedBy: input.decision === "needs-call" ? null : input.authority._tag,
             reason: input.reason ?? (changed ? null : item.reason),
             applyState: changed ? "pending" : item.applyState,

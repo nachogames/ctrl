@@ -13,7 +13,8 @@ import {
   reviewSourceDetail,
   reviewSourceStateLabel,
   reviewTriageLabel,
-  reviewDecisionLabel,
+  pointDecisionLabel,
+  reviewerApplyBadges,
   reviewerApplyLines,
   reviewSourceTitle,
   suggestedReviewVerdict,
@@ -247,7 +248,7 @@ describe("reviewing someone else's pull request", () => {
       round: 2,
       githubThreadIds: [],
       ...fields,
-    }) as Pick<ReviewItem, "decision" | "sources" | "round" | "githubThreadIds">;
+    }) as Pick<ReviewItem, "decision" | "sources" | "round" | "githubThreadIds" | "postAs">;
 
   it("names your own GitHub reviews as yours", () => {
     const yours = source({ kind: "human", author: "NeilMcEachin", isBot: false });
@@ -264,13 +265,29 @@ describe("reviewing someone else's pull request", () => {
     ).toContain("Changes requested");
   });
 
-  it("labels Fix and Decline by what they do to each kind of point", () => {
-    expect(reviewDecisionLabel("fix")).toBe("Fix");
-    expect(reviewDecisionLabel("fix", "finding")).toBe("Post");
-    expect(reviewDecisionLabel("fix", "overlap")).toBe("+1");
-    expect(reviewDecisionLabel("decline", "overlap")).toBe("Skip");
-    expect(reviewDecisionLabel("fix", "follow-up")).toBe("Resolve");
-    expect(reviewDecisionLabel("decline", "follow-up")).toBe("Keep open");
+  it("names each choice by what it does to the point", () => {
+    const session = { round: 2 };
+    const label = (fields: Partial<ReviewItem>, decision: "fix" | "decline", reviewer = true) =>
+      pointDecisionLabel(mine(fields), decision, session, reviewer);
+    expect(label({}, "fix", false)).toBe("Fix");
+    expect(label({}, "fix")).toBe("Post");
+    expect(label({}, "decline")).toBe("Skip");
+    const overlap = { sources: ["local-review", "copilot"] as ReviewItem["sources"] };
+    expect(label(overlap, "fix")).toBe("+1 on their thread");
+    expect(label({ ...overlap, postAs: "comment" }, "fix")).toBe("Post my own");
+    expect(label({ round: 1, githubThreadIds: ["T1"] }, "fix")).toBe("Resolve");
+    expect(label({ round: 1, githubThreadIds: ["T1"] }, "decline")).toBe("Keep open");
+  });
+
+  it("says what preparing the pending review did to each point", () => {
+    expect(reviewerApplyBadges({ applyState: "replied" }, "reply", "applied")).toEqual([
+      "+1 posted",
+    ]);
+    expect(reviewerApplyBadges({ applyState: "pending" }, "skip", "applied")).toEqual(["Skipped"]);
+    expect(reviewerApplyBadges({ applyState: "working" }, "resolve", "applying")).toEqual([
+      "Resolving…",
+    ]);
+    expect(reviewerApplyBadges({ applyState: "pending" }, null, "applied")).toEqual([]);
   });
 
   it("suggests approving only when every follow-up resolved and nothing new is posted", () => {
@@ -294,13 +311,14 @@ describe("reviewing someone else's pull request", () => {
       [
         mine({}),
         mine({ sources: ["local-review", "copilot"], githubThreadIds: ["T2"] }),
+        mine({ sources: ["local-review", "copilot"], githubThreadIds: ["T4"], postAs: "comment" }),
         mine({ round: 1, githubThreadIds: ["T1"] }),
         mine({ sources: ["copilot"] }),
       ],
       2,
     );
     expect(lines).toEqual([
-      "Post 1 new comment.",
+      "Post 2 new comments.",
       "Reply +1 on 1 thread someone else already raised.",
       "Resolve 1 thread of yours that are fixed.",
       "Everything goes into your pending review on GitHub. Nothing is submitted, and no code is changed.",

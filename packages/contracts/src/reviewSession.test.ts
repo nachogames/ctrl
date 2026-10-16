@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  reviewerAction,
   reviewerPointKind,
   reviewRole,
   ReviewItemSource,
@@ -101,5 +102,22 @@ describe("reviewerPointKind", () => {
     // Skipped last round, so it never got a thread: it is a new finding again.
     expect(reviewerPointKind(point(["local-review"], 1), 2)).toBe("finding");
     expect(reviewerPointKind(point(["local-review"], 2, ["PRRT_1"]), 2)).toBe("finding");
+  });
+});
+
+describe("reviewerAction", () => {
+  it("names what a decision does, including how a point others raised goes out", () => {
+    const overlap = {
+      sources: ["local-review", "copilot"] as ReadonlyArray<ReviewItemSource>,
+      round: 2,
+      githubThreadIds: ["T2"],
+      decision: "fix" as const,
+      postAs: null,
+    };
+    expect(reviewerAction(overlap, 2)).toBe("reply");
+    expect(reviewerAction({ ...overlap, postAs: "comment" }, 2)).toBe("comment");
+    expect(reviewerAction(overlap, 2, "decline")).toBe("skip");
+    expect(reviewerAction({ ...overlap, decision: "needs-call" }, 2)).toBeNull();
+    expect(reviewerAction({ ...overlap, sources: ["copilot"] }, 2)).toBeNull();
   });
 });

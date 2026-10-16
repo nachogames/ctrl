@@ -81,6 +81,17 @@ export const ReviewSourceState = Schema.Literals([
 ]);
 export type ReviewSourceState = typeof ReviewSourceState.Type;
 
+/**
+ * How a point someone else already raised goes out when you post it: a +1 reply on their thread,
+ * or your own new comment.
+ */
+export const ReviewPostAs = Schema.Literals(["reply", "comment"]);
+export type ReviewPostAs = typeof ReviewPostAs.Type;
+
+/** Whether Ctrl adds to the pending review you already have on GitHub or starts a new one. */
+export const ReviewPendingChoice = Schema.Literals(["add", "replace"]);
+export type ReviewPendingChoice = typeof ReviewPendingChoice.Type;
+
 /** What a submitted GitHub review said overall. */
 export const ReviewVerdict = Schema.Literals(["approved", "changes-requested", "commented"]);
 export type ReviewVerdict = typeof ReviewVerdict.Type;
@@ -249,6 +260,8 @@ export const ReviewItem = Schema.Struct({
   draftReplyRevision: NonNegativeInt,
   draftReplyBy: Schema.NullOr(ReviewEditor),
   applyState: ReviewApplyState,
+  /** For a point someone else already raised: post it as a +1 reply (default) or your own comment. */
+  postAs: Schema.optional(Schema.NullOr(ReviewPostAs)),
   /** Not raised again since the round moved on. */
   stale: Schema.Boolean,
   viewed: Schema.Boolean,
@@ -296,6 +309,7 @@ const PointFields = { sessionId: ReviewSessionId, number: PositiveInt } as const
 export const ReviewItemsDecideInput = Schema.Struct({
   ...PointFields,
   decision: ReviewDecision,
+  postAs: Schema.optional(ReviewPostAs),
   reason: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2000))),
 });
 export type ReviewItemsDecideInput = typeof ReviewItemsDecideInput.Type;
@@ -315,7 +329,8 @@ export type ReviewItemResult = typeof ReviewItemResult.Type;
 /** What a panel button asks the review chat's agent to do. */
 export const ReviewTurnRequest = Schema.Union([
   Schema.TaggedStruct("triage", {}),
-  Schema.TaggedStruct("apply", {}),
+  /** `pendingReview`: what to do with a pending review you already have on GitHub. */
+  Schema.TaggedStruct("apply", { pendingReview: Schema.optional(ReviewPendingChoice) }),
   /** Reviewer flow: open the next round, check your threads, and review the new head. */
   Schema.TaggedStruct("re-review", {}),
   /** Reviewer flow: you approved; finish the review. */
@@ -375,6 +390,30 @@ export const isMinePoint = (item: Pick<ReviewItem, "sources">): boolean =>
  * - `finding`: yours alone; Post means a new comment.
  */
 export type ReviewerPointKind = "context" | "overlap" | "follow-up" | "finding";
+
+/** What deciding a point does on someone else's pull request. */
+export type ReviewerAction = "post" | "reply" | "comment" | "resolve" | "keep-open" | "skip";
+
+/**
+ * The action a point's decision takes on someone else's pull request, or null while it is
+ * undecided or only context. `decision` defaults to the point's own.
+ */
+export const reviewerAction = (
+  item: Pick<ReviewItem, "sources" | "round" | "githubThreadIds" | "decision" | "postAs">,
+  sessionRound: number,
+  decision: ReviewDecision = item.decision,
+): ReviewerAction | null => {
+  const kind = reviewerPointKind(item, sessionRound);
+  if (kind === "context" || decision === "needs-call") return null;
+  switch (kind) {
+    case "finding":
+      return decision === "fix" ? "post" : "skip";
+    case "overlap":
+      return decision === "fix" ? (item.postAs === "comment" ? "comment" : "reply") : "skip";
+    case "follow-up":
+      return decision === "fix" ? "resolve" : "keep-open";
+  }
+};
 
 export const reviewerPointKind = (
   item: Pick<ReviewItem, "sources" | "round" | "githubThreadIds">,

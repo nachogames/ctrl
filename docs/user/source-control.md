@@ -341,10 +341,11 @@ works for you as the reviewer. Your GitHub reviews show as yours; a review the t
 appears once, under **Your review**.
 
 Run your review, then triage it with Copilot and anyone else's comments. Only the points your
-review raised need a decision: **Post** a new comment or **Skip** it. When someone already raised
-the same problem, the point suggests a **+1** reply on their thread instead of a duplicate.
-**Post pending review** puts everything into a pending review on GitHub and changes no code.
-Read it there and submit it with your verdict; the tab suggests one.
+review raised need a choice: **Post** a new comment or **Skip** it. When someone already raised
+the same problem, choose **+1 on their thread**, **Post my own** comment, or **Skip**.
+**Prepare pending review** puts everything into a pending review on GitHub and changes no code.
+If you already have a pending review there, you choose whether to add to it or start fresh, which
+deletes that draft. Read it on GitHub and submit it with your verdict; the tab suggests one.
 
 When the author asks for your review again, choose **Re-review**. Each of your open threads is
 checked against the new code (**Resolve** or **Keep open** with a follow-up), and your review runs

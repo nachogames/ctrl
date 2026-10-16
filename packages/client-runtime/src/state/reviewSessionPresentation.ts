@@ -3,9 +3,11 @@ import {
   isMinePoint,
   isReviewOverview,
   isViewerSource,
+  reviewerAction,
   reviewerPointKind,
 } from "@t3tools/contracts";
 import type {
+  ReviewerAction,
   ReviewerPointKind,
   ReviewVerdict,
   ReviewDecision,
@@ -25,25 +27,33 @@ const DECISION_LABELS: Record<ReviewDecision, string> = {
 const quantity = (count: number, noun: string) => `${count} ${count === 1 ? noun : `${noun}s`}`;
 const shortSha = (sha: string | null) => (sha === null ? "" : sha.slice(0, 7));
 
-/** On someone else's pull request, what Fix and Decline mean for each kind of point. */
-const REVIEWER_LABELS: Record<
-  Exclude<ReviewerPointKind, "context">,
-  Record<"fix" | "decline", string>
-> = {
-  finding: { fix: "Post", decline: "Skip" },
-  overlap: { fix: "+1", decline: "Skip" },
-  "follow-up": { fix: "Resolve", decline: "Keep open" },
+/** What each choice does on someone else's pull request, as the panel names it. */
+export const REVIEWER_ACTION_LABELS: Record<ReviewerAction, string> = {
+  post: "Post",
+  reply: "+1 on their thread",
+  comment: "Post my own",
+  resolve: "Resolve",
+  "keep-open": "Keep open",
+  skip: "Skip",
 };
 
-/** `kind` is the point's reviewer kind on someone else's pull request; null on your own. */
-export function reviewDecisionLabel(
+export function reviewDecisionLabel(decision: ReviewDecision): string {
+  return DECISION_LABELS[decision];
+}
+
+/**
+ * A decision's label: on your own pull request Fix or Decline; on someone else's, the action it
+ * takes on the point (`kind` non-null), such as Post, +1 on their thread or Keep open.
+ */
+export function pointDecisionLabel(
+  item: Pick<ReviewItem, "sources" | "round" | "githubThreadIds" | "decision" | "postAs">,
   decision: ReviewDecision,
-  kind: ReviewerPointKind | null = null,
+  session: { readonly round: number } | null,
+  reviewer: boolean,
 ): string {
-  if (kind === null || kind === "context" || decision === "needs-call") {
-    return DECISION_LABELS[decision];
-  }
-  return REVIEWER_LABELS[kind][decision];
+  const action =
+    reviewer && session !== null ? reviewerAction(item, session.round, decision) : null;
+  return action === null ? DECISION_LABELS[decision] : REVIEWER_ACTION_LABELS[action];
 }
 
 /** A point's reviewer kind on someone else's pull request, or null on your own. */
@@ -187,7 +197,8 @@ export function reviewRoundStatusLine(input: {
   }
   if (round.state === "applying") {
     const working = items.find((item) => item.applyState === "working");
-    return working === undefined ? "Applying…" : `Applying: working on #${working.number}…`;
+    const doing = input.reviewer === true ? "Preparing your pending review" : "Applying";
+    return working === undefined ? `${doing}…` : `${doing}: working on #${working.number}…`;
   }
   const ready = sources.filter((source) => source.state === "done" && !source.triaged);
   const waiting = sources.filter(
@@ -338,45 +349,74 @@ export function reviewResolutionLabel(
  * kept open, approve when every follow-up resolved and nothing new was posted.
  */
 export function suggestedReviewVerdict(
-  items: ReadonlyArray<Pick<ReviewItem, "decision" | "sources" | "round" | "githubThreadIds">>,
+  items: ReadonlyArray<
+    Pick<ReviewItem, "decision" | "sources" | "round" | "githubThreadIds" | "postAs">
+  >,
   sessionRound: number,
 ): "request-changes" | "approve" {
   const open = items.some((item) => {
     if (!isMinePoint(item)) return false;
-    const kind = reviewerPointKind(item, sessionRound);
-    return kind === "follow-up" ? item.decision === "decline" : item.decision === "fix";
+    const action = reviewerAction(item, sessionRound);
+    return action !== null && action !== "skip" && action !== "resolve";
   });
   return open ? "request-changes" : "approve";
 }
 
-/** The reviewer Apply confirmation: what goes into the pending review, and what never happens. */
+/** The reviewer confirmation: what goes into the pending review, and what never happens. */
 export function reviewerApplyLines(
-  items: ReadonlyArray<Pick<ReviewItem, "decision" | "sources" | "round" | "githubThreadIds">>,
+  items: ReadonlyArray<
+    Pick<ReviewItem, "decision" | "sources" | "round" | "githubThreadIds" | "postAs">
+  >,
   sessionRound: number,
 ): ReadonlyArray<string> {
-  const count = { finding: 0, overlap: 0, resolve: 0, keepOpen: 0 };
+  const count: Record<ReviewerAction, number> = {
+    post: 0,
+    reply: 0,
+    comment: 0,
+    resolve: 0,
+    "keep-open": 0,
+    skip: 0,
+  };
   for (const item of items) {
-    const kind = reviewerPointKind(item, sessionRound);
-    if (kind === "context") continue;
-    if (kind === "follow-up") {
-      if (item.decision === "fix") count.resolve += 1;
-      else if (item.decision === "decline") count.keepOpen += 1;
-    } else if (item.decision === "fix") {
-      count[kind] += 1;
-    }
+    const action = reviewerAction(item, sessionRound);
+    if (action !== null) count[action] += 1;
   }
+  const comments = count.post + count.comment;
   const lines: Array<string> = [];
-  if (count.finding > 0) lines.push(`Post ${quantity(count.finding, "new comment")}.`);
-  if (count.overlap > 0)
-    lines.push(`Reply +1 on ${quantity(count.overlap, "thread")} someone else already raised.`);
-  if (count.keepOpen > 0)
-    lines.push(`Follow up on ${quantity(count.keepOpen, "thread")} of yours that still need work.`);
+  if (comments > 0) lines.push(`Post ${quantity(comments, "new comment")}.`);
+  if (count.reply > 0)
+    lines.push(`Reply +1 on ${quantity(count.reply, "thread")} someone else already raised.`);
+  if (count["keep-open"] > 0)
+    lines.push(
+      `Follow up on ${quantity(count["keep-open"], "thread")} of yours that still need work.`,
+    );
   if (count.resolve > 0)
     lines.push(`Resolve ${quantity(count.resolve, "thread")} of yours that are fixed.`);
   lines.push(
     "Everything goes into your pending review on GitHub. Nothing is submitted, and no code is changed.",
   );
   return lines;
+}
+
+/** Badges on a reviewer point while its pending review is prepared, and once it is. */
+export function reviewerApplyBadges(
+  item: Pick<ReviewItem, "applyState">,
+  action: ReviewerAction | null,
+  roundState: ReviewRoundState,
+): ReadonlyArray<string> {
+  if (roundState === "collecting" || action === null) return [];
+  switch (item.applyState) {
+    case "pending":
+      if (action === "skip") return ["Skipped"];
+      return roundState === "applied" ? ["Not posted"] : ["Waiting"];
+    case "working":
+      return [action === "resolve" ? "Resolving…" : "Posting…"];
+    case "fixed":
+    case "replied":
+      return [action === "reply" ? "+1 posted" : action === "keep-open" ? "Followed up" : "Posted"];
+    case "resolved":
+      return ["Resolved"];
+  }
 }
 
 /** The note on your local review's row once Ctrl posted it to GitHub. */
