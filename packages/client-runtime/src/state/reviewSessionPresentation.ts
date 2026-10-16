@@ -1,5 +1,13 @@
-import { isActiveReviewItem, isReviewOverview } from "@t3tools/contracts";
+import {
+  isActiveReviewItem,
+  isMinePoint,
+  isReviewOverview,
+  isViewerSource,
+  reviewerPointKind,
+} from "@t3tools/contracts";
 import type {
+  ReviewerPointKind,
+  ReviewVerdict,
   ReviewDecision,
   ReviewItem,
   ReviewRound,
@@ -17,9 +25,41 @@ const DECISION_LABELS: Record<ReviewDecision, string> = {
 const quantity = (count: number, noun: string) => `${count} ${count === 1 ? noun : `${noun}s`}`;
 const shortSha = (sha: string | null) => (sha === null ? "" : sha.slice(0, 7));
 
-export function reviewDecisionLabel(decision: ReviewDecision): string {
-  return DECISION_LABELS[decision];
+/** On someone else's pull request, what Fix and Decline mean for each kind of point. */
+const REVIEWER_LABELS: Record<
+  Exclude<ReviewerPointKind, "context">,
+  Record<"fix" | "decline", string>
+> = {
+  finding: { fix: "Post", decline: "Skip" },
+  overlap: { fix: "+1", decline: "Skip" },
+  "follow-up": { fix: "Resolve", decline: "Keep open" },
+};
+
+/** `kind` is the point's reviewer kind on someone else's pull request; null on your own. */
+export function reviewDecisionLabel(
+  decision: ReviewDecision,
+  kind: ReviewerPointKind | null = null,
+): string {
+  if (kind === null || kind === "context" || decision === "needs-call") {
+    return DECISION_LABELS[decision];
+  }
+  return REVIEWER_LABELS[kind][decision];
 }
+
+/** A point's reviewer kind on someone else's pull request, or null on your own. */
+export function pointKindFor(
+  item: Pick<ReviewItem, "sources" | "round" | "githubThreadIds">,
+  session: { readonly round: number } | null,
+  reviewer: boolean,
+): ReviewerPointKind | null {
+  return reviewer && session !== null ? reviewerPointKind(item, session.round) : null;
+}
+
+const VERDICT_LABELS: Record<ReviewVerdict, string> = {
+  approved: "Approved",
+  "changes-requested": "Changes requested",
+  commented: "Commented",
+};
 
 /** What a point's pill shows: the user's decision, else Claude's call. */
 export function effectiveDecision(
@@ -28,9 +68,17 @@ export function effectiveDecision(
   return item.decision === "needs-call" ? item.suggestedDecision : item.decision;
 }
 
-export function reviewSourceTitle(source: Pick<ReviewSource, "kind" | "author">): string {
+/**
+ * `viewerLogin` names the person using Ctrl: their GitHub reviews read as theirs, and one Ctrl
+ * posted from their local review reads as that review, posted.
+ */
+export function reviewSourceTitle(
+  source: Pick<ReviewSource, "kind" | "author" | "posted">,
+  viewerLogin: string | null = null,
+): string {
   if (source.kind === "copilot") return "Copilot";
   if (source.kind === "local") return "Your review";
+  if (isViewerSource(source, viewerLogin)) return source.posted ? "Your review · posted" : "You";
   return source.author ?? "A reviewer";
 }
 
@@ -40,6 +88,8 @@ export function reviewSourceStateLabel(
 ): string {
   if (source.failed) return "Failed";
   switch (source.state) {
+    case "pending":
+      return "Pending";
     case "done":
       return quantity(source.commentCount, source.kind === "local" ? "finding" : "comment");
     case "reviewing":
@@ -53,7 +103,10 @@ export function reviewSourceStateLabel(
 
 /** The second line of a review's row. `ranOnLabel` is the provider and model a local run used. */
 export function reviewSourceDetail(
-  source: Pick<ReviewSource, "kind" | "state" | "commentCount" | "commitSha" | "failed">,
+  source: Pick<
+    ReviewSource,
+    "kind" | "state" | "commentCount" | "commitSha" | "failed" | "verdict"
+  >,
   ranOnLabel: string | null,
 ): string {
   if (source.failed) return `Could not review ${shortSha(source.commitSha)}`;
@@ -62,8 +115,15 @@ export function reviewSourceDetail(
     const ran = ranOnLabel === null ? "Ran in its own chat" : `Ran on ${ranOnLabel}`;
     return `${ran} · ${shortSha(source.commitSha)} · ${quantity(source.commentCount, "finding")}`;
   }
+  if (source.state === "pending") {
+    return `Pending on GitHub · ${quantity(source.commentCount, "comment")} · open the pull request to submit`;
+  }
   if (source.state === "done") {
-    return `Reviewed ${shortSha(source.commitSha)} · ${quantity(source.commentCount, "comment")} on GitHub`;
+    const verdict =
+      source.verdict == null || source.verdict === "commented"
+        ? ""
+        : ` · ${VERDICT_LABELS[source.verdict]}`;
+    return `Reviewed ${shortSha(source.commitSha)} · ${quantity(source.commentCount, "comment")} on GitHub${verdict}`;
   }
   if (source.state === "not-run") return "Was asked, then the request was withdrawn";
   return "Requested on GitHub";
@@ -98,7 +158,7 @@ const joinNames = (names: ReadonlyArray<string>) =>
     ? (names[0] ?? "")
     : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 
-const sentenceName = (source: Pick<ReviewSource, "kind" | "author">) =>
+const sentenceName = (source: Pick<ReviewSource, "kind" | "author" | "posted">) =>
   source.kind === "local" ? "your review" : reviewSourceTitle(source);
 
 const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
@@ -108,9 +168,16 @@ export function reviewRoundStatusLine(input: {
   readonly round: ReviewRound;
   readonly sources: ReadonlyArray<ReviewSource>;
   readonly items: ReadonlyArray<Pick<ReviewItem, "number" | "applyState">>;
+  /** Reviewing someone else's pull request: an applied round is a pending review, not a push. */
+  readonly reviewer?: boolean;
 }): string {
   const { round, items } = input;
   const sources = input.sources.filter((source) => source.round === round.round);
+  if (round.state === "applied" && input.reviewer === true) {
+    const posted = items.filter((item) => item.applyState === "replied").length;
+    const resolved = items.filter((item) => item.applyState === "resolved").length;
+    return `Posted to your pending review · ${quantity(posted, "comment")} · ${resolved} resolved`;
+  }
   if (round.state === "applied") {
     const replies = items.filter(
       (item) => item.applyState === "replied" || item.applyState === "resolved",
@@ -264,4 +331,58 @@ export function reviewResolutionLabel(
   return resolved === items.length
     ? `All resolved · ${resolved}/${items.length}`
     : `${items.length - resolved} open · ${resolved} resolved`;
+}
+
+/**
+ * What to submit on GitHub after a reviewer round: request changes when anything was posted or
+ * kept open, approve when every follow-up resolved and nothing new was posted.
+ */
+export function suggestedReviewVerdict(
+  items: ReadonlyArray<Pick<ReviewItem, "decision" | "sources" | "round" | "githubThreadIds">>,
+  sessionRound: number,
+): "request-changes" | "approve" {
+  const open = items.some((item) => {
+    if (!isMinePoint(item)) return false;
+    const kind = reviewerPointKind(item, sessionRound);
+    return kind === "follow-up" ? item.decision === "decline" : item.decision === "fix";
+  });
+  return open ? "request-changes" : "approve";
+}
+
+/** The reviewer Apply confirmation: what goes into the pending review, and what never happens. */
+export function reviewerApplyLines(
+  items: ReadonlyArray<Pick<ReviewItem, "decision" | "sources" | "round" | "githubThreadIds">>,
+  sessionRound: number,
+): ReadonlyArray<string> {
+  const count = { finding: 0, overlap: 0, resolve: 0, keepOpen: 0 };
+  for (const item of items) {
+    const kind = reviewerPointKind(item, sessionRound);
+    if (kind === "context") continue;
+    if (kind === "follow-up") {
+      if (item.decision === "fix") count.resolve += 1;
+      else if (item.decision === "decline") count.keepOpen += 1;
+    } else if (item.decision === "fix") {
+      count[kind] += 1;
+    }
+  }
+  const lines: Array<string> = [];
+  if (count.finding > 0) lines.push(`Post ${quantity(count.finding, "new comment")}.`);
+  if (count.overlap > 0)
+    lines.push(`Reply +1 on ${quantity(count.overlap, "thread")} someone else already raised.`);
+  if (count.keepOpen > 0)
+    lines.push(`Follow up on ${quantity(count.keepOpen, "thread")} of yours that still need work.`);
+  if (count.resolve > 0)
+    lines.push(`Resolve ${quantity(count.resolve, "thread")} of yours that are fixed.`);
+  lines.push(
+    "Everything goes into your pending review on GitHub. Nothing is submitted, and no code is changed.",
+  );
+  return lines;
+}
+
+/** The note on your local review's row once Ctrl posted it to GitHub. */
+export function postedReviewNote(posted: Pick<ReviewSource, "state" | "verdict">): string {
+  if (posted.state === "pending") return "Pending on GitHub";
+  return posted.verdict == null || posted.verdict === "commented"
+    ? "Posted to GitHub"
+    : `Posted to GitHub · ${VERDICT_LABELS[posted.verdict]}`;
 }

@@ -1,4 +1,11 @@
-import { isActiveReviewItem } from "@t3tools/contracts";
+import {
+  isActiveReviewItem,
+  isMinePoint,
+  isViewerSource,
+  reReviewReason,
+  reviewerPointKind,
+  reviewRole,
+} from "@t3tools/contracts";
 import {
   CommandId,
   MessageId,
@@ -288,10 +295,36 @@ const replyForNewRound = (item: ReviewItem, draftReply: string | null) =>
 const liveItems = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>
   items.filter((item) => item.lastSeenRound === session.round && isActiveReviewItem(item));
 
+const isReviewer = (session: ReviewSession) => reviewRole(session) === "reviewer";
+
+/**
+ * The live points the user decides: every one on their own pull request; on someone else's,
+ * only the ones they raised. The rest is context.
+ */
+const decidableItems = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>
+  liveItems(session, items).filter((item) => !isReviewer(session) || isMinePoint(item));
+
 /** `#N` of each live point the user has not yet decided. */
 const undecidedPoints = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>
-  liveItems(session, items)
+  decidableItems(session, items)
     .filter((item) => item.decision === "needs-call")
+    .map((item) => `#${item.number}`);
+
+/**
+ * On someone else's pull request, what each of your points still owes before its round closes:
+ * Post, +1 and Resolve must be in the pending review or resolved; a Keep open with a follow-up
+ * drafted must be in the pending review. A Skip owes nothing, even with a leftover draft.
+ */
+const reviewerUnapplied = (session: ReviewSession, items: ReadonlyArray<ReviewItem>) =>
+  decidableItems(session, items)
+    .filter((item) =>
+      item.decision === "fix"
+        ? item.applyState !== "replied" && item.applyState !== "resolved"
+        : item.decision === "decline" &&
+          reviewerPointKind(item, session.round) === "follow-up" &&
+          hasText(item.draftReply) &&
+          item.applyState !== "replied",
+    )
     .map((item) => `#${item.number}`);
 
 const isOpen = (applyState: ReviewApplyState) =>
@@ -749,6 +782,9 @@ export const make = Effect.gen(function* () {
           if (Option.isSome(existing)) {
             const item = existing.value;
             const raisedAgain = item.lastSeenRound < session.round;
+            // On someone else's pull request a point raised again asks a new question (resolve
+            // your thread, or +1 again), so last round's answer does not carry over.
+            const askAgain = raisedAgain && isReviewer(session);
             yield* repo.upsertItem(session.id, {
               ...item,
               // AI may enrich raw GitHub feedback, but never replaces a user's decision/reply.
@@ -786,6 +822,15 @@ export const make = Effect.gen(function* () {
               // its posted reply is not posted twice.
               applyState: raisedAgain ? "pending" : item.applyState,
               ...(raisedAgain ? replyForNewRound(item, incoming.draftReply) : {}),
+              ...(askAgain
+                ? {
+                    decision: "needs-call" as const,
+                    decidedBy: null,
+                    reason: null,
+                    suggestedDecision: incoming.suggestedDecision,
+                    recommendation: incoming.recommendation,
+                  }
+                : {}),
               updatedAt: at,
             });
             if (!created.includes(item.number) && !matched.includes(item.number)) {
@@ -1010,6 +1055,120 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  /** Opens the round after `session.round` on `headSha`; the current round is already closed. */
+  const openNextRound = (session: ReviewSession, headSha: string, at: string) =>
+    Effect.gen(function* () {
+      const updated: ReviewSession = {
+        ...session,
+        round: session.round + 1,
+        headSha,
+        updatedAt: at,
+      };
+      yield* repo.updateSession(updated);
+      yield* repo.upsertRound(session.id, {
+        round: updated.round,
+        headSha,
+        state: "collecting",
+        appliedSha: null,
+        createdAt: at,
+        updatedAt: at,
+      });
+      // Points stay stale until a new round's import raises them again.
+      yield* repo.markItemsStale(session.id);
+      // A review that finished but was never triaged goes to the next round's triage. Your own
+      // submitted review stays with the round it answered; an unsubmitted pending one is the
+      // review the new round builds on (GitHub keeps one per person).
+      for (const source of yield* repo.listSources(session.id)) {
+        if (source.round !== session.round) continue;
+        const yours = isViewerSource(source, session.viewerLogin);
+        if (
+          (source.state === "done" && !source.triaged && !yours) ||
+          (source.state === "pending" && yours)
+        ) {
+          yield* repo.moveSourceToRound(session.id, source.id, updated.round);
+        }
+      }
+      return updated;
+    });
+
+  /**
+   * Someone else's pull request moves in two steps. Posting the pending review closes the round
+   * and the review stays on it while you submit on GitHub. Re-review opens the next round once
+   * you submitted and were asked again (or the head moved). Finishing needs no settled reviews:
+   * the others' reviews are context, not yours to triage.
+   */
+  const advanceAsReviewer = (
+    session: ReviewSession,
+    round: ReviewRound,
+    items: ReadonlyArray<ReviewItem>,
+    input: { readonly headSha: string; readonly finish: boolean },
+  ) =>
+    Effect.gen(function* () {
+      const at = yield* now;
+      if (input.finish) {
+        if (round.state !== "applied") {
+          yield* repo.upsertRound(session.id, {
+            ...round,
+            state: "applied",
+            appliedSha: session.headSha ?? (input.headSha === "" ? null : input.headSha),
+            updatedAt: at,
+          });
+        }
+        const done: ReviewSession = { ...session, phase: "done", updatedAt: at };
+        yield* repo.updateSession(done);
+        return done;
+      }
+      if (round.state === "applied") {
+        const sources = yield* repo.listSources(session.id);
+        if (reReviewReason(session, sources) === null) {
+          return yield* fail(
+            sources.some(
+              (source) =>
+                source.round === session.round &&
+                source.state === "pending" &&
+                source.author?.toLowerCase() === session.viewerLogin?.toLowerCase(),
+            )
+              ? "Submit your pending review on GitHub first. Re-review starts after you have."
+              : "Nothing to re-review yet: wait until the author asks for your review again or pushes new commits.",
+            session.id,
+          );
+        }
+        const head = session.headSha ?? (input.headSha === "" ? null : input.headSha);
+        if (head === null) {
+          return yield* fail(
+            "The pull request's head is not known yet. Try again in a moment.",
+            session.id,
+          );
+        }
+        return yield* openNextRound(session, head, at);
+      }
+      if (round.state === "collecting") {
+        const unseen = undecidedPoints(session, items);
+        if (unseen.length > 0) {
+          return yield* fail(
+            `${unseen.join(", ")} ${unseen.length === 1 ? "needs" : "need"} a decision before the round moves on.`,
+            session.id,
+          );
+        }
+      }
+      const unapplied = reviewerUnapplied(session, items);
+      if (unapplied.length > 0) {
+        return yield* fail(
+          `${unapplied.join(", ")}: not in your pending review yet. Add it, then record it with review_items_record_apply.`,
+          session.id,
+        );
+      }
+      yield* repo.upsertRound(session.id, {
+        ...round,
+        state: "applied",
+        appliedSha: input.headSha,
+        updatedAt: at,
+      });
+      const updated: ReviewSession = { ...session, updatedAt: at };
+      yield* repo.updateSession(updated);
+      return updated;
+    });
+
   const advanceRound: ReviewSessionService["Service"]["advanceRound"] = (input) =>
     Effect.gen(function* () {
       const next = yield* write(
@@ -1019,6 +1178,7 @@ export const make = Effect.gen(function* () {
           yield* requireLive(session);
           const round = yield* loadRound(session);
           const items = yield* repo.listItems(session.id);
+          if (isReviewer(session)) return yield* advanceAsReviewer(session, round, items, input);
           if (round.state === "collecting") {
             const unseen = undecidedPoints(session, items);
             if (unseen.length > 0) {
@@ -1063,29 +1223,17 @@ export const make = Effect.gen(function* () {
             appliedSha: input.headSha,
             updatedAt: at,
           });
-          const updated: ReviewSession = input.finish
-            ? { ...session, phase: "done", headSha: input.headSha, updatedAt: at }
-            : { ...session, round: session.round + 1, headSha: input.headSha, updatedAt: at };
-          yield* repo.updateSession(updated);
-          if (!input.finish) {
-            yield* repo.upsertRound(session.id, {
-              round: updated.round,
+          if (input.finish) {
+            const done: ReviewSession = {
+              ...session,
+              phase: "done",
               headSha: input.headSha,
-              state: "collecting",
-              appliedSha: null,
-              createdAt: at,
               updatedAt: at,
-            });
-            // Points stay stale until a new round's import raises them again.
-            yield* repo.markItemsStale(session.id);
-            // A review that finished but was never triaged goes to the next round's triage.
-            for (const source of yield* repo.listSources(session.id)) {
-              if (source.round === session.round && source.state === "done" && !source.triaged) {
-                yield* repo.moveSourceToRound(session.id, source.id, updated.round);
-              }
-            }
+            };
+            yield* repo.updateSession(done);
+            return done;
           }
-          return updated;
+          return yield* openNextRound(session, input.headSha, at);
         }),
       );
       // Files the re-requested Copilot and any review held back while the round applied.
@@ -1309,10 +1457,38 @@ export const make = Effect.gen(function* () {
 
   const requestTurn: ReviewSessionService["Service"]["requestTurn"] = (input) =>
     Effect.gen(function* () {
+      const request = input.request;
+      if (request._tag === "finish") {
+        const current = yield* loadSession(input.sessionId);
+        if (!isReviewer(current)) {
+          return yield* fail(
+            "Finish is for reviewing someone else's pull request; your own finishes when a round finds nothing new.",
+            current.id,
+          );
+        }
+        yield* advanceRound({
+          sessionId: current.id,
+          headSha: current.headSha ?? "",
+          finish: true,
+        });
+        return;
+      }
       const session = yield* loadSession(input.sessionId);
       yield* requireLive(session);
-      yield* requireCollecting(session, yield* loadRound(session));
-      const request = input.request;
+      if (request._tag === "re-review") {
+        if (!isReviewer(session)) {
+          return yield* fail("Re-review is for reviewing someone else's pull request.", session.id);
+        }
+        // Only a posted round moves on; closing one is the apply's job, not Re-review's.
+        if ((yield* loadRound(session)).state !== "applied") {
+          return yield* fail(
+            "Finish this round first: post your pending review, then submit it on GitHub.",
+            session.id,
+          );
+        }
+      } else {
+        yield* requireCollecting(session, yield* loadRound(session));
+      }
       let targetThreadId = session.reviewThreadId;
       if (request._tag !== "rewrite-reply" && input.targetThreadId !== undefined) {
         const target = yield* liveThread(input.targetThreadId);
@@ -1421,6 +1597,16 @@ export const make = Effect.gen(function* () {
           }),
         );
       }
+      // Re-review opens the next round before the agent starts on it, so the panel shows the
+      // new round at once and a refusal reaches the user without a turn.
+      const turnSession =
+        request._tag === "re-review"
+          ? (yield* advanceRound({
+              sessionId: session.id,
+              headSha: session.headSha ?? "",
+              finish: false,
+            })).session
+          : session;
       // The agent never got the request, so the round goes back to collecting.
       const moveBack = write(
         session.id,
@@ -1443,7 +1629,7 @@ export const make = Effect.gen(function* () {
           commandId: CommandId.make(`review-request:${id}`),
           threadId: targetThreadId,
           messageId: MessageId.make(`message:review-request:${id}`),
-          text: reviewRequestText({ session, request, item, sources: untriaged }),
+          text: reviewRequestText({ session: turnSession, request, item, sources: untriaged }),
           attachments: [],
           mode: "queue",
           // Sent as the system so the quote guard never reads it as the user's words.

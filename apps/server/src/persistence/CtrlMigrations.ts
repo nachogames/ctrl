@@ -20,6 +20,7 @@ import CtrlMigration0002 from "./CtrlMigrations/002_ThreadGroupLinks.ts";
 import CtrlMigration0003 from "./CtrlMigrations/003_ReviewSessions.ts";
 
 import CtrlMigration0004 from "./CtrlMigrations/004_ReviewSourceHistory.ts";
+import CtrlMigration0005 from "./CtrlMigrations/005_ReviewViewer.ts";
 
 export const CTRL_MIGRATIONS_TABLE = "ctrl_sql_migrations";
 
@@ -28,6 +29,7 @@ export const ctrlMigrationEntries = [
   [2, "ThreadGroupLinks", CtrlMigration0002],
   [3, "ReviewSessions", CtrlMigration0003],
   [4, "ReviewSourceHistory", CtrlMigration0004],
+  [5, "ReviewViewer", CtrlMigration0005],
 ] as const;
 
 /**

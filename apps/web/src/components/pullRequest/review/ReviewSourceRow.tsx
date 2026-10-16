@@ -1,4 +1,5 @@
 import {
+  postedReviewNote,
   reviewSourceDetail,
   reviewSourceStateLabel,
   reviewSourceTitle,
@@ -41,12 +42,14 @@ function ReviewSourceAvatar({ kind, author }: Pick<ReviewSource, "kind" | "autho
 const SOURCE_NAMES: Record<string, string> = {
   copilot: "Copilot",
   "local-review": "your review",
+  you: "you",
   ci: "CI",
 };
 
 const SOURCE_TIPS: Record<string, string> = {
   copilot: "Copilot · review comment on GitHub",
   "local-review": "Your review · ran on this computer",
+  you: "You · your review on GitHub",
   ci: "CI · a failing check",
 };
 
@@ -95,8 +98,14 @@ export const ReviewSourceRow = memo(function ReviewSourceRow({
   ranOn,
   resolution,
   comments,
+  viewerLogin = null,
+  posted,
 }: {
   source: ReviewSource;
+  /** Who uses Ctrl, so their GitHub reviews read as theirs. */
+  viewerLogin?: string | null;
+  /** The GitHub review Ctrl posted from this local review. */
+  posted?: ReviewSource | undefined;
   resolution?: string | undefined;
   environmentId: EnvironmentId;
   sessionId: ReviewSessionId | null;
@@ -105,7 +114,8 @@ export const ReviewSourceRow = memo(function ReviewSourceRow({
   ranOn: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const readable = source.state === "done" && source.commentCount > 0;
+  const readable =
+    (source.state === "done" || source.state === "pending") && source.commentCount > 0;
   const expanded = open && readable;
   return (
     <li className={cn("rounded-lg", expanded && "bg-muted/40")}>
@@ -126,9 +136,10 @@ export const ReviewSourceRow = memo(function ReviewSourceRow({
         />
         <ReviewSourceAvatar kind={source.kind} author={source.author} />
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="text-sm font-medium">{reviewSourceTitle(source)}</span>
+          <span className="text-sm font-medium">{reviewSourceTitle(source, viewerLogin)}</span>
           <span className="truncate text-xs text-muted-foreground">
             {reviewSourceDetail(source, ranOn)}
+            {posted === undefined ? "" : ` · ${postedReviewNote(posted)}`}
             {source.submittedAt ? ` · ${new Date(source.submittedAt).toLocaleString()}` : ""}
           </span>
         </span>

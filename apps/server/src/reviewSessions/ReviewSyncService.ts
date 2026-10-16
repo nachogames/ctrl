@@ -92,6 +92,7 @@ const make = Effect.gen(function* () {
             ),
           );
           const plan = planReviewSync({
+            sessionId: session.id,
             sessionRound: session.round,
             roundState,
             existing: sources,
@@ -109,8 +110,25 @@ const make = Effect.gen(function* () {
             ]).values(),
           ];
           const existingItems = yield* repo.listItems(session.id);
+          const rawOptions = { sessionId: session.id, viewerLogin: read.viewerLogin };
           const missingRaw =
-            roundState === "collecting" ? rawReviewItems(session, existingItems, rawSources) : [];
+            roundState === "collecting"
+              ? rawReviewItems(session, existingItems, rawSources, rawOptions)
+              : [];
+          // Who wrote it and who reads it; a read that cannot tell keeps what was known.
+          const people = (current: ReviewSession) => ({
+            authorLogin: read.authorLogin ?? current.authorLogin ?? null,
+            viewerLogin: read.viewerLogin ?? current.viewerLogin ?? null,
+            viewerRequested: plan.viewerRequested,
+          });
+          const peopleChanged = (current: ReviewSession) => {
+            const next = people(current);
+            return (
+              next.authorLogin !== (current.authorLogin ?? null) ||
+              next.viewerLogin !== (current.viewerLogin ?? null) ||
+              next.viewerRequested !== (current.viewerRequested ?? false)
+            );
+          };
           const headChanged = read.headSha !== null && session.headSha !== read.headSha;
           const githubStates = existingItems.flatMap((item) => {
             const next = itemGithubState(item.githubThreadIds, plan.threads);
@@ -123,7 +141,8 @@ const make = Effect.gen(function* () {
             plan.removals.length === 0 &&
             githubStates.length === 0 &&
             !headChanged &&
-            missingRaw.length === 0
+            missingRaw.length === 0 &&
+            !peopleChanged(session)
           ) {
             return false;
           }
@@ -172,7 +191,12 @@ const make = Effect.gen(function* () {
               }
               const items =
                 roundState === "collecting"
-                  ? rawReviewItems(latest.value, yield* repo.listItems(session.id), rawSources)
+                  ? rawReviewItems(
+                      latest.value,
+                      yield* repo.listItems(session.id),
+                      rawSources,
+                      rawOptions,
+                    )
                   : [];
               for (const item of items) {
                 yield* repo.upsertItem(session.id, {
@@ -180,9 +204,10 @@ const make = Effect.gen(function* () {
                   githubState: itemGithubState(item.githubThreadIds, plan.threads),
                 });
               }
-              if (items.length > 0 || headChanged)
+              if (items.length > 0 || headChanged || peopleChanged(latest.value))
                 yield* repo.updateSession({
                   ...latest.value,
+                  ...people(latest.value),
                   nextNumber: Math.max(
                     latest.value.nextNumber,
                     ...items.map((item) => item.number + 1),

@@ -1,4 +1,4 @@
-import { isActiveReviewItem, isReviewOverview } from "@t3tools/contracts";
+import { isActiveReviewItem, isReviewOverview, isViewerSource } from "@t3tools/contracts";
 import {
   reviewHistoryRounds,
   type ReviewHistoryRound,
@@ -233,4 +233,35 @@ export function reviewApplyLines(summary: {
     );
   }
   return lines;
+}
+
+/**
+ * Your GitHub review that Ctrl posted from your local review is that same review, posted: each
+ * round lists the local row once, notes it was posted, and hides the GitHub copy. A review you
+ * wrote straight on GitHub stays its own row.
+ */
+export function foldPostedReviews(
+  sources: ReadonlyArray<ReviewSource>,
+  viewerLogin: string | null,
+): { readonly hidden: ReadonlySet<string>; readonly postedFor: ReadonlyMap<string, ReviewSource> } {
+  const hidden = new Set<string>();
+  const postedFor = new Map<string, ReviewSource>();
+  const time = (source: ReviewSource) => source.submittedAt ?? source.updatedAt;
+  for (const round of new Set(sources.map((source) => source.round))) {
+    const local = sources.findLast(
+      (source) => source.round === round && source.kind === "local" && source.state !== "not-run",
+    );
+    if (local === undefined) continue;
+    const posted = sources.filter(
+      (source) =>
+        source.round === round && source.posted === true && isViewerSource(source, viewerLogin),
+    );
+    if (posted.length === 0) continue;
+    for (const source of posted) hidden.add(source.id);
+    postedFor.set(
+      local.id,
+      posted.reduce((latest, source) => (time(source) > time(latest) ? source : latest)),
+    );
+  }
+  return { hidden, postedFor };
 }

@@ -277,6 +277,8 @@ export interface ProviderChangeRequestActivity {
  */
 export interface ProviderChangeRequestReviewRound {
   readonly authorLogin: string | null;
+  /** Who the host's credentials belong to: the person whose reviews are "yours". */
+  readonly viewerLogin: string | null;
   readonly headSha: string | null;
   readonly reviews: ReadonlyArray<{
     readonly id: string;

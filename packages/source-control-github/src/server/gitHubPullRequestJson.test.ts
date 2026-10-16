@@ -2204,6 +2204,7 @@ describe("decodeReviewRoundJson", () => {
   it("reads each review's commit, who is still asked, and which review wrote each comment", () => {
     const raw = JSON.stringify({
       data: {
+        viewer: { login: "NeilMcEachin" },
         repository: {
           pullRequest: {
             headRefOid: "c7d8e9f",
@@ -2253,6 +2254,7 @@ describe("decodeReviewRoundJson", () => {
     });
     const read = expectSuccess(decodeReviewRoundJson(raw));
     expect(read.authorLogin).toBe("nach");
+    expect(read.viewerLogin).toBe("NeilMcEachin");
     expect(read.headSha).toBe("c7d8e9f");
     expect(read.reviews).toEqual([
       {

@@ -1,4 +1,5 @@
 import type {
+  ReviewVerdict,
   ReviewGithubState,
   ReviewItem,
   ReviewSession,
@@ -14,10 +15,21 @@ const COPILOT_LOGIN = /^(copilot|copilot-pull-request-reviewer)(\[bot\])?$/i;
 export const isCopilotLogin = (login: string | null | undefined): boolean =>
   login !== null && login !== undefined && COPILOT_LOGIN.test(login);
 
+/** The hidden marker Ctrl puts on every comment it writes for a review session. */
+export const ctrlReviewMarker = (sessionId: string) => `ctrl-review:${sessionId}:`;
+
+const VERDICTS: Record<string, ReviewVerdict> = {
+  APPROVED: "approved",
+  CHANGES_REQUESTED: "changes-requested",
+  COMMENTED: "commented",
+};
+
 /** A reviewer asked in a round who has not reviewed yet. */
 export const requestSourceId = (round: number, login: string) => `request:${round}:${login}`;
 
 export interface ReviewSyncInput {
+  /** The session the markers name; null for the pre-session history read. */
+  readonly sessionId?: string | null;
   readonly sessionRound: number;
   readonly roundState: ReviewRoundState;
   /** Every source of the session, all rounds. */
@@ -38,6 +50,8 @@ export interface ReviewSyncPlan {
     string,
     { readonly isResolved: boolean; readonly isOutdated: boolean }
   >;
+  /** The viewer reviews someone else's pull request and is asked to review it (again). */
+  readonly viewerRequested: boolean;
 }
 
 type Review = ProviderChangeRequestReviewRound["reviews"][number];
@@ -82,10 +96,17 @@ function reviewComments(
  * being applied; then they wait, and the first read after the round advances files them in the
  * next one. A known source keeps its round and triage mark. Reviews by the pull request's
  * author are retained unless they are Ctrl apply summaries or reply-only reviews.
+ *
+ * On someone else's pull request the viewer's own reviews always file into the current round,
+ * even while it is held, and their pending review files as `pending`: it is the review this
+ * round is building.
  */
 export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
   const { read, sessionRound, now } = input;
   const author = read.authorLogin?.toLowerCase() ?? null;
+  const viewer = read.viewerLogin?.toLowerCase() ?? null;
+  const asReviewer = viewer !== null && author !== null && viewer !== author;
+  const marker = input.sessionId == null ? null : ctrlReviewMarker(input.sessionId);
   const known = new Map(input.existing.map((source) => [source.id, source]));
   const holding = input.roundState !== "collecting";
   const upserts: Array<ReviewSyncPlan["upserts"][number]> = [];
@@ -111,30 +132,40 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
           !read.threads.some((thread) => thread.comments[0]?.reviewId === review.id)))
     )
       continue;
-    if (review.state === "PENDING") continue;
+    const mine = asReviewer && login !== null && login.toLowerCase() === viewer;
+    const pending = review.state === "PENDING";
+    if (pending && !mine) continue;
     const stored = known.get(review.id);
-    if (stored === undefined && holding) {
+    if (stored === undefined && holding && !mine) {
       if (login !== null) heldReviewers.add(login.toLowerCase());
       continue;
     }
     const round = stored?.round ?? sessionRound;
-    noteReview(login, round);
+    if (!pending) noteReview(login, round);
     const comments = reviewComments(read, review);
+    const state = pending ? "pending" : "done";
+    const verdict = pending ? null : (VERDICTS[review.state] ?? null);
+    const posted =
+      mine && marker !== null && comments.some((comment) => comment.body.includes(marker));
     const failed =
       isCopilotLogin(login) &&
       /Copilot encountered an error and was unable to review/i.test(review.body);
     const reviewThreads = read.threads.filter(
       (thread) => thread.comments[0]?.reviewId === review.id,
     );
+    // What Ctrl posted from its own points needs no triage.
     const triaged =
       stored?.triaged === true ||
       failed ||
+      posted ||
       (isCopilotLogin(login) &&
         reviewThreads.length > 0 &&
         reviewThreads.every((thread) => thread.isResolved));
     if (
       stored !== undefined &&
-      stored.state === "done" &&
+      stored.state === state &&
+      (stored.verdict ?? null) === verdict &&
+      (stored.posted ?? false) === posted &&
       stored.submittedAt === review.submittedAt &&
       stored.failed === failed &&
       stored.triaged === triaged &&
@@ -152,7 +183,7 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
         failed,
         round,
         kind: isCopilotLogin(login) ? "copilot" : "human",
-        state: "done",
+        state,
         author: login,
         isBot: review.author?.isBot === true,
         commitSha: review.commitSha,
@@ -161,6 +192,8 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
         threadId: null,
         ranOn: null,
         url: review.url,
+        verdict,
+        posted,
         updatedAt: now,
       },
       comments,
@@ -168,9 +201,15 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
   }
 
   const pending = new Set<string>();
+  let viewerRequested = false;
   for (const reviewer of read.pendingReviewers) {
     const key = reviewer.login.toLowerCase();
     if (key === author) continue;
+    // Your own request is the Re-review signal, not a reviewer to wait for.
+    if (asReviewer && key === viewer) {
+      viewerRequested = true;
+      continue;
+    }
     pending.add(key);
     if (holding || (reviewedRounds.get(key) ?? []).some((round) => round >= sessionRound)) continue;
     const id = requestSourceId(sessionRound, reviewer.login);
@@ -196,6 +235,12 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
     });
   }
 
+  // A pending review you deleted on GitHub is gone; one you submitted came back as done above.
+  const onGitHub = new Set(read.reviews.map((review) => review.id));
+  for (const source of input.existing) {
+    if (source.state === "pending" && !onGitHub.has(source.id)) removals.push(source.id);
+  }
+
   for (const source of input.existing) {
     if (!source.id.startsWith("request:") || source.author === null) continue;
     const key = source.author.toLowerCase();
@@ -212,6 +257,7 @@ export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
   return {
     upserts,
     removals,
+    viewerRequested,
     threads: new Map(
       read.threads.map((thread) => [
         thread.id,
@@ -268,7 +314,14 @@ export function rawReviewItems(
   session: Pick<ReviewSession, "round" | "nextNumber">,
   existing: ReadonlyArray<ReviewItem>,
   sources: ReviewSyncPlan["upserts"],
+  /**
+   * `sessionId`: comments carrying its marker are Ctrl's own posts of existing points and are
+   * skipped. `viewerLogin`: the viewer's own GitHub comments are raised by `you`.
+   */
+  options: { readonly sessionId?: string | null; readonly viewerLogin?: string | null } = {},
 ): ReadonlyArray<ReviewItem> {
+  const marker = options.sessionId == null ? null : ctrlReviewMarker(options.sessionId);
+  const viewer = options.viewerLogin?.toLowerCase() ?? null;
   const nextNumber = Math.max(session.nextNumber, ...existing.map((item) => item.number + 1));
   const keys = new Set(existing.flatMap((item) => item.sourceKeys));
   const items: Array<ReviewItem> = [];
@@ -277,6 +330,7 @@ export function rawReviewItems(
     for (const comment of comments ?? []) {
       if (keys.has(comment.key) || !comment.body.trim()) continue;
       if (source.kind === "copilot" && comment.key.startsWith("gh-review:")) continue;
+      if (marker !== null && comment.body.includes(marker)) continue;
       keys.add(comment.key);
       const summary = comment.body.trim().split("\n")[0]!.slice(0, 180);
       const login = source.author ?? "unknown";
@@ -286,7 +340,13 @@ export function rawReviewItems(
         lastSeenRound: session.round,
         sourceKeys: [comment.key],
         sourceIds: [source.id],
-        sources: [source.kind === "copilot" ? "copilot" : `human:${login}`],
+        sources: [
+          source.kind === "copilot"
+            ? "copilot"
+            : viewer !== null && login.toLowerCase() === viewer
+              ? "you"
+              : `human:${login}`,
+        ],
         githubThreadIds: comment.threadId === null ? [] : [comment.threadId],
         githubState: null,
         path: comment.path,

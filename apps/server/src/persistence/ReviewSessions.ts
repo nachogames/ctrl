@@ -36,6 +36,9 @@ interface SessionRow {
   readonly round: number;
   readonly head_sha: string | null;
   readonly next_number: number;
+  readonly author_login: string | null;
+  readonly viewer_login: string | null;
+  readonly viewer_requested: number;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -52,6 +55,8 @@ interface RoundRow {
 interface SourceRow {
   readonly submitted_at: string | null;
   readonly failed: number;
+  readonly verdict: string | null;
+  readonly posted: number;
   readonly source_id: string;
   readonly round: number;
   readonly kind: string;
@@ -144,6 +149,9 @@ const sessionFromRow = (row: SessionRow) =>
     round: row.round,
     headSha: row.head_sha,
     nextNumber: row.next_number,
+    authorLogin: row.author_login,
+    viewerLogin: row.viewer_login,
+    viewerRequested: row.viewer_requested === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }).pipe(Effect.mapError(decodeError("ReviewSession")));
@@ -175,6 +183,8 @@ const sourceFromRow = (row: SourceRow) =>
       threadId: row.thread_id,
       ranOn: row.ran_on_json === null ? null : yield* decodeRanOn(row.ran_on_json),
       url: row.url,
+      verdict: row.verdict,
+      posted: row.posted === 1,
       updatedAt: row.updated_at,
     });
   }).pipe(Effect.mapError(decodeError("ReviewSource")));
@@ -357,6 +367,7 @@ const make = Effect.gen(function* () {
       : itemFromRow(rows[0]!).pipe(Effect.map(Option.some));
 
   // Keys come from review_item_keys; the review rows are the sources whose comments carry them.
+  // A `<body key>#<slug>` key is one finding inside a review body, so it belongs to that review.
   const itemSelect = sql`
     SELECT i.*,
       (SELECT json_group_array(k.source_key) FROM review_item_keys k
@@ -364,7 +375,9 @@ const make = Effect.gen(function* () {
       (SELECT json_group_array(DISTINCT c.source_id)
          FROM review_item_keys k
          JOIN review_source_comments c
-           ON c.session_id = k.session_id AND c.finding_key = k.source_key
+           ON c.session_id = k.session_id
+          AND (c.finding_key = k.source_key
+            OR substr(k.source_key, 1, length(c.finding_key) + 1) = c.finding_key || '#')
         WHERE k.session_id = i.session_id AND k.number = i.number) AS source_ids_json
     FROM review_items i
   `;
@@ -374,17 +387,23 @@ const make = Effect.gen(function* () {
       sql`
         INSERT INTO review_sessions
           (session_id, project_id, host, repository, number, url, group_id, review_thread_id,
-           phase, round, head_sha, next_number, created_at, updated_at)
+           phase, round, head_sha, next_number, author_login, viewer_login, viewer_requested,
+           created_at, updated_at)
         VALUES (${session.id}, ${session.projectId}, ${session.pullRequest.host},
                 ${session.pullRequest.repository}, ${session.pullRequest.number}, ${session.url},
                 ${session.groupId}, ${session.reviewThreadId}, ${session.phase}, ${session.round},
-                ${session.headSha}, ${session.nextNumber}, ${session.createdAt}, ${session.updatedAt})
+                ${session.headSha}, ${session.nextNumber}, ${session.authorLogin ?? null},
+                ${session.viewerLogin ?? null}, ${session.viewerRequested ? 1 : 0},
+                ${session.createdAt}, ${session.updatedAt})
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("insertReviewSession"))),
     updateSession: (session) =>
       sql`
         UPDATE review_sessions
         SET phase = ${session.phase}, round = ${session.round}, head_sha = ${session.headSha},
-            next_number = ${session.nextNumber}, updated_at = ${session.updatedAt}
+            next_number = ${session.nextNumber}, author_login = ${session.authorLogin ?? null},
+            viewer_login = ${session.viewerLogin ?? null},
+            viewer_requested = ${session.viewerRequested ? 1 : 0},
+            updated_at = ${session.updatedAt}
         WHERE session_id = ${session.id}
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("updateReviewSession"))),
     getSession: (id) =>
@@ -457,17 +476,21 @@ const make = Effect.gen(function* () {
         yield* sql`
           INSERT INTO review_sources (
             session_id, source_id, round, kind, state, author, is_bot, commit_sha,
-            comment_count, triaged, thread_id, ran_on_json, url, updated_at, submitted_at, failed
+            comment_count, triaged, thread_id, ran_on_json, url, updated_at, submitted_at, failed,
+            verdict, posted
           ) VALUES (
             ${sessionId}, ${source.id}, ${source.round}, ${source.kind}, ${source.state},
             ${source.author}, ${source.isBot ? 1 : 0}, ${source.commitSha},
             ${source.commentCount}, ${source.triaged ? 1 : 0}, ${source.threadId},
             ${source.ranOn === null ? null : encodeRanOn(source.ranOn)}, ${source.url},
-            ${source.updatedAt}, ${source.submittedAt ?? null}, ${source.failed ? 1 : 0}
+            ${source.updatedAt}, ${source.submittedAt ?? null}, ${source.failed ? 1 : 0},
+            ${source.verdict ?? null}, ${source.posted ? 1 : 0}
           )
           ON CONFLICT (session_id, source_id) DO UPDATE SET
             submitted_at = excluded.submitted_at,
             failed = excluded.failed,
+            verdict = excluded.verdict,
+            posted = excluded.posted,
             triaged = MAX(review_sources.triaged, excluded.triaged),
             kind = excluded.kind,
             state = excluded.state,

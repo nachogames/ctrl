@@ -42,3 +42,18 @@ it("publishes inline findings before fixing, then replies and resolves their sav
   expect(brief).toContain("read them again before retrying");
   expect(brief).not.toContain("one line per point whose sources include local-review");
 });
+
+it("on someone else's pull request, prepares one pending review and never pushes or submits", () => {
+  const brief = reviewBrief(sessionFixture({ authorLogin: "dan", viewerLogin: "NeilMcEachin" }));
+  expect(brief).toContain("@dan wrote this pull request");
+  expect(brief).toContain("Never edit code, commit, push, approve, request changes or submit");
+  expect(brief).toContain("addPullRequestReview(input: {pullRequestId: $pr, commitOID: $sha})");
+  expect(brief).toContain("ctrl-review:review:");
+  expect(brief).toContain("## Re-review");
+  expect(brief).not.toContain("## Next round");
+  expect(brief).not.toContain("Self-review, round <session.round>");
+  // The author's loop is unchanged on the user's own pull request.
+  expect(reviewBrief(sessionFixture({ authorLogin: "nach", viewerLogin: "nach" }))).toContain(
+    "## Next round",
+  );
+});
