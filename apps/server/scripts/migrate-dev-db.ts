@@ -258,6 +258,16 @@ const CLEARED_TABLES: ReadonlyArray<string> = [
   "auth_pairing_links",
 ];
 
+/** Ctrl's PR review tables, children before parents so foreign keys hold. */
+const REVIEW_TABLES: ReadonlyArray<string> = [
+  "review_item_keys",
+  "review_items",
+  "review_source_comments",
+  "review_sources",
+  "review_rounds",
+  "review_sessions",
+];
+
 /** Shared between threads; the prune keeps the ones a kept thread is bound to. */
 const PROVIDER_SESSIONS_TABLE = "orchestration_v2_projection_provider_sessions";
 
@@ -291,6 +301,8 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
 
   yield* sql.withTransaction(
     Effect.gen(function* () {
+      // Tables copy in schema order, not dependency order.
+      yield* sql`PRAGMA defer_foreign_keys = ON`;
       for (const table of tables) yield* sql.unsafe(table.sql).unprepared;
       if (filtered) {
         yield* sql`CREATE TEMP TABLE copied_threads (thread_id TEXT PRIMARY KEY)`;
@@ -310,7 +322,9 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
               // index instead of scanning every event.
               `WHERE (aggregate_kind = 'thread' AND stream_id IN (SELECT thread_id FROM copied_threads))
                 OR aggregate_kind < 'thread' OR aggregate_kind > 'thread'`
-            : nullable === undefined || name === PROVIDER_SESSIONS_TABLE
+            : nullable === undefined ||
+                name === PROVIDER_SESSIONS_TABLE ||
+                REVIEW_TABLES.includes(name)
               ? ""
               : `WHERE thread_id IN (SELECT thread_id FROM copied_threads)${nullable ? " OR thread_id IS NULL" : ""}`;
         yield* sql.unsafe(`INSERT INTO main."${name}" SELECT * FROM src."${name}" ${filter}`)
@@ -401,15 +415,28 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
   // Every V2 table and every V1 table the lazy importer reads is keyed by
   // thread_id, so one sweep covers both and new tables need no change here.
   // Provider sessions are shared between threads and pruned by binding below.
+  // Review tables hang off a project's review session and use thread_id for
+  // GitHub threads, so they are pruned by project below instead.
   const threadTables = yield* sql<{ name: string }>`
     SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
     WHERE m.type = 'table' AND c.name = 'thread_id'
-      AND m.name <> ${PROVIDER_SESSIONS_TABLE}`;
+      AND m.name <> ${PROVIDER_SESSIONS_TABLE}
+      AND m.name NOT IN ${sql.in(REVIEW_TABLES)}`;
+  const reviewTables = yield* sql<{ name: string }>`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ${sql.in(REVIEW_TABLES)}`;
 
   yield* sql.withTransaction(
     Effect.gen(function* () {
       yield* sql`DELETE FROM projection_projects
         WHERE project_id NOT IN (SELECT project_id FROM kept_projects)`;
+      for (const name of REVIEW_TABLES) {
+        if (!reviewTables.some((table) => table.name === name)) continue;
+        yield* sql.unsafe(
+          `DELETE FROM "${name}" WHERE session_id IN (
+            SELECT session_id FROM review_sessions
+            WHERE project_id NOT IN (SELECT project_id FROM kept_projects))`,
+        ).unprepared;
+      }
       yield* sql`DELETE FROM ${sql(PROVIDER_SESSIONS_TABLE)}
         WHERE COALESCE(thread_id, '') NOT IN (SELECT thread_id FROM kept_threads)
           AND provider_session_id NOT IN (
