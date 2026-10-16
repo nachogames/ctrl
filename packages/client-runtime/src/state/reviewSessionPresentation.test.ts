@@ -176,9 +176,10 @@ it("keeps old overview records and resolved points out of apply while retaining 
     item(2, { githubState: "resolved" }),
     item(3, { githubState: "outdated" }),
     item(4, { stale: true }),
+    item(5, { sourceKeys: ["gh-review:R1#status-radius"] }),
   ];
-  expect(liveRoundItems({ items }, 1).map((item) => item.number)).toEqual([3]);
-  expect(items).toHaveLength(4);
+  expect(liveRoundItems({ items }, 1).map((item) => item.number)).toEqual([3, 5]);
+  expect(items).toHaveLength(5);
 });
 
 describe("GitHub review rounds", () => {

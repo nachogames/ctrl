@@ -185,7 +185,8 @@ export type ReviewSource = typeof ReviewSource.Type;
 
 /**
  * Exactly what a review said. `key` is the finding key points use:
- * `gh:<thread node id>`, `gh-review:<review node id>` for a review's body, or
+ * `gh:<thread node id>`, `gh-review:<review node id>` for a review's body
+ * (`gh-review:<review node id>#<slug>` for one finding raised only in that body), or
  * `local:<path>:<slug>` for a local finding.
  */
 export const ReviewSourceComment = Schema.Struct({
@@ -349,11 +350,15 @@ export class ReviewSessionError extends Schema.TaggedError<ReviewSessionError>()
   },
 ) {}
 
-/** Older imports numbered Copilot overviews; retain their records but never treat them as work. */
+/**
+ * Older imports numbered a whole Copilot overview (`gh-review:<id>`); retain those records but
+ * never treat them as work. A finding taken out of a review body has its own
+ * `gh-review:<id>#<slug>` key and is an ordinary point.
+ */
 export const isReviewOverview = (item: Pick<ReviewItem, "sources" | "sourceKeys">): boolean =>
   item.sources.includes("copilot") &&
   item.sourceKeys.length > 0 &&
-  item.sourceKeys.every((key) => key.startsWith("gh-review:"));
+  item.sourceKeys.every((key) => key.startsWith("gh-review:") && !key.includes("#"));
 
 export const isActiveReviewItem = (item: ReviewItem): boolean =>
   !item.stale && item.githubState !== "resolved" && !isReviewOverview(item);

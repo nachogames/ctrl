@@ -66,7 +66,7 @@ const ImportItem = Schema.Struct({
     .check(Schema.isMinLength(1))
     .annotate({
       description:
-        'The comment keys this point answers: "gh:<thread id>" for a GitHub thread, "local:<path>:<slug>" for a local finding. A point that restates one already listed must reuse that point\'s keys so it keeps its number and decision. One problem raised by two reviews is one point with both keys.',
+        'The comment keys this point answers: "gh:<thread id>" for a GitHub thread, "gh-review:<review id>#<slug>" for a finding raised only in a review body, "local:<path>:<slug>" for a local finding. A point that restates one already listed must reuse that point\'s keys so it keeps its number and decision. One problem raised by two reviews is one point with both keys.',
     }),
   sources: Schema.Array(ReviewItemSource).check(Schema.isMinLength(1)).annotate({
     description:

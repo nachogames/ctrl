@@ -367,6 +367,7 @@ const make = Effect.gen(function* () {
       : itemFromRow(rows[0]!).pipe(Effect.map(Option.some));
 
   // Keys come from review_item_keys; the review rows are the sources whose comments carry them.
+  // A `<body key>#<slug>` key is one finding inside a review body, so it belongs to that review.
   const itemSelect = sql`
     SELECT i.*,
       (SELECT json_group_array(k.source_key) FROM review_item_keys k
@@ -374,7 +375,9 @@ const make = Effect.gen(function* () {
       (SELECT json_group_array(DISTINCT c.source_id)
          FROM review_item_keys k
          JOIN review_source_comments c
-           ON c.session_id = k.session_id AND c.finding_key = k.source_key
+           ON c.session_id = k.session_id
+          AND (c.finding_key = k.source_key
+            OR substr(k.source_key, 1, length(c.finding_key) + 1) = c.finding_key || '#')
         WHERE k.session_id = i.session_id AND k.number = i.number) AS source_ids_json
     FROM review_items i
   `;

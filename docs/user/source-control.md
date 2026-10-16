@@ -312,7 +312,8 @@ Linked GitHub PRs automatically collect existing and future reviews. Open the PR
 **Review** tab to see feedback as numbered points, initially marked Needs a call. No agent
 request or project skill installation is needed. Discovery runs in the background; opening
 the tab discovers the PR immediately. GitHub feedback refreshes periodically.
-Copilot overviews stay with their review summaries. Resolved findings remain in history and do not
+Copilot overviews stay with their review summaries; a problem an overview raises that no inline
+comment covers becomes its own point when the agent triages. Resolved findings remain in history and do not
 need another decision. Each completed Copilot pass starts a review round, with failed retries and reviews of the same
 commit grouped alongside it. Each round shows how many findings are still open or resolved,
 including resolutions made directly on GitHub.

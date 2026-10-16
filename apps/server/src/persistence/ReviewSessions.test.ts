@@ -193,6 +193,25 @@ it.effect("keeps who wrote the pull request, who reads it, and a review's verdic
   ),
 );
 
+it.effect("links a finding taken out of a review body to that review", () =>
+  Effect.gen(function* () {
+    const repo = yield* repository;
+    yield* repo.insertSession(session);
+    yield* repo.upsertSource(session.id, copilot, [
+      { ...comment("gh-review:PRR_copilot", "Previously missed: raw status radius."), path: null },
+    ]);
+    yield* repo.upsertItem(session.id, {
+      ...item,
+      sourceKeys: ["gh-review:PRR_copilot#status-radius"],
+      githubThreadIds: [],
+    });
+    const [stored] = yield* repo.listItems(session.id);
+    assert.deepEqual(stored?.sourceIds, ["PRR_copilot"]);
+  }).pipe(
+    Effect.provide(ReviewSessions.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
+  ),
+);
+
 it.effect("moves a review to a later round with its triage mark and comments", () =>
   Effect.gen(function* () {
     const repo = yield* repository;
