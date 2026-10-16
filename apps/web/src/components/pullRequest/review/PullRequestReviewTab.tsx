@@ -4,14 +4,22 @@ import {
   effectiveDecision,
   liveRoundItems,
   nextUnviewedNumber,
+  pointKindFor,
   reviewApplySummary,
+  reviewerApplyLines,
+  suggestedReviewVerdict,
 } from "@t3tools/client-runtime/state/review-sessions";
-import type {
-  EnvironmentId,
-  PullRequestRef,
-  ReviewDecision,
-  ReviewItem,
-  ScopedThreadRef,
+import {
+  latestViewerReview,
+  reReviewReason,
+  reviewRole,
+  isViewerSource,
+  type EnvironmentId,
+  type PullRequestRef,
+  type ReviewDecision,
+  type ReviewItem,
+  type ReviewSessionSnapshot,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -176,6 +184,10 @@ function GroupPullRequestReview({
   const decide = useReviewCommand(reviewSessionEnvironment.decide, "Could not save the decision");
   const canRequest = useAtomValue(reviewSessionEnvironment.request.permissionAtom(environmentId));
   const request = useReviewCommand(reviewSessionEnvironment.request, "Could not apply");
+  const continueReview = useReviewCommand(
+    reviewSessionEnvironment.request,
+    "Could not continue the review",
+  );
   const sideChat = useOpenReviewSideChat(environmentId);
   const [confirmingApply, setConfirmingApply] = useState(false);
   // The round an Apply was sent for. The request only moves the round to applying and queues the
@@ -340,6 +352,12 @@ function GroupPullRequestReview({
   };
 
   const views = reviewRoundViews(snapshot);
+  const reviewer = reviewRole(snapshot.session) === "reviewer";
+  const viewerLogin = snapshot.session.viewerLogin ?? null;
+  const decidedItems = liveItems.map((item) => ({
+    ...item,
+    decision: effectiveDecision(item) ?? ("needs-call" as const),
+  }));
   return (
     <div className="flex h-full flex-col gap-2.5 overflow-y-auto p-3">
       {views.map((view) => {
@@ -353,6 +371,28 @@ function GroupPullRequestReview({
             targetThreadId={threadRef.threadId}
             environmentId={environmentId}
             providers={providers}
+            viewerLogin={viewerLogin}
+            reviewer={reviewer}
+            actions={
+              reviewer && view.current && view.round.state !== "collecting" ? (
+                <ReviewerSubmitRow
+                  snapshot={snapshot}
+                  roundState={view.round.state}
+                  disabled={!canRequest}
+                  onOpenLink={onOpenLink}
+                  onRequest={(tag) =>
+                    void continueReview({
+                      environmentId,
+                      input: {
+                        sessionId,
+                        targetThreadId: threadRef.threadId,
+                        request: { _tag: tag },
+                      },
+                    })
+                  }
+                />
+              ) : null
+            }
             discussed={
               view.items.filter(
                 (item) => (mentions.get(item.number) ?? 0) > 0 || item.sideThreadId !== null,
@@ -361,8 +401,14 @@ function GroupPullRequestReview({
             footer={
               collecting ? (
                 <ApplyRow
-                  left={view.items.filter((item) => effectiveDecision(item) === null).length}
-
+                  left={
+                    view.items.filter(
+                      (item) =>
+                        effectiveDecision(item) === null &&
+                        pointKindFor(item, snapshot.session, reviewer) !== "context",
+                    ).length
+                  }
+                  reviewer={reviewer}
                   sending={applySent === applyKey}
                   disabled={!canRequest}
                   onApply={() => setConfirmingApply(true)}
@@ -385,6 +431,7 @@ function GroupPullRequestReview({
                   canView={canView}
                   canDecide={canDecide}
                   talked={mentions.get(item.number) ?? 0}
+                  kind={pointKindFor(item, snapshot.session, reviewer)}
                   onOpenChange={onOpenChange}
                   onViewed={onViewed}
                   onDecide={onDecide}
@@ -419,19 +466,15 @@ function GroupPullRequestReview({
         onOpenChange={setConfirmingApply}
 
         pullRequestNumber={snapshot.session.pullRequest.number}
+        reviewer={reviewer}
         lines={
-          confirmingApply
-            ? reviewApplyLines(
-                reviewApplySummary(
-                  liveItems.map((item) => ({
-                    ...item,
-                    decision: effectiveDecision(item) ?? "needs-call",
-                  })),
-                  snapshot.sources,
-                  snapshot.session.round,
-                ),
-              )
-            : NO_LINES
+          !confirmingApply
+            ? NO_LINES
+            : reviewer
+              ? reviewerApplyLines(decidedItems, snapshot.session.round)
+              : reviewApplyLines(
+                  reviewApplySummary(decidedItems, snapshot.sources, snapshot.session.round),
+                )
         }
         onApply={() => void startApply()}
       />
@@ -445,23 +488,107 @@ function ApplyRow({
   sending,
   disabled,
   onApply,
+  reviewer,
 }: {
   left: number;
   sending: boolean;
   disabled: boolean;
   onApply: () => void;
+  reviewer: boolean;
 }) {
   return (
     <div className="flex items-center gap-2.5 px-1 pt-1.5">
       <span className="min-w-0 flex-1 text-xs text-muted-foreground">
         {sending
           ? "Starting the apply in the review chat…"
-          : left === 0
-            ? "Apply approves the displayed Fix/Decline choices, posts your review, replies and resolves."
-            : `${left} need a Fix or Decline decision.`}
+          : left > 0
+            ? `${left} need a decision.`
+            : reviewer
+              ? "Puts your approved comments, +1s and follow-ups into a pending review on GitHub. You submit it there."
+              : "Apply approves the displayed Fix/Decline choices, posts your review, replies and resolves."}
       </span>
       <Button size="sm" disabled={disabled || sending || left > 0} onClick={onApply}>
-        Apply approved findings
+        {reviewer ? "Post pending review" : "Apply approved findings"}
+      </Button>
+    </div>
+  );
+}
+
+const VERDICT_TEXT = {
+  approved: "Approved",
+  "changes-requested": "Changes requested",
+  commented: "Commented",
+} as const;
+
+/**
+ * After a reviewer round is posted: where your review stands on GitHub, the verdict to pick,
+ * and the way on (Re-review once you are asked again, Finish once you approved).
+ */
+function ReviewerSubmitRow({
+  snapshot,
+  roundState,
+  disabled,
+  onOpenLink,
+  onRequest,
+}: {
+  snapshot: ReviewSessionSnapshot;
+  roundState: "applying" | "applied";
+  disabled: boolean;
+  onOpenLink: (url: string) => void;
+  onRequest: (tag: "re-review" | "finish") => void;
+}) {
+  const { session, sources } = snapshot;
+  const pending = sources.find(
+    (source) => source.state === "pending" && isViewerSource(source, session.viewerLogin),
+  );
+  const submitted = latestViewerReview(session, sources);
+  const reason = reReviewReason(session, sources);
+  const items = liveRoundItems(snapshot, session.round);
+  const verdict =
+    suggestedReviewVerdict(items, session.round) === "approve" ? "Approve" : "Request changes";
+  const author = session.authorLogin ?? "The author";
+  const line =
+    submitted !== null
+      ? `You submitted: ${submitted.verdict == null ? "a review" : VERDICT_TEXT[submitted.verdict]}. ${
+          reason === "requested"
+            ? `${author} asked for your review again.`
+            : reason === "head-moved"
+              ? "New commits since your review."
+              : submitted.verdict === "approved"
+                ? "Finish when you are done."
+                : `Waiting for ${author} to push fixes and ask again.`
+        }`
+      : pending !== undefined
+        ? `Your pending review is on GitHub. Read it there and submit: ${verdict} suggested.${
+            pending.commitSha !== null &&
+            session.headSha !== null &&
+            pending.commitSha !== session.headSha
+              ? " The pull request changed since you started it."
+              : ""
+          }`
+        : roundState === "applying"
+          ? `Preparing your pending review… then submit it on GitHub: ${verdict} suggested.`
+          : `Nothing was posted this round. Submit your verdict on GitHub: ${verdict} suggested.`;
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t border-border/60 px-1 pt-2">
+      <span className="min-w-0 flex-1 text-xs text-muted-foreground">{line}</span>
+      <Button size="sm" variant="outline" onClick={() => onOpenLink(pending?.url ?? session.url)}>
+        Open on GitHub
+      </Button>
+      <Button
+        size="sm"
+        variant={submitted?.verdict === "approved" ? "default" : "outline"}
+        disabled={disabled}
+        onClick={() => onRequest("finish")}
+      >
+        Finish
+      </Button>
+      <Button
+        size="sm"
+        disabled={disabled || roundState !== "applied" || reason === null}
+        onClick={() => onRequest("re-review")}
+      >
+        Re-review
       </Button>
     </div>
   );

@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/review-sessions";
 import type {
   EnvironmentId,
+  ReviewerPointKind,
   ReviewDecision,
   ReviewItem,
   ReviewRoundState,
@@ -47,6 +48,8 @@ interface ReviewPointRowProps {
   canDecide: boolean;
   /** Messages the user sent about it. */
   talked: number;
+  /** What the point is to you on someone else's pull request; null on your own. */
+  kind?: ReviewerPointKind | null;
   // The callbacks take the point so the tab can pass the same function to every row.
   onOpenChange: (item: ReviewItem, open: boolean) => void;
   onViewed: (item: ReviewItem, viewed: boolean) => void;
@@ -78,6 +81,7 @@ export const ReviewPointRow = memo(function ReviewPointRow({
   canView,
   canDecide,
   talked,
+  kind = null,
   onOpenChange,
   onViewed,
   onDecide,
@@ -137,7 +141,7 @@ export const ReviewPointRow = memo(function ReviewPointRow({
           ) : null}
           {decision === null ? null : (
             <Badge variant={decision === "fix" ? "info" : "secondary"}>
-              {reviewDecisionLabel(decision)}
+              {reviewDecisionLabel(decision, kind)}
             </Badge>
           )}
         </button>
@@ -185,7 +189,7 @@ export const ReviewPointRow = memo(function ReviewPointRow({
               <span className="font-semibold">
                 {item.suggestedDecision === null
                   ? "No call yet."
-                  : `My call: ${reviewDecisionLabel(item.suggestedDecision)}.`}
+                  : `My call: ${reviewDecisionLabel(item.suggestedDecision, kind)}.`}
               </span>
               {item.recommendation === null ? null : <> {item.recommendation}</>}
             </p>
@@ -214,21 +218,27 @@ export const ReviewPointRow = memo(function ReviewPointRow({
               />
             ) : null}
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Decision</span>
-            <ToggleGroup
-              aria-label={`Decision for #${item.number}`}
-              value={decision === null ? [] : [decision]}
-              disabled={!collecting || !canDecide}
-              onValueChange={(next) => {
-                const value = toggledDecision(item, next);
-                if (value !== null) onDecide(item, value);
-              }}
-            >
-              <Toggle value="fix">Fix</Toggle>
-              <Toggle value="decline">Decline</Toggle>
-            </ToggleGroup>
-          </div>
+          {kind === "context" ? (
+            <p className="text-xs text-muted-foreground">
+              Raised by someone else, not by your review. Nothing for you to decide.
+            </p>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Decision</span>
+              <ToggleGroup
+                aria-label={`Decision for #${item.number}`}
+                value={decision === null ? [] : [decision]}
+                disabled={!collecting || !canDecide}
+                onValueChange={(next) => {
+                  const value = toggledDecision(item, next);
+                  if (value !== null) onDecide(item, value);
+                }}
+              >
+                <Toggle value="fix">{reviewDecisionLabel("fix", kind)}</Toggle>
+                <Toggle value="decline">{reviewDecisionLabel("decline", kind)}</Toggle>
+              </ToggleGroup>
+            </div>
+          )}
           <ReviewReplyDraft
             item={item}
             environmentId={environmentId}

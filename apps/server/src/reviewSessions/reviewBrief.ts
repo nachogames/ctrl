@@ -1,4 +1,4 @@
-import type { ReviewSession } from "@t3tools/contracts";
+import { reviewRole, type ReviewSession } from "@t3tools/contracts";
 
 /**
  * The rules of the review loop, returned by review_session_open. The shared provider instructions
@@ -7,7 +7,7 @@ import type { ReviewSession } from "@t3tools/contracts";
  */
 export function reviewBrief(session: ReviewSession): string {
   const pr = session.pullRequest.number;
-  return `# Review brief: ${session.url}
+  const shared = `# Review brief: ${session.url}
 
 The review list is the memory, not the chat. Pass sessionId "${session.id}" on every review tool call so other PR reviews in the group remain separate. Call review_session_read at the start of every turn and write every conclusion to the list. The user works through it in the Review tab of the pull request panel: each point has a Viewed box, a Fix/Decline toggle and the reply you drafted.
 
@@ -47,6 +47,9 @@ Raw GitHub feedback is already visible as Needs a call points. Match its sourceK
 ## Your local review
 If the round has no local review yet, offer to run one; review_local_review_start starts it in its own chat. It never sees Copilot's comments. Triage it together with the others once it is done.
 
+`;
+  if (reviewRole(session) === "reviewer") return shared + reviewerSteps(session);
+  return `${shared}
 ## Apply (when asked, after the user confirmed in the panel)
 1. review_session_read. Apply only the current round's live points (lastSeenRound equal to session.round, not stale, not resolved on GitHub, not a Copilot overview); every one has a Fix or Decline decision. Viewed marks are not required.
 2. Before any GitHub write, call review_items_record_apply with applyState "working" on the first selected point to enforce the apply gate; stop if refused. Before editing or pushing, publish local findings as inline GitHub review threads on the reviewed head. The user's Apply authorizes this for their own PR. For an external PR, do not edit or push; prepare a pending review and leave submission to the user unless explicitly authorized.
@@ -77,5 +80,46 @@ If the round has no local review yet, offer to run one; review_local_review_star
 2. Call review_round_advance with headSha set to \`git rev-parse HEAD\`. It refuses while a fix point is not yet pushed, or while a point with a GitHub thread and a drafted reply is not yet recorded "replied" or "resolved".
 3. Tell the user the round is applied and that "Run your review" is offered for the new commit. New feedback lands in the new round by itself.
 4. When a round's triage creates no new points, call review_round_advance with finish: true and tell the user the self-review is clean. Merging waits for the user's approval and is not part of this loop.
+`;
+}
+
+/**
+ * The loop on someone else's pull request: the user reviews, Ctrl prepares one pending review,
+ * and the user submits it on GitHub. Replaces the author's Apply and Next round.
+ */
+function reviewerSteps(session: ReviewSession): string {
+  const author = session.authorLogin ?? "the author";
+  const viewer = session.viewerLogin ?? "the user";
+  return `
+## Reviewing someone else's pull request
+@${author} wrote this pull request; the user is @${viewer}, reviewing it. These rules replace the parts of Triage above that assume the user's own pull request, and replace its Apply.
+- Never edit code, commit, push, approve, request changes or submit a review. Everything goes into one pending review the user reads and submits on GitHub.
+- Only points whose sources include "local-review" or "you" are the user's. A point only others raised is context: import it with a summary so the user can read it, and leave suggestedDecision, recommendation and draftReply empty. It needs no decision and Apply ignores it.
+- Decisions are stored as fix or decline. The panel names them by kind:
+  - A finding only the user raised: fix = Post (a new inline comment), decline = Skip.
+  - A finding someone else already raised: merge it into their point (their sourceKeys and sources plus the local key and "local-review"). Suggest fix = +1, with draftReply a short reply in the user's voice on their thread, such as "Noticed this too: <why it matters, one line>." decline = Skip and posts nothing.
+  - A follow-up (the user's own thread from an earlier round): fix = Resolve, because the new code fixes it; decline = Keep open, with draftReply a follow-up saying what is still wrong.
+- Every comment you write on GitHub ends with \`<!-- ctrl-review:${session.id}:<session.round>:<item.number> -->\`, including replies on other people's threads. That marker is how Ctrl knows the posted review is the user's and never brings it back as new points.
+
+## Post the pending review (Apply: when asked, after the user confirmed in the panel)
+1. review_session_read. Apply only the user's live points of the current round; each has a decision.
+2. Before any GitHub write, call review_items_record_apply with applyState "working" on the first selected point to enforce the apply gate; stop if refused.
+3. Find the user's pending review: \`gh api graphql -f query='query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { id reviews(first: 1, states: PENDING) { nodes { id comments(first: 100) { nodes { body } } } } } } }'\`. GitHub allows one pending review per person: add to it when it exists. Otherwise create one on session.headSha: \`addPullRequestReview(input: {pullRequestId: $pr, commitOID: $sha}) { pullRequestReview { id } }\`. Never pass an event: the review stays pending.
+4. Skip points whose marker is already in the pending review (a retry). Then, in number order:
+   - Post: \`addPullRequestReviewThread(input: {pullRequestReviewId: $review, path: $path, line: $line, side: RIGHT, body: $body}) { thread { id } }\`. The body is **Problem:** with one paragraph, a blank line, then **Solution:** with one paragraph, then the marker. Verify path and line against the diff at session.headSha; if GitHub cannot anchor it, report the point and leave it pending. Record the new thread id with review_items_record_apply (githubThreadIds, applyState "replied").
+   - +1 and Keep open: \`addPullRequestReviewThreadReply(input: {pullRequestReviewId: $review, pullRequestReviewThreadId: $thread, body: $body}) { comment { url } }\` with the approved draftReply and the marker. Record applyState "replied".
+   - Resolve: only a thread whose first comment is @${viewer}'s. \`resolveReviewThread(input: {threadId: $thread}) { thread { isResolved } }\`, verify it, record applyState "resolved". Never resolve anyone else's thread.
+   - Skip: nothing.
+5. Call review_round_advance with headSha set to session.headSha. On this pull request it closes the round and the review stays on it until the user submits.
+6. Tell the user the pending review is ready on GitHub to read and submit, and the verdict to pick: Request changes when anything was posted or kept open, Approve when every follow-up resolved and nothing new was posted.
+
+## Re-review (when asked)
+The server has already opened the next round on the new head.
+1. review_session_read. For each of the user's points from earlier rounds whose thread is still open, read the new code and reimport it with its original sourceKeys and sources: suggestedDecision fix (Resolve) when the code fixes it, decline (Keep open) with a draftReply follow-up when it does not, and a one-line recommendation. Pass sourceIds [] when no new review is covered.
+2. Start the local review with review_local_review_start. It reviews the new head on its own.
+3. When it is done, triage it with any new reviews of the round as above. Apply waits until both the follow-ups and the new review are triaged, so they go out in one pending review.
+
+## Finishing
+The user finishes from the Review tab once they approve. Never call review_round_advance with finish: true unless the user asks.
 `;
 }

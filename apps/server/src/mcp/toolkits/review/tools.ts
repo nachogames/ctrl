@@ -69,7 +69,8 @@ const ImportItem = Schema.Struct({
         'The comment keys this point answers: "gh:<thread id>" for a GitHub thread, "local:<path>:<slug>" for a local finding. A point that restates one already listed must reuse that point\'s keys so it keeps its number and decision. One problem raised by two reviews is one point with both keys.',
     }),
   sources: Schema.Array(ReviewItemSource).check(Schema.isMinLength(1)).annotate({
-    description: 'Who raised it: "copilot", "local-review", "ci", or "human:<login>".',
+    description:
+      'Who raised it: "copilot", "local-review", "ci", "you" (a review the user wrote on GitHub), or "human:<login>".',
   }),
   githubThreadIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)).annotate({
     description: "GraphQL node ids of the review threads this point answers.",
@@ -257,10 +258,13 @@ const ReviewItemsRecordApplyTool = Tool.make("review_items_record_apply", {
 const ReviewRoundAdvanceTool = Tool.make("review_round_advance", {
   ...reviewTool,
   description:
-    "Close the applied round on the pushed head commit and open the next one, or pass finish: true when a round raised nothing new. Refused while a fix point is not yet pushed, or a point's drafted reply on its GitHub threads is not yet recorded replied or resolved; finish is also refused while a review of the round is in but untriaged or still running. Every point is stale until the new round raises it again. Available to ordinary chats in the review group; dedicated side and independent local-review chats retain their scoped roles.",
+    "Close the applied round on the pushed head commit and open the next one, or pass finish: true when a round raised nothing new. Refused while a fix point is not yet pushed, or a point's drafted reply on its GitHub threads is not yet recorded replied or resolved; finish is also refused while a review of the round is in but untriaged or still running. Every point is stale until the new round raises it again. On someone else's pull request it only closes the round once the pending review holds every point; the Review tab's Re-review opens the next one. Available to ordinary chats in the review group; dedicated side and independent local-review chats retain their scoped roles.",
   parameters: Schema.Struct({
     ...SessionTarget,
-    headSha: TrimmedNonEmptyString.annotate({ description: "git rev-parse HEAD after the push." }),
+    headSha: TrimmedNonEmptyString.annotate({
+      description:
+        "git rev-parse HEAD after the push; on someone else's pull request, session.headSha.",
+    }),
     finish: Schema.optional(Schema.Boolean),
   }),
   success: Schema.Struct(Snapshot),

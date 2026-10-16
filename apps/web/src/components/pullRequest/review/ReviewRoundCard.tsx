@@ -20,6 +20,7 @@ import { reviewSessionEnvironment } from "~/state/reviewSessions";
 import ChatMarkdown from "../../ChatMarkdown";
 import { Button } from "../../ui/button";
 import {
+  foldPostedReviews,
   offersLocalReview,
   ranOnLabel,
   type ReviewRoundView,
@@ -43,6 +44,9 @@ export function ReviewRoundCard({
   discussed,
   renderPoint,
   footer,
+  actions,
+  viewerLogin = null,
+  reviewer = false,
 }: {
   view: ReviewRoundView;
   sessionId: ReviewSessionId;
@@ -54,6 +58,12 @@ export function ReviewRoundCard({
   renderPoint: (item: ReviewItem, view: ReviewRoundView) => ReactNode;
   /** The Apply row (Task 11). */
   footer?: ReactNode;
+  /** Shown whether or not the round has points: the reviewer's submit and Re-review row. */
+  actions?: ReactNode;
+  /** Who uses Ctrl, so their own GitHub reviews read as theirs. */
+  viewerLogin?: string | null;
+  /** Reviewing someone else's pull request. */
+  reviewer?: boolean;
 }) {
   const [historyExpanded, setHistoryOpen] = useState<boolean | null>(null);
   const historyOpen =
@@ -82,6 +92,7 @@ export function ReviewRoundCard({
     triage?.key === triageKey ? triage.ids : NO_SOURCE_IDS,
   );
   const offerLocal = offersLocalReview(view);
+  const folded = foldPostedReviews(view.sources, viewerLogin);
   const viewed = view.items.filter((item) => item.viewed).length;
 
   const startTriage = async () => {
@@ -122,6 +133,7 @@ export function ReviewRoundCard({
                 round: view.round,
                 sources: view.sources,
                 items: view.items,
+                reviewer,
               })}
         </p>
         {triageButtonState === null ? null : (
@@ -154,6 +166,7 @@ export function ReviewRoundCard({
                   .filter(
                     (source) =>
                       source.round === view.round.round &&
+                      !folded.hidden.has(source.id) &&
                       !(offerLocal && source.kind === "local" && source.state === "not-run"),
                   )
                   .map((source) => (
@@ -163,6 +176,8 @@ export function ReviewRoundCard({
                       environmentId={environmentId}
                       sessionId={sessionId}
                       ranOn={ranOnLabel(source.ranOn, providers)}
+                      viewerLogin={viewerLogin}
+                      posted={folded.postedFor.get(source.id)}
                       resolution={
                         source.state === "done"
                           ? reviewResolutionLabel(
@@ -219,6 +234,7 @@ export function ReviewRoundCard({
               {footer}
             </>
           )}
+          {actions}
         </>
       )}
     </section>

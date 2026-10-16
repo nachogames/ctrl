@@ -1135,6 +1135,7 @@ export const REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY = `query($owner: String!, $nam
  * request passes 100 reviews, and a `first:` page would never see a new one.
  */
 export const REVIEW_ROUND_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  viewer { login }
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       headRefOid
@@ -2807,6 +2808,9 @@ export function decodeReviewDismissalsJson(raw: string): Result.Result<
 
 const RawReviewRoundSchema = Schema.Struct({
   data: Schema.Struct({
+    viewer: Schema.optional(
+      Schema.NullOr(Schema.Struct({ login: Schema.optional(Schema.NullOr(Schema.String)) })),
+    ),
     repository: Schema.Struct({
       pullRequest: Schema.Struct({
         headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
@@ -2880,6 +2884,7 @@ export function decodeReviewRoundJson(
   const pullRequest = decoded.success.data.repository.pullRequest;
   return Result.succeed({
     authorLogin: trimmed(pullRequest.author?.login),
+    viewerLogin: trimmed(decoded.success.data.viewer?.login),
     headSha: trimmed(pullRequest.headRefOid),
     reviews: (pullRequest.reviews?.nodes ?? []).map((review) => ({
       id: review.id,

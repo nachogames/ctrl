@@ -126,6 +126,10 @@ export function reviewRequestText(input: {
       return `Triage round ${session.round} of the review of ${session.url}: ${input.sources.map(reviewSourceName).join(", ")}. Use sessionId "${session.id}" on every review tool call. Call review_session_open with this URL to reload the brief, then read the list with review_session_read and follow the brief's triage steps.`;
     case "apply":
       return `Apply round ${session.round} of the review of ${session.url}. The user confirmed the displayed Fix/Decline choices. Viewed marks are not required. Use sessionId "${session.id}" on every review tool call. Call review_session_open with this URL to reload the brief, then follow its apply steps.`;
+    case "re-review":
+      return `Re-review the pull request ${session.url}: round ${session.round} is open on the new head. Use sessionId "${session.id}" on every review tool call. Call review_session_open with this URL to reload the brief, then follow its Re-review steps: check your open threads against the new code, start your local review, and triage both together.`;
+    case "finish":
+      return `The review of ${session.url} is finished.`;
     case "rewrite-reply":
       return formatReviewPointTag(
         { number: request.number, label: input.item?.shortName ?? "point" },

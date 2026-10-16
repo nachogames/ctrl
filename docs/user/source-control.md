@@ -332,3 +332,20 @@ you to confirm, including the displayed recommendations, then runs in the review
 Points without a decision or recommendation still need your call. It fixes accepted points, runs checks, commits
 and pushes, and posts the approved replies. Human reviewers' threads stay open. New reviews
 arrive in the same session; after applying, the next round lets you check them again.
+
+### Reviewing someone else's PR
+
+When the PR was written by someone other than the GitHub account T3 Code uses, the **Review** tab
+works for you as the reviewer. Your GitHub reviews show as yours; a review the tab posted for you
+appears once, under **Your review**.
+
+Run your review, then triage it with Copilot and anyone else's comments. Only the points your
+review raised need a decision: **Post** a new comment or **Skip** it. When someone already raised
+the same problem, the point suggests a **+1** reply on their thread instead of a duplicate.
+**Post pending review** puts everything into a pending review on GitHub and changes no code.
+Read it there and submit it with your verdict; the tab suggests one.
+
+When the author asks for your review again, choose **Re-review**. Each of your open threads is
+checked against the new code (**Resolve** or **Keep open** with a follow-up), and your review runs
+again on the new commits. Both go out together in one new pending review. Only your own threads
+are ever resolved. After you approve, choose **Finish**.

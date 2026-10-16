@@ -158,6 +158,41 @@ it.effect("links one point to every review that raised it", () =>
   ),
 );
 
+it.effect("keeps who wrote the pull request, who reads it, and a review's verdict", () =>
+  Effect.gen(function* () {
+    const repo = yield* repository;
+    yield* repo.insertSession(session);
+    yield* repo.updateSession({
+      ...session,
+      authorLogin: "dan",
+      viewerLogin: "NeilMcEachin",
+      viewerRequested: true,
+    });
+    yield* repo.upsertSource(
+      session.id,
+      {
+        ...copilot,
+        id: "PRR_mine",
+        kind: "human",
+        author: "NeilMcEachin",
+        isBot: false,
+        verdict: "changes-requested",
+        posted: true,
+      },
+      [],
+    );
+    const stored = Option.getOrNull(yield* repo.getSession(session.id));
+    assert.strictEqual(stored?.authorLogin, "dan");
+    assert.strictEqual(stored?.viewerLogin, "NeilMcEachin");
+    assert.strictEqual(stored?.viewerRequested, true);
+    const [mine] = yield* repo.listSources(session.id);
+    assert.strictEqual(mine?.verdict, "changes-requested");
+    assert.strictEqual(mine?.posted, true);
+  }).pipe(
+    Effect.provide(ReviewSessions.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
+  ),
+);
+
 it.effect("moves a review to a later round with its triage mark and comments", () =>
   Effect.gen(function* () {
     const repo = yield* repository;

@@ -13,6 +13,10 @@ import {
   reviewSourceDetail,
   reviewSourceStateLabel,
   reviewTriageLabel,
+  reviewDecisionLabel,
+  reviewerApplyLines,
+  reviewSourceTitle,
+  suggestedReviewVerdict,
 } from "./reviewSessionPresentation.ts";
 
 const source = (fields: Partial<ReviewSource>): ReviewSource => ({
@@ -231,5 +235,74 @@ describe("GitHub review rounds", () => {
     expect(reviewResolutionLabel([item(1, { githubState: "outdated" })])).toBe(
       "1 open · 0 resolved",
     );
+  });
+});
+
+describe("reviewing someone else's pull request", () => {
+  const mine = (fields: Partial<ReviewItem>) =>
+    ({
+      decision: "fix",
+      sources: ["local-review"],
+      round: 2,
+      githubThreadIds: [],
+      ...fields,
+    }) as Pick<ReviewItem, "decision" | "sources" | "round" | "githubThreadIds">;
+
+  it("names your own GitHub reviews as yours", () => {
+    const yours = source({ kind: "human", author: "NeilMcEachin", isBot: false });
+    expect(reviewSourceTitle(yours, "neilmceachin")).toBe("You");
+    expect(reviewSourceTitle({ ...yours, posted: true }, "NeilMcEachin")).toBe(
+      "Your review · posted",
+    );
+    expect(reviewSourceTitle(yours, "dan")).toBe("NeilMcEachin");
+    expect(
+      reviewSourceDetail(source({ kind: "human", state: "pending", commentCount: 2 }), null),
+    ).toBe("Pending on GitHub · 2 comments · open the pull request to submit");
+    expect(
+      reviewSourceDetail(source({ kind: "human", verdict: "changes-requested" }), null),
+    ).toContain("Changes requested");
+  });
+
+  it("labels Fix and Decline by what they do to each kind of point", () => {
+    expect(reviewDecisionLabel("fix")).toBe("Fix");
+    expect(reviewDecisionLabel("fix", "finding")).toBe("Post");
+    expect(reviewDecisionLabel("fix", "overlap")).toBe("+1");
+    expect(reviewDecisionLabel("decline", "overlap")).toBe("Skip");
+    expect(reviewDecisionLabel("fix", "follow-up")).toBe("Resolve");
+    expect(reviewDecisionLabel("decline", "follow-up")).toBe("Keep open");
+  });
+
+  it("suggests approving only when every follow-up resolved and nothing new is posted", () => {
+    const resolved = mine({ round: 1, githubThreadIds: ["T1"] });
+    expect(suggestedReviewVerdict([resolved], 2)).toBe("approve");
+    expect(suggestedReviewVerdict([{ ...resolved, decision: "decline" }], 2)).toBe(
+      "request-changes",
+    );
+    expect(suggestedReviewVerdict([resolved, mine({})], 2)).toBe("request-changes");
+    // Skipped findings and points only others raised ask nothing of the author.
+    expect(
+      suggestedReviewVerdict(
+        [resolved, mine({ decision: "decline" }), mine({ sources: ["copilot"] })],
+        2,
+      ),
+    ).toBe("approve");
+  });
+
+  it("lists what goes into the pending review", () => {
+    const lines = reviewerApplyLines(
+      [
+        mine({}),
+        mine({ sources: ["local-review", "copilot"], githubThreadIds: ["T2"] }),
+        mine({ round: 1, githubThreadIds: ["T1"] }),
+        mine({ sources: ["copilot"] }),
+      ],
+      2,
+    );
+    expect(lines).toEqual([
+      "Post 1 new comment.",
+      "Reply +1 on 1 thread someone else already raised.",
+      "Resolve 1 thread of yours that are fixed.",
+      "Everything goes into your pending review on GitHub. Nothing is submitted, and no code is changed.",
+    ]);
   });
 });

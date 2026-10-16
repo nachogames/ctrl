@@ -8,7 +8,13 @@ import {
   threadComment,
   at,
 } from "./testkit.ts";
-import { isCopilotLogin, itemGithubState, planReviewSync, shouldSyncReview } from "./reviewSync.ts";
+import {
+  isCopilotLogin,
+  itemGithubState,
+  planReviewSync,
+  rawReviewItems,
+  shouldSyncReview,
+} from "./reviewSync.ts";
 
 describe("planReviewSync", () => {
   it("files reviewers, shows Copilot as reviewing, and skips the author's own posts", () => {
@@ -58,6 +64,95 @@ describe("planReviewSync", () => {
     });
     expect(plan.upserts).toEqual([]);
     expect(plan.removals).toEqual([]);
+  });
+
+  describe("on someone else's pull request", () => {
+    const asReviewer = (fields: Parameters<typeof reviewRoundRead>[0]) =>
+      reviewRoundRead({ authorLogin: "dan", viewerLogin: "NeilMcEachin", ...fields });
+    const marker = "<!-- ctrl-review:review:1:1:3 -->";
+
+    it("files your pending review while the round is held, and its submission with a verdict", () => {
+      const pending = planReviewSync({
+        sessionId: "review:1",
+        sessionRound: 1,
+        roundState: "applied",
+        existing: [],
+        now: at,
+        read: asReviewer({
+          reviews: [
+            githubReview("PRR_mine", "NeilMcEachin", { state: "PENDING", submittedAt: null }),
+            githubReview("PRR_copilot", "copilot-pull-request-reviewer", { isBot: true }),
+          ],
+          threads: [githubThread("T1", [threadComment("PRR_mine", `Null session. ${marker}`)])],
+        }),
+      });
+      // Copilot waits for the next round; your own review is this round's.
+      expect(pending.upserts.map(({ source }) => [source.id, source.state, source.posted])).toEqual(
+        [["PRR_mine", "pending", true]],
+      );
+      const submitted = planReviewSync({
+        sessionId: "review:1",
+        sessionRound: 1,
+        roundState: "applied",
+        existing: pending.upserts.map(({ source }) => source),
+        now: at,
+        read: asReviewer({
+          reviews: [githubReview("PRR_mine", "NeilMcEachin", { state: "CHANGES_REQUESTED" })],
+          threads: [githubThread("T1", [threadComment("PRR_mine", `Null session. ${marker}`)])],
+        }),
+      });
+      expect(submitted.upserts.map(({ source }) => [source.state, source.verdict])).toEqual([
+        ["done", "changes-requested"],
+      ]);
+    });
+
+    it("reads a re-request of your review as the Re-review signal, not a reviewer to wait for", () => {
+      const plan = planReviewSync({
+        sessionRound: 1,
+        roundState: "applied",
+        existing: [],
+        now: at,
+        read: asReviewer({ pendingReviewers: [actor("NeilMcEachin")] }),
+      });
+      expect(plan.viewerRequested).toBe(true);
+      expect(plan.upserts).toEqual([]);
+    });
+
+    it("never turns what Ctrl posted into new points, and names your own GitHub comments `you`", () => {
+      const plan = planReviewSync({
+        sessionId: "review:1",
+        sessionRound: 1,
+        roundState: "collecting",
+        existing: [],
+        now: at,
+        read: asReviewer({
+          reviews: [githubReview("PRR_mine", "NeilMcEachin")],
+          threads: [
+            githubThread("T1", [threadComment("PRR_mine", `Posted by Ctrl. ${marker}`)]),
+            githubThread("T2", [threadComment("PRR_mine", "Written on GitHub.")]),
+          ],
+        }),
+      });
+      const items = rawReviewItems({ round: 1, nextNumber: 1 }, [], plan.upserts, {
+        sessionId: "review:1",
+        viewerLogin: "NeilMcEachin",
+      });
+      expect(items.map((item) => [item.sourceKeys, item.sources])).toEqual([[["gh:T2"], ["you"]]]);
+    });
+  });
+
+  it("files your own pending review on your own pull request as before: not at all", () => {
+    const plan = planReviewSync({
+      sessionRound: 1,
+      roundState: "collecting",
+      existing: [],
+      now: at,
+      read: reviewRoundRead({
+        reviews: [githubReview("PRR_own", "nach", { state: "PENDING", body: "draft" })],
+      }),
+    });
+    expect(plan.upserts).toEqual([]);
+    expect(plan.viewerRequested).toBe(false);
   });
 
   it("names Copilot under either login", () => {

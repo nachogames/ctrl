@@ -23,9 +23,12 @@ export const ReviewPhase = Schema.Literals([
 ]);
 export type ReviewPhase = typeof ReviewPhase.Type;
 
-/** Who raised a point: Copilot, the local review, CI, or a human reviewer by login. */
+/**
+ * Who raised a point: Copilot, the local review, CI, a human reviewer by login, or `you` for a
+ * review the viewer wrote on GitHub.
+ */
 export const ReviewItemSource = TrimmedNonEmptyString.check(
-  Schema.isPattern(/^(copilot|local-review|ci|human:[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?)$/),
+  Schema.isPattern(/^(copilot|local-review|ci|you|human:[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?)$/),
 );
 export type ReviewItemSource = typeof ReviewItemSource.Type;
 
@@ -65,9 +68,22 @@ export type ReviewRoundState = typeof ReviewRoundState.Type;
 export const ReviewSourceKind = Schema.Literals(["copilot", "human", "local"]);
 export type ReviewSourceKind = typeof ReviewSourceKind.Type;
 
-/** `not-run`: requested, then withdrawn without a review. */
-export const ReviewSourceState = Schema.Literals(["requested", "reviewing", "done", "not-run"]);
+/**
+ * `not-run`: requested, then withdrawn without a review. `pending`: the viewer's own review,
+ * written on GitHub but not yet submitted.
+ */
+export const ReviewSourceState = Schema.Literals([
+  "requested",
+  "reviewing",
+  "pending",
+  "done",
+  "not-run",
+]);
 export type ReviewSourceState = typeof ReviewSourceState.Type;
+
+/** What a submitted GitHub review said overall. */
+export const ReviewVerdict = Schema.Literals(["approved", "changes-requested", "commented"]);
+export type ReviewVerdict = typeof ReviewVerdict.Type;
 
 export const ReviewReplyStyle = Schema.Literals(["shorter", "friendlier", "mention-commit"]);
 export type ReviewReplyStyle = typeof ReviewReplyStyle.Type;
@@ -84,10 +100,40 @@ export const ReviewSession = Schema.Struct({
   round: PositiveInt,
   headSha: Schema.NullOr(TrimmedNonEmptyString),
   nextNumber: PositiveInt,
+  /** The pull request's author and the account Ctrl reads GitHub as; see `reviewRole`. */
+  authorLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  viewerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** The viewer is asked to review again (a re-request after their review). */
+  viewerRequested: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 export type ReviewSession = typeof ReviewSession.Type;
+
+export type ReviewRole = "author" | "reviewer";
+
+const sameLogin = (a: string | null | undefined, b: string | null | undefined) =>
+  a != null && b != null && a.toLowerCase() === b.toLowerCase();
+
+/**
+ * `author` when the viewer wrote the pull request (Ctrl fixes, pushes and resolves);
+ * `reviewer` when someone else did (Ctrl prepares a pending review). Author until both
+ * logins are known.
+ */
+export const reviewRole = (
+  session: Pick<ReviewSession, "authorLogin" | "viewerLogin">,
+): ReviewRole =>
+  session.authorLogin != null &&
+  session.viewerLogin != null &&
+  !sameLogin(session.authorLogin, session.viewerLogin)
+    ? "reviewer"
+    : "author";
+
+/** A GitHub review the viewer wrote. Local reviews are always the viewer's too. */
+export const isViewerSource = (
+  source: Pick<ReviewSource, "kind" | "author">,
+  viewerLogin: string | null | undefined,
+): boolean => source.kind === "human" && sameLogin(source.author, viewerLogin);
 
 /** A round: the reviews that went in on `headSha` and the points that came out. */
 export const ReviewRound = Schema.Struct({
@@ -129,6 +175,10 @@ export const ReviewSource = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   ranOn: Schema.NullOr(ReviewRanOn),
   url: Schema.NullOr(TrimmedNonEmptyString),
+  /** A submitted GitHub review's overall verdict. */
+  verdict: Schema.optional(Schema.NullOr(ReviewVerdict)),
+  /** The viewer's review was posted by Ctrl from this review's points (carries its markers). */
+  posted: Schema.optional(Schema.Boolean),
   updatedAt: IsoDateTime,
 });
 export type ReviewSource = typeof ReviewSource.Type;
@@ -265,6 +315,10 @@ export type ReviewItemResult = typeof ReviewItemResult.Type;
 export const ReviewTurnRequest = Schema.Union([
   Schema.TaggedStruct("triage", {}),
   Schema.TaggedStruct("apply", {}),
+  /** Reviewer flow: open the next round, check your threads, and review the new head. */
+  Schema.TaggedStruct("re-review", {}),
+  /** Reviewer flow: you approved; finish the review. */
+  Schema.TaggedStruct("finish", {}),
   Schema.TaggedStruct("rewrite-reply", { number: PositiveInt, style: ReviewReplyStyle }),
 ]);
 export type ReviewTurnRequest = typeof ReviewTurnRequest.Type;
@@ -304,10 +358,81 @@ export const isReviewOverview = (item: Pick<ReviewItem, "sources" | "sourceKeys"
 export const isActiveReviewItem = (item: ReviewItem): boolean =>
   !item.stale && item.githubState !== "resolved" && !isReviewOverview(item);
 
+/** Raised by the viewer: their local review, or a review they wrote on GitHub. */
+export const isMinePoint = (item: Pick<ReviewItem, "sources">): boolean =>
+  item.sources.some((source) => source === "local-review" || source === "you");
+
+/**
+ * What a point is to the viewer reviewing someone else's pull request:
+ * - `context`: only others raised it; it needs nothing from you.
+ * - `overlap`: you and someone else raised it; Post means a +1 on their thread.
+ * - `follow-up`: yours from an earlier round with a thread; Post means resolve it.
+ * - `finding`: yours alone; Post means a new comment.
+ */
+export type ReviewerPointKind = "context" | "overlap" | "follow-up" | "finding";
+
+export const reviewerPointKind = (
+  item: Pick<ReviewItem, "sources" | "round" | "githubThreadIds">,
+  sessionRound: number,
+): ReviewerPointKind => {
+  if (!isMinePoint(item)) return "context";
+  if (item.sources.some((source) => source !== "local-review" && source !== "you"))
+    return "overlap";
+  if (item.round < sessionRound && item.githubThreadIds.length > 0) return "follow-up";
+  return "finding";
+};
+
+/** Your latest submitted GitHub review in the current round of someone else's pull request. */
+export const latestViewerReview = (
+  session: Pick<ReviewSession, "round" | "viewerLogin">,
+  sources: ReadonlyArray<ReviewSource>,
+): ReviewSource | null =>
+  sources.reduce<ReviewSource | null>((latest, source) => {
+    if (
+      source.round !== session.round ||
+      source.state !== "done" ||
+      !isViewerSource(source, session.viewerLogin)
+    )
+      return latest;
+    const time = (candidate: ReviewSource) => candidate.submittedAt ?? candidate.updatedAt;
+    return latest === null || time(source) > time(latest) ? source : latest;
+  }, null);
+
+/**
+ * Why Re-review may open the next round of someone else's pull request: you were asked to
+ * review again, or the head moved past the commit you reviewed. Null until you have submitted
+ * this round's review, while a pending review of yours is unsubmitted, and while neither happened.
+ */
+export const reReviewReason = (
+  session: Pick<
+    ReviewSession,
+    "round" | "phase" | "headSha" | "authorLogin" | "viewerLogin" | "viewerRequested"
+  >,
+  sources: ReadonlyArray<ReviewSource>,
+): "requested" | "head-moved" | null => {
+  if (reviewRole(session) !== "reviewer" || session.phase === "done") return null;
+  // GitHub keeps one pending review per person: the next round would only add to it.
+  if (
+    sources.some(
+      (source) => source.state === "pending" && isViewerSource(source, session.viewerLogin),
+    )
+  )
+    return null;
+  const review = latestViewerReview(session, sources);
+  if (review === null) return null;
+  if (session.viewerRequested === true) return "requested";
+  return session.headSha !== null &&
+    review.commitSha !== null &&
+    session.headSha !== review.commitSha
+    ? "head-moved"
+    : null;
+};
+
 /** Review history before the user has created a review chat. */
 export const ReviewHostInput = PullRequestRef;
 export type ReviewHostInput = typeof ReviewHostInput.Type;
 export const ReviewHostResult = Schema.Struct({
+  viewerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   sources: Schema.Array(ReviewSource),
   items: Schema.Array(ReviewItem),
   comments: Schema.Record(Schema.String, Schema.Array(ReviewSourceComment)),
