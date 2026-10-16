@@ -1,16 +1,20 @@
 import {
   reviewFindingTitle,
   effectiveDecision,
+  REVIEWER_ACTION_LABELS,
   reviewApplyBadges,
   reviewDecisionLabel,
+  reviewerApplyBadges,
 } from "@t3tools/client-runtime/state/review-sessions";
-import type {
-  EnvironmentId,
-  ReviewerPointKind,
-  ReviewDecision,
-  ReviewItem,
-  ReviewRoundState,
-  ReviewSessionId,
+import {
+  reviewerAction,
+  reviewerPointKind,
+  type EnvironmentId,
+  type ReviewPostAs,
+  type ReviewDecision,
+  type ReviewItem,
+  type ReviewRoundState,
+  type ReviewSessionId,
 } from "@t3tools/contracts";
 import { ChevronRightIcon, LayersIcon, MessageSquareIcon, SparklesIcon } from "lucide-react";
 import { memo, type ReactNode } from "react";
@@ -48,12 +52,12 @@ interface ReviewPointRowProps {
   canDecide: boolean;
   /** Messages the user sent about it. */
   talked: number;
-  /** What the point is to you on someone else's pull request; null on your own. */
-  kind?: ReviewerPointKind | null;
+  /** The current round when reviewing someone else's pull request; null on your own. */
+  reviewerRound?: number | null;
   // The callbacks take the point so the tab can pass the same function to every row.
   onOpenChange: (item: ReviewItem, open: boolean) => void;
   onViewed: (item: ReviewItem, viewed: boolean) => void;
-  onDecide: (item: ReviewItem, decision: ReviewDecision) => void;
+  onDecide: (item: ReviewItem, decision: ReviewDecision, postAs?: ReviewPostAs) => void;
   onOpenLink: (url: string) => void;
   /**
    * The ⋯ menu and the side-chat banner (Task 11). Read only while the point is open: pass them
@@ -81,7 +85,7 @@ export const ReviewPointRow = memo(function ReviewPointRow({
   canView,
   canDecide,
   talked,
-  kind = null,
+  reviewerRound = null,
   onOpenChange,
   onViewed,
   onDecide,
@@ -90,6 +94,13 @@ export const ReviewPointRow = memo(function ReviewPointRow({
   banner,
 }: ReviewPointRowProps) {
   const decision = effectiveDecision(item);
+  const kind = reviewerRound === null ? null : reviewerPointKind(item, reviewerRound);
+  // On someone else's pull request a choice is named by what it does to the point.
+  const label = (choice: ReviewDecision) => {
+    const action = reviewerRound === null ? null : reviewerAction(item, reviewerRound, choice);
+    return action === null ? reviewDecisionLabel(choice) : REVIEWER_ACTION_LABELS[action];
+  };
+  const action = reviewerRound === null ? null : reviewerAction(item, reviewerRound);
   const fixedIn = item.alreadyFixedIn;
   const dim = item.viewed && !open;
   return (
@@ -140,9 +151,7 @@ export const ReviewPointRow = memo(function ReviewPointRow({
             </Tooltip>
           ) : null}
           {decision === null ? null : (
-            <Badge variant={decision === "fix" ? "info" : "secondary"}>
-              {reviewDecisionLabel(decision, kind)}
-            </Badge>
+            <Badge variant={decision === "fix" ? "info" : "secondary"}>{label(decision)}</Badge>
           )}
         </button>
         {roundState === "collecting" ? (
@@ -158,9 +167,12 @@ export const ReviewPointRow = memo(function ReviewPointRow({
           </label>
         ) : (
           <span className="flex shrink-0 gap-1">
-            {reviewApplyBadges(item, roundState).map((label) => (
-              <Badge key={label} variant={applyBadgeVariant(label)}>
-                {label}
+            {(reviewerRound === null
+              ? reviewApplyBadges(item, roundState)
+              : reviewerApplyBadges(item, action, roundState)
+            ).map((badge) => (
+              <Badge key={badge} variant={applyBadgeVariant(badge)}>
+                {badge}
               </Badge>
             ))}
           </span>
@@ -189,7 +201,7 @@ export const ReviewPointRow = memo(function ReviewPointRow({
               <span className="font-semibold">
                 {item.suggestedDecision === null
                   ? "No call yet."
-                  : `My call: ${reviewDecisionLabel(item.suggestedDecision, kind)}.`}
+                  : `My call: ${label(item.suggestedDecision)}.`}
               </span>
               {item.recommendation === null ? null : <> {item.recommendation}</>}
             </p>
@@ -211,7 +223,13 @@ export const ReviewPointRow = memo(function ReviewPointRow({
             />
             {decision === "decline" && item.skipReason ? (
               <ChatMarkdown
-                text={`**Reason to decline:** ${item.skipReason}`}
+                text={`**${
+                  kind === null
+                    ? "Reason to decline"
+                    : kind === "follow-up"
+                      ? "Still needs"
+                      : "Why skip"
+                }:** ${item.skipReason}`}
                 cwd={undefined}
                 environmentId={environmentId}
                 parseRawHtml
@@ -225,18 +243,43 @@ export const ReviewPointRow = memo(function ReviewPointRow({
           ) : (
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">Decision</span>
-              <ToggleGroup
-                aria-label={`Decision for #${item.number}`}
-                value={decision === null ? [] : [decision]}
-                disabled={!collecting || !canDecide}
-                onValueChange={(next) => {
-                  const value = toggledDecision(item, next);
-                  if (value !== null) onDecide(item, value);
-                }}
-              >
-                <Toggle value="fix">{reviewDecisionLabel("fix", kind)}</Toggle>
-                <Toggle value="decline">{reviewDecisionLabel("decline", kind)}</Toggle>
-              </ToggleGroup>
+              {kind === "overlap" ? (
+                <ToggleGroup
+                  aria-label={`What to do with #${item.number}`}
+                  value={
+                    decision === null
+                      ? []
+                      : [decision === "decline" ? "decline" : (item.postAs ?? "reply")]
+                  }
+                  disabled={!collecting || !canDecide}
+                  onValueChange={(next) => {
+                    const choice = next[0];
+                    if (choice === "reply" || choice === "comment") onDecide(item, "fix", choice);
+                    else if (choice === "decline") onDecide(item, "decline");
+                    else {
+                      const value = toggledDecision(item, next);
+                      if (value !== null) onDecide(item, value);
+                    }
+                  }}
+                >
+                  <Toggle value="reply">{REVIEWER_ACTION_LABELS.reply}</Toggle>
+                  <Toggle value="comment">{REVIEWER_ACTION_LABELS.comment}</Toggle>
+                  <Toggle value="decline">{REVIEWER_ACTION_LABELS.skip}</Toggle>
+                </ToggleGroup>
+              ) : (
+                <ToggleGroup
+                  aria-label={`Decision for #${item.number}`}
+                  value={decision === null ? [] : [decision]}
+                  disabled={!collecting || !canDecide}
+                  onValueChange={(next) => {
+                    const value = toggledDecision(item, next);
+                    if (value !== null) onDecide(item, value);
+                  }}
+                >
+                  <Toggle value="fix">{label("fix")}</Toggle>
+                  <Toggle value="decline">{label("decline")}</Toggle>
+                </ToggleGroup>
+              )}
             </div>
           )}
           <ReviewReplyDraft

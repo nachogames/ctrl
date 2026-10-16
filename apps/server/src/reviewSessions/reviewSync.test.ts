@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  itemFixture,
+  localSourceFixture,
+  sourceComment,
   actor,
   githubReview,
   githubThread,
@@ -13,6 +16,7 @@ import {
   itemGithubState,
   planReviewSync,
   rawReviewItems,
+  repairUnknownLocalSources,
   shouldSyncReview,
 } from "./reviewSync.ts";
 
@@ -187,5 +191,34 @@ describe("shouldSyncReview", () => {
     expect(shouldSyncReview(mark, { ...next, waiting: true }, 60_000)).toBe(true);
     expect(shouldSyncReview(mark, { ...next, fingerprint: null }, 60_000)).toBe(true);
     expect(shouldSyncReview(mark, next, 10 * 60_000)).toBe(true);
+  });
+});
+
+describe("the local review's raw findings", () => {
+  it("are raised by your review, not by a nameless reviewer", () => {
+    const items = rawReviewItems(
+      { round: 1, nextNumber: 1 },
+      [],
+      [
+        {
+          source: localSourceFixture("local:run-1"),
+          comments: [sourceComment("local:src/app.ts:null-session", "Null session.")],
+        },
+      ],
+    );
+    expect(items.map((item) => item.sources)).toEqual([["local-review"]]);
+  });
+
+  it("repairs points an older import named human:unknown, leaving real reviewers alone", () => {
+    const merged = itemFixture(1, {
+      sourceKeys: ["local:src/app.ts:null-session"],
+      sources: ["human:unknown", "local-review"],
+      draftReply: "Noticed this too.",
+    });
+    const github = itemFixture(2, { sourceKeys: ["gh:T1"], sources: ["human:unknown"] });
+    const repaired = repairUnknownLocalSources([merged, github]);
+    expect(repaired.map((item) => [item.sources, item.draftReply])).toEqual([
+      [["local-review"], null],
+    ]);
   });
 });

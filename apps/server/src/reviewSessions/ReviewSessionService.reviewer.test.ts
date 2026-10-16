@@ -223,3 +223,49 @@ it.effect(
     }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
   },
 );
+
+it.effect(
+  "keeps how you chose to post a point someone else raised, and says what is missing in your words",
+  () => {
+    const harness = newHarness();
+    harness.read = asReviewer();
+    return Effect.gen(function* () {
+      const reviews = yield* service;
+      const { snapshot } = yield* reviews.open(openInput);
+      const sessionId = snapshot.session.id;
+      yield* reviews.importItems({
+        sessionId,
+        sourceIds: [],
+        items: [
+          importItem("gh:T2", {
+            sourceKeys: ["gh:T2", "local:auth.ts:retry"],
+            sources: ["copilot", "local-review"],
+            githubThreadIds: ["T2"],
+            suggestedDecision: null,
+          }),
+        ],
+      });
+      const undecided = yield* Effect.flip(
+        reviews.requestTurn({ sessionId, request: { _tag: "apply" } }),
+      );
+      assert.include(undecided.message, "before preparing your pending review");
+      const own = yield* reviews.decide({
+        sessionId,
+        number: 1,
+        decision: "fix",
+        postAs: "comment",
+        authority: { _tag: "panel" },
+      });
+      assert.equal(own.postAs, "comment");
+      yield* reviews.requestTurn({
+        sessionId,
+        request: { _tag: "apply", pendingReview: "replace" },
+      });
+      const sent = harness.sent.at(-1)?.text ?? "";
+      assert.include(sent, "Prepare the user's pending review");
+      assert.include(sent, "start fresh");
+      assert.notInclude(sent, "Fix/Decline");
+      assert.equal((yield* reviews.read(sessionId)).items[0]?.postAs, "comment");
+    }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+  },
+);

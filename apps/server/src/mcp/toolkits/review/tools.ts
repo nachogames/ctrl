@@ -4,6 +4,7 @@ import {
   ReviewAlreadyFixedIn,
   ReviewApplyState,
   ReviewDecision,
+  ReviewPostAs,
   ReviewItem,
   ReviewItemSource,
   ReviewRound,
@@ -228,6 +229,10 @@ const ReviewItemsDecideTool = Tool.make("review_items_decide", {
     }),
     reason: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2000))).annotate({
       description: "Why, in the user's terms. Expected for decline.",
+    }),
+    postAs: Schema.optional(ReviewPostAs).annotate({
+      description:
+        'Reviewing someone else\'s pull request, for a point another reviewer already raised that the user chose to post: "reply" for a +1 on their thread, "comment" for the user\'s own new comment.',
     }),
   }),
   success: ItemResult,

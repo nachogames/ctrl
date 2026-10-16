@@ -23,6 +23,7 @@ import {
   itemGithubState,
   planReviewSync,
   rawReviewItems,
+  repairUnknownLocalSources,
   shouldSyncReview,
   type ReviewSyncMark,
 } from "./reviewSync.ts";
@@ -142,7 +143,8 @@ const make = Effect.gen(function* () {
             githubStates.length === 0 &&
             !headChanged &&
             missingRaw.length === 0 &&
-            !peopleChanged(session)
+            !peopleChanged(session) &&
+            repairUnknownLocalSources(existingItems).length === 0
           ) {
             return false;
           }
@@ -242,6 +244,9 @@ const make = Effect.gen(function* () {
                 }
               }
               for (const sourceId of plan.removals) yield* repo.deleteSource(session.id, sourceId);
+              for (const item of repairUnknownLocalSources(yield* repo.listItems(session.id))) {
+                yield* repo.upsertItem(session.id, item);
+              }
               for (const { number, next } of githubStates) {
                 yield* repo.setItemGithubState(session.id, number, next);
               }

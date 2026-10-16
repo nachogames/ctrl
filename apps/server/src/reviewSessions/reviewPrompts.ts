@@ -1,3 +1,4 @@
+import { reviewRole } from "@t3tools/contracts";
 import type {
   ReviewItem,
   ReviewSession,
@@ -125,6 +126,15 @@ export function reviewRequestText(input: {
     case "triage":
       return `Triage round ${session.round} of the review of ${session.url}: ${input.sources.map(reviewSourceName).join(", ")}. Use sessionId "${session.id}" on every review tool call. Call review_session_open with this URL to reload the brief, then read the list with review_session_read and follow the brief's triage steps.`;
     case "apply":
+      if (reviewRole(session) === "reviewer") {
+        const pending =
+          request.pendingReview === "replace"
+            ? " The user chose to start fresh: delete their existing pending review on GitHub first, then create a new one."
+            : request.pendingReview === "add"
+              ? " The user chose to add to the pending review they already have on GitHub."
+              : "";
+        return `Prepare the user's pending review for round ${session.round} of ${session.url}. The user confirmed the actions shown on each point (Post, +1 on their thread, Post my own, Resolve, Keep open, Skip).${pending} Viewed marks are not required. Use sessionId "${session.id}" on every review tool call. Call review_session_open with this URL to reload the brief, then follow its "Post the pending review" steps. Do not change code, push, or submit the review.`;
+      }
       return `Apply round ${session.round} of the review of ${session.url}. The user confirmed the displayed Fix/Decline choices. Viewed marks are not required. Use sessionId "${session.id}" on every review tool call. Call review_session_open with this URL to reload the brief, then follow its apply steps.`;
     case "re-review":
       return `Re-review the pull request ${session.url}: round ${session.round} is open on the new head. Use sessionId "${session.id}" on every review tool call. Call review_session_open with this URL to reload the brief, then follow its Re-review steps: check your open threads against the new code, start your local review, and triage both together.`;
