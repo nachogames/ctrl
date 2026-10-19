@@ -54,7 +54,6 @@ lines.on("line", (line) => {
       skills: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
     });
   }
-  // The probe follows initialize with get_usage on the same process.
   if (message.request?.subtype === "get_usage") {
     reply({
       session: {},

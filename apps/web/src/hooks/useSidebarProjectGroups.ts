@@ -1,5 +1,3 @@
-import { useMemo } from "react";
-
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
@@ -38,20 +36,15 @@ export function useSidebarProjectGroups() {
   const groupingSettings = useClientSettings(selectProjectGroupingSettings);
   const environments = useEnvironmentIdentities();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const orderedProjects = useMemo(
-    () => orderSidebarProjects(projects, projectOrder),
-    [projectOrder, projects],
+  const orderedProjects = orderSidebarProjects(projects, projectOrder);
+  const labels = new Map(
+    environments.map((environment) => [environment.environmentId, environment.label] as const),
   );
-  return useMemo(() => {
-    const labels = new Map(
-      environments.map((environment) => [environment.environmentId, environment.label] as const),
-    );
-    return buildSidebarProjectSnapshots({
-      projects: orderedProjects,
-      groupScratchProjects: true,
-      settings: groupingSettings,
-      primaryEnvironmentId,
-      resolveEnvironmentLabel: (environmentId) => labels.get(environmentId) ?? null,
-    });
-  }, [environments, groupingSettings, orderedProjects, primaryEnvironmentId]);
+  return buildSidebarProjectSnapshots({
+    projects: orderedProjects,
+    groupScratchProjects: true,
+    settings: groupingSettings,
+    primaryEnvironmentId,
+    resolveEnvironmentLabel: (environmentId) => labels.get(environmentId) ?? null,
+  });
 }
