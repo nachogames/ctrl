@@ -293,6 +293,7 @@ import {
 } from "./device.ts";
 import {
   DictationAppendInput,
+  DictationAppendResult,
   DictationCancelInput,
   DictationError,
   DictationFinishInput,
@@ -1781,6 +1782,8 @@ const WsDictationWarmRpc = Rpc.make(WS_METHODS.dictationWarm, {
 
 const WsDictationAppendRpc = Rpc.make(WS_METHODS.dictationAppend, {
   payload: DictationAppendInput,
+  // Nullish: environments from before live text answer with nothing.
+  success: Schema.NullishOr(DictationAppendResult),
   error: DictationRpcError,
 });
 

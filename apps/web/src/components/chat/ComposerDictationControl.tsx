@@ -20,7 +20,7 @@ export function ComposerDictationControl(props: {
   readonly dictation: ComposerDictation;
   readonly disabled: boolean;
   readonly shortcutLabel: string | null;
-  /** Replaces the idle button's start and label, as Shift's thread does to start a conversation. */
+  /** Replaces the idle button's start and label, as voice mode does to start a conversation. */
   readonly talk?: { readonly label: string; readonly start: () => void };
 }) {
   const { dictation } = props;

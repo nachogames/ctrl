@@ -958,6 +958,7 @@ const fakeApple = (options: {
             samples.push(pcm.length / 2);
             options.written?.push(pcm.length / 2);
           }),
+        partial: Effect.sync(() => (samples.length ? `hearing ${samples.join("+")}` : "")),
         finish: Effect.sync(() => ({ text: `heard ${samples.join("+")}`, locale: "en-US" })),
         close: Effect.sync(() => {
           if (options.closed) options.closed.count++;
@@ -1065,4 +1066,31 @@ it.effect("reports a language Apple cannot transcribe as a failed install", () =
     assert.strictEqual(state.ready, false);
     assert.strictEqual(state.apple.assets._tag, "failed");
   }),
+);
+
+it.effect("streams live text with each append", () =>
+  Effect.gen(function* () {
+    const service = yield* Dictation.Dictation;
+    const { sessionId } = yield* service.start;
+    assert.deepStrictEqual(yield* service.append({ sessionId, seq: 0, pcm: pcm(0.5) }), {
+      partial: "hearing 8000",
+    });
+    assert.deepStrictEqual(yield* service.append({ sessionId, seq: 1, pcm: pcm(0.25) }), {
+      partial: "hearing 8000+4000",
+    });
+  }).pipe(Effect.provide(testLayer({ apple: fakeApple({}) })), Effect.scoped),
+);
+
+it.effect("keeps a session alive while the first audio waits on the microphone prompt", () =>
+  Effect.gen(function* () {
+    const service = yield* Dictation.Dictation;
+    // Long enough since the server started that a stale idle clock would expire a new session.
+    yield* TestClock.adjust("10 minutes");
+    const { sessionId } = yield* service.start;
+    // The idle sweep runs every 10 seconds; the user is still answering the prompt.
+    yield* TestClock.adjust("20 seconds");
+    yield* service.append({ sessionId, seq: 0, pcm: pcm(1) });
+    const result = yield* service.finish({ sessionId, chunkCount: 1 });
+    assert.strictEqual(result.text, "heard 16000");
+  }).pipe(Effect.provide(testLayer({ apple: fakeApple({}) })), Effect.scoped),
 );

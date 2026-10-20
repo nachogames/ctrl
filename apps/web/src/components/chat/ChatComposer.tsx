@@ -49,7 +49,6 @@ import type {
 import {
   EnvironmentRequestInvalidError,
   AuthOrchestrationOperateScope,
-  isHomeThreadId,
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -297,9 +296,9 @@ import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerDictationControl } from "./ComposerDictationControl";
-import { ShiftVoiceControls, shiftVoiceUnavailableReason } from "./ShiftVoiceControls";
-import { shiftSpeaker } from "../../speech/shiftSpeaker";
-import { useShiftVoiceMode } from "../../speech/voiceMode";
+import { VoiceReplyControls, voiceUnavailableReason } from "./VoiceReplyControls";
+import { replySpeaker } from "../../speech/replySpeaker";
+import { useVoiceMode } from "../../speech/voiceMode";
 import { useDictationEnvironmentId } from "../../state/dictation";
 import { useSpeechState } from "../../state/speech";
 import { useComposerDictation } from "../../dictation/useComposerDictation";
@@ -2335,21 +2334,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
-  // In Shift's thread, voice mode sends each dictation as soon as it is transcribed.
-  const isShiftThread = activeThreadId !== null && isHomeThreadId(activeThreadId);
-  const [shiftVoiceModeSetting, setShiftVoiceMode] = useShiftVoiceMode();
+  // Voice mode sends each dictation as soon as it is transcribed, and reads replies aloud.
+  const [voiceModeSetting, setVoiceMode] = useVoiceMode();
   // Voice mode needs both halves on this environment; a saved "on" reads as off until they are.
-  const shiftDictationEnvironmentId = useDictationEnvironmentId(
-    isShiftThread ? environmentId : null,
-  );
-  const { state: shiftSpeechState } = useSpeechState(isShiftThread ? environmentId : null);
-  const shiftVoiceUnavailable = isShiftThread
-    ? shiftVoiceUnavailableReason({
-        dictationReady: shiftDictationEnvironmentId !== null,
-        spokenRepliesReady: shiftSpeechState?.ready === true,
-      })
-    : null;
-  const voiceMode = isShiftThread && shiftVoiceModeSetting && shiftVoiceUnavailable === null;
+  const voiceDictationEnvironmentId = useDictationEnvironmentId(environmentId);
+  const { state: voiceSpeechState } = useSpeechState(environmentId);
+  const voiceUnavailable = voiceUnavailableReason({
+    dictationReady: voiceDictationEnvironmentId !== null,
+    spokenRepliesReady: voiceSpeechState?.ready === true,
+  });
+  const voiceMode = voiceModeSetting && voiceUnavailable === null;
   // These callbacks run after recording, once the handlers declared below exist.
   const dictationInsertedRangeRef = useRef<{ start: number; end: number } | null>(null);
   const dictation = useComposerDictation({
@@ -2385,6 +2379,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusEditorAfterReplace: false,
       });
     },
+    showLiveText: (text) => composerEditorRef.current?.showLiveText(text),
     onCommitted: () => {
       if (voiceMode) {
         dictationInsertedRangeRef.current = null;
@@ -2397,20 +2392,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (inserted) composerEditorRef.current?.flashRange(inserted);
     },
   });
-  // In Shift's thread the mic and the hold shortcut start a conversation: it sends
-  // when you stop, and Shift answers aloud.
-  const shiftTalk =
-    isShiftThread && shiftVoiceUnavailable === null
-      ? {
-          label: "Talk to Shift",
-          start: () => {
-            shiftSpeaker.prime();
-            shiftSpeaker.stop();
-            setShiftVoiceMode(true);
-            dictation.start();
-          },
-        }
-      : null;
+  // In voice mode the mic and the hold shortcut start a conversation: it sends
+  // when you stop, and the reply is read aloud.
+  const voiceTalk = voiceMode
+    ? {
+        label: "Talk",
+        start: () => {
+          // The press is the gesture that lets the reply's audio start later.
+          replySpeaker.prime();
+          replySpeaker.stop();
+          dictation.start();
+        },
+      }
+    : null;
   const sendDisabledReason =
     (dictation.active ? "Finish dictation first." : null) ??
     externalSendDisabledReason ??
@@ -2515,12 +2509,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsComposerScrollCollapsed,
     restoreAfterTimelineReachedEnd,
   } = useComposerFocusState();
-  // Starting to dictate to Shift stops it mid-sentence.
+  // Starting to dictate stops a reply that is being read aloud mid-sentence.
   const dictationPhase = dictation.state.phase;
   useEffect(() => {
-    if (isShiftThread && (dictationPhase === "preparing" || dictationPhase === "recording"))
-      shiftSpeaker.stop();
-  }, [isShiftThread, dictationPhase]);
+    if (dictationPhase === "preparing" || dictationPhase === "recording") replySpeaker.stop();
+  }, [dictationPhase]);
   // Focusing the composer usually comes right before dictating; load the speech model early.
   const warmDictation = dictation.warm;
   useEffect(() => {
@@ -4114,8 +4107,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
     setComposerSubmissionError(submission.validationMessage);
     if (!submission.didDispatch) return;
-    // Sending to Shift talks over whatever it was still saying.
-    if (isShiftThread) shiftSpeaker.stop();
+    // Sending talks over whatever the last reply was still saying.
+    replySpeaker.stop();
     onTypingGuardSend();
     if (shouldBlurMobileComposerOnSubmit()) {
       blurMobileComposerAfterSend();
@@ -5453,7 +5446,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useDictationHoldShortcut({
     dictation,
     enabled: !composerTextUnavailable,
-    ...(shiftTalk ? { start: shiftTalk.start } : {}),
+    ...(voiceTalk ? { start: voiceTalk.start } : {}),
     isDictateShortcut: (event) =>
       !isCommandPaletteOpen() &&
       resolveShortcutCommand(event, keybindings, {
@@ -7366,18 +7359,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Tooltip>
                     </>
                   ) : null}
-                  {isShiftThread ? (
-                    <ShiftVoiceControls
-                      voiceMode={voiceMode}
-                      onVoiceModeChange={setShiftVoiceMode}
-                      unavailableReason={shiftVoiceUnavailable}
-                    />
-                  ) : null}
+                  <VoiceReplyControls
+                    voiceMode={voiceMode}
+                    onVoiceModeChange={setVoiceMode}
+                    unavailableReason={voiceUnavailable}
+                  />
                   <ComposerDictationControl
                     dictation={dictation}
                     disabled={composerTextUnavailable}
                     shortcutLabel={shortcutLabelForCommand(keybindings, "composer.dictate")}
-                    {...(shiftTalk ? { talk: shiftTalk } : {})}
+                    {...(voiceTalk ? { talk: voiceTalk } : {})}
                   />
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}

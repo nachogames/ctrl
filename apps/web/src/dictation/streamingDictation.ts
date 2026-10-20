@@ -19,6 +19,9 @@ import { dictationEnvironment } from "../state/dictation";
 import { createDictationLevel, type DictationLevel } from "./dictationLevel";
 import { PcmCapture } from "./pcmCapture";
 
+/** Under the environment's one-minute idle expiry, with room for a slow round trip. */
+const SESSION_REFRESH_AFTER_MS = 30_000;
+
 type DictationSession = {
   readonly environmentId: EnvironmentId;
   /** Null until the environment answers `dictationStart`; frames wait in `pending` until then. */
@@ -27,6 +30,10 @@ type DictationSession = {
   readonly pending: ArrayBuffer[];
   /** Chunks sent so far; also the next chunk's `seq`. */
   chunks: number;
+  /** The newest chunk whose answer carried live text, so late answers cannot roll it back. */
+  partialSeq: number;
+  /** Live text last handed to `showPartial`. */
+  partial: string;
   /** False once the server has finished or been told to cancel. */
   open: boolean;
   /** Settles after `sessionId` is set and `pending` is flushed, or with the start failure. */
@@ -79,6 +86,11 @@ export function createStreamingDictation(input: {
   readonly finishedAtLimit: (uri: string) => void;
   /** Applied to each transcript before it is inserted, e.g. to turn spoken skill names into chips. */
   readonly rewriteTranscript: (text: string) => string;
+  /**
+   * Live text heard so far, called only when it changes; "" clears it. It is
+   * provisional: the transcript `transcribe` returns is what gets inserted.
+   */
+  readonly showPartial: (text: string) => void;
 }): {
   readonly dependencies: Omit<
     VoiceInputControllerDependencies,
@@ -126,7 +138,17 @@ export function createStreamingDictation(input: {
       environmentId: target.environmentId,
       input: { sessionId, seq, pcm: Base64.encode(new Uint8Array(frame)) },
     }).then((result) => {
-      if (result._tag !== "Failure" || !target.open) return;
+      if (!target.open) return;
+      if (result._tag !== "Failure") {
+        // Answers can arrive out of order; only a newer chunk's text may replace the shown one.
+        const partial = result.value?.partial;
+        if (partial === undefined || seq < target.partialSeq || session !== target) return;
+        target.partialSeq = seq;
+        if (partial === target.partial) return;
+        target.partial = partial;
+        input.showPartial(partial);
+        return;
+      }
       const message = `Dictation stopped: ${failureMessage(result)}`;
       target.loseChunk(message);
       if (session === target) input.interrupt(message);
@@ -147,6 +169,8 @@ export function createStreamingDictation(input: {
       sessionId: null,
       pending,
       chunks: 0,
+      partialSeq: -1,
+      partial: "",
       open: true,
       ready: run(dictationEnvironment.start, { environmentId, input: {} }).then((started) => {
         if (started._tag === "Failure") return failureMessage(started);
@@ -240,9 +264,17 @@ export function createStreamingDictation(input: {
         const environmentId = input.resolveEnvironmentId();
         close(session);
         session = environmentId === null ? null : begin(environmentId);
+        const askedAt = Date.now();
         const access = await capture.open();
         if (!access.granted) {
           return { granted: false, canAskAgain: true, message: access.message };
+        }
+        // The environment ends sessions that stay silent for a minute. Someone who
+        // took a while over the first-use microphone prompt gets a fresh one, so
+        // dictation carries on once they allow access.
+        if (environmentId !== null && Date.now() - askedAt > SESSION_REFRESH_AFTER_MS) {
+          close(session);
+          session = begin(environmentId);
         }
         await capture.prepare();
         const current = session;
@@ -259,6 +291,7 @@ export function createStreamingDictation(input: {
     },
     settle: (state) => {
       if (state.phase !== "idle" && state.phase !== "error") return;
+      if (session?.partial) input.showPartial("");
       clearLimit();
       capture.release();
       level.set(0);

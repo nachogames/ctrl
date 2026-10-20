@@ -1,8 +1,8 @@
 import { SquareIcon, Volume2Icon, VolumeOffIcon } from "lucide-react";
 import type { PointerEvent } from "react";
 
-import { shiftSpeaker } from "~/speech/shiftSpeaker";
-import { useShiftSpeaking } from "~/speech/voiceMode";
+import { replySpeaker } from "~/speech/replySpeaker";
+import { useReplySpeaking } from "~/speech/voiceMode";
 import { Button } from "../ui/button";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -13,7 +13,7 @@ const keepComposerFocus = (event: PointerEvent) => event.preventDefault();
  * What voice mode needs that is missing, as a hint naming where to turn it on;
  * null when dictation and spoken replies are both ready.
  */
-export function shiftVoiceUnavailableReason(input: {
+export function voiceUnavailableReason(input: {
   readonly dictationReady: boolean;
   readonly spokenRepliesReady: boolean;
 }): string | null {
@@ -25,16 +25,16 @@ export function shiftVoiceUnavailableReason(input: {
 }
 
 /**
- * Voice controls for Shift's composer: a switch for reading Shift's replies
- * aloud, plus a stop button while it talks. Talking itself starts from the
- * mic, which turns this on. Disabled, with a hint, while either half cannot work.
+ * Voice controls for a thread's composer: a switch for reading replies
+ * aloud, plus a stop button while it talks. While it is on, the mic and the
+ * hold shortcut send what you say. Disabled, with a hint, while either half cannot work.
  */
-export function ShiftVoiceControls(props: {
+export function VoiceReplyControls(props: {
   readonly voiceMode: boolean;
   readonly onVoiceModeChange: (voiceMode: boolean) => void;
   readonly unavailableReason: string | null;
 }) {
-  const speaking = useShiftSpeaking();
+  const speaking = useReplySpeaking();
   return (
     <>
       {speaking ? (
@@ -46,7 +46,7 @@ export function ShiftVoiceControls(props: {
                 variant="ghost"
                 size="icon-sm"
                 onPointerDown={keepComposerFocus}
-                onClick={() => shiftSpeaker.stop()}
+                onClick={() => replySpeaker.stop()}
                 aria-label="Stop speaking"
               />
             }
@@ -83,7 +83,7 @@ export function ShiftVoiceControls(props: {
                 onPointerDown={keepComposerFocus}
                 onPressedChange={(pressed) => {
                   // The click is the gesture that lets audio start later.
-                  if (pressed) shiftSpeaker.prime();
+                  if (pressed) replySpeaker.prime();
                   props.onVoiceModeChange(pressed);
                 }}
                 aria-label="Read replies aloud"
@@ -94,8 +94,8 @@ export function ShiftVoiceControls(props: {
           </TooltipTrigger>
           <TooltipPopup>
             {props.voiceMode
-              ? "Reading Shift's replies aloud. Click to mute."
-              : "Read Shift's replies aloud. The mic talks to Shift."}
+              ? "Reading replies aloud, and the mic sends what you say. Click to turn off."
+              : "Read replies aloud, and send what you say into the mic."}
           </TooltipPopup>
         </Tooltip>
       )}

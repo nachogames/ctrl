@@ -143,6 +143,36 @@ it.effect("streams vocabulary and audio, then returns the finalized phrases", ()
   }),
 );
 
+it.effect("reports finalized phrases plus the phrase still being spoken as live text", () =>
+  Effect.gen(function* () {
+    let audio = 0;
+    const apple = yield* service(
+      fakeSpawner([], {
+        initial: [{ type: "ready", locale: "en-US" }],
+        respond: (frame) => {
+          if (frame.kind === "E") return [{ type: "done" }];
+          if (frame.kind !== "A") return [];
+          audio += 1;
+          return audio === 1
+            ? [{ type: "partial", text: "Hello" }]
+            : [
+                { type: "final", text: "Hello there." },
+                { type: "partial", text: "How are" },
+              ];
+        },
+      }),
+    );
+    const session = yield* apple.open({ language: "en-US", words: [] });
+    assert.strictEqual(yield* session.partial, "");
+    yield* session.write(new Uint8Array(3200));
+    yield* session.write(new Uint8Array(3200));
+    // Finishing waits for "done", so every earlier event has been read.
+    yield* session.finish;
+    assert.strictEqual(yield* session.partial, "Hello there. How are");
+    yield* session.close;
+  }),
+);
+
 it.effect("surfaces a helper error event as a dictation error", () =>
   Effect.gen(function* () {
     const apple = yield* service(

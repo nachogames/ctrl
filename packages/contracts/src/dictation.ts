@@ -163,6 +163,17 @@ export const DictationAppendInput = Schema.Struct({
 });
 export type DictationAppendInput = typeof DictationAppendInput.Type;
 
+/**
+ * What the environment has heard so far, returned by each append so the
+ * composer can show words while the user speaks. Provisional: `finish`
+ * returns the transcript to insert. Environments without live text return null.
+ */
+export const DictationAppendResult = Schema.Struct({
+  /** Finalized phrases plus the phrase still being spoken; empty before any speech. */
+  partial: Schema.String,
+});
+export type DictationAppendResult = typeof DictationAppendResult.Type;
+
 export const DictationFinishInput = Schema.Struct({
   sessionId: DictationSessionId,
   /** Total chunks sent, so the server can wait for stragglers before decoding. */

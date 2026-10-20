@@ -20,7 +20,7 @@ export function useDictationHoldShortcut(input: {
   /** False while the composer cannot take text; presses are still claimed. */
   readonly enabled: boolean;
   readonly isDictateShortcut: (event: KeyboardEvent) => boolean;
-  /** Replaces starting dictation, as Shift's thread does to start a conversation. */
+  /** Replaces starting dictation, as voice mode does to start a conversation. */
   readonly start?: () => void;
 }) {
   const latest = useRef(input);

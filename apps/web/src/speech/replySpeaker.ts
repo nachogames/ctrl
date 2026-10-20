@@ -19,12 +19,12 @@ export function decodeBase64(base64: string): ArrayBuffer {
 }
 
 /**
- * Reads the openings of Shift's replies aloud, one sentence at a time. Each
+ * Reads the openings of agent replies aloud, one sentence at a time. Each
  * sentence is synthesized by the environment while the previous one plays,
  * and played back to back through one AudioContext. `stop` silences it at
  * once and drops whatever was left of the messages it was reading.
  */
-class ShiftSpeaker {
+class ReplySpeaker {
   #context: AudioContext | null = null;
   #generation = 0;
   #queue: Pending[] = [];
@@ -164,4 +164,4 @@ class ShiftSpeaker {
   }
 }
 
-export const shiftSpeaker = new ShiftSpeaker();
+export const replySpeaker = new ReplySpeaker();

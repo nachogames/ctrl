@@ -9,6 +9,7 @@ import {
   type DictationLocalEngine,
   type DictationModelId,
   type DictationAppendInput,
+  type DictationAppendResult,
   type DictationCancelInput,
   type DictationFinishInput,
   type DictationFinishResult,
@@ -121,7 +122,10 @@ export class Dictation extends Context.Service<
     readonly remove: (input: DictationRemoveInput) => Effect.Effect<void, DictationError>;
     readonly start: Effect.Effect<DictationStartResult, DictationError>;
     readonly warm: Effect.Effect<void>;
-    readonly append: (input: DictationAppendInput) => Effect.Effect<void, DictationError>;
+    /** Queues one chunk and returns the live transcript so far. */
+    readonly append: (
+      input: DictationAppendInput,
+    ) => Effect.Effect<DictationAppendResult, DictationError>;
     readonly finish: (
       input: DictationFinishInput,
     ) => Effect.Effect<DictationFinishResult, DictationError>;
@@ -621,7 +625,10 @@ const make = Effect.gen(function* () {
       closed: false,
       finishing: false,
       expectedChunks: null,
-      lastUse: lastModelUse,
+      // Not lastModelUse: Apple sessions never touch the model, so that can be
+      // long past, and the idle sweep would end a session whose first audio is
+      // still waiting on the microphone permission prompt.
+      lastUse: yield* Clock.currentTimeMillis,
       error: null,
     };
     sessions.set(id, session);
@@ -696,9 +703,15 @@ const make = Effect.gen(function* () {
       Effect.forkIn(scope),
     );
   });
+  /** Live text so far: Apple's streams per word, Parakeet's per decoded phrase. */
+  const live = (session: Session) =>
+    Effect.map(
+      session.apple ? session.apple.partial : Effect.sync(() => joinTexts(session.texts)),
+      (partial): DictationAppendResult => ({ partial }),
+    );
   const append = Effect.fnUntraced(function* (input: DictationAppendInput) {
     const session = yield* getSession(input.sessionId);
-    if (input.seq < session.next || session.chunks.has(input.seq)) return;
+    if (input.seq < session.next || session.chunks.has(input.seq)) return yield* live(session);
     if (session.expectedChunks !== null && input.seq >= session.expectedChunks)
       return yield* new DictationError({
         reason: "transcription-failed",
@@ -758,6 +771,7 @@ const make = Effect.gen(function* () {
     session.changed = yield* Deferred.make<void>();
     yield* Deferred.succeed(changed, undefined);
     if (!transcription) yield* pump(session);
+    return yield* live(session);
   });
   const finish = Effect.fnUntraced(function* (input: DictationFinishInput) {
     const session = yield* getSession(input.sessionId);

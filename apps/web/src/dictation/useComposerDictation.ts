@@ -40,6 +40,7 @@ function createComposerDictationController(input: {
     resolveEnvironmentId: () => latest.current.environmentId,
     interrupt: (message) => void controller?.interruptRecording(message),
     rewriteTranscript: (text) => latest.current.rewriteTranscript(text),
+    showPartial: (text) => latest.current.showLiveText(text),
     finishedAtLimit: (uri) =>
       void controller?.handleRecorderStatus({
         isFinished: true,
@@ -85,6 +86,11 @@ export function useComposerDictation(input: {
   readonly rewriteTranscript: (text: string) => string;
   /** Runs once the editor is unfrozen after a transcript was inserted. */
   readonly onCommitted: () => void;
+  /**
+   * Shows what has been heard so far where the transcript will land, while the
+   * user speaks; "" clears it. Called only when the text changes.
+   */
+  readonly showLiveText: (text: string) => void;
 }) {
   const registry = use(RegistryContext);
   const navigate = useNavigate();

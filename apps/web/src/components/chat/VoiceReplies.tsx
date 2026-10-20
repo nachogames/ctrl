@@ -2,8 +2,8 @@ import { RegistryContext } from "@effect/atom-react";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { use, useEffect, useRef } from "react";
 
-import { shiftSpeaker } from "~/speech/shiftSpeaker";
-import { useShiftVoiceMode } from "~/speech/voiceMode";
+import { replySpeaker } from "~/speech/replySpeaker";
+import { useVoiceMode } from "~/speech/voiceMode";
 import { useDictationEnvironmentId } from "~/state/dictation";
 import { useSpeechState } from "~/state/speech";
 import type { ChatMessage } from "~/types";
@@ -12,17 +12,17 @@ import type { ChatMessage } from "~/types";
 const FRESH_REPLY_MS = 60_000;
 
 /**
- * Reads Shift's new replies aloud while voice mode is on and the environment's
+ * Reads a thread's new replies aloud while voice mode is on and the environment's
  * dictation and spoken replies are ready. Everything already in the thread when voice mode
  * turns on, or when the thread opens, counts as heard. Renders nothing.
  */
-export function ShiftVoiceReplies(props: {
+export function VoiceReplies(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly messages: ReadonlyArray<ChatMessage>;
 }) {
   const registry = use(RegistryContext);
-  const [voiceMode] = useShiftVoiceMode();
+  const [voiceMode] = useVoiceMode();
   const { state } = useSpeechState(props.environmentId);
   // Matches the composer toggle: voice mode counts as off unless dictation is ready too.
   const dictationReady = useDictationEnvironmentId(props.environmentId) !== null;
@@ -30,10 +30,10 @@ export function ShiftVoiceReplies(props: {
   const activeKey = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!active) shiftSpeaker.stop();
+    if (!active) replySpeaker.stop();
   }, [active]);
   // Mounted per thread (keyed by ChatView), so leaving the thread stops reading it.
-  useEffect(() => () => shiftSpeaker.stop(), []);
+  useEffect(() => () => replySpeaker.stop(), []);
 
   useEffect(() => {
     const assistant = props.messages.filter((message) => message.role === "assistant");
@@ -44,20 +44,20 @@ export function ShiftVoiceReplies(props: {
     }
     if (activeKey.current !== key) {
       activeKey.current = key;
-      shiftSpeaker.markHeard(assistant.map((message) => message.id));
+      replySpeaker.markHeard(assistant.map((message) => message.id));
       return;
     }
     // Only the newest few can be arriving; older history that loads late is not a reply.
     for (const message of assistant.slice(-3)) {
       if (
-        shiftSpeaker.isNew(message.id) &&
+        replySpeaker.isNew(message.id) &&
         !message.streaming &&
         Date.now() - Date.parse(message.createdAt) > FRESH_REPLY_MS
       ) {
-        shiftSpeaker.markHeard([message.id]);
+        replySpeaker.markHeard([message.id]);
         continue;
       }
-      shiftSpeaker.feed({
+      replySpeaker.feed({
         registry,
         environmentId: props.environmentId,
         messageId: message.id,

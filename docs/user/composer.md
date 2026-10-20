@@ -212,9 +212,10 @@ language, and the other models always detect it automatically. Remove models
 you no longer use to free disk. Whisper turbo is slow without a GPU.
 
 Click the composer's microphone to record, then the stop button to insert the text where your
-selection was. You can also hold `Option+Space` on macOS or `Ctrl+Shift+Space` on Windows and
-Linux while T3 Code is focused, and release to insert. `Esc` cancels. Recordings can be up to
-five minutes long. Rebind the shortcut as **Composer: Hold to Dictate** in
+selection was. Your words appear in gray at the cursor as you speak, and the finished transcript
+replaces them when you stop. You can also hold `Option+Space` on macOS or `Ctrl+Shift+Space` on
+Windows and Linux while T3 Code is focused, and release to insert. `Esc` cancels. Recordings can
+be up to five minutes long. Rebind the shortcut as **Composer: Hold to Dictate** in
 [keybindings](keybindings.md).
 
 The machine that owns the thread transcribes when its dictation is ready; otherwise another
@@ -223,8 +224,16 @@ ready machine does. With two or more machines connected, you can pick one for th
 
 Say a skill's name followed by "skill", such as "use the bug fix skill", to insert it as a skill.
 
-The first recording asks for microphone access. Browsers allow the microphone only over HTTPS
-or on localhost.
+The first recording asks for microphone access, and keeps recording once you allow it. Browsers
+allow the microphone only over HTTPS or on localhost.
+
+### Voice mode
+
+With dictation and **Spoken replies** both on in **Settings → Integrations**, the speaker button
+next to the microphone turns on voice mode. Then the microphone and the hold shortcut send what
+you say as soon as you stop, and the first sentence or two of each new reply in that thread is
+read aloud. Start talking, send a message, or press the stop button to interrupt it. Voice mode
+is remembered on each device, for every thread.
 
 ## Queued messages
 

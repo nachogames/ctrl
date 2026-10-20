@@ -4,7 +4,7 @@ import type { AtomRegistry } from "effect/reactivity";
 import { useSyncExternalStore } from "react";
 
 import { speechEnvironment } from "../state/speech";
-import { decodeBase64 } from "./shiftSpeaker";
+import { decodeBase64 } from "./replySpeaker";
 
 const SAMPLE = "Hey, it's Shift. The PayParty build finished, and two things need you.";
 /** Decoded samples kept so replaying a voice is instant; a handful covers every voice. */

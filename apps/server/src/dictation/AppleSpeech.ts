@@ -96,6 +96,8 @@ const unavailable = (reason: string | null): AppleProbe => ({
 export interface AppleTranscription {
   /** Queue int16 PCM in recording order. */
   readonly write: (pcm: Uint8Array) => Effect.Effect<void, DictationError>;
+  /** Text heard so far: finalized phrases plus the current phrase's volatile text. */
+  readonly partial: Effect.Effect<string>;
   /** End the utterance and wait for its final text. */
   readonly finish: Effect.Effect<DictationFinishResult, DictationError>;
   /** Stop the helper; safe to call more than once. */
@@ -237,6 +239,8 @@ export const makeWithBinary = Effect.fnUntraced(function* (
       Effect.onError(() => Scope.close(scope, Exit.void)),
     );
     const texts: string[] = [];
+    /** Volatile text of the phrase being spoken, replaced by its "final". */
+    let volatile = "";
     let locale = input.language === "auto" || !input.language ? "en" : input.language;
     let error: DictationError | null = null;
     const done = yield* Deferred.make<void, DictationError>();
@@ -245,8 +249,11 @@ export const makeWithBinary = Effect.fnUntraced(function* (
       Stream.runForEach((event) =>
         Effect.gen(function* () {
           if (event.type === "ready") locale = event.locale;
-          else if (event.type === "final" && event.text.trim()) texts.push(event.text.trim());
-          else if (event.type === "done") yield* Deferred.succeed(done, undefined);
+          else if (event.type === "partial") volatile = event.text;
+          else if (event.type === "final") {
+            volatile = "";
+            if (event.text.trim()) texts.push(event.text.trim());
+          } else if (event.type === "done") yield* Deferred.succeed(done, undefined);
           else if (event.type === "error") {
             error = helperError(event);
             yield* Deferred.fail(done, error);
@@ -275,6 +282,7 @@ export const makeWithBinary = Effect.fnUntraced(function* (
     }
     return {
       write: (pcm) => send(encodeFrame("A", pcm)),
+      partial: Effect.sync(() => joinTexts([...texts, volatile])),
       finish: Effect.gen(function* () {
         yield* send(encodeFrame("E"));
         yield* Deferred.await(done).pipe(

@@ -2304,6 +2304,13 @@ code {
   }
 }
 
+/* Words dictation has heard so far, before the transcript replaces them; see ComposerLiveTextPlugin. */
+.composer-tiptap .composer-live-text {
+  color: var(--muted-foreground);
+  pointer-events: none;
+  user-select: none;
+}
+
 .composer-tiptap .composer-chip-range-selected {
   position: relative;
 }
