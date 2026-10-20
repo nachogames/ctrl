@@ -66,7 +66,6 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
-  ArrowBigUpIcon,
   LayersIcon,
   MessageSquareDashedIcon,
   LinkIcon,
@@ -265,6 +264,7 @@ import type { Project } from "../types";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import { ShiftKeyIcon } from "./home/ShiftKeyIcon";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
@@ -2169,7 +2169,7 @@ function OpenCommandPaletteDialog(props: {
       value: "action:home",
       searchTerms: ["shift", "fleet", "all projects"],
       title: "Open Shift",
-      icon: <ArrowBigUpIcon className={ITEM_ICON_CLASS} />,
+      icon: <ShiftKeyIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "home.open",
       run: async () => {
         await navigate({

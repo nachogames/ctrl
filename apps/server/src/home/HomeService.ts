@@ -205,8 +205,24 @@ const make = Effect.gen(function* () {
 
   // Home's instructions follow the app version, so an update reaches the
   // current Home in its next provider session, not only after a fresh start.
-  if (available && (yield* readHome.pipe(Effect.orElseSucceed(() => null)))?.threadId != null) {
+  const startupHomeThreadId = available
+    ? (yield* readHome.pipe(Effect.orElseSucceed(() => null)))?.threadId
+    : null;
+  if (startupHomeThreadId != null) {
     yield* folders.ensureHomeProject.pipe(Effect.ignore);
+    // Ctrl calls Home "Shift"; a thread started before that keeps upstream's title.
+    const shell = yield* liveShell(startupHomeThreadId);
+    if (shell?.title === "Home") {
+      const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      yield* threads
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`home-rename:${id}`),
+          threadId: startupHomeThreadId,
+          title: "Shift",
+        })
+        .pipe(Effect.ignore);
+    }
   }
 
   // A read failure fails the report, so the reporter retries the batch and

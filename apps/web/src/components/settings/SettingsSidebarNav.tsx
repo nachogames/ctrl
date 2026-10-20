@@ -15,7 +15,6 @@ import {
   CalendarClockIcon,
   GitBranchIcon,
   HardDriveIcon,
-  ArrowBigUpIcon,
   PanelsTopLeftIcon,
   KeyboardIcon,
   Link2Icon,
@@ -52,6 +51,7 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
+import { ShiftKeyIcon } from "../home/ShiftKeyIcon";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -81,7 +81,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
 > = {
   "/settings/general": Settings2Icon,
   "/settings/diagnostics": Settings2Icon,
-  "/settings/home": ArrowBigUpIcon,
+  "/settings/home": ShiftKeyIcon,
   "/settings/appearance": PaletteIcon,
   "/settings/projects": PanelsTopLeftIcon,
   "/settings/keybindings": KeyboardIcon,

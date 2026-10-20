@@ -206,6 +206,8 @@ function namedProjectReadme(name: string): string {
 const HOME_SECTION_START = "<!-- t3-home:start -->";
 const HOME_SECTION_END = "<!-- t3-home:end -->";
 
+const SHIFT_PROJECT_ICON = { kind: "lucide", name: "arrow-big-up", color: "gray" } as const;
+
 /** What T3 tells every Home thread. Rewritten in place on each Home start. */
 const HOME_SECTION = `${HOME_SECTION_START}
 # Shift
@@ -637,9 +639,24 @@ const make = Effect.gen(function* () {
           .update({
             commandId: CommandId.make(`home-project-icon:${id}`),
             projectId: bootstrapped.project.id,
-            projectIcon: { kind: "lucide", name: "arrow-big-up", color: "gray" },
+            projectIcon: SHIFT_PROJECT_ICON,
           })
           .pipe(Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })));
+      } else {
+        // Ctrl calls Home "Shift"; a project made before that keeps upstream's name and icon.
+        const existing = yield* projects
+          .getById(bootstrapped.project.id)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isSome(existing) && existing.value.title === "Home") {
+          yield* projects
+            .update({
+              commandId: CommandId.make(`home-project-rename:${id}`),
+              projectId: bootstrapped.project.id,
+              title: "Shift",
+              projectIcon: SHIFT_PROJECT_ICON,
+            })
+            .pipe(Effect.ignore);
+        }
       }
       return { projectId: bootstrapped.project.id, workspaceRoot };
     },

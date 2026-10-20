@@ -84,7 +84,6 @@ import {
   GitBranchIcon,
   LayersIcon,
   ListFilterIcon,
-  ArrowBigUpIcon,
   type LucideIcon,
   MessageCircleQuestionIcon,
   PinIcon,
@@ -341,6 +340,7 @@ import {
   type DraftSessionState,
 } from "../composerDraftStore";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import { ShiftKeyIcon } from "./home/ShiftKeyIcon";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -1959,7 +1959,7 @@ const SidebarHomeRow = memo(function SidebarHomeRow(props: {
           activate();
         }}
       >
-        <ArrowBigUpIcon aria-hidden className="size-4 shrink-0" />
+        <ShiftKeyIcon aria-hidden className="size-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate">Shift</span>
         {topStatus ? (
           <span
