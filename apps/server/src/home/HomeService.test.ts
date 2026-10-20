@@ -185,7 +185,7 @@ it.effect("a Home thread that a fresh start replaced cannot change watches", () 
     const error = yield* home
       .updateWatches(old, (current) => ({ ...current, watchAll: true }))
       .pipe(Effect.flip);
-    expect(error.message).toContain("no longer Home");
+    expect(error.message).toContain("no longer Shift");
   }).pipe(Effect.provide(layer));
 });
 

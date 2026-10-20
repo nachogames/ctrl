@@ -303,7 +303,7 @@ const OrchestratorMcpProjectTarget = Schema.optional(
 export const OrchestratorMcpEnvironmentTarget = Schema.optional(
   EnvironmentId.annotate({
     description:
-      "Home only: the environment to act in. Omit for this environment. t3_environment_list lists them.",
+      "Shift only: the environment to act in. Omit for this environment. t3_environment_list lists them.",
   }),
 );
 
@@ -312,7 +312,7 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
   projectId: Schema.optional(
     ProjectId.annotate({
       description:
-        "Project to list. Omit for the calling thread's project; Home lists every project when omitted. Required when the caller is not a T3 thread.",
+        "Project to list. Omit for the calling thread's project; Shift lists every project when omitted. Required when the caller is not a T3 thread.",
     }),
   ),
   statuses: Schema.optional(

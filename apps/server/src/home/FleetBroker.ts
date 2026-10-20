@@ -105,7 +105,7 @@ const make = Effect.gen(function* () {
           ([, entry]) =>
             Deferred.fail(
               entry.deferred,
-              unavailable("The desktop window relaying Home's calls disconnected."),
+              unavailable("The desktop window relaying Shift's calls disconnected."),
             ),
           { discard: true },
         );
@@ -171,7 +171,7 @@ const make = Effect.gen(function* () {
             return Effect.succeed([
               Option.some(
                 unavailable(
-                  "No desktop window is relaying Home's calls. Open the T3 Code desktop app.",
+                  "No desktop window is relaying Shift's calls. Open the T3 Code desktop app.",
                 ),
               ),
               current,

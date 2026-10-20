@@ -250,7 +250,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       if (input.decision !== undefined || input.answers === undefined)
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
-          message: "Only Home can answer approval requests. Pass answers for a question.",
+          message: "Only Shift can answer approval requests. Pass answers for a question.",
         });
       const { threads, projection } = yield* readQuestion(input);
       const result = yield* threads

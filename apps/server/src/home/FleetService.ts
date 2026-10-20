@@ -97,7 +97,7 @@ export const refuseHomeFolder = Effect.fn("FleetService.refuseHomeFolder")(funct
   ];
   for (const root of roots) {
     if (yield* services.folders.isInHomeFolder(root)) {
-      return yield* failure("invalid_request", "Threads never launch in Home's folder.");
+      return yield* failure("invalid_request", "Threads never launch in Shift's folder.");
     }
   }
 });
@@ -248,7 +248,7 @@ const make = Effect.gen(function* () {
         if (input.threadId !== undefined && !isHomeLaunchedThreadId(input.threadId)) {
           return yield* failure(
             "invalid_request",
-            "A launched thread id must be a Home launch id.",
+            "A launched thread id must be a Shift launch id.",
           );
         }
         if (

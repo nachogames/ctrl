@@ -34,7 +34,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply. Settling this thread takes effect when your turn completes, returning settlesWhenTurnEnds=true; a turn that fails or is interrupted, or a queued message, leaves it active. Home can organize any thread in any environment.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply. Settling this thread takes effect when your turn completes, returning settlesWhenTurnEnds=true; a turn that fails or is interrupted, or a queued message, leaves it active. Shift can organize any thread in any environment.",
   parameters: FleetThreadOrganizeInput,
   success: Schema.Union([
     OrchestrationV2DispatchCommandResult,
@@ -146,7 +146,7 @@ const requestTool = {
 const PendingRequestListTool = Tool.make("t3_pending_request_list", {
   ...requestTool,
   description:
-    "List pending user questions in a thread. Omit threadId for this thread. Approval requests are not included, except for Home, which also gets approvalRequestIds, in any thread in any environment.",
+    "List pending user questions in a thread. Omit threadId for this thread. Approval requests are not included, except for Shift, which also gets approvalRequestIds, in any thread in any environment.",
   parameters: FleetRequestsListInput,
   success: FleetRequestsListResult,
 })
@@ -155,7 +155,7 @@ const PendingRequestListTool = Tool.make("t3_pending_request_list", {
 const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
   ...requestTool,
   description:
-    "Read a pending user question, or (Home only) an approval request with what it asks to do. Answer with t3_pending_request_respond; existing live or message response handling is used.",
+    "Read a pending user question, or (Shift only) an approval request with what it asks to do. Answer with t3_pending_request_respond; existing live or message response handling is used.",
   parameters: FleetRequestTarget,
   success: pendingRequest,
 })
@@ -164,7 +164,7 @@ const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
 const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
   ...requestTool,
   description:
-    "Answer a pending user-input request with answers using the existing runtime response command. Only Home can approve: it passes decision for an approval request.",
+    "Answer a pending user-input request with answers using the existing runtime response command. Only Shift can approve: it passes decision for an approval request.",
   parameters: FleetRequestRespondInput,
 })
   .annotate(Tool.Destructive, true)
@@ -238,7 +238,7 @@ const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
   description:
-    "Search active thread titles and content with the app's existing bounded search. Matches are limited to one project (projectId, else the calling thread's project) out of the global top matches, so this may return fewer than limit. A caller outside a T3 thread, or Home, that omits projectId searches every project. No pagination or exhaustive-result guarantee.",
+    "Search active thread titles and content with the app's existing bounded search. Matches are limited to one project (projectId, else the calling thread's project) out of the global top matches, so this may return fewer than limit. A caller outside a T3 thread, or Shift, that omits projectId searches every project. No pagination or exhaustive-result guarantee.",
   parameters: Schema.Struct({
     ...OrchestrationSearchThreadsInput.fields,
     projectId: Schema.optional(ProjectId),

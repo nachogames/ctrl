@@ -58,7 +58,7 @@ const CHANGES_STATE = {
 export const readHomeChangeCaller = Effect.fn("mcp.readHomeChangeCaller")(function* () {
   const context = yield* readCaller();
   yield* assertLiveCaller(context);
-  yield* assertFullAccess(context, "Home makes changes only in full-access/default mode.");
+  yield* assertFullAccess(context, "Shift makes changes only in full-access/default mode.");
   return context;
 });
 
@@ -74,7 +74,7 @@ export const runAsHome = Effect.fn("mcp.runAsHome")(function* <Op extends FleetO
   if (scope.thread === undefined || !(yield* callerIsHome())) {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
-      message: "Only Home can act with the user's reach.",
+      message: "Only Shift can act with the user's reach.",
     });
   }
   const invoke = {
@@ -107,7 +107,7 @@ export const routeHome = Effect.fn("mcp.routeHome")(function* <Op extends FleetO
   if (environmentId !== undefined && environmentId !== scope.environmentId) {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
-      message: "Only Home can act in another environment.",
+      message: "Only Shift can act in another environment.",
     });
   }
   return Option.none<FleetResult<Op>>();

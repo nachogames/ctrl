@@ -52,9 +52,12 @@ export function HomeSettings() {
   const homeThreadId = usePrimarySettings((settings) => settings.home.threadId);
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Home">
+      <SettingsSection title="Shift">
         {!isElectron || environmentId === null || homeWorkspaceRoot === null ? (
-          <SettingsRow {...searchableSetting("home")} description="Home runs in the desktop app." />
+          <SettingsRow
+            {...searchableSetting("home")}
+            description="Shift runs in the desktop app."
+          />
         ) : homeThreadId === null ? (
           <HomeOffRows environmentId={environmentId} />
         ) : (
@@ -119,7 +122,7 @@ function HomeOffRows({ environmentId }: { environmentId: EnvironmentId }) {
     setPending(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        reportHomeFailure("Could not turn on Home", squashAtomCommandFailure(result));
+        reportHomeFailure("Could not turn on Shift", squashAtomCommandFailure(result));
       }
       return;
     }
@@ -153,7 +156,7 @@ function HomeOffRows({ environmentId }: { environmentId: EnvironmentId }) {
               }
             />
             <Button size="sm" disabled={pending} onClick={() => void turnOn()}>
-              Turn on Home
+              Turn on Shift
             </Button>
           </div>
         )
@@ -200,7 +203,7 @@ function HomeOnRows(props: {
     setPending(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        reportHomeFailure("Could not start a fresh Home", squashAtomCommandFailure(result));
+        reportHomeFailure("Could not start a fresh Shift", squashAtomCommandFailure(result));
       }
       return;
     }
@@ -212,7 +215,7 @@ function HomeOnRows(props: {
     const result = await disable({ environmentId, input: {} });
     setPending(false);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      reportHomeFailure("Could not turn off Home", squashAtomCommandFailure(result));
+      reportHomeFailure("Could not turn off Shift", squashAtomCommandFailure(result));
     }
   };
 
@@ -238,7 +241,7 @@ function HomeOnRows(props: {
             variant="outline"
             onClick={() => void navigateToThread(environmentId, threadId)}
           >
-            Open Home
+            Open Shift
           </Button>
         }
       />
@@ -250,7 +253,7 @@ function HomeOnRows(props: {
       )}
       <SettingsRow
         title="Start fresh"
-        description="New Home thread. The current one stays as a normal thread."
+        description="New Shift thread. The current one stays as a normal thread."
         control={
           <Button
             size="sm"
@@ -264,7 +267,7 @@ function HomeOnRows(props: {
       />
       <SettingsRow
         title="Instructions"
-        description="AGENTS.md in the Home folder."
+        description="AGENTS.md in the Shift folder."
         control={
           <Button size="sm" variant="outline" onClick={() => void editInstructions()}>
             Edit
@@ -273,7 +276,7 @@ function HomeOnRows(props: {
       />
       <SettingsRow
         title="Turn off"
-        description="Home stops. Its threads stay."
+        description="Shift stops. Its threads stay."
         control={
           <Button
             size="sm"

@@ -208,9 +208,9 @@ const HOME_SECTION_END = "<!-- t3-home:end -->";
 
 /** What T3 tells every Home thread. Rewritten in place on each Home start. */
 const HOME_SECTION = `${HOME_SECTION_START}
-# Home
+# Shift
 
-You are Home, the user's agent for their whole T3 Code fleet. The user talks to you in this thread. You act for them in every project on every environment they have connected.
+You are Shift, the user's agent for their whole T3 Code fleet. The user talks to you in this thread. You act for them in every project on every environment they have connected.
 
 - \`t3_environment_list\` lists the environments you can reach. Pass \`environmentId\` to \`orchestrator_capabilities\`, \`t3_project_list\`, \`t3_thread_list\`, \`t3_thread_read\`, \`t3_thread_launch\`, \`t3_thread_send\`, \`t3_thread_interrupt\`, \`t3_thread_organize\`, \`t3_thread_update\` (rename only) and the \`t3_pending_request_*\` tools to act in another environment. Omit it to act in this one.
 - To start work, launch a normal thread with \`t3_thread_launch\` and pass a \`projectId\` from \`t3_project_list\`, or \`scratch:true\`. It shows in the user's sidebar and they can steer it. Use \`delegate_task\` only for short helper work of your own.
@@ -227,7 +227,7 @@ const HOME_AGENTS_TEMPLATE = `${HOME_SECTION}
 
 ## Your instructions
 
-Add standing instructions for Home below. T3 Code keeps the section above up to date and leaves the rest of this file alone.
+Add standing instructions for Shift below. T3 Code keeps the section above up to date and leaves the rest of this file alone.
 `;
 
 /**
@@ -619,7 +619,7 @@ const make = Effect.gen(function* () {
         .bootstrap({
           commandId: CommandId.make(`home-project:${id}`),
           projectId: ProjectId.make(id),
-          title: "Home",
+          title: "Shift",
           workspaceRoot,
         })
         .pipe(
@@ -637,7 +637,7 @@ const make = Effect.gen(function* () {
           .update({
             commandId: CommandId.make(`home-project-icon:${id}`),
             projectId: bootstrapped.project.id,
-            projectIcon: { kind: "lucide", name: "house", color: "gray" },
+            projectIcon: { kind: "lucide", name: "arrow-big-up", color: "gray" },
           })
           .pipe(Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })));
       }

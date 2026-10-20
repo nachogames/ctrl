@@ -66,7 +66,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
-  HouseIcon,
+  ArrowBigUpIcon,
   LayersIcon,
   MessageSquareDashedIcon,
   LinkIcon,
@@ -2167,9 +2167,9 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:home",
-      searchTerms: ["home", "fleet", "all projects"],
-      title: "Open Home",
-      icon: <HouseIcon className={ITEM_ICON_CLASS} />,
+      searchTerms: ["shift", "fleet", "all projects"],
+      title: "Open Shift",
+      icon: <ArrowBigUpIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "home.open",
       run: async () => {
         await navigate({

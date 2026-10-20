@@ -111,7 +111,7 @@ const handlers = {
       if (yield* callerIsHome())
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
-          message: "Home launches threads with t3_thread_launch and a projectId or scratch:true.",
+          message: "Shift launches threads with t3_thread_launch and a projectId or scratch:true.",
         });
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;

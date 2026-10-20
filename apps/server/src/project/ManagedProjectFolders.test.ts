@@ -607,10 +607,10 @@ it("keeps the user's Home instructions while refreshing T3's section", () => {
   const fresh = ManagedProjectFolders.refreshHomeAgents(null);
   assert.isNotNull(fresh);
   const edited = fresh!
-    .replace("You are Home", "You were Home")
+    .replace("You are Shift", "You were Shift")
     .concat("\nAlways answer in French.\n");
   const refreshed = ManagedProjectFolders.refreshHomeAgents(edited);
-  assert.include(refreshed!, "You are Home");
+  assert.include(refreshed!, "You are Shift");
   assert.include(refreshed!, "Always answer in French.");
   assert.isNull(ManagedProjectFolders.refreshHomeAgents(refreshed));
   assert.isNull(ManagedProjectFolders.refreshHomeAgents("# My own file\n"));

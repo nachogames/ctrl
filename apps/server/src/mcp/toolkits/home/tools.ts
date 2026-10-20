@@ -27,7 +27,7 @@ const shared = {
 const EnvironmentListTool = Tool.make("t3_environment_list", {
   ...shared,
   description:
-    "List the environments this thread can act in. Other threads see only their own environment. Home sees every environment the user's desktop app is connected to; relayConnected is false when no desktop window is open to relay calls to them.",
+    "List the environments this thread can act in. Other threads see only their own environment. Shift sees every environment the user's desktop app is connected to; relayConnected is false when no desktop window is open to relay calls to them.",
   success: Schema.Struct({
     currentEnvironmentId: EnvironmentId,
     relayConnected: Schema.Boolean,
@@ -47,7 +47,7 @@ const EnvironmentListTool = Tool.make("t3_environment_list", {
 const ThreadWatchTool = Tool.make("t3_thread_watch", {
   ...shared,
   description:
-    "Home only. Choose which threads wake Home. watch/unwatch one thread (threadId, optional environmentId), or watch_all/unwatch_all for every thread in every environment. Threads Home launches are already watched. A watch ends when its thread is settled or archived. Returns what Home now watches.",
+    "Shift only. Choose which threads wake Shift. watch/unwatch one thread (threadId, optional environmentId), or watch_all/unwatch_all for every thread in every environment. Threads Shift launches are already watched. A watch ends when its thread is settled or archived. Returns what Shift now watches.",
   parameters: Schema.Struct({
     action: Schema.Literals(["watch", "unwatch", "watch_all", "unwatch_all"]),
     environmentId: OrchestratorMcpEnvironmentTarget,

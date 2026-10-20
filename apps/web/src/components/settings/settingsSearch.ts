@@ -76,7 +76,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diagnostics": "Diagnostics",
   "/settings/projects": "Project",
   "/settings/general": "General",
-  "/settings/home": "Home",
+  "/settings/home": "Shift",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
@@ -596,7 +596,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "home",
-    title: "Home",
+    title: "Shift",
     to: "/settings/home",
     searchTerms: ["agent all projects machines fleet questions approvals instructions agents.md"],
     desktopOnly: true,

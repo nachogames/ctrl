@@ -80,7 +80,7 @@ const watchLaunched = (homeThreadId: ThreadId, environmentId: EnvironmentId, thr
       () =>
         new OrchestratorMcpFailure({
           code: "orchestration_error",
-          message: "Home could not watch the new thread, so it was not launched.",
+          message: "Shift could not watch the new thread, so it was not launched.",
         }),
     ),
   );
@@ -144,12 +144,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
             message:
-              "Home must pass projectId or scratch:true. Threads never launch in Home's folder.",
+              "Shift must pass projectId or scratch:true. Threads never launch in Shift's folder.",
           });
         if (remote && !isHome)
           return yield* new OrchestratorMcpFailure({
             code: "capability_denied",
-            message: "Only Home can act in another environment.",
+            message: "Only Shift can act in another environment.",
           });
         const attachments = input.attachments ?? [];
         if (remote && attachments.length > 0)
@@ -366,7 +366,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       if (yield* callerIsHome())
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
-          message: "Home cannot delete projects. Archive or settle their threads instead.",
+          message: "Shift cannot delete projects. Archive or settle their threads instead.",
         });
       const projects = yield* Project.ProjectService;
       return yield* projects

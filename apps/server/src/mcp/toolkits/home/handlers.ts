@@ -47,14 +47,14 @@ export const layer = McpToolAccess.toLayer(HomeToolkit, {
       if (!(yield* callerIsHome()))
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
-          message: "Only Home can watch threads.",
+          message: "Only Shift can watch threads.",
         });
       const { scope } = yield* readHomeChangeCaller();
       const homeThreadId = scope.thread?.threadId;
       if (homeThreadId === undefined)
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
-          message: "Only Home can watch threads.",
+          message: "Only Shift can watch threads.",
         });
       const home = yield* HomeService.HomeService;
       const environmentId = input.environmentId ?? scope.environmentId;

@@ -1234,7 +1234,7 @@ const layerHomeRpc = ServerHomeRpcGroup.toLayer(
           Effect.gen(function* () {
             if (!home.available) {
               return yield* new HomeUnavailableError({
-                message: "Home runs only on a server the T3 Code desktop app hosts.",
+                message: "Shift runs only on a server the T3 Code desktop app hosts.",
               });
             }
             return yield* fleetBroker.connect(input);

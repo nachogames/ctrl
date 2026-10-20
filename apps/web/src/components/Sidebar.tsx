@@ -84,7 +84,7 @@ import {
   GitBranchIcon,
   LayersIcon,
   ListFilterIcon,
-  HouseIcon,
+  ArrowBigUpIcon,
   type LucideIcon,
   MessageCircleQuestionIcon,
   PinIcon,
@@ -1943,7 +1943,7 @@ const SidebarHomeRow = memo(function SidebarHomeRow(props: {
       <div
         role="button"
         tabIndex={0}
-        aria-label={topStatus ? `Home, ${topStatus.label}` : "Home"}
+        aria-label={topStatus ? `Shift, ${topStatus.label}` : "Shift"}
         aria-current={isActive ? "page" : undefined}
         data-testid="sidebar-home-row"
         className={cn(
@@ -1959,8 +1959,8 @@ const SidebarHomeRow = memo(function SidebarHomeRow(props: {
           activate();
         }}
       >
-        <HouseIcon aria-hidden className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">Home</span>
+        <ArrowBigUpIcon aria-hidden className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">Shift</span>
         {topStatus ? (
           <span
             className={cn(

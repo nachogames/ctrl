@@ -269,7 +269,7 @@ export const FleetRequestRespondInput = Schema.Struct({
   answers: Schema.optional(ProviderUserInputAnswers),
   decision: Schema.optional(
     ProviderApprovalDecision.annotate({
-      description: "Home only: the decision for a pending approval.",
+      description: "Shift only: the decision for a pending approval.",
     }),
   ),
 });

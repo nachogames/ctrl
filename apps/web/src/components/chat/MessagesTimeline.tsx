@@ -2349,7 +2349,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               tone="muted"
               aria-label="Open sending thread"
             >
-              {isHomeThreadId(senderThreadId) ? "Sent by Home" : "Sent by another agent"}
+              {isHomeThreadId(senderThreadId) ? "Sent by Shift" : "Sent by another agent"}
             </InlineButton>
           ) : (
             "Sent by another agent"

@@ -128,16 +128,16 @@ const make = Effect.gen(function* () {
   const fail = (message: string) => new HomeUnavailableError({ message });
   const requireAvailable = available
     ? Effect.void
-    : Effect.fail(fail("Home runs only on a server the T3 Code desktop app hosts."));
+    : Effect.fail(fail("Shift runs only on a server the T3 Code desktop app hosts."));
 
   const readHome = settings.getSettings.pipe(
     Effect.map((current) => current.home),
-    Effect.mapError(() => fail("Home's settings could not be read.")),
+    Effect.mapError(() => fail("Shift's settings could not be read.")),
   );
   const writeHome = (home: HomeSettings) =>
     settings.updateSettings({ home }).pipe(
       Effect.map((current) => current.home),
-      Effect.mapError(() => fail("Home's settings could not be saved.")),
+      Effect.mapError(() => fail("Shift's settings could not be saved.")),
     );
 
   const liveShell = (threadId: ThreadId) =>
@@ -159,7 +159,7 @@ const make = Effect.gen(function* () {
           commandId: CommandId.make(`${HOME_THREAD_ID_PREFIX}${id}`),
           threadId: ThreadId.make(`${HOME_THREAD_ID_PREFIX}${id}`),
           projectId,
-          title: "Home",
+          title: "Shift",
           modelSelection,
           // Approving for the user needs the widest mode, and the mode check
           // stops a caller from acting on a thread broader than itself.
@@ -199,7 +199,7 @@ const make = Effect.gen(function* () {
         commandId: yield* commandId,
         threadId,
         runId: shell.activeRunId,
-        reason: "Home was turned off or started fresh.",
+        reason: "Shift was turned off or started fresh.",
       });
     }).pipe(Effect.ignore);
 
@@ -215,7 +215,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const shell = yield* threads
         .getThreadShell(homeThreadId)
-        .pipe(Effect.mapError(() => fail("Home could not be read.")));
+        .pipe(Effect.mapError(() => fail("Shift could not be read.")));
       if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) return;
       const id = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       yield* threads
@@ -230,7 +230,7 @@ const make = Effect.gen(function* () {
           createdBy: "system",
           creationSource: "server",
         })
-        .pipe(Effect.mapError(() => fail("Home could not be woken.")));
+        .pipe(Effect.mapError(() => fail("Shift could not be woken.")));
     });
 
   return HomeService.of({
@@ -264,7 +264,7 @@ const make = Effect.gen(function* () {
         yield* requireAvailable;
         const home = yield* readHome;
         const current = home.threadId === null ? null : yield* liveShell(home.threadId);
-        if (current === null) return yield* fail("Turn Home on first.");
+        if (current === null) return yield* fail("Turn Shift on first.");
         const threadId = yield* launchHome(current.modelSelection);
         // The grant moves first; stopping the old run comes after.
         yield* writeHome({ ...home, threadId });
@@ -295,8 +295,8 @@ const make = Effect.gen(function* () {
       withLock(
         Effect.gen(function* () {
           const home = yield* readHome;
-          if (home.threadId === null) return yield* fail("Home is off.");
-          if (home.threadId !== homeThreadId) return yield* fail("This thread is no longer Home.");
+          if (home.threadId === null) return yield* fail("Shift is off.");
+          if (home.threadId !== homeThreadId) return yield* fail("This thread is no longer Shift.");
           return yield* writeHome(update(home));
         }),
       ),
