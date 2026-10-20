@@ -5,7 +5,7 @@ import { AsyncResult } from "effect/reactivity";
 import { Platform, View } from "react-native";
 
 import { AppIconMark } from "../../../../components/AppIconMark";
-import { AppText as Text } from "../../../../components/AppText";
+import { AppText as Text } from "../../../../components/ui/AppText";
 import { resolveAppIconPreference } from "../../../../lib/appIconPreference";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../../state/preferences";
 import { SettingsChoiceRow } from "../../components/SettingsChoiceRow";

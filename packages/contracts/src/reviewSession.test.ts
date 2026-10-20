@@ -2,6 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  reviewerAction,
+  reviewerPointKind,
+  reviewRole,
   ReviewItemSource,
   ReviewItemsDecideInput,
   ReviewRequestInput,
@@ -19,6 +22,7 @@ describe("ReviewItemSource", () => {
       "copilot",
       "local-review",
       "ci",
+      "you",
       "human:octocat",
       "human:renovate[bot]",
     ]) {
@@ -71,5 +75,49 @@ describe("ReviewRequestInput", () => {
 describe("ReviewSessionSubscribeResult", () => {
   it("reads a pull request with no review as a null snapshot", () => {
     expect(decodeSubscribeResult({ snapshot: null })).toEqual({ snapshot: null });
+  });
+});
+
+describe("reviewRole", () => {
+  it("is the author's loop until both logins are known and differ", () => {
+    expect(reviewRole({ authorLogin: "nach", viewerLogin: "NACH" })).toBe("author");
+    expect(reviewRole({ authorLogin: "dan", viewerLogin: null })).toBe("author");
+    expect(reviewRole({})).toBe("author");
+    expect(reviewRole({ authorLogin: "dan", viewerLogin: "nach" })).toBe("reviewer");
+  });
+});
+
+describe("reviewerPointKind", () => {
+  const point = (
+    sources: ReadonlyArray<string>,
+    round = 2,
+    threads: ReadonlyArray<string> = [],
+  ) => ({ sources: sources as ReadonlyArray<ReviewItemSource>, round, githubThreadIds: threads });
+
+  it("names what each point asks of the reviewer", () => {
+    expect(reviewerPointKind(point(["copilot"]), 2)).toBe("context");
+    expect(reviewerPointKind(point(["local-review", "human:dan"]), 2)).toBe("overlap");
+    expect(reviewerPointKind(point(["local-review"], 1, ["PRRT_1"]), 2)).toBe("follow-up");
+    expect(reviewerPointKind(point(["you"], 1, ["PRRT_1"]), 2)).toBe("follow-up");
+    // Skipped last round, so it never got a thread: it is a new finding again.
+    expect(reviewerPointKind(point(["local-review"], 1), 2)).toBe("finding");
+    expect(reviewerPointKind(point(["local-review"], 2, ["PRRT_1"]), 2)).toBe("finding");
+  });
+});
+
+describe("reviewerAction", () => {
+  it("names what a decision does, including how a point others raised goes out", () => {
+    const overlap = {
+      sources: ["local-review", "copilot"] as ReadonlyArray<ReviewItemSource>,
+      round: 2,
+      githubThreadIds: ["T2"],
+      decision: "fix" as const,
+      postAs: null,
+    };
+    expect(reviewerAction(overlap, 2)).toBe("reply");
+    expect(reviewerAction({ ...overlap, postAs: "comment" }, 2)).toBe("comment");
+    expect(reviewerAction(overlap, 2, "decline")).toBe("skip");
+    expect(reviewerAction({ ...overlap, decision: "needs-call" }, 2)).toBeNull();
+    expect(reviewerAction({ ...overlap, sources: ["copilot"] }, 2)).toBeNull();
   });
 });

@@ -1,12 +1,11 @@
 import { AuthPreviewOperateScope } from "@t3tools/contracts";
-import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { ThreadRouteView } from "../components/ThreadRouteView";
 import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
-import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
@@ -35,6 +34,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
+import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -65,49 +65,33 @@ function ChatRouteGlobalShortcuts() {
   const environmentScopeId = legacySidebarEnabled
     ? null
     : resolveSidebarEnvironmentScope(environments, storedEnvironmentScopeId);
-  const projectGroups = useMemo(
-    () =>
-      buildSidebarProjectSnapshots({
-        projects:
-          environmentScopeId === null
-            ? projects
-            : projects.filter((project) => project.environmentId === environmentScopeId),
-        settings: projectGroupingSettings,
-        primaryEnvironmentId,
-        resolveEnvironmentLabel: () => null,
-      }),
-    [environmentScopeId, primaryEnvironmentId, projectGroupingSettings, projects],
-  );
-  const projectGroupCount = projectGroups.length;
+  const projectGroupCount = buildSidebarProjectSnapshots({
+    projects:
+      environmentScopeId === null
+        ? projects
+        : projects.filter((project) => project.environmentId === environmentScopeId),
+    settings: projectGroupingSettings,
+    primaryEnvironmentId,
+    resolveEnvironmentLabel: () => null,
+  }).length;
   // Same manual order as the unfiltered default, so the shortcut and the
   // sidebar button pick the same project.
-  const scopedDefaultProjectRef = useMemo(() => {
-    if (environmentScopeId === null) return null;
-    const project = orderedProjects.find(
-      (candidate) => candidate.environmentId === environmentScopeId,
-    );
-    return project ? scopeProjectRef(project.environmentId, project.id) : null;
-  }, [environmentScopeId, orderedProjects]);
-  const newThreadContext = useMemo(
-    () =>
-      scopeThreadActionContext(
-        {
-          activeDraftThread,
-          activeThread: activeThread ?? undefined,
-          defaultProjectRef,
-          handleNewThread,
-        },
-        environmentScopeId,
-        scopedDefaultProjectRef,
-      ),
-    [
+  const scopedProject =
+    environmentScopeId === null
+      ? undefined
+      : orderedProjects.find((candidate) => candidate.environmentId === environmentScopeId);
+  const scopedDefaultProjectRef = scopedProject
+    ? scopeProjectRef(scopedProject.environmentId, scopedProject.id)
+    : null;
+  const newThreadContext = scopeThreadActionContext(
+    {
       activeDraftThread,
-      activeThread,
+      activeThread: activeThread ?? undefined,
       defaultProjectRef,
-      environmentScopeId,
       handleNewThread,
-      scopedDefaultProjectRef,
-    ],
+    },
+    environmentScopeId,
+    scopedDefaultProjectRef,
   );
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
@@ -200,9 +184,6 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.new") {
         event.preventDefault();
         event.stopPropagation();
-        // The default sidebar routes creation through the command palette
-        // whenever there is a real choice to make; the legacy sidebar (and
-        // single-project setups) keep the immediate contextual create.
         if (!legacySidebarEnabled && projectGroupCount > 1) {
           openCommandPalette({ open: "new-thread-in" });
           return;
@@ -229,9 +210,6 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      // The remaining preview commands only fire when the panel is the
-      // currently-focused tenant. The `when: previewFocus` rule already
-      // gates this, but defend against the keybinding being misconfigured.
       if (
         command === "preview.refresh" ||
         command === "preview.focusUrl" ||
@@ -261,6 +239,7 @@ function ChatRouteGlobalShortcuts() {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [
+    activeThread,
     clearSelection,
     canOperatePreview,
     environmentScopeId,
@@ -284,10 +263,7 @@ function ChatRouteGlobalShortcuts() {
 function ChatRouteLayout() {
   // Both thread routes render here, not in their own leaf components, so the
   // draft-to-thread promotion keeps one ChatView mounted across the swap.
-  const threadTarget = useParams({
-    strict: false,
-    select: (params) => resolveThreadRouteTarget(params),
-  });
+  const threadTarget = useThreadRouteTarget();
   return (
     <>
       <ChatRouteGlobalShortcuts />

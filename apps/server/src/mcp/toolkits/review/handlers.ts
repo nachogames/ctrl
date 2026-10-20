@@ -246,6 +246,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           number: input.number,
           decision: input.decision,
           reason: input.reason,
+          postAs: input.postAs,
           authority: { _tag: "chat", threadId: access.caller.id, quote: input.quote },
         })
         .pipe(Effect.catch(reviewFailure));

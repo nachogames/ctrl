@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Pressable, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { themeColorWithAlpha, type MobileThemeVariables } from "../../lib/mobileTheme";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 

@@ -89,6 +89,7 @@ export function HostPullRequestReview({
                       sessionId={null}
                       ranOn={null}
                       comments={data.comments[source.id] ?? []}
+                      viewerLogin={data.viewerLogin ?? null}
                       resolution={
                         source.state === "done"
                           ? reviewResolutionLabel(
