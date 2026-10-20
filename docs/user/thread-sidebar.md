@@ -162,8 +162,9 @@ When a chat moves into a group that works in another workspace, T3 Code asks fir
 the chat to the group's branch and worktree. A busy chat cannot switch.
 
 Chats in a group sit under the group's row: in the active list beneath their project, or in
-**Pinned**, **Snoozed**, or **Settled** wherever the group is. Click the row to show or hide its
-chats; the group with the open chat stays open. Drag chats within an expanded group to arrange
+**Pinned**, **Snoozed**, or **Settled** wherever the group is. Click the row to open the group's
+first chat; click its arrow (or press Right and Left) to show or hide its chats. The group with
+the open chat stays open. Drag chats within an expanded group to arrange
 them; that member order is saved on the server and follows your other clients.
 New chats appear at the top. A collapsed group shows its pull request number
 and its most urgent status, and hovering it shows how many chats it holds. A chat that was handed

@@ -5324,6 +5324,11 @@ export default function Sidebar() {
     const entry = groupEntryByKeyRef.current.get(groupKey);
     if (entry) void groupActions.renameGroup(entry.group, title);
   });
+  // A group row's click opens its first chat; the caret alone expands and collapses.
+  const handleOpenGroup = useStableCallback((groupKey: string) => {
+    const first = groupEntryByKeyRef.current.get(groupKey)?.members[0];
+    if (first) void navigateToThread(scopeThreadRef(first.environmentId, first.id));
+  });
   const handleNewChatInGroup = useStableCallback((groupKey: string) => {
     const entry = groupEntryByKeyRef.current.get(groupKey);
     if (entry) void groupActions.newChatInGroup(entry.group);
@@ -6067,6 +6072,7 @@ export default function Sidebar() {
                                 }
                                 isRenaming={renamingGroupKey === item.key}
                                 onToggle={toggleGroupExpanded}
+                                onOpen={handleOpenGroup}
                                 onNewChat={handleNewChatInGroup}
                                 onContextMenu={handleGroupContextMenu}
                                 onCommitRename={commitGroupRename}
