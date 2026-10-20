@@ -7,6 +7,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { PullRequestReviewDecision } from "./pullRequest.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
@@ -208,6 +209,8 @@ const VcsStatusChangeRequest = Schema.Struct({
   state: VcsStatusChangeRequestState,
   isDraft: Schema.optional(Schema.Boolean),
   updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Known only for a pull request read from the host; branch status leaves it out. */
+  reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
 });
 
 const VcsStatusLocalShape = {

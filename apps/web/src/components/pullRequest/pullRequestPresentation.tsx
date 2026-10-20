@@ -84,6 +84,18 @@ function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
   }
 }
 
+/**
+ * A review outcome worth showing in place of a pull request's open state:
+ * approved or changes requested. Null while it only awaits review.
+ */
+export function resolvePullRequestReviewOutcome(
+  decision: PullRequestReviewDecision | null | undefined,
+): ReturnType<typeof reviewDecisionPresentation> | null {
+  return decision === "approved" || decision === "changes-requested"
+    ? reviewDecisionPresentation(decision)
+    : null;
+}
+
 export function PullRequestReviewDecisionGlyph({
   decision,
 }: {

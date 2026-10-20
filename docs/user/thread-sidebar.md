@@ -177,6 +177,14 @@ menu, in the chat header's group menu, and in the Group panel. You can bind the
 `chat.newInGroup` command to a shortcut in [keybindings](./keybindings.md); it has none by
 default.
 
+The **+** on a project heading starts a new chat in that project, as its own group.
+**New group** under the new chat's heading lists the project's groups; pick one to start the
+chat in that group instead.
+
+The pull request number on a group or chat row takes the color of its state. An open pull request that was
+approved, or that has changes requested, shows that review outcome instead; hover the number to
+read it.
+
 The **Group** panel (`G`, the right panel launcher, or the command palette) shows the open chat's
 group: its title and goal, which you can edit, cards for its branch, pull request, tickets, frontend, worktree and activity,
 what is running for it, its chats, and the last handoff. **Link ticket** on the Tickets card adds

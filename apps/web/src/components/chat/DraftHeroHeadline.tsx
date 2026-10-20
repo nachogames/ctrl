@@ -4,7 +4,7 @@ import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/c
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentThreadGroup } from "@t3tools/client-runtime/state/models";
-import { FolderPlusIcon, LayersIcon } from "lucide-react";
+import { ChevronDownIcon, FolderPlusIcon, LayersIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -25,6 +25,7 @@ import {
   projectGroupsSpanEnvironments,
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
+import { useThreadGroups } from "~/state/threadGroups";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -41,6 +42,7 @@ import {
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { DraftProjectName } from "./DraftProjectName";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
@@ -90,6 +92,7 @@ export function DraftHeroHeadline({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
   const pickerFilter = useComboboxFilter();
+  const threadGroups = useThreadGroups();
 
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
@@ -362,6 +365,59 @@ export function DraftHeroHeadline({
       </Tooltip>
     ) : null;
 
+  // The project's open groups, newest first, single chats included since the
+  // sidebar shows them as groups too: a new chat starts its own group unless
+  // it joins one of these.
+  const joinableGroups =
+    activeProjectRef === null || isScratchDraft
+      ? []
+      : threadGroups
+          .filter(
+            (candidate) =>
+              candidate.environmentId === activeProjectRef.environmentId &&
+              candidate.projectId === activeProjectRef.projectId &&
+              candidate.threadIds.length > 0 &&
+              candidate.settledAt === null,
+          )
+          .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const groupPicker =
+    draftId !== null && hasResolvedProject && !isScratchDraft ? (
+      <Menu>
+        <MenuTrigger
+          render={<InlineButton tone="muted" className="pointer-events-auto" />}
+          aria-label="Choose a group for this chat"
+        >
+          <LayersIcon aria-hidden className="size-3.5" />
+          New group
+          <ChevronDownIcon aria-hidden className="size-3.5" />
+        </MenuTrigger>
+        <MenuPopup align="center" className="max-w-80">
+          {joinableGroups.length === 0 ? (
+            <MenuItem disabled>No groups in this project yet</MenuItem>
+          ) : null}
+          {joinableGroups.map((candidate) => (
+            <MenuItem
+              key={candidate.id}
+              onClick={() =>
+                // Same workspace as "+ New chat in group"; "start outside the
+                // group" takes it back out.
+                setDraftThreadContext(draftId, {
+                  groupId: candidate.id,
+                  branch: candidate.branch,
+                  worktreePath: candidate.worktreePath,
+                  envMode: candidate.worktreePath ? "worktree" : "local",
+                  startFromOrigin: false,
+                })
+              }
+            >
+              <LayersIcon aria-hidden />
+              <span className="min-w-0 truncate">{candidate.title}</span>
+            </MenuItem>
+          ))}
+        </MenuPopup>
+      </Menu>
+    ) : null;
+
   if (group !== null) {
     // A new chat in a group names the group first, so it can't read as a
     // fresh thread of the project.
@@ -413,20 +469,37 @@ export function DraftHeroHeadline({
       </h1>
       {/* Reserved whenever threads can skip a project, so the heading does not
           move. Without a project, the picker moves here to choose one. */}
-      {scratchWorkspaceRoot === null ? (
-        scratchUnavailable === null ? null : (
-          <p className="mt-2 flex h-6 w-full items-center justify-center text-muted-foreground text-sm">
-            <Tooltip>
-              <TooltipTrigger render={<span className="pointer-events-auto cursor-default" />}>
-                No project isn't available on this machine
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">{scratchUnavailable}</TooltipPopup>
-            </Tooltip>
-          </p>
-        )
-      ) : (
-        <p className="mt-2 flex h-6 w-full items-center justify-center text-sm">
-          {isScratchDraft ? projectSelector : orStartWithoutProject}
+      {groupPicker === null &&
+      scratchWorkspaceRoot === null &&
+      scratchUnavailable === null ? null : (
+        <p className="mt-2 flex h-6 w-full items-center justify-center gap-1.5 text-sm">
+          {isScratchDraft && scratchWorkspaceRoot !== null ? (
+            projectSelector
+          ) : (
+            <>
+              {groupPicker}
+              {groupPicker !== null &&
+              (orStartWithoutProject !== null || scratchUnavailable !== null) ? (
+                <span aria-hidden className="text-muted-foreground">
+                  ·
+                </span>
+              ) : null}
+              {scratchWorkspaceRoot === null && scratchUnavailable !== null ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="pointer-events-auto cursor-default text-muted-foreground" />
+                    }
+                  >
+                    No project isn't available on this machine
+                  </TooltipTrigger>
+                  <TooltipPopup side="bottom">{scratchUnavailable}</TooltipPopup>
+                </Tooltip>
+              ) : (
+                orStartWithoutProject
+              )}
+            </>
+          )}
         </p>
       )}
     </div>

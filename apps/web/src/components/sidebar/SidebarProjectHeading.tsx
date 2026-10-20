@@ -1,4 +1,4 @@
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, PlusIcon } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -8,12 +8,14 @@ import {
 
 import { cn } from "~/lib/utils";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SIDEBAR_LIFTED_ROW_CLASS } from "./SidebarGroupRow";
 import { useStaticSidebarSortable } from "./useStaticSidebarSortable";
 
 /**
  * A project's heading in the Active tree: favicon and name, muted. Clicking
- * collapses or expands the project's rows; dragging moves the project.
+ * collapses or expands the project's rows; dragging moves the project; its
+ * "+" starts a new chat in the project.
  */
 export const SidebarProjectHeading = memo(function SidebarProjectHeading(props: {
   sortableId: string;
@@ -23,9 +25,10 @@ export const SidebarProjectHeading = memo(function SidebarProjectHeading(props: 
   collapsed: boolean;
   draggable: boolean;
   onToggleCollapsed: (projectKey: string, collapsed: boolean) => void;
+  onNewChat: (projectKey: string) => void;
   onContextMenu: (projectKey: string, position: { x: number; y: number }) => void;
 }) {
-  const { collapsed, onContextMenu, onToggleCollapsed, projectKey } = props;
+  const { collapsed, onContextMenu, onNewChat, onToggleCollapsed, projectKey } = props;
   const { setNodeRef, style, listeners, isDragging } = useStaticSidebarSortable(props.sortableId, {
     draggable: props.draggable,
   });
@@ -86,6 +89,27 @@ export const SidebarProjectHeading = memo(function SidebarProjectHeading(props: 
             !collapsed && "rotate-90 opacity-0 group-hover/project-heading:opacity-100",
           )}
         />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`New chat in ${props.displayName}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onNewChat(projectKey);
+                }}
+                onKeyDown={(event) => event.stopPropagation()}
+                // A press on the button must not start a drag of the project.
+                onPointerDown={(event) => event.stopPropagation()}
+                className="pointer-events-none ml-auto inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-sidebar-row-hover hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/project-heading:pointer-events-auto group-hover/project-heading:opacity-100"
+              />
+            }
+          >
+            <PlusIcon aria-hidden className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">New chat in {props.displayName}</TooltipPopup>
+        </Tooltip>
       </div>
     </li>
   );

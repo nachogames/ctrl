@@ -158,6 +158,10 @@ export function pullRequestDetailToVcsStatus(
     state: detail.state,
     ...(detail.isDraft === true ? { isDraft: true } : {}),
     updatedAt: detail.updatedAt,
+    // A detail carries reviews, not the host's decision; only a summary has it.
+    ...("reviewDecision" in detail && detail.reviewDecision != null
+      ? { reviewDecision: detail.reviewDecision }
+      : {}),
   };
 }
 

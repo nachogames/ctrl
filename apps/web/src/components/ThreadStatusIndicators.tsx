@@ -62,7 +62,10 @@ import {
   PullRequestGlyph,
   type PullRequestGlyphIcon,
 } from "./pullRequest/pullRequestIcons";
-import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import {
+  resolvePullRequestReviewOutcome,
+  resolvePullRequestState,
+} from "./pullRequest/pullRequestPresentation";
 
 export interface PrStatusIndicator {
   label: string;
@@ -147,6 +150,7 @@ export function linkedPullRequestSnapshotStatus(
       headRef: snapshot.headBranch,
       baseRef: snapshot.baseBranch,
       ...(snapshot.updatedAt === null ? {} : { updatedAt: snapshot.updatedAt }),
+      ...(snapshot.reviewDecision == null ? {} : { reviewDecision: snapshot.reviewDecision }),
     },
     sourceControlProvider: { kind, name: kind, baseUrl: "" },
   };
@@ -418,12 +422,19 @@ export function prStatusIndicator(
   if (!pr) return null;
   const { shortLabel } = sourceControlClients.get(provider?.kind).changeRequest;
   const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
+  // An open pull request's review outcome outranks its open state.
+  const review =
+    pr.state === "open" && pr.isDraft !== true
+      ? resolvePullRequestReviewOutcome(pr.reviewDecision)
+      : null;
+  const stateLabel =
+    review === null ? state.label : `${state.label}, ${review.label.toLowerCase()}`;
 
-  const tooltipLead = `${shortLabel} #${pr.number} - ${state.label}`;
+  const tooltipLead = `${shortLabel} #${pr.number} - ${stateLabel}`;
   return {
-    label: `${shortLabel} ${state.label.toLowerCase()}`,
-    colorClass: state.toneClassName,
-    Icon: state.Icon,
+    label: `${shortLabel} ${stateLabel.toLowerCase()}`,
+    colorClass: review?.toneClassName ?? state.toneClassName,
+    Icon: review?.Icon ?? state.Icon,
     tooltip: `${tooltipLead}: ${pr.title}`,
     tooltipLead,
     tooltipTitle: pr.title,

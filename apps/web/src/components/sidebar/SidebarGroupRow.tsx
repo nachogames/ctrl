@@ -17,7 +17,10 @@ import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useSharedPullRequestSummary } from "~/state/pullRequests";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
-import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
+import {
+  resolvePullRequestReviewOutcome,
+  resolvePullRequestState,
+} from "../pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import {
   compactSidebarTimeLabel,
@@ -47,7 +50,10 @@ function relativeLabel(ms: number): string {
     : "";
 }
 
-/** `#412`, coloured by state: open green, merged purple, closed and draft grey. */
+/**
+ * `#412`, coloured by state: open green, merged purple, closed and draft grey.
+ * An open one shows its review outcome instead: approved, or changes requested.
+ */
 function GroupPullRequestNumber(props: { group: EnvironmentThreadGroup }) {
   const link = props.group.pullRequest;
   const reference = useMemo(
@@ -69,19 +75,43 @@ function GroupPullRequestNumber(props: { group: EnvironmentThreadGroup }) {
     status === null
       ? null
       : resolvePullRequestState({ state: status.state, isDraft: status.isDraft ?? false });
-  const Icon = presentation?.Icon ?? PullRequestGlyph.pullRequest;
+  const review =
+    status?.state === "open" && status.isDraft !== true
+      ? resolvePullRequestReviewOutcome(status.reviewDecision)
+      : null;
+  const Icon = review?.Icon ?? presentation?.Icon ?? PullRequestGlyph.pullRequest;
   const tone =
-    presentation === null || status?.state === "closed" || presentation.label === "Draft"
+    review?.toneClassName ??
+    (presentation === null || status?.state === "closed" || presentation.label === "Draft"
       ? "text-muted-foreground"
-      : presentation.toneClassName;
+      : presentation.toneClassName);
+  const label = [
+    `Pull request #${link.number}`,
+    presentation?.label,
+    review?.label ??
+      (status?.state === "open" && status.reviewDecision === "review-required"
+        ? "Awaiting review"
+        : undefined),
+  ]
+    .filter((part) => part !== undefined)
+    .join(" · ");
   return (
-    <span className={cn("inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums", tone)}>
-      <Icon aria-hidden className="size-3" />
-      <span>
-        <span className="sr-only">Pull request </span>
-        {link.number}
-      </span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className={cn("inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums", tone)}
+          />
+        }
+      >
+        <Icon aria-hidden className="size-3" />
+        <span>
+          <span className="sr-only">{label}</span>
+          <span aria-hidden>{link.number}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -276,7 +306,8 @@ export function SidebarGroupNewChatButton(props: { title: string; onClick: () =>
             }}
             // A press on the button must not start a drag of the row.
             onPointerDown={(event) => event.stopPropagation()}
-            className="pointer-events-none inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-sidebar-row-active hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/sidebar-group:pointer-events-auto group-hover/sidebar-group:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100"
+            // Takes no room at rest, so the PR number sits beside the time.
+            className="hidden size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-sidebar-row-active hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-focus-within/sidebar-group:inline-flex group-hover/sidebar-group:inline-flex group-focus-within/sidebar-row:inline-flex group-any-hover/sidebar-row:inline-flex"
           />
         }
       >
