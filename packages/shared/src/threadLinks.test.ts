@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatThreadLink, parseThreadLinkHref, relabelThreadLinks } from "./threadLinks.ts";
+import {
+  formatEnvironmentThreadLink,
+  formatThreadLink,
+  parseThreadLinkHref,
+  parseThreadLinkTarget,
+  relabelThreadLinks,
+} from "./threadLinks.ts";
 
 describe("thread links", () => {
   it("takes the thread id verbatim, percent escapes included", () => {
@@ -70,5 +76,38 @@ describe("thread links", () => {
         (threadId) => titles.get(threadId),
       ),
     ).toBe("See [Fix the build now](t3-thread://v1/renamed) and [Gone](t3-thread://v1/deleted).");
+  });
+
+  it("round-trips a link to a thread in another environment", () => {
+    const link = formatEnvironmentThreadLink({
+      environmentId: "studio mac",
+      threadId: "home-launched:mcp:1/2",
+      title: "Fix [the] build\nnow",
+    });
+    const href = /\]\((.+)\)$/.exec(link)![1]!;
+    expect(link.startsWith("[Fix the build now](")).toBe(true);
+    expect(parseThreadLinkTarget(href)).toEqual({
+      environmentId: "studio mac",
+      threadId: "home-launched:mcp:1/2",
+    });
+    expect(parseThreadLinkHref(href)).toBe("home-launched:mcp:1/2");
+    expect(parseThreadLinkTarget("t3-thread://v1/t1")).toEqual({
+      environmentId: null,
+      threadId: "t1",
+    });
+  });
+
+  it("rejects a malformed or empty environment", () => {
+    expect(parseThreadLinkTarget("t3-thread://v1/t1?environment=%E0%A4%A")).toBeNull();
+    expect(parseThreadLinkTarget("t3-thread://v1/t1?environment=%20")).toBeNull();
+    expect(parseThreadLinkTarget("t3-thread://v1/?environment=env")).toBeNull();
+  });
+
+  it("keeps the environment when relabeling", () => {
+    expect(
+      relabelThreadLinks("[Old](t3-thread://v1/t1?environment=env-2)", (threadId, environmentId) =>
+        threadId === "t1" && environmentId === "env-2" ? "New" : undefined,
+      ),
+    ).toBe("[New](t3-thread://v1/t1?environment=env-2)");
   });
 });

@@ -1,8 +1,5 @@
-import {
-  scopedProjectKey,
-  scopeProjectRef,
-  scopeThreadRef,
-} from "@t3tools/client-runtime/environment";
+import { useAtomValue } from "@effect/atom-react";
+import { scopedProjectKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ScopedProjectRef,
@@ -35,13 +32,14 @@ import {
   useQuietThreadShell,
 } from "../state/entities";
 import {
+  defaultNewThreadProjectRef,
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
 } from "../lib/chatThreadActions";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { environmentServerConfigsAtom } from "../state/server";
+import { environmentServerConfigsAtom, primaryServerConfigAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
@@ -422,15 +420,22 @@ export function useHandleNewThread() {
       legacyProjectCwdPreferenceKey(project.workspaceRoot),
     ],
   });
-  const defaultProject = orderedProjects[0];
-  const defaultProjectRef = defaultProject
-    ? scopeProjectRef(defaultProject.environmentId, defaultProject.id)
-    : null;
+  const primaryEnvironmentId = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => config?.environment.environmentId ?? null,
+  );
+  const homeWorkspaceRoot = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => config?.homeWorkspaceRoot ?? null,
+  );
 
   return {
     activeDraftThread,
     activeThread,
-    defaultProjectRef,
+    defaultProjectRef: defaultNewThreadProjectRef(orderedProjects, {
+      primaryEnvironmentId,
+      homeWorkspaceRoot,
+    }),
     handleNewThread,
     orderedProjects,
     routeDraftId,

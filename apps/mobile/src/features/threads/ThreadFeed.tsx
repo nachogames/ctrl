@@ -33,7 +33,7 @@ import {
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { parseThreadLinkTarget } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -1787,11 +1787,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
   const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
-    const linkedThreadId = parseThreadLinkHref(href);
-    if (linkedThreadId) {
+    const threadLink = parseThreadLinkTarget(href);
+    if (threadLink) {
+      // A link from Home can name a thread in another environment.
       navigation.navigate("Thread", {
-        environmentId: String(props.environmentId),
-        threadId: String(linkedThreadId),
+        environmentId: String(threadLink.environmentId ?? props.environmentId),
+        threadId: String(threadLink.threadId),
       });
       return;
     }

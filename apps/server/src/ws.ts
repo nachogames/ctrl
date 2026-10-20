@@ -101,6 +101,8 @@ import {
   WS_METHODS,
   WsBaseRpcGroup,
   WsReviewSessionsRpcGroup,
+  WsHomeRpcGroup,
+  HomeUnavailableError,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -188,6 +190,9 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
+import * as FleetBroker from "./home/FleetBroker.ts";
+import * as FleetService from "./home/FleetService.ts";
+import * as HomeService from "./home/HomeService.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -557,6 +562,7 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 const ServerWsBaseRpcGroup = WsBaseRpcGroup.middleware(RpcInstrumentation);
 const ServerReviewSessionsRpcGroup = WsReviewSessionsRpcGroup.middleware(RpcInstrumentation);
+const ServerHomeRpcGroup = WsHomeRpcGroup.middleware(RpcInstrumentation);
 // Replaying each intervening event costs a shell refetch; past this gap a
 // single O(active-threads) snapshot is cheaper and bounded.
 const SHELL_RESUME_MAX_GAP = 1_000;
@@ -1213,6 +1219,33 @@ const layerReviewSessionsRpc = ServerReviewSessionsRpcGroup.toLayer(
   }),
 );
 
+const layerHomeRpc = ServerHomeRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    const fleet = yield* FleetService.FleetService;
+    const fleetBroker = yield* FleetBroker.FleetBroker;
+    return ServerHomeRpcGroup.of({
+      [WS_METHODS.homeEnable]: (input) => home.enable(input),
+      [WS_METHODS.homeDisable]: (_input) => home.disable,
+      [WS_METHODS.homeStartFresh]: (_input) => home.startFresh,
+      [WS_METHODS.fleetInvoke]: (input) => fleet.execute(input),
+      [WS_METHODS.fleetConnect]: (input) =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            if (!home.available) {
+              return yield* new HomeUnavailableError({
+                message: "Home runs only on a server the T3 Code desktop app hosts.",
+              });
+            }
+            return yield* fleetBroker.connect(input);
+          }),
+        ),
+      [WS_METHODS.fleetRespond]: (input) => fleetBroker.respond(input),
+      [WS_METHODS.fleetReportWatchEvents]: (input) => home.report(input),
+    });
+  }),
+);
+
 const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -1238,6 +1271,7 @@ const layerWsRpc = (
       const threadGroupService = yield* ThreadGroupService.ThreadGroupService;
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
+      const home = yield* HomeService.HomeService;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
@@ -1775,6 +1809,7 @@ const layerWsRpc = (
             }),
             newProjectsRoot: managedFolders.namedProjectsRoot,
             ...(battery === null ? {} : { hostBattery: battery }),
+            ...(home.available ? { homeWorkspaceRoot: yield* managedFolders.homeRoot } : {}),
           };
         });
 
@@ -2457,8 +2492,10 @@ const layerWsRpc = (
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
         [WS_METHODS.serverGetSettings]: (_input) =>
           serverSettings.getSettings.pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
-        [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
+        [WS_METHODS.serverUpdateSettings]: ({ patch: clientPatch, providerInstanceMutation }) =>
           Effect.gen(function* () {
+            // Home's state changes only through the Home RPCs and Home's tools.
+            const { home: _home, ...patch } = clientPatch;
             const deviceHosts = patch.deviceHosts
               ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                   Effect.provide(deviceHostContext),
@@ -3242,6 +3279,11 @@ export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
+    const homeLayer = Layer.mergeAll(
+      Layer.succeed(HomeService.HomeService, yield* HomeService.HomeService),
+      Layer.succeed(FleetService.FleetService, yield* FleetService.FleetService),
+      Layer.succeed(FleetBroker.FleetBroker, yield* FleetBroker.FleetBroker),
+    );
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -3312,7 +3354,7 @@ export const layer = Layer.unwrap(
           return httpEffect;
         }).pipe(
           Effect.provide(
-            Layer.merge(
+            Layer.mergeAll(
               layerWsRpc(
                 session,
                 clientOrigin,
@@ -3321,12 +3363,14 @@ export const layer = Layer.unwrap(
                 serverBrowser,
               ),
               layerReviewSessionsRpc,
+              layerHomeRpc,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees
               // their defects, not the rest of the server's.
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+              Layer.provide(homeLayer),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),

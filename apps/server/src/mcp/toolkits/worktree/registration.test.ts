@@ -39,6 +39,7 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import * as GroupResourceScanner from "../../../threadGroups/GroupResourceScanner.ts";
 import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
+import { notHomeLayer } from "../../../home/HomeTestkit.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -67,6 +68,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(ThreadGroupStore.ThreadGroupStoreV2)({}),
   Layer.mock(GroupResourceScanner.GroupResourceScanner)({}),
   Layer.mock(ReviewSessionService.ReviewSessionService)({}),
+  notHomeLayer,
 );
 
 const ToolsListPayload = Schema.fromJsonString(

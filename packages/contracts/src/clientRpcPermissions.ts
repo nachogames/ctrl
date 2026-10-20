@@ -54,6 +54,13 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.reviewSessionsRunLocalReview]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewSessionsDiscussInSideChat]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
+  // Home acts with the user's reach, which orchestration:operate already grants.
+  [WS_METHODS.homeEnable]: AuthOrchestrationOperateScope,
+  [WS_METHODS.homeDisable]: AuthOrchestrationOperateScope,
+  [WS_METHODS.homeStartFresh]: AuthOrchestrationOperateScope,
+  [WS_METHODS.fleetInvoke]: AuthOrchestrationOperateScope,
+  [WS_METHODS.fleetRespond]: AuthOrchestrationOperateScope,
+  [WS_METHODS.fleetReportWatchEvents]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

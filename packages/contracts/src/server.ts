@@ -636,6 +636,11 @@ export const ServerConfig = Schema.Struct({
   threadFindProgressive: Schema.optionalKey(Schema.Boolean),
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
+   * Folder behind Home, the fleet-wide agent thread. Present only on servers a
+   * desktop app hosts, which are the only ones that can run Home.
+   */
+  homeWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
    * Why this environment offers no Scratch folder, so clients can show the
    * machine as unavailable instead of hiding it. Absent when it offers one,
    * and on older servers.
