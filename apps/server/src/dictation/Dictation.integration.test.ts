@@ -17,6 +17,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as Dictation from "./Dictation.ts";
 import * as DictationArtifacts from "./DictationArtifacts.ts";
 import * as DictationRecognizer from "./DictationRecognizer.ts";
+import * as AppleSpeech from "./AppleSpeech.ts";
+import * as DictationVocabulary from "./DictationVocabulary.ts";
 import { models } from "./models.ts";
 
 const fixture = process.env.T3_DICTATION_E2E_FIXTURE;
@@ -57,6 +59,8 @@ it.live.skipIf(!fixture)(
         Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
       );
       const layer = Dictation.layer.pipe(
+        Layer.provide(AppleSpeech.layerUnavailable),
+        Layer.provide(DictationVocabulary.layerEmpty),
         Layer.provide(DictationRecognizer.layer.pipe(Layer.provide(artifactsLayer))),
         Layer.provideMerge(artifactsLayer),
         Layer.provideMerge(

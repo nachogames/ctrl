@@ -31,7 +31,9 @@ so choose a model you trust with that.
 Shift can listen and answer out loud, all on your machine at no cost:
 
 1. In **Settings → Integrations**, turn on **Dictation** and **Spoken replies**.
-   Each downloads a local model the first time. Pick a voice under **Reply voice**.
+   Spoken replies download a local voice model the first time, and so does
+   dictation except on a Mac with macOS 26 or later. Pick a voice under
+   **Reply voice**; the play button next to each voice plays a sample.
 2. In Shift's thread, turn on voice mode with the waveform button next to the
    microphone.
 3. Hold **Option+Space** and speak. When you let go, your words are sent to Shift
@@ -39,7 +41,8 @@ Shift can listen and answer out loud, all on your machine at no cost:
 
 Start talking or send a message to interrupt it, or press the stop button. Shift
 answers quick questions itself and hands bigger thinking to a stronger agent,
-then tells you the short version. Voice mode is remembered on each device.
+then tells you the short version. Voice mode is remembered on each device. The
+waveform button stays off until both dictation and spoken replies are ready.
 
 ## Other machines
 

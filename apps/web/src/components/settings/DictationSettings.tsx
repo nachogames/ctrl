@@ -42,11 +42,33 @@ function percent(state: Extract<DictationInstallState, { _tag: "installing" }>):
     : formatBytes(state.receivedBytes);
 }
 
-/** Status of the selected model on one environment, and whether Retry applies. */
+/** Status of Apple's on-device language assets, which macOS fetches itself. */
+function appleStatus(state: DictationState): { readonly label: string; readonly failed: boolean } {
+  const assets = state.apple.assets;
+  if (assets._tag === "failed") return { label: `Failed: ${assets.message}`, failed: true };
+  if (assets._tag === "installing") {
+    return {
+      label:
+        assets.totalBytes > 0
+          ? `Getting Apple's speech assets ${percent(assets)}`
+          : "Getting Apple's speech assets",
+      failed: false,
+    };
+  }
+  if (assets._tag === "installed")
+    return { label: state.ready ? "Ready" : "Installed", failed: false };
+  return {
+    label: state.settings.engine === "off" ? "Nothing to download" : "Waiting for macOS",
+    failed: false,
+  };
+}
+
+/** Status of the active engine on one environment, and whether Retry applies. */
 function activeModelStatus(state: DictationState): {
   readonly label: string;
   readonly failed: boolean;
 } {
+  if (state.activeEngine === "apple") return appleStatus(state);
   const model = state.models.find((candidate) => candidate.id === state.settings.localModel);
   if (!model) return { label: "Unknown model", failed: true };
   if (model.install._tag === "failed")
@@ -79,6 +101,11 @@ function readinessLabel(state: DictationState | null): string {
   return activeModelStatus(state).label;
 }
 
+const RECOGNIZERS = [
+  { value: "apple", label: "Apple on-device (no download)" },
+  { value: "parakeet", label: "Parakeet" },
+] as const;
+
 const modelDetail = (model: DictationModel) =>
   [model.languages, formatBytes(model.downloadBytes), model.note].filter(Boolean).join(" · ");
 
@@ -106,7 +133,19 @@ export function DictationSettingsSection() {
   const locked = !canConfigure || projectScope || environmentId === null || unsupported;
   const models = state?.models ?? [];
   const activeModel = models.find((model) => model.id === settings.localModel);
-  const languageOptions = activeModel?.languageOptions ?? [];
+  // The recognizer choice exists only where Apple's on-device engine runs (macOS 26+ servers).
+  const appleAvailable = state?.apple.available === true;
+  const usesApple = appleAvailable && settings.localEngine === "apple";
+  const languageOptions = usesApple
+    ? (state?.apple.languageOptions ?? [])
+    : (activeModel?.languageOptions ?? []);
+  const modelStatus = connectedEnvironments.map((target) => (
+    <DictationModelStatus
+      key={target.environmentId}
+      environmentId={target.environmentId}
+      label={connectedEnvironments.length > 1 ? target.label : null}
+    />
+  ));
 
   return (
     <SettingsSection id="dictation" title="Dictation">
@@ -119,7 +158,7 @@ export function DictationSettingsSection() {
             ? "Update T3 Code on this machine to use dictation."
             : unsupported
               ? "This environment's platform has no supported speech model."
-              : "Transcribe dictation on this environment with a local speech model. Audio is not sent to any other service."
+              : "Transcribe dictation on this environment, on device. Audio is not sent to any other service."
         }
         control={
           <ScopedSwitch
@@ -135,55 +174,98 @@ export function DictationSettingsSection() {
       />
       {unsupported ? null : (
         <>
-          <SettingsRow
-            {...searchableSetting("dictation-model")}
-            serverScoped
-            settingKeys={["dictation"]}
-            description={activeModel ? modelDetail(activeModel) : undefined}
-            status={connectedEnvironments.map((target) => (
-              <DictationModelStatus
-                key={target.environmentId}
-                environmentId={target.environmentId}
-                label={connectedEnvironments.length > 1 ? target.label : null}
-              />
-            ))}
-            control={
-              <Select
-                items={models.map((model) => ({ value: model.id, label: model.label }))}
-                value={settings.localModel}
-                disabled={locked || models.length === 0}
-                onValueChange={(value) => {
-                  const model = models.find((candidate) => candidate.id === value);
-                  if (!model) return;
-                  const keepsLanguage =
-                    settings.language === "auto" ||
-                    model.languageOptions.some((option) => option.code === settings.language);
-                  updateSettings({
-                    dictation: {
-                      localModel: model.id,
-                      ...(keepsLanguage ? {} : { language: "auto" }),
-                    },
-                  });
-                }}
-              >
-                <SelectTrigger size="xs" className="w-40" aria-label="Dictation model">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {models.map((model) => (
-                    <SelectItem key={model.id} value={model.id}>
-                      <span className="flex w-full items-center justify-between gap-5">
-                        <span>{model.label}</span>
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                          {modelDetail(model)}
+          {appleAvailable ? (
+            <SettingsRow
+              {...searchableSetting("dictation-recognizer")}
+              serverScoped
+              settingKeys={["dictation"]}
+              description={
+                usesApple
+                  ? "Built into macOS, nothing to download. Knows your project names."
+                  : "Downloads a speech model to this environment."
+              }
+              status={usesApple ? modelStatus : undefined}
+              control={
+                <Select
+                  items={RECOGNIZERS}
+                  value={settings.localEngine}
+                  disabled={locked}
+                  onValueChange={(value) => {
+                    if (value !== "apple" && value !== "parakeet") return;
+                    const options =
+                      value === "apple"
+                        ? (state?.apple.languageOptions ?? [])
+                        : (activeModel?.languageOptions ?? []);
+                    const keepsLanguage =
+                      settings.language === "auto" ||
+                      options.some((option) => option.code === settings.language);
+                    updateSettings({
+                      dictation: {
+                        localEngine: value,
+                        ...(keepsLanguage ? {} : { language: "auto" }),
+                      },
+                    });
+                  }}
+                >
+                  <SelectTrigger size="xs" className="w-40" aria-label="Speech recognizer">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    {RECOGNIZERS.map((recognizer) => (
+                      <SelectItem key={recognizer.value} value={recognizer.value}>
+                        {recognizer.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          ) : null}
+          {usesApple ? null : (
+            <SettingsRow
+              {...searchableSetting("dictation-model")}
+              serverScoped
+              settingKeys={["dictation"]}
+              description={activeModel ? modelDetail(activeModel) : undefined}
+              status={modelStatus}
+              control={
+                <Select
+                  items={models.map((model) => ({ value: model.id, label: model.label }))}
+                  value={settings.localModel}
+                  disabled={locked || models.length === 0}
+                  onValueChange={(value) => {
+                    const model = models.find((candidate) => candidate.id === value);
+                    if (!model) return;
+                    const keepsLanguage =
+                      settings.language === "auto" ||
+                      model.languageOptions.some((option) => option.code === settings.language);
+                    updateSettings({
+                      dictation: {
+                        localModel: model.id,
+                        ...(keepsLanguage ? {} : { language: "auto" }),
+                      },
+                    });
+                  }}
+                >
+                  <SelectTrigger size="xs" className="w-40" aria-label="Dictation model">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    {models.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        <span className="flex w-full items-center justify-between gap-5">
+                          <span>{model.label}</span>
+                          <span className="text-xs tabular-nums text-muted-foreground">
+                            {modelDetail(model)}
+                          </span>
                         </span>
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            }
-          />
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          )}
           <SettingsRow
             {...searchableSetting("dictation-language")}
             serverScoped

@@ -4,6 +4,7 @@ import { use, useEffect, useRef } from "react";
 
 import { shiftSpeaker } from "~/speech/shiftSpeaker";
 import { useShiftVoiceMode } from "~/speech/voiceMode";
+import { useDictationEnvironmentId } from "~/state/dictation";
 import { useSpeechState } from "~/state/speech";
 import type { ChatMessage } from "~/types";
 
@@ -12,7 +13,7 @@ const FRESH_REPLY_MS = 60_000;
 
 /**
  * Reads Shift's new replies aloud while voice mode is on and the environment's
- * spoken replies are ready. Everything already in the thread when voice mode
+ * dictation and spoken replies are ready. Everything already in the thread when voice mode
  * turns on, or when the thread opens, counts as heard. Renders nothing.
  */
 export function ShiftVoiceReplies(props: {
@@ -23,12 +24,14 @@ export function ShiftVoiceReplies(props: {
   const registry = use(RegistryContext);
   const [voiceMode] = useShiftVoiceMode();
   const { state } = useSpeechState(props.environmentId);
-  const active = voiceMode && state?.ready === true;
+  // Matches the composer toggle: voice mode counts as off unless dictation is ready too.
+  const dictationReady = useDictationEnvironmentId(props.environmentId) !== null;
+  const active = voiceMode && dictationReady && state?.ready === true;
   const activeKey = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!voiceMode) shiftSpeaker.stop();
-  }, [voiceMode]);
+    if (!active) shiftSpeaker.stop();
+  }, [active]);
   // Mounted per thread (keyed by ChatView), so leaving the thread stops reading it.
   useEffect(() => () => shiftSpeaker.stop(), []);
 

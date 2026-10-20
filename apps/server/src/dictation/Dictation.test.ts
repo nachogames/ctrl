@@ -18,6 +18,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as Dictation from "./Dictation.ts";
 import * as DictationArtifacts from "./DictationArtifacts.ts";
 import * as DictationRecognizer from "./DictationRecognizer.ts";
+import * as AppleSpeech from "./AppleSpeech.ts";
+import * as DictationVocabulary from "./DictationVocabulary.ts";
 
 const testLayer = (
   options: {
@@ -30,9 +32,22 @@ const testLayer = (
     remove?: DictationArtifacts.DictationArtifacts["Service"]["remove"];
     inspectFails?: boolean;
     load?: DictationRecognizer.DictationRecognizer["Service"]["load"];
+    apple?: AppleSpeech.AppleSpeech["Service"];
+    localEngine?: "apple" | "parakeet";
+    words?: ReadonlyArray<string>;
   } = {},
 ) =>
   Dictation.layer.pipe(
+    Layer.provide(
+      options.apple
+        ? Layer.succeed(AppleSpeech.AppleSpeech, options.apple)
+        : AppleSpeech.layerUnavailable,
+    ),
+    Layer.provide(
+      Layer.succeed(DictationVocabulary.DictationVocabulary, {
+        words: Effect.succeed(options.words ?? []),
+      }),
+    ),
     Layer.provide(
       Layer.sync(DictationArtifacts.DictationArtifacts, () => {
         let runtime: DictationInstallState =
@@ -122,6 +137,7 @@ const testLayer = (
           ServerSettings.layerTest({
             dictation: {
               engine: options.engine ?? "local",
+              localEngine: options.localEngine ?? "apple",
               localModel: options.localModel ?? "parakeet-v3",
               language: options.language ?? "auto",
             },
@@ -899,4 +915,154 @@ it.effect("an unreadable install directory leaves dictation not installed instea
     assert.strictEqual(state.runtime._tag, "not-installed");
     assert.strictEqual(state.ready, false);
   }).pipe(Effect.provide(testLayer({ engine: "off", inspectFails: true })), Effect.scoped),
+);
+
+it("prefers Apple's engine only where it is available", () => {
+  assert.strictEqual(Dictation.resolveActiveEngine("apple", true), "apple");
+  assert.strictEqual(Dictation.resolveActiveEngine("apple", false), "parakeet");
+  assert.strictEqual(Dictation.resolveActiveEngine("parakeet", true), "parakeet");
+  assert.strictEqual(Dictation.resolveActiveEngine("parakeet", false), "parakeet");
+});
+
+const appleProbe = (
+  assets: AppleSpeech.AppleProbe["assets"],
+  locale: string | null = "en-US",
+): AppleSpeech.AppleProbe => ({
+  available: true,
+  reason: null,
+  locale,
+  assets,
+  languageOptions: [{ code: "en-US", label: "English (United States)" }],
+});
+
+const fakeApple = (options: {
+  probe?: AppleSpeech.AppleProbe;
+  installs?: string[];
+  opened?: Array<{ language: string; words: ReadonlyArray<string> }>;
+  written?: number[];
+  closed?: { count: number };
+}): AppleSpeech.AppleSpeech["Service"] => ({
+  probe: () => Effect.succeed(options.probe ?? appleProbe("installed")),
+  install: (language, progress) =>
+    Effect.gen(function* () {
+      options.installs?.push(language);
+      yield* progress(1, 2);
+    }),
+  open: (input) =>
+    Effect.sync(() => {
+      options.opened?.push(input);
+      const samples: number[] = [];
+      return {
+        write: (pcm) =>
+          Effect.sync(() => {
+            samples.push(pcm.length / 2);
+            options.written?.push(pcm.length / 2);
+          }),
+        finish: Effect.sync(() => ({ text: `heard ${samples.join("+")}`, locale: "en-US" })),
+        close: Effect.sync(() => {
+          if (options.closed) options.closed.count++;
+        }),
+      };
+    }),
+});
+
+it.effect("uses Apple's engine on a Mac without downloading Parakeet", () =>
+  Effect.gen(function* () {
+    const parakeetInstalls: DictationModelId[] = [];
+    const installs: string[] = [];
+    const opened: Array<{ language: string; words: ReadonlyArray<string> }> = [];
+    const closed = { count: 0 };
+    yield* Effect.gen(function* () {
+      const service = yield* Dictation.Dictation;
+      const { sessionId } = yield* service.start;
+      const state = yield* service.state;
+      assert.strictEqual(state.activeEngine, "apple");
+      assert.strictEqual(state.supported, true);
+      assert.strictEqual(state.ready, true);
+      // Chunks arrive out of order and are written in recording order.
+      yield* service.append({ sessionId, seq: 1, pcm: pcm(0.5) });
+      yield* service.append({ sessionId, seq: 0, pcm: pcm(1) });
+      const result = yield* service.finish({ sessionId, chunkCount: 2 });
+      assert.deepStrictEqual(result, { text: "heard 16000+8000", locale: "en-US" });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          supported: false,
+          installed: false,
+          install: (model) =>
+            Effect.sync(() => {
+              parakeetInstalls.push(model);
+            }),
+          words: ["PayParty"],
+          apple: fakeApple({ installs, opened, closed }),
+        }),
+      ),
+      Effect.scoped,
+    );
+    assert.deepStrictEqual(parakeetInstalls, []);
+    assert.deepStrictEqual(installs, []);
+    assert.deepStrictEqual(opened, [{ language: "auto", words: ["PayParty"] }]);
+    assert.strictEqual(closed.count, 1);
+  }),
+);
+
+it.effect("installs Apple's language assets when they are missing", () =>
+  Effect.gen(function* () {
+    const installs: string[] = [];
+    const states = yield* Effect.gen(function* () {
+      const service = yield* Dictation.Dictation;
+      // Starting waits for reconciliation, which begins the asset download.
+      const before = yield* service.start.pipe(Effect.flip);
+      assert.strictEqual(before.reason, "not-installed");
+      return yield* service.stateStream.pipe(
+        Stream.filter((state) => state.ready),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          language: "fr",
+          apple: fakeApple({ probe: appleProbe("supported"), installs }),
+        }),
+      ),
+      Effect.scoped,
+    );
+    assert.deepStrictEqual(installs, ["fr"]);
+    assert.strictEqual(states[0]?.apple.assets._tag, "installed");
+  }),
+);
+
+it.effect("keeps Parakeet when the user picks it on a Mac", () =>
+  Effect.gen(function* () {
+    const opened: Array<{ language: string; words: ReadonlyArray<string> }> = [];
+    const result = yield* Effect.gen(function* () {
+      const service = yield* Dictation.Dictation;
+      const { sessionId } = yield* service.start;
+      assert.strictEqual((yield* service.state).activeEngine, "parakeet");
+      yield* service.append({ sessionId, seq: 0, pcm: pcm(1) });
+      return yield* service.finish({ sessionId, chunkCount: 1 });
+    }).pipe(
+      Effect.provide(testLayer({ localEngine: "parakeet", apple: fakeApple({ opened }) })),
+      Effect.scoped,
+    );
+    assert.strictEqual(result.text, "one");
+    assert.deepStrictEqual(opened, []);
+  }),
+);
+
+it.effect("reports a language Apple cannot transcribe as a failed install", () =>
+  Effect.gen(function* () {
+    const state = yield* Effect.gen(function* () {
+      const service = yield* Dictation.Dictation;
+      yield* service.start.pipe(Effect.flip);
+      return yield* service.state;
+    }).pipe(
+      Effect.provide(testLayer({ apple: fakeApple({ probe: appleProbe("unsupported", null) }) })),
+      Effect.scoped,
+    );
+    assert.strictEqual(state.activeEngine, "apple");
+    assert.strictEqual(state.ready, false);
+    assert.strictEqual(state.apple.assets._tag, "failed");
+  }),
 );

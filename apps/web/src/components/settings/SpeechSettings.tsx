@@ -1,13 +1,15 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   AuthSettingsWriteScope,
   type DictationInstallState,
   type EnvironmentId,
   type SpeechState,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { PlayIcon, SquareIcon } from "lucide-react";
+import { type PointerEvent, type SyntheticEvent, use, useEffect, useState } from "react";
 
 import { formatBytes } from "~/lib/formatBytes";
+import { useVoicePreviewPlaying, voicePreview } from "~/speech/voicePreview";
 import { cn } from "~/lib/utils";
 import { speechEnvironment, useSpeechState } from "~/state/speech";
 import { useEnvironmentScope } from "~/state/session";
@@ -15,6 +17,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
@@ -77,6 +80,8 @@ export function SpeechSettingsSection() {
   const unsupported = state?.supported === false || outdated;
   const locked = !canConfigure || projectScope || environmentId === null || unsupported;
   const downloadBytes = state?.model.downloadBytes;
+  // Leaving settings silences a preview.
+  useEffect(() => () => voicePreview.stop(), []);
 
   return (
     <SettingsSection id="spoken-replies" title="Spoken replies">
@@ -131,7 +136,15 @@ export function SpeechSettingsSection() {
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   {VOICES.map((voice) => (
                     <SelectItem key={voice.value} value={voice.value}>
-                      {voice.label}
+                      <span className="flex w-full items-center justify-between gap-5">
+                        <span>{voice.label}</span>
+                        <VoicePreviewButton
+                          environmentId={environmentId}
+                          voice={voice.value}
+                          label={voice.label}
+                          ready={state?.ready === true}
+                        />
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -148,6 +161,65 @@ export function SpeechSettingsSection() {
         </>
       )}
     </SettingsSection>
+  );
+}
+
+/** Keeps a press on the preview button from also choosing the voice it sits in. */
+const isolate = (event: SyntheticEvent | PointerEvent) => {
+  event.stopPropagation();
+  event.preventDefault();
+};
+
+/**
+ * Play/stop for one voice's sample, inside its picker item. Disabled until the
+ * environment can synthesize, since that is when the voices are downloaded.
+ */
+function VoicePreviewButton(props: {
+  readonly environmentId: EnvironmentId | null;
+  readonly voice: (typeof VOICES)[number]["value"];
+  readonly label: string;
+  readonly ready: boolean;
+}) {
+  const registry = use(RegistryContext);
+  const playing = useVoicePreviewPlaying();
+  const active = playing === `${props.environmentId}:${props.voice}`;
+  const environmentId = props.environmentId;
+  if (!props.ready || environmentId === null) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={<span className="inline-flex" />} onPointerUp={isolate}>
+          <Button size="icon-xs" variant="ghost" disabled aria-label={`Preview ${props.label}`}>
+            <PlayIcon />
+          </Button>
+        </TooltipTrigger>
+        <TooltipPopup>Turn on Spoken replies to download the voices</TooltipPopup>
+      </Tooltip>
+    );
+  }
+  return (
+    <Button
+      size="icon-xs"
+      variant="ghost"
+      aria-label={active ? `Stop ${props.label}` : `Preview ${props.label}`}
+      onPointerDown={isolate}
+      onPointerUp={isolate}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+      }}
+      onClick={(event) => {
+        isolate(event);
+        if (active) {
+          voicePreview.stop();
+          return;
+        }
+        void voicePreview.play({ registry, environmentId, voice: props.voice }).then((played) => {
+          if (!played)
+            toastManager.add({ type: "error", title: `Could not preview ${props.label}` });
+        });
+      }}
+    >
+      {active ? <SquareIcon /> : <PlayIcon />}
+    </Button>
   );
 }
 

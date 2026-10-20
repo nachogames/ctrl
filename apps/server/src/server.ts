@@ -96,6 +96,8 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as Dictation from "./dictation/Dictation.ts";
 import * as DictationArtifacts from "./dictation/DictationArtifacts.ts";
 import * as DictationRecognizer from "./dictation/DictationRecognizer.ts";
+import * as AppleSpeech from "./dictation/AppleSpeech.ts";
+import * as DictationVocabulary from "./dictation/DictationVocabulary.ts";
 import * as Speech from "./speech/Speech.ts";
 import * as SpeechSynthesizer from "./speech/SpeechSynthesizer.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
@@ -322,6 +324,8 @@ const layerDictationArtifacts = DictationArtifacts.layer;
 const layerDictation = Dictation.layer.pipe(
   Layer.provide(DictationRecognizer.layer.pipe(Layer.provide(layerDictationArtifacts))),
   Layer.provide(layerDictationArtifacts),
+  Layer.provide(AppleSpeech.layer),
+  Layer.provide(DictationVocabulary.layer.pipe(Layer.provide(ProjectStore.layer))),
   Layer.provide(layerServerSettings),
 );
 const layerSpeech = Speech.layer.pipe(

@@ -552,6 +552,11 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
         T3CODE_CLI_PATH: Option.getOrUndefined(input.cliPath),
+        // Packaged Macs ship the dictation helper prebuilt; a checkout's server builds it from source.
+        T3CODE_APPLE_SPEECH_PATH:
+          environment.isPackaged && environment.platform === "darwin"
+            ? environment.path.join(environment.resourcesPath, "apple-speech", "ctrl-apple-speech")
+            : undefined,
       },
       extendEnv: true,
       bootstrap,

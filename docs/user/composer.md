@@ -197,11 +197,18 @@ transcription or cancellation; only the message text is sent when you submit.
 ## Dictation on web and desktop
 
 Dictation turns speech into text with a speech model that runs on one of your T3 Code
-machines. Set it up for that machine in **Settings → Integrations → Dictation**: turn it on and
-pick a model. Parakeet v3 covers 25 European languages, Whisper turbo covers 99, and Moonshine
+machines. Set it up for that machine in **Settings → Integrations → Dictation** by turning it on.
+
+On a Mac with macOS 26 or later, dictation uses Apple's built-in on-device speech recognition
+and downloads nothing (macOS may fetch its own language files the first time). It knows your
+project names, so they come out spelled right. To use a downloadable model instead, set
+**Speech recognizer** to Parakeet.
+
+On other machines, pick a model. Parakeet v3 covers 25 European languages, Whisper turbo covers 99, and Moonshine
 base is a small English-only model. Nothing downloads until dictation is on; then the machine
 downloads the model you picked and the status line shows the progress. **Language** can pin
-Whisper turbo to one language; the other models always detect it automatically. Remove models
+Whisper turbo or Apple's recognizer to one language; Apple's otherwise follows your Mac's
+language, and the other models always detect it automatically. Remove models
 you no longer use to free disk. Whisper turbo is slow without a GPU.
 
 Click the composer's microphone to record, then the stop button to insert the text where your

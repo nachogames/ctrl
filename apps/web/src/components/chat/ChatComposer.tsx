@@ -297,9 +297,11 @@ import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerDictationControl } from "./ComposerDictationControl";
-import { ShiftVoiceControls } from "./ShiftVoiceControls";
+import { ShiftVoiceControls, shiftVoiceUnavailableReason } from "./ShiftVoiceControls";
 import { shiftSpeaker } from "../../speech/shiftSpeaker";
 import { useShiftVoiceMode } from "../../speech/voiceMode";
+import { useDictationEnvironmentId } from "../../state/dictation";
+import { useSpeechState } from "../../state/speech";
 import { useComposerDictation } from "../../dictation/useComposerDictation";
 import { useDictationHoldShortcut } from "../../dictation/useDictationHoldShortcut";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
@@ -2336,7 +2338,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // In Shift's thread, voice mode sends each dictation as soon as it is transcribed.
   const isShiftThread = activeThreadId !== null && isHomeThreadId(activeThreadId);
   const [shiftVoiceModeSetting, setShiftVoiceMode] = useShiftVoiceMode();
-  const voiceMode = isShiftThread && shiftVoiceModeSetting;
+  // Voice mode needs both halves on this environment; a saved "on" reads as off until they are.
+  const shiftDictationEnvironmentId = useDictationEnvironmentId(
+    isShiftThread ? environmentId : null,
+  );
+  const { state: shiftSpeechState } = useSpeechState(isShiftThread ? environmentId : null);
+  const shiftVoiceUnavailable = isShiftThread
+    ? shiftVoiceUnavailableReason({
+        dictationReady: shiftDictationEnvironmentId !== null,
+        spokenRepliesReady: shiftSpeechState?.ready === true,
+      })
+    : null;
+  const voiceMode = isShiftThread && shiftVoiceModeSetting && shiftVoiceUnavailable === null;
   // These callbacks run after recording, once the handlers declared below exist.
   const dictationInsertedRangeRef = useRef<{ start: number; end: number } | null>(null);
   const dictation = useComposerDictation({
@@ -7342,6 +7355,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <ShiftVoiceControls
                       voiceMode={voiceMode}
                       onVoiceModeChange={setShiftVoiceMode}
+                      unavailableReason={shiftVoiceUnavailable}
                     />
                   ) : null}
                   <ComposerDictationControl

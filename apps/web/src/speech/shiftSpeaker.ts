@@ -11,7 +11,7 @@ interface Pending {
   readonly text: string;
 }
 
-function decodeBase64(base64: string): ArrayBuffer {
+export function decodeBase64(base64: string): ArrayBuffer {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);

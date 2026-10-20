@@ -721,6 +721,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["speech to text voice microphone transcribe local model"],
   },
   {
+    id: "dictation-recognizer",
+    title: "Speech recognizer",
+    to: "/settings/integrations",
+    targetId: "dictation",
+    searchTerms: ["apple on-device siri macos parakeet engine no download"],
+  },
+  {
     id: "dictation-model",
     title: "Dictation model",
     to: "/settings/integrations",

@@ -4,7 +4,9 @@ import {
   DICTATION_SAMPLE_RATE,
   DictationError,
   DictationSessionId,
+  type DictationAppleEngineState,
   type DictationInstallState,
+  type DictationLocalEngine,
   type DictationModelId,
   type DictationAppendInput,
   type DictationCancelInput,
@@ -27,10 +29,50 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ServerSettings from "../serverSettings.ts";
+import * as AppleSpeech from "./AppleSpeech.ts";
 import * as DictationArtifacts from "./DictationArtifacts.ts";
 import * as DictationRecognizer from "./DictationRecognizer.ts";
+import * as DictationVocabulary from "./DictationVocabulary.ts";
 import { concatenate, decodePcm, findSplit, joinTexts, takeOrderedChunks } from "./audio.ts";
 import { models, resolveLanguage } from "./models.ts";
+
+/** The recognizer sessions use: the chosen one, unless Apple's is unavailable here. */
+export function resolveActiveEngine(
+  setting: DictationLocalEngine,
+  appleAvailable: boolean,
+): DictationLocalEngine {
+  return setting === "apple" && appleAvailable ? "apple" : "parakeet";
+}
+
+/** Apple's probe as client state. Assets macOS is mid-way through fetching read as not installed. */
+export function appleEngineState(probe: AppleSpeech.AppleProbe): DictationAppleEngineState {
+  return {
+    available: probe.available,
+    unavailableReason: probe.reason,
+    locale: probe.locale,
+    languageOptions: probe.languageOptions,
+    assets: !probe.available
+      ? { _tag: "not-installed" }
+      : probe.locale === null
+        ? { _tag: "failed", message: "Apple's speech recognition does not support this language." }
+        : probe.assets === "installed"
+          ? { _tag: "installed", sizeBytes: 0 }
+          : { _tag: "not-installed" },
+  };
+}
+
+/** Whether a client can start a session on this state right now. */
+export function isReady(state: DictationState): boolean {
+  if (!state.supported || state.settings.engine !== "local") return false;
+  if (state.activeEngine === "apple")
+    return state.apple.available && state.apple.assets._tag === "installed";
+  return (
+    state.runtime._tag === "installed" &&
+    state.models.some(
+      (model) => model.id === state.settings.localModel && model.install._tag === "installed",
+    )
+  );
+}
 
 interface Installation {
   readonly model: DictationModelId;
@@ -46,7 +88,11 @@ interface LoadedModel {
 }
 interface Session {
   id: DictationSessionId;
-  model: LoadedModel;
+  /** Null for Apple sessions, which stream to their own helper instead. */
+  model: LoadedModel | null;
+  apple: AppleSpeech.AppleTranscription | null;
+  /** Keeps Apple writes in recording order across concurrent appends. */
+  writes: Semaphore.Semaphore;
   language: string;
   chunks: Map<number, Float32Array>;
   next: number;
@@ -89,6 +135,8 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const artifacts = yield* DictationArtifacts.DictationArtifacts;
   const recognizers = yield* DictationRecognizer.DictationRecognizer;
+  const apple = yield* AppleSpeech.AppleSpeech;
+  const vocabulary = yield* DictationVocabulary.DictationVocabulary;
   const settingsChanges = yield* settings.subscribeChanges;
   const readSettings = settings.getSettings.pipe(
     Effect.mapError(
@@ -122,21 +170,26 @@ const make = Effect.gen(function* () {
       install: installed.models.get(id) ?? { _tag: "not-installed" },
     })),
     loadedModel: null,
+    apple: appleEngineState({
+      available: false,
+      reason: null,
+      locale: null,
+      assets: "unsupported",
+      languageOptions: [],
+    }),
+    activeEngine: "parakeet",
     ready: false,
   });
   const update = (change: (current: DictationState) => DictationState) =>
     SubscriptionRef.update(state, (current) => {
       const next = change(current);
-      return {
+      const activeEngine = resolveActiveEngine(next.settings.localEngine, next.apple.available);
+      const resolved = {
         ...next,
-        ready:
-          next.supported &&
-          next.settings.engine === "local" &&
-          next.runtime._tag === "installed" &&
-          next.models.some(
-            (model) => model.id === next.settings.localModel && model.install._tag === "installed",
-          ),
+        supported: artifacts.supported || next.apple.available,
+        activeEngine,
       };
+      return { ...resolved, ready: isReady(resolved) };
     });
   yield* update((current) => current);
   // Native work cannot be cancelled. Hold its permit until it really returns, including on cancellation.
@@ -146,6 +199,9 @@ const make = Effect.gen(function* () {
   let loaded: LoadedModel | null = null;
   let lastModelUse = yield* Clock.currentTimeMillis;
   let installing: Installation | null = null;
+  let appleInstalling: Fiber.Fiber<void> | null = null;
+  /** Language Apple was last probed for; null forces a probe on the next reconcile. */
+  let appleProbedLanguage: string | null = null;
 
   const close = Effect.fnUntraced(function* (session: Session) {
     session.closed = true;
@@ -156,6 +212,7 @@ const make = Effect.gen(function* () {
     session.pendingSamples = 0;
     yield* Deferred.succeed(session.changed, undefined);
     session.worker?.interruptUnsafe();
+    if (session.apple) yield* session.apple.close;
   });
   const unload = Effect.fnUntraced(function* () {
     const previous = loaded;
@@ -189,7 +246,15 @@ const make = Effect.gen(function* () {
             ),
           },
     );
+  const setAppleAssets = (assets: DictationInstallState) =>
+    update((current) => ({ ...current, apple: { ...current.apple, assets } }));
   const stopInstallation = Effect.fnUntraced(function* () {
+    const appleJob = appleInstalling;
+    appleInstalling = null;
+    if (appleJob) {
+      yield* Fiber.interrupt(appleJob);
+      appleProbedLanguage = null;
+    }
     const previous = installing;
     installing = null;
     if (!previous) return;
@@ -211,6 +276,7 @@ const make = Effect.gen(function* () {
     if (
       !current.supported ||
       current.settings.engine !== "local" ||
+      current.activeEngine !== "parakeet" ||
       current.settings.localModel !== model ||
       installing
     )
@@ -264,18 +330,68 @@ const make = Effect.gen(function* () {
         Effect.forkIn(scope),
       );
   }, Effect.uninterruptible);
+  /** Asks macOS for Apple's language assets; nothing else is downloaded for this engine. */
+  const beginAppleInstallation = Effect.fnUntraced(function* (retry: boolean) {
+    const current = yield* SubscriptionRef.get(state);
+    if (
+      current.settings.engine !== "local" ||
+      current.activeEngine !== "apple" ||
+      appleInstalling ||
+      current.apple.locale === null
+    )
+      return;
+    const assets = current.apple.assets;
+    if (assets._tag === "installed" || (!retry && assets._tag === "failed")) return;
+    yield* setAppleAssets({ _tag: "installing", receivedBytes: 0, totalBytes: 0 });
+    const job = apple
+      .install(current.settings.language, (completed, total) =>
+        setAppleAssets({ _tag: "installing", receivedBytes: completed, totalBytes: total }),
+      )
+      .pipe(
+        Effect.andThen(setAppleAssets({ _tag: "installed", sizeBytes: 0 })),
+        Effect.catchTags({
+          DictationError: (error) => setAppleAssets({ _tag: "failed", message: error.message }),
+        }),
+        Effect.catchCause(() =>
+          setAppleAssets({ _tag: "failed", message: "Could not download Apple's speech assets." }),
+        ),
+      );
+    const fiber = yield* job.pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (appleInstalling === fiber) appleInstalling = null;
+        }),
+      ),
+      Effect.forkIn(scope, { startImmediately: false }),
+    );
+    appleInstalling = fiber;
+  });
+  const probeApple = Effect.fnUntraced(function* (language: string) {
+    if (appleProbedLanguage === language) return;
+    const probe = yield* apple.probe(language);
+    appleProbedLanguage = language;
+    yield* update((current) => ({ ...current, apple: appleEngineState(probe) }));
+  });
   const reconcileSettings = Effect.fnUntraced(function* () {
     let next = (yield* readSettings).dictation;
     const before = yield* SubscriptionRef.get(state);
-    if (before.settings.engine !== next.engine || before.settings.localModel !== next.localModel) {
+    if (
+      before.settings.engine !== next.engine ||
+      before.settings.localEngine !== next.localEngine ||
+      before.settings.localModel !== next.localModel
+    ) {
       yield* stopInstallation();
       yield* unload();
       // Cancellation can wait for cleanup while settings change again. Claim from the latest selection.
       next = (yield* readSettings).dictation;
     }
+    // Probe before any download decision, so a Mac that has Apple's engine never fetches Parakeet.
+    yield* probeApple(next.language);
     const current = yield* SubscriptionRef.get(state);
     const activationChanged =
-      current.settings.engine !== next.engine || current.settings.localModel !== next.localModel;
+      current.settings.engine !== next.engine ||
+      current.settings.localEngine !== next.localEngine ||
+      current.settings.localModel !== next.localModel;
     if (activationChanged || current.settings.language !== next.language) {
       yield* update((current) => ({
         ...current,
@@ -292,9 +408,19 @@ const make = Effect.gen(function* () {
             ? { ...model, install: { _tag: "not-installed" } }
             : model,
         ),
+        // Re-activating retries Apple's assets, unless the language itself is unsupported.
+        apple:
+          activationChanged &&
+          next.engine === "local" &&
+          current.apple.assets._tag === "failed" &&
+          current.apple.locale !== null
+            ? { ...current.apple, assets: { _tag: "not-installed" } }
+            : current.apple,
       }));
     }
-    yield* beginInstallation(next.localModel, false);
+    if ((yield* SubscriptionRef.get(state)).activeEngine === "apple")
+      yield* beginAppleInstallation(false);
+    else yield* beginInstallation(next.localModel, false);
   }, Effect.uninterruptible);
   yield* settingsChanges.pipe(
     Stream.runForEach(() =>
@@ -320,6 +446,11 @@ const make = Effect.gen(function* () {
             reason: "unsupported-platform",
             message: "Local dictation is unavailable on this platform.",
           });
+        if (current.settings.engine === "local" && current.activeEngine === "apple") {
+          appleProbedLanguage = null;
+          yield* probeApple(current.settings.language);
+          return yield* beginAppleInstallation(true);
+        }
         if (current.settings.engine !== "local" || current.settings.localModel !== input.model)
           return yield* new DictationError({
             reason: "disabled",
@@ -413,7 +544,12 @@ const make = Effect.gen(function* () {
     const current = yield* SubscriptionRef.get(state);
     // A failed load is retried by the next recording, not by every warm-up.
     if (loaded) return;
-    if (current.supported && current.settings.engine === "local" && current.ready) {
+    if (
+      current.supported &&
+      current.settings.engine === "local" &&
+      current.activeEngine === "parakeet" &&
+      current.ready
+    ) {
       yield* ensureLoaded(current);
     }
   }).pipe(
@@ -438,14 +574,18 @@ const make = Effect.gen(function* () {
     if (!current.ready)
       return yield* new DictationError({
         reason: "not-installed",
-        message: "Install the dictation model first.",
+        message:
+          current.activeEngine === "apple"
+            ? "Apple's speech assets are not installed yet."
+            : "Install the dictation model first.",
       });
     if (sessions.size >= 4)
       return yield* new DictationError({
         reason: "transcription-failed",
         message: "Too many dictation sessions are active.",
       });
-    const model = yield* ensureLoaded(current);
+    const useApple = current.activeEngine === "apple";
+    const model = useApple ? null : yield* ensureLoaded(current);
     const id = DictationSessionId.make(
       yield* crypto.randomUUIDv4().pipe(
         Effect.mapError(
@@ -458,9 +598,14 @@ const make = Effect.gen(function* () {
         ),
       ),
     );
+    const transcription = useApple
+      ? yield* apple.open({ language: current.settings.language, words: yield* vocabulary.words })
+      : null;
     const session: Session = {
       id,
       model,
+      apple: transcription,
+      writes: yield* Semaphore.make(1),
       language: resolveLanguage(current.settings.localModel, current.settings.language),
       chunks: new Map(),
       next: 0,
@@ -496,12 +641,14 @@ const make = Effect.gen(function* () {
           );
     });
   const decode = Effect.fnUntraced(function* (session: Session, samples: Float32Array) {
-    if (session.model.loading) yield* Fiber.join(session.model.loading);
-    if (session.model.error) return yield* session.model.error;
+    const model = session.model;
+    if (!model) return;
+    if (model.loading) yield* Fiber.join(model.loading);
+    if (model.error) return yield* model.error;
     yield* native.withPermit(
       Effect.gen(function* () {
-        if (session.closed || !session.model.recognizer) return;
-        const result = yield* session.model.recognizer
+        if (session.closed || !model.recognizer) return;
+        const result = yield* model.recognizer
           .decode(samples, session.language)
           .pipe(Effect.uninterruptible);
         if (!session.closed && result.text.trim()) {
@@ -523,7 +670,7 @@ const make = Effect.gen(function* () {
       return;
     session.busy = true;
     session.worker = yield* Effect.gen(function* () {
-      if (session.model.loading) yield* Fiber.join(session.model.loading);
+      if (session.model?.loading) yield* Fiber.join(session.model.loading);
       while (!session.closed) {
         const samples = concatenate(session.pending);
         session.attemptedSamples = samples.length;
@@ -591,14 +738,26 @@ const make = Effect.gen(function* () {
     session.lastUse = lastModelUse = yield* Clock.currentTimeMillis;
     session.samples += samples.length;
     session.chunks.set(input.seq, samples);
-    const ordered = takeOrderedChunks(session.chunks, session.next);
-    session.next = ordered.next;
-    session.pending.push(...ordered.ordered);
-    session.pendingSamples += ordered.ordered.reduce((n, chunk) => n + chunk.length, 0);
+    const transcription = session.apple;
+    if (transcription) {
+      yield* session.writes.withPermit(
+        Effect.gen(function* () {
+          const ordered = takeOrderedChunks(session.chunks, session.next);
+          session.next = ordered.next;
+          for (const chunk of ordered.ordered)
+            yield* transcription.write(AppleSpeech.encodePcm16(chunk));
+        }),
+      );
+    } else {
+      const ordered = takeOrderedChunks(session.chunks, session.next);
+      session.next = ordered.next;
+      session.pending.push(...ordered.ordered);
+      session.pendingSamples += ordered.ordered.reduce((n, chunk) => n + chunk.length, 0);
+    }
     const changed = session.changed;
     session.changed = yield* Deferred.make<void>();
     yield* Deferred.succeed(changed, undefined);
-    yield* pump(session);
+    if (!transcription) yield* pump(session);
   });
   const finish = Effect.fnUntraced(function* (input: DictationFinishInput) {
     const session = yield* getSession(input.sessionId);
@@ -635,6 +794,15 @@ const make = Effect.gen(function* () {
             ),
         }),
       );
+      const transcription = session.apple;
+      if (transcription) {
+        if (session.closed)
+          return yield* new DictationError({
+            reason: "unknown-session",
+            message: "This dictation session has ended.",
+          });
+        return yield* session.writes.withPermit(transcription.finish);
+      }
       if (session.worker) yield* Fiber.await(session.worker);
       if (session.closed)
         return yield* new DictationError({
@@ -690,7 +858,12 @@ const make = Effect.gen(function* () {
       );
     }),
   );
-  yield* reconcileSettings().pipe(lifecycle.withPermit);
+  // Probing Apple's engine takes a moment (or a one-time helper build in a checkout); do not hold up startup.
+  yield* reconcileSettings().pipe(
+    lifecycle.withPermit,
+    Effect.catchTags({ DictationError: () => Effect.void }),
+    Effect.forkIn(scope),
+  );
   return Dictation.of({
     state: SubscriptionRef.get(state),
     stateStream: SubscriptionRef.changes(state),

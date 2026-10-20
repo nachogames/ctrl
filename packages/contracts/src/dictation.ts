@@ -3,7 +3,8 @@
  *
  * Clients capture 16 kHz mono int16 PCM and stream it in chunks to the
  * environment they picked while the user speaks. The environment transcribes
- * with an opt-in local model (sherpa-onnx) and returns the text on finish.
+ * on device, with Apple's speech recognition on macOS 26+ or an opt-in local
+ * model (sherpa-onnx), and returns the text on finish.
  *
  * @module Dictation
  */
@@ -24,6 +25,14 @@ export type DictationModelId = typeof DictationModelId.Type;
 export const DictationEngine = Schema.Literals(["off", "local"]);
 export type DictationEngine = typeof DictationEngine.Type;
 
+/**
+ * Which on-device recognizer a "local" engine uses. "apple" is Apple's built-in
+ * speech recognition (macOS 26+, nothing to download); an environment without
+ * it falls back to "parakeet", the downloadable sherpa-onnx models.
+ */
+export const DictationLocalEngine = Schema.Literals(["apple", "parakeet"]);
+export type DictationLocalEngine = typeof DictationLocalEngine.Type;
+
 /** "auto" lets the model detect the language; otherwise a code from the model's `languageOptions`. */
 export const DictationLanguage = TrimmedNonEmptyString;
 export type DictationLanguage = typeof DictationLanguage.Type;
@@ -35,6 +44,9 @@ export type DictationLanguage = typeof DictationLanguage.Type;
  */
 export const DictationSettings = Schema.Struct({
   engine: DictationEngine.pipe(Schema.withDecodingDefault(Effect.succeed("off" as const))),
+  localEngine: DictationLocalEngine.pipe(
+    Schema.withDecodingDefault(Effect.succeed("apple" as const)),
+  ),
   localModel: DictationModelId.pipe(
     Schema.withDecodingDefault(Effect.succeed("parakeet-v3" as const)),
   ),
@@ -44,6 +56,7 @@ export type DictationSettings = typeof DictationSettings.Type;
 
 export const DictationSettingsPatch = Schema.Struct({
   engine: Schema.optionalKey(DictationEngine),
+  localEngine: Schema.optionalKey(DictationLocalEngine),
   localModel: Schema.optionalKey(DictationModelId),
   language: Schema.optionalKey(DictationLanguage),
 });
@@ -61,9 +74,36 @@ export const DictationInstallState = Schema.Union([
 ]);
 export type DictationInstallState = typeof DictationInstallState.Type;
 
+const DictationLanguageOption = Schema.Struct({
+  code: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+});
+
+/** Apple's on-device speech recognition on this environment. */
+export const DictationAppleEngineState = Schema.Struct({
+  /** True on macOS 26+ servers whose speech helper runs. */
+  available: Schema.Boolean,
+  /** Why it is unavailable, when the platform could have it. */
+  unavailableReason: Schema.NullOr(Schema.String),
+  /** Locale the current language resolves to, or null when Apple does not support it. */
+  locale: Schema.NullOr(Schema.String),
+  languageOptions: Schema.Array(DictationLanguageOption),
+  /** Apple's own on-device language assets, which macOS downloads on first use. */
+  assets: DictationInstallState,
+});
+export type DictationAppleEngineState = typeof DictationAppleEngineState.Type;
+
+const unavailableAppleEngine: DictationAppleEngineState = {
+  available: false,
+  unavailableReason: null,
+  locale: null,
+  languageOptions: [],
+  assets: { _tag: "not-installed" },
+};
+
 /** Server-pushed dictation state for one environment. */
 export const DictationState = Schema.Struct({
-  /** False when this platform has no supported runtime build. */
+  /** False when this platform has no on-device engine at all. */
   supported: Schema.Boolean,
   settings: DictationSettings,
   runtime: DictationInstallState,
@@ -74,9 +114,7 @@ export const DictationState = Schema.Struct({
       /** Human summary, e.g. "25 European languages". */
       languages: TrimmedNonEmptyString,
       /** Languages this model can be pinned to; empty when it only detects automatically. */
-      languageOptions: Schema.Array(
-        Schema.Struct({ code: TrimmedNonEmptyString, label: TrimmedNonEmptyString }),
-      ),
+      languageOptions: Schema.Array(DictationLanguageOption),
       /** Short caveat shown next to the model, e.g. that it is slow without a GPU. */
       note: Schema.NullOr(TrimmedNonEmptyString).pipe(
         Schema.withDecodingDefault(Effect.succeed(null)),
@@ -87,7 +125,14 @@ export const DictationState = Schema.Struct({
   ),
   /** The model currently held in memory, if any. */
   loadedModel: Schema.NullOr(DictationModelId),
-  /** True when a client can start a session right now (engine on, runtime and model installed). */
+  apple: DictationAppleEngineState.pipe(
+    Schema.withDecodingDefault(Effect.succeed(unavailableAppleEngine)),
+  ),
+  /** The recognizer sessions use now: the setting, unless Apple's is unavailable. */
+  activeEngine: DictationLocalEngine.pipe(
+    Schema.withDecodingDefault(Effect.succeed("parakeet" as const)),
+  ),
+  /** True when a client can start a session right now (engine on and the active engine installed). */
   ready: Schema.Boolean,
 });
 export type DictationState = typeof DictationState.Type;
@@ -95,7 +140,10 @@ export type DictationState = typeof DictationState.Type;
 export const DictationSessionId = TrimmedNonEmptyString.pipe(Schema.brand("DictationSessionId"));
 export type DictationSessionId = typeof DictationSessionId.Type;
 
-/** Starts or retries installation of the active model; returns before its download completes. */
+/**
+ * Starts or retries installation of the active model; returns before its download completes.
+ * With Apple's engine active, it retries Apple's language assets instead.
+ */
 export const DictationInstallInput = Schema.Struct({ model: DictationModelId });
 export type DictationInstallInput = typeof DictationInstallInput.Type;
 
