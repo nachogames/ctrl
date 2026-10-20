@@ -22,6 +22,11 @@ export function useDictationHoldShortcut(input: {
   readonly isDictateShortcut: (event: KeyboardEvent) => boolean;
   /** Replaces starting dictation, as voice mode does to start a conversation. */
   readonly start?: () => void;
+  /**
+   * Runs first on Escape outside the terminal, even while dictation is idle;
+   * true claims the key. Voice mode uses it to end a conversation.
+   */
+  readonly escape?: () => boolean;
 }) {
   const latest = useRef(input);
   useLayoutEffect(() => {
@@ -43,9 +48,15 @@ export function useDictationHoldShortcut(input: {
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      const { dictation, enabled, isDictateShortcut, start } = latest.current;
+      const { dictation, enabled, isDictateShortcut, start, escape } = latest.current;
       const phase = dictation.readPhase();
       const active = phase === "preparing" || phase === "recording" || phase === "transcribing";
+      if (event.key === "Escape" && escape && !isTerminalFocused() && escape()) {
+        event.preventDefault();
+        event.stopPropagation();
+        heldCode = null;
+        return;
+      }
       // The terminal keeps its own Escape (vim, less) even while dictation runs.
       if (event.key === "Escape" && active && !isTerminalFocused()) {
         event.preventDefault();

@@ -8,6 +8,9 @@ import type {
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
+/** The error a recording with no words in it ends with. */
+export const NO_SPEECH_DETECTED_MESSAGE = "No speech was detected.";
+
 export type VoiceInputPhase = "idle" | "preparing" | "recording" | "transcribing" | "error";
 
 export type VoiceInputState = {
@@ -483,7 +486,7 @@ export class VoiceInputController {
         return;
       }
       if (result.kind === "empty") {
-        this.setError("No speech was detected.", "retry");
+        this.setError(NO_SPEECH_DETECTED_MESSAGE, "retry");
         return;
       }
 

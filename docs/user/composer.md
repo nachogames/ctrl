@@ -235,6 +235,12 @@ you say as soon as you stop, and the first sentence or two of each new reply in 
 read aloud. Start talking, send a message, or press the stop button to interrupt it. Voice mode
 is remembered on each device, for every thread.
 
+Clicking the microphone in voice mode starts a hands-free conversation. You don't click to send:
+your words go out when you stop speaking for a moment, and once a reply starts being read the
+microphone listens again, so you can answer or talk over it. To end the conversation, press
+`Escape`, click the microphone (or its stop button, which sends what you said first), or turn
+the speaker off.
+
 ## Queued messages
 
 On web and desktop, the composer shows **Interrupt** while the agent is working and the draft is

@@ -1,4 +1,4 @@
-import { MicIcon } from "lucide-react";
+import { AudioLinesIcon, MicIcon } from "lucide-react";
 import type { PointerEvent } from "react";
 
 import type { ComposerDictation } from "~/dictation/useComposerDictation";
@@ -22,8 +22,18 @@ export function ComposerDictationControl(props: {
   readonly shortcutLabel: string | null;
   /** Replaces the idle button's start and label, as voice mode does to start a conversation. */
   readonly talk?: { readonly label: string; readonly start: () => void };
+  /**
+   * A hands-free conversation is running. Cancel and the idle button end it;
+   * stop sends what was said and ends it too.
+   */
+  readonly conversation?: {
+    /** Waiting for a reply; the microphone is closed. */
+    readonly waiting: boolean;
+    readonly end: () => void;
+    readonly finish: () => void;
+  } | null;
 }) {
-  const { dictation } = props;
+  const { dictation, conversation } = props;
   const phase = dictation.state.phase;
   const active = phase === "preparing" || phase === "recording" || phase === "transcribing";
   const label =
@@ -44,7 +54,7 @@ export function ComposerDictationControl(props: {
           <ComposerDictationActivity
             phase={phase}
             level={dictation.level}
-            onCancel={dictation.cancel}
+            onCancel={conversation?.end ?? dictation.cancel}
           />
         </div>
       </div>
@@ -53,12 +63,38 @@ export function ComposerDictationControl(props: {
           type="button"
           disabled={phase !== "recording"}
           onPointerDown={keepComposerFocus}
-          onClick={dictation.stop}
-          aria-label={phase === "recording" ? "Stop and insert dictation" : "Transcribing"}
+          onClick={conversation?.finish ?? dictation.stop}
+          aria-label={
+            phase !== "recording"
+              ? "Transcribing"
+              : conversation
+                ? "Send and end the conversation"
+                : "Stop and insert dictation"
+          }
           className="mr-0.5 grid size-7 place-items-center rounded-full bg-primary text-primary-foreground transition-[opacity,scale] duration-200 ease-out starting:scale-50 starting:opacity-0 disabled:opacity-45 motion-reduce:transition-none"
         >
           <span className="size-2.5 rounded-xs bg-current" />
         </button>
+      ) : conversation?.waiting ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon-sm"
+                onPointerDown={keepComposerFocus}
+                onClick={conversation.end}
+                aria-label="End the conversation"
+              />
+            }
+          >
+            <AudioLinesIcon />
+          </TooltipTrigger>
+          <TooltipPopup>
+            Listening again once the reply is read. Click to end the conversation.
+          </TooltipPopup>
+        </Tooltip>
       ) : (
         <Tooltip>
           <TooltipTrigger

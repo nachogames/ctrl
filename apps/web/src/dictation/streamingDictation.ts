@@ -34,6 +34,9 @@ type DictationSession = {
   partialSeq: number;
   /** Live text last handed to `showPartial`. */
   partial: string;
+  /** Hands-free turn events already reported, so each fires once. */
+  speaking: boolean;
+  endOfTurn: boolean;
   /** False once the server has finished or been told to cancel. */
   open: boolean;
   /** Settles after `sessionId` is set and `pending` is flushed, or with the start failure. */
@@ -91,6 +94,12 @@ export function createStreamingDictation(input: {
    * provisional: the transcript `transcribe` returns is what gets inserted.
    */
   readonly showPartial: (text: string) => void;
+  /** Read when a session starts: ask the environment to hear the end of the turn. */
+  readonly handsFree: () => boolean;
+  /** Hands-free only: the user started speaking. */
+  readonly onSpeechStart: () => void;
+  /** Hands-free only: the user stopped speaking long enough to end the turn. */
+  readonly onEndOfTurn: () => void;
 }): {
   readonly dependencies: Omit<
     VoiceInputControllerDependencies,
@@ -140,8 +149,20 @@ export function createStreamingDictation(input: {
     }).then((result) => {
       if (!target.open) return;
       if (result._tag !== "Failure") {
+        // Turn flags only ever turn on, so any answer may report them.
+        const answer = result.value;
+        if (answer && session === target) {
+          if (answer.speaking && !target.speaking) {
+            target.speaking = true;
+            input.onSpeechStart();
+          }
+          if (answer.endOfTurn && !target.endOfTurn) {
+            target.endOfTurn = true;
+            input.onEndOfTurn();
+          }
+        }
         // Answers can arrive out of order; only a newer chunk's text may replace the shown one.
-        const partial = result.value?.partial;
+        const partial = answer?.partial;
         if (partial === undefined || seq < target.partialSeq || session !== target) return;
         target.partialSeq = seq;
         if (partial === target.partial) return;
@@ -171,8 +192,13 @@ export function createStreamingDictation(input: {
       chunks: 0,
       partialSeq: -1,
       partial: "",
+      speaking: false,
+      endOfTurn: false,
       open: true,
-      ready: run(dictationEnvironment.start, { environmentId, input: {} }).then((started) => {
+      ready: run(dictationEnvironment.start, {
+        environmentId,
+        input: { handsFree: input.handsFree() },
+      }).then((started) => {
         if (started._tag === "Failure") return failureMessage(started);
         const { sessionId } = started.value;
         if (!target.open) {

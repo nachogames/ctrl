@@ -17,7 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
-import { models, runtimeFor, speechModel } from "./models.ts";
+import { models, runtimeFor, speechModel, vadModel } from "./models.ts";
 import { createIntegrityHash } from "./integrity.ts";
 import { readTar } from "./tar.ts";
 
@@ -55,6 +55,8 @@ export class DictationArtifacts extends Context.Service<
     ) => Effect.Effect<void, DictationError>;
     /** Deletes the voice model only; the runtime stays for dictation. */
     readonly removeSpeech: Effect.Effect<void, DictationError>;
+    /** Silero VAD, installed as part of the runtime. */
+    readonly vadPaths: { runtime: string; model: string };
   }
 >()("t3/dictation/DictationArtifacts") {}
 
@@ -78,6 +80,8 @@ const make = Effect.gen(function* () {
     runtime: runtimePath,
     model: path.join(root, "voices", speechModel.directory),
   };
+  const vadDirectory = path.join(root, "vad", vadModel.directory);
+  const vadPaths = { runtime: runtimePath, model: path.join(vadDirectory, vadModel.file.name) };
   const io = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
     operation.pipe(
       Effect.mapError(
@@ -98,7 +102,7 @@ const make = Effect.gen(function* () {
       ),
       io,
     );
-  const inspectRuntime = Effect.gen(function* () {
+  const inspectNative = Effect.gen(function* () {
     let complete = runtime !== null;
     let bytes = 0;
     for (const name of runtime?.nativeFiles ?? []) {
@@ -123,6 +127,15 @@ const make = Effect.gen(function* () {
     }
     return complete
       ? ({ _tag: "installed", sizeBytes: bytes } as const)
+      : ({ _tag: "not-installed" } as const);
+  });
+  /** The native runtime counts as installed only with the VAD model beside it. */
+  const inspectRuntime = Effect.gen(function* () {
+    const native = yield* inspectNative;
+    if (native._tag !== "installed") return native;
+    const vad = yield* size(vadPaths.model);
+    return vad === vadModel.file.bytes
+      ? ({ _tag: "installed", sizeBytes: native.sizeBytes + vad } as const)
       : ({ _tag: "not-installed" } as const);
   });
   const inspect = Effect.gen(function* () {
@@ -252,6 +265,11 @@ const make = Effect.gen(function* () {
     if (!runtime) return yield* unsupported(noun);
     const current = yield* inspectRuntime;
     if (current._tag === "installed") return yield* progress(current);
+    // Runtimes installed before hands-free voice only lack the small VAD model.
+    if ((yield* inspectNative)._tag === "installed") {
+      yield* installFiles(noun, vadDirectory, [vadModel.file], () => Effect.void);
+      return yield* progress(yield* inspectRuntime);
+    }
     const report = throttled(progress);
     yield* progress({ _tag: "installing", receivedBytes: 0, totalBytes: 0 });
     yield* atomicInstall(runtimePath, (temporary) =>
@@ -298,6 +316,7 @@ const make = Effect.gen(function* () {
         yield* io(fs.remove(archive));
       }),
     );
+    yield* installFiles(noun, vadDirectory, [vadModel.file], () => Effect.void);
     yield* progress(yield* inspectRuntime);
   });
 
@@ -376,6 +395,7 @@ const make = Effect.gen(function* () {
     inspectSpeech,
     installSpeech,
     removeSpeech,
+    vadPaths,
   });
 });
 

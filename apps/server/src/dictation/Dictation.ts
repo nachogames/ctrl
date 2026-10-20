@@ -16,6 +16,7 @@ import {
   type DictationInstallInput,
   type DictationRemoveInput,
   type DictationSettings,
+  type DictationStartInput,
   type DictationStartResult,
   type DictationState,
 } from "@t3tools/contracts";
@@ -34,6 +35,8 @@ import * as AppleSpeech from "./AppleSpeech.ts";
 import * as DictationArtifacts from "./DictationArtifacts.ts";
 import * as DictationRecognizer from "./DictationRecognizer.ts";
 import * as DictationVocabulary from "./DictationVocabulary.ts";
+import * as VoiceActivity from "./VoiceActivity.ts";
+import { createTurnDetector, type TurnDetector } from "./endOfTurn.ts";
 import { concatenate, decodePcm, findSplit, joinTexts, takeOrderedChunks } from "./audio.ts";
 import { models, resolveLanguage } from "./models.ts";
 
@@ -111,6 +114,11 @@ interface Session {
   expectedChunks: number | null;
   lastUse: number;
   error: DictationError | null;
+  /** Hands-free sessions only: hears speech, and decides when the turn ends. */
+  vad: VoiceActivity.VoiceActivityDetector | null;
+  turn: TurnDetector | null;
+  /** Samples the detector has heard, its clock. */
+  heardSamples: number;
 }
 
 export class Dictation extends Context.Service<
@@ -120,7 +128,9 @@ export class Dictation extends Context.Service<
     readonly stateStream: Stream.Stream<DictationState>;
     readonly install: (input: DictationInstallInput) => Effect.Effect<void, DictationError>;
     readonly remove: (input: DictationRemoveInput) => Effect.Effect<void, DictationError>;
-    readonly start: Effect.Effect<DictationStartResult, DictationError>;
+    readonly start: (
+      input: DictationStartInput,
+    ) => Effect.Effect<DictationStartResult, DictationError>;
     readonly warm: Effect.Effect<void>;
     /** Queues one chunk and returns the live transcript so far. */
     readonly append: (
@@ -141,6 +151,7 @@ const make = Effect.gen(function* () {
   const recognizers = yield* DictationRecognizer.DictationRecognizer;
   const apple = yield* AppleSpeech.AppleSpeech;
   const vocabulary = yield* DictationVocabulary.DictationVocabulary;
+  const voiceActivity = yield* VoiceActivity.VoiceActivity;
   const settingsChanges = yield* settings.subscribeChanges;
   const readSettings = settings.getSettings.pipe(
     Effect.mapError(
@@ -214,6 +225,8 @@ const make = Effect.gen(function* () {
     session.pending = [];
     session.texts = [];
     session.pendingSamples = 0;
+    session.vad?.release();
+    session.vad = null;
     yield* Deferred.succeed(session.changed, undefined);
     session.worker?.interruptUnsafe();
     if (session.apple) yield* session.apple.close;
@@ -562,7 +575,7 @@ const make = Effect.gen(function* () {
     Effect.catchTags({ DictationError: () => Effect.void }),
   );
 
-  const start = Effect.gen(function* () {
+  const start = Effect.fnUntraced(function* (input: DictationStartInput) {
     yield* reconcileSettings();
     const current = yield* SubscriptionRef.get(state);
     if (!current.supported)
@@ -605,6 +618,7 @@ const make = Effect.gen(function* () {
     const transcription = useApple
       ? yield* apple.open({ language: current.settings.language, words: yield* vocabulary.words })
       : null;
+    const vad = input.handsFree ? yield* voiceActivity.open : null;
     const session: Session = {
       id,
       model,
@@ -630,10 +644,13 @@ const make = Effect.gen(function* () {
       // still waiting on the microphone permission prompt.
       lastUse: yield* Clock.currentTimeMillis,
       error: null,
+      vad,
+      turn: vad ? createTurnDetector() : null,
+      heardSamples: 0,
     };
     sessions.set(id, session);
-    return { sessionId: id };
-  }).pipe(lifecycle.withPermit);
+    return { sessionId: id, handsFree: vad !== null };
+  }, lifecycle.withPermit);
 
   const getSession = (id: DictationSessionId) =>
     Effect.suspend(() => {
@@ -703,11 +720,26 @@ const make = Effect.gen(function* () {
       Effect.forkIn(scope),
     );
   });
-  /** Live text so far: Apple's streams per word, Parakeet's per decoded phrase. */
+  /** Feeds ordered audio to a hands-free session's detector. */
+  const listen = (session: Session, chunks: ReadonlyArray<Float32Array>) => {
+    const { vad, turn } = session;
+    if (!vad || !turn) return;
+    for (const chunk of chunks) {
+      if (turn.state.endOfTurn) return;
+      const detected = vad.accept(chunk);
+      session.heardSamples += chunk.length;
+      turn.push(detected, (session.heardSamples / DICTATION_SAMPLE_RATE) * 1000);
+    }
+  };
+  /** Live text so far (Apple's streams per word, Parakeet's per decoded phrase), and the turn. */
   const live = (session: Session) =>
     Effect.map(
       session.apple ? session.apple.partial : Effect.sync(() => joinTexts(session.texts)),
-      (partial): DictationAppendResult => ({ partial }),
+      (partial): DictationAppendResult => ({
+        partial,
+        speaking: session.turn?.state.speaking ?? false,
+        endOfTurn: session.turn?.state.endOfTurn ?? false,
+      }),
     );
   const append = Effect.fnUntraced(function* (input: DictationAppendInput) {
     const session = yield* getSession(input.sessionId);
@@ -757,6 +789,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const ordered = takeOrderedChunks(session.chunks, session.next);
           session.next = ordered.next;
+          listen(session, ordered.ordered);
           for (const chunk of ordered.ordered)
             yield* transcription.write(AppleSpeech.encodePcm16(chunk));
         }),
@@ -764,6 +797,7 @@ const make = Effect.gen(function* () {
     } else {
       const ordered = takeOrderedChunks(session.chunks, session.next);
       session.next = ordered.next;
+      listen(session, ordered.ordered);
       session.pending.push(...ordered.ordered);
       session.pendingSamples += ordered.ordered.reduce((n, chunk) => n + chunk.length, 0);
     }

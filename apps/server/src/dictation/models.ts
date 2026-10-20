@@ -345,3 +345,18 @@ export const speechModel = {
     },
   }),
 };
+
+/**
+ * Silero VAD (v4) for hands-free voice: it hears when the user starts and
+ * stops speaking. Installed with the sherpa-onnx runtime, whichever voice
+ * feature brings that in.
+ */
+export const vadModel = {
+  directory: "silero-vad-v4",
+  file: {
+    name: "silero_vad.onnx",
+    bytes: 1807522,
+    sha256: "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28",
+    url: "https://huggingface.co/csukuangfj/vad/resolve/fba88cd2e921609e7675c3aaf51e0b9b295da4bc/silero_vad.onnx",
+  },
+};

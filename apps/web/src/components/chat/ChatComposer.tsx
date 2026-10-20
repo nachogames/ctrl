@@ -298,7 +298,9 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerDictationControl } from "./ComposerDictationControl";
 import { VoiceReplyControls, voiceUnavailableReason } from "./VoiceReplyControls";
 import { replySpeaker } from "../../speech/replySpeaker";
-import { useVoiceMode } from "../../speech/voiceMode";
+import { useReplySpeaking, useVoiceMode } from "../../speech/voiceMode";
+import { CONVERSATION_LISTEN_TIMEOUT_MS, VoiceConversation } from "../../speech/voiceConversation";
+import { NO_SPEECH_DETECTED_MESSAGE } from "@t3tools/client-runtime/voice-input";
 import { useDictationEnvironmentId } from "../../state/dictation";
 import { useSpeechState } from "../../state/speech";
 import { useComposerDictation } from "../../dictation/useComposerDictation";
@@ -2344,9 +2346,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     spokenRepliesReady: voiceSpeechState?.ready === true,
   });
   const voiceMode = voiceModeSetting && voiceUnavailable === null;
+  // Hands-free conversation: Talk starts it, each turn ends when the user stops speaking.
+  const [conversation] = useState(() => new VoiceConversation());
+  const conversationState = useSyncExternalStore(conversation.subscribe, conversation.getSnapshot);
+  const conversationHeardSpeechRef = useRef(false);
   // These callbacks run after recording, once the handlers declared below exist.
   const dictationInsertedRangeRef = useRef<{ start: number; end: number } | null>(null);
   const dictation = useComposerDictation({
+    handsFree: () => conversation.active,
+    onSpeechStart: () => {
+      conversationHeardSpeechRef.current = true;
+      // Barge-in: speaking over a reply that is being read stops it.
+      if (conversation.active) replySpeaker.stop();
+    },
+    onEndOfTurn: () => {
+      if (conversation.active) dictation.stop();
+    },
+    quietError: (error) => conversation.active && error === NO_SPEECH_DETECTED_MESSAGE,
     ownerKey: `${composerDraftTargetKey}:${activePendingProgress?.activeQuestion?.id ?? "prompt"}`,
     draftEnvironmentId: environmentId,
     // Spoken "review skill" becomes a $review chip, matching what typing would insert.
@@ -2383,6 +2399,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onCommitted: () => {
       if (voiceMode) {
         dictationInsertedRangeRef.current = null;
+        conversation.turnSent();
         submitComposerStable();
         return;
       }
@@ -2401,7 +2418,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           // The press is the gesture that lets the reply's audio start later.
           replySpeaker.prime();
           replySpeaker.stop();
+          conversation.begin();
           dictation.start();
+        },
+      }
+    : null;
+  const endConversation = () => {
+    conversation.end();
+    dictation.cancel();
+  };
+  const conversationControls = conversationState.active
+    ? {
+        waiting: conversationState.waiting,
+        end: endConversation,
+        finish: () => {
+          conversation.end();
+          dictation.stop();
         },
       }
     : null;
@@ -2509,11 +2541,56 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsComposerScrollCollapsed,
     restoreAfterTimelineReachedEnd,
   } = useComposerFocusState();
-  // Starting to dictate stops a reply that is being read aloud mid-sentence.
+  // Starting to dictate stops a reply that is being read aloud mid-sentence. A
+  // conversation listens through replies instead, and stops them when the user speaks.
   const dictationPhase = dictation.state.phase;
   useEffect(() => {
+    if (conversation.active) return;
     if (dictationPhase === "preparing" || dictationPhase === "recording") replySpeaker.stop();
-  }, [dictationPhase]);
+  }, [conversation, dictationPhase]);
+  // Drives the conversation: listen again once a reply starts being read, and
+  // end it when voice mode turns off.
+  const replySpeaking = useReplySpeaking();
+  const dictationState = dictation.state;
+  const startDictation = dictation.start;
+  const cancelDictation = dictation.cancel;
+  const threadRunning = phase === "running";
+  useEffect(() => {
+    if (!voiceMode) {
+      if (conversation.active) {
+        conversation.end();
+        cancelDictation();
+      }
+      return;
+    }
+    const action = conversation.sync({
+      phase: dictationState.phase,
+      speaking: replySpeaking,
+      running: threadRunning,
+      error: dictationState.error,
+      quietError: (error) => error === NO_SPEECH_DETECTED_MESSAGE,
+    });
+    if (action === "listen") startDictation();
+  }, [
+    cancelDictation,
+    conversation,
+    dictationState,
+    replySpeaking,
+    startDictation,
+    threadRunning,
+    voiceMode,
+  ]);
+  // Listening that hears nothing for a minute closes the microphone until the next reply.
+  useEffect(() => {
+    if (dictationPhase === "preparing") conversationHeardSpeechRef.current = false;
+    if (!conversationState.active || dictationPhase !== "recording") return;
+    const timeout = setTimeout(() => {
+      if (conversationHeardSpeechRef.current) return;
+      conversation.pause();
+      cancelDictation();
+    }, CONVERSATION_LISTEN_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [cancelDictation, conversation, conversationState.active, dictationPhase]);
   // Focusing the composer usually comes right before dictating; load the speech model early.
   const warmDictation = dictation.warm;
   useEffect(() => {
@@ -5447,6 +5524,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dictation,
     enabled: !composerTextUnavailable,
     ...(voiceTalk ? { start: voiceTalk.start } : {}),
+    escape: () => {
+      if (!conversation.active) return false;
+      endConversation();
+      return true;
+    },
     isDictateShortcut: (event) =>
       !isCommandPaletteOpen() &&
       resolveShortcutCommand(event, keybindings, {
@@ -7369,6 +7451,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     disabled={composerTextUnavailable}
                     shortcutLabel={shortcutLabelForCommand(keybindings, "composer.dictate")}
                     {...(voiceTalk ? { talk: voiceTalk } : {})}
+                    conversation={conversationControls}
                   />
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}

@@ -1,4 +1,5 @@
 export {
+  NO_SPEECH_DETECTED_MESSAGE,
   VoiceInputController,
   VOICE_RECORDING_LIMIT_SECONDS,
   voiceInputBlocksSubmission,

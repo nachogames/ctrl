@@ -300,6 +300,7 @@ import {
   DictationFinishResult,
   DictationInstallInput,
   DictationRemoveInput,
+  DictationStartInput,
   DictationStartResult,
   DictationState,
 } from "./dictation.ts";
@@ -1769,7 +1770,7 @@ const WsDictationRemoveRpc = Rpc.make(WS_METHODS.dictationRemove, {
 });
 
 const WsDictationStartRpc = Rpc.make(WS_METHODS.dictationStart, {
-  payload: Schema.Struct({}),
+  payload: DictationStartInput,
   success: DictationStartResult,
   error: DictationRpcError,
 });

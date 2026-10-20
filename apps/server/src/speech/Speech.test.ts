@@ -40,6 +40,7 @@ const testLayer = (
           install: () => Effect.void,
           remove: () => Effect.void,
           speechPaths: { runtime: "/unused", model: "/unused" },
+          vadPaths: { runtime: "/unused", model: "/unused" },
           inspectSpeech: Effect.sync(() => ({ runtime, model })),
           installSpeech: (progress) =>
             Effect.gen(function* () {

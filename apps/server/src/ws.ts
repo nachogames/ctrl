@@ -1258,7 +1258,7 @@ const layerDictationRpc = ServerDictationRpcGroup.toLayer(
     return ServerDictationRpcGroup.of({
       [WS_METHODS.dictationInstall]: (input) => dictation.install(input),
       [WS_METHODS.dictationRemove]: (input) => dictation.remove(input),
-      [WS_METHODS.dictationStart]: () => dictation.start,
+      [WS_METHODS.dictationStart]: (input) => dictation.start(input),
       [WS_METHODS.dictationWarm]: () => dictation.warm,
       [WS_METHODS.dictationAppend]: (input) => dictation.append(input),
       [WS_METHODS.dictationFinish]: (input) => dictation.finish(input),

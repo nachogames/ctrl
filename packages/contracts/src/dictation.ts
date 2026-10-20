@@ -151,7 +151,21 @@ export type DictationInstallInput = typeof DictationInstallInput.Type;
 export const DictationRemoveInput = Schema.Struct({ model: DictationModelId });
 export type DictationRemoveInput = typeof DictationRemoveInput.Type;
 
-export const DictationStartResult = Schema.Struct({ sessionId: DictationSessionId });
+export const DictationStartInput = Schema.Struct({
+  /**
+   * Hands-free: the environment listens for the end of the user's turn with a
+   * voice activity detector and reports it on each append, so the client can
+   * finish without a click. Ignored where the detector is not installed.
+   */
+  handsFree: Schema.optionalKey(Schema.Boolean),
+});
+export type DictationStartInput = typeof DictationStartInput.Type;
+
+export const DictationStartResult = Schema.Struct({
+  sessionId: DictationSessionId,
+  /** True when this session reports `speaking` and `endOfTurn`; false falls back to a manual stop. */
+  handsFree: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
 export type DictationStartResult = typeof DictationStartResult.Type;
 
 export const DictationAppendInput = Schema.Struct({
@@ -171,6 +185,10 @@ export type DictationAppendInput = typeof DictationAppendInput.Type;
 export const DictationAppendResult = Schema.Struct({
   /** Finalized phrases plus the phrase still being spoken; empty before any speech. */
   partial: Schema.String,
+  /** Hands-free sessions: true once the user has started speaking. Never goes back to false. */
+  speaking: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Hands-free sessions: true once the user stopped speaking long enough to end the turn. */
+  endOfTurn: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type DictationAppendResult = typeof DictationAppendResult.Type;
 

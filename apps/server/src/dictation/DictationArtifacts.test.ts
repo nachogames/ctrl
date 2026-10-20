@@ -10,7 +10,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import * as DictationArtifacts from "./DictationArtifacts.ts";
-import { runtimeFor, speechModel } from "./models.ts";
+import { runtimeFor, speechModel, vadModel } from "./models.ts";
 
 const layer = (http: HttpClient.HttpClient) =>
   DictationArtifacts.layer.pipe(
@@ -112,7 +112,7 @@ it("pins every voice file the Kokoro config reads", () => {
   assert.strictEqual(new Set(speakers).size, speakers.length);
 });
 
-const installRuntimeFiles = Effect.gen(function* () {
+const installNativeFiles = Effect.gen(function* () {
   const service = yield* DictationArtifacts.DictationArtifacts;
   const fs = yield* FileSystem.FileSystem;
   for (const name of runtimeFor("darwin", "arm64")!.nativeFiles) {
@@ -120,6 +120,40 @@ const installRuntimeFiles = Effect.gen(function* () {
     yield* fs.writeFileString(`${service.speechPaths.runtime}/${name}`, "native");
   }
 });
+
+const installRuntimeFiles = Effect.gen(function* () {
+  const service = yield* DictationArtifacts.DictationArtifacts;
+  const fs = yield* FileSystem.FileSystem;
+  yield* installNativeFiles;
+  const directory = service.vadPaths.model.slice(0, service.vadPaths.model.lastIndexOf("/"));
+  yield* fs.makeDirectory(directory, { recursive: true });
+  yield* fs.writeFile(service.vadPaths.model, new Uint8Array(vadModel.file.bytes));
+});
+
+const requested: string[] = [];
+
+it.effect("a runtime from before hands-free voice fetches only the VAD model", () =>
+  Effect.gen(function* () {
+    const service = yield* DictationArtifacts.DictationArtifacts;
+    yield* installNativeFiles;
+    assert.strictEqual((yield* service.inspectSpeech).runtime._tag, "not-installed");
+    const error = yield* service.installSpeech(() => Effect.void).pipe(Effect.flip);
+    assert.strictEqual(error.message, "The voice download failed integrity verification.");
+    assert.deepStrictEqual(requested, [vadModel.file.url]);
+  }).pipe(
+    Effect.provide(
+      layer(
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            requested.push(request.url);
+            return HttpClientResponse.fromWeb(request, new Response("corrupt"));
+          }),
+        ),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
 
 it.effect("a corrupt voice download reuses the runtime and leaves nothing behind", () =>
   Effect.gen(function* () {

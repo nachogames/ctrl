@@ -20,6 +20,8 @@ import * as DictationArtifacts from "./DictationArtifacts.ts";
 import * as DictationRecognizer from "./DictationRecognizer.ts";
 import * as AppleSpeech from "./AppleSpeech.ts";
 import * as DictationVocabulary from "./DictationVocabulary.ts";
+import * as VoiceActivity from "./VoiceActivity.ts";
+import { END_OF_TURN_SILENCE_MS, VAD_REPORT_LAG_MS } from "./endOfTurn.ts";
 
 const testLayer = (
   options: {
@@ -35,9 +37,15 @@ const testLayer = (
     apple?: AppleSpeech.AppleSpeech["Service"];
     localEngine?: "apple" | "parakeet";
     words?: ReadonlyArray<string>;
+    vad?: VoiceActivity.VoiceActivity["Service"];
   } = {},
 ) =>
   Dictation.layer.pipe(
+    Layer.provide(
+      options.vad
+        ? Layer.succeed(VoiceActivity.VoiceActivity, options.vad)
+        : VoiceActivity.layerUnavailable,
+    ),
     Layer.provide(
       options.apple
         ? Layer.succeed(AppleSpeech.AppleSpeech, options.apple)
@@ -98,6 +106,7 @@ const testLayer = (
           inspectSpeech: Effect.succeed({ runtime, model: { _tag: "not-installed" } }),
           installSpeech: () => Effect.void,
           removeSpeech: Effect.void,
+          vadPaths: { runtime: "/unused", model: "/unused" },
         } satisfies DictationArtifacts.DictationArtifacts["Service"];
       }),
     ),
@@ -163,7 +172,7 @@ it.effect("gates start on platform, settings and installed artifacts", () =>
       [{ installed: false, install: () => Effect.never }, "not-installed"],
     ] as const) {
       const result = yield* Effect.gen(function* () {
-        return yield* (yield* Dictation.Dictation).start.pipe(Effect.flip);
+        return yield* (yield* Dictation.Dictation).start({}).pipe(Effect.flip);
       }).pipe(Effect.provide(testLayer(options)), Effect.scoped);
       assert.strictEqual(result.reason, reason);
     }
@@ -180,7 +189,7 @@ it.effect(
       let decoded = 0;
       const program = Effect.gen(function* () {
         const service = yield* Dictation.Dictation;
-        const { sessionId } = yield* service.start;
+        const { sessionId } = yield* service.start({});
         yield* service.append({ sessionId, seq: 1, pcm: pcm(0.5, 0) });
         yield* service.append({ sessionId, seq: 0, pcm: pcm(4) });
         yield* Deferred.succeed(loading, undefined);
@@ -219,7 +228,7 @@ it.effect(
 it.effect("finish accepts ordered stragglers and deduplicates retries", () =>
   Effect.gen(function* () {
     const service = yield* Dictation.Dictation;
-    const { sessionId } = yield* service.start;
+    const { sessionId } = yield* service.start({});
     yield* service.append({ sessionId, seq: 1, pcm: pcm(0.1) });
     const finishing = yield* service.finish({ sessionId, chunkCount: 2 }).pipe(Effect.forkChild);
     yield* service.append({ sessionId, seq: 0, pcm: pcm(0.1) });
@@ -231,7 +240,7 @@ it.effect("finish accepts ordered stragglers and deduplicates retries", () =>
 it.effect("cancel discards a recording and rejects later operations", () =>
   Effect.gen(function* () {
     const service = yield* Dictation.Dictation;
-    const { sessionId } = yield* service.start;
+    const { sessionId } = yield* service.start({});
     yield* service.append({ sessionId, seq: 0, pcm: pcm(0.1) });
     yield* service.cancel({ sessionId });
     assert.strictEqual(
@@ -248,7 +257,7 @@ it.effect("cancel discards a recording and rejects later operations", () =>
 it.effect("rejects recordings over the duration cap and frees the session", () =>
   Effect.gen(function* () {
     const service = yield* Dictation.Dictation;
-    const { sessionId } = yield* service.start;
+    const { sessionId } = yield* service.start({});
     yield* service.append({ sessionId, seq: 0, pcm: pcm(DICTATION_MAX_SECONDS) });
     assert.strictEqual(
       (yield* service.append({ sessionId, seq: 1, pcm: pcm(0.1) }).pipe(Effect.flip)).reason,
@@ -265,7 +274,7 @@ it.effect("expires abandoned sessions and observes engine-off settings", () =>
   Effect.gen(function* () {
     const service = yield* Dictation.Dictation;
     const settings = yield* ServerSettings.ServerSettingsService;
-    const { sessionId } = yield* service.start;
+    const { sessionId } = yield* service.start({});
     yield* TestClock.adjust("70 seconds");
     assert.strictEqual(
       (yield* service.finish({ sessionId, chunkCount: 0 }).pipe(Effect.flip)).reason,
@@ -279,14 +288,14 @@ it.effect("expires abandoned sessions and observes engine-off settings", () =>
     );
     yield* settings.updateSettings({ dictation: { engine: "off" } });
     yield* Fiber.join(changed);
-    assert.strictEqual((yield* service.start.pipe(Effect.flip)).reason, "disabled");
+    assert.strictEqual((yield* service.start({}).pipe(Effect.flip)).reason, "disabled");
   }).pipe(Effect.provide(testLayer()), Effect.scoped),
 );
 
 it.effect("returns typed cold-load failures", () =>
   Effect.gen(function* () {
     const service = yield* Dictation.Dictation;
-    const { sessionId } = yield* service.start;
+    const { sessionId } = yield* service.start({});
     yield* service.append({ sessionId, seq: 0, pcm: pcm(0.1) });
     assert.strictEqual(
       (yield* service.finish({ sessionId, chunkCount: 1 }).pipe(Effect.flip)).reason,
@@ -314,7 +323,7 @@ it.effect("cancel suppresses a decode that is already running", () =>
     const complete = yield* Deferred.make<void>();
     yield* Effect.gen(function* () {
       const service = yield* Dictation.Dictation;
-      const { sessionId } = yield* service.start;
+      const { sessionId } = yield* service.start({});
       yield* service.append({ sessionId, seq: 0, pcm: pcm(4) });
       yield* service.append({ sessionId, seq: 1, pcm: pcm(0.5, 0) });
       yield* Deferred.await(started);
@@ -349,14 +358,14 @@ it.effect("unloads an idle recognizer and loads it again for a later recording",
     let loads = 0;
     yield* Effect.gen(function* () {
       const service = yield* Dictation.Dictation;
-      const { sessionId } = yield* service.start;
+      const { sessionId } = yield* service.start({});
       yield* service.append({ sessionId, seq: 0, pcm: pcm(0.1) });
       yield* service.finish({ sessionId, chunkCount: 1 });
       assert.strictEqual((yield* service.state).loadedModel, "parakeet-v3");
       yield* TestClock.adjust("31 minutes");
       yield* Deferred.await(released);
       assert.strictEqual((yield* service.state).loadedModel, null);
-      const second = yield* service.start;
+      const second = yield* service.start({});
       yield* service.append({ sessionId: second.sessionId, seq: 0, pcm: pcm(0.1) });
       yield* service.finish({ sessionId: second.sessionId, chunkCount: 1 });
       assert.strictEqual(loads, 2);
@@ -411,7 +420,7 @@ it.effect("completes removal coherently when its caller disconnects during a dec
     const released = yield* Deferred.make<void>();
     yield* Effect.gen(function* () {
       const service = yield* Dictation.Dictation;
-      const { sessionId } = yield* service.start;
+      const { sessionId } = yield* service.start({});
       yield* service.append({ sessionId, seq: 0, pcm: pcm(4) });
       yield* service.append({ sessionId, seq: 1, pcm: pcm(0.5, 0) });
       yield* Deferred.await(decoding);
@@ -542,7 +551,7 @@ it.effect("a failed activation waits for explicit retry or re-selection", () =>
         );
       yield* failed();
       yield* settings.updateSettings({ dictation: { language: "en" } });
-      assert.strictEqual((yield* service.start.pipe(Effect.flip)).reason, "not-installed");
+      assert.strictEqual((yield* service.start({}).pipe(Effect.flip)).reason, "not-installed");
       assert.strictEqual(installs, 1);
       yield* service.install({ model: "parakeet-v3" });
       yield* failed();
@@ -635,9 +644,9 @@ it.effect(
       yield* Effect.gen(function* () {
         const service = yield* Dictation.Dictation;
         const settings = yield* ServerSettings.ServerSettingsService;
-        const first = yield* service.start;
+        const first = yield* service.start({});
         yield* settings.updateSettings({ dictation: { language: "nl" } });
-        const second = yield* service.start;
+        const second = yield* service.start({});
         yield* service.append({ sessionId: first.sessionId, seq: 0, pcm: pcm(0.1) });
         yield* service.finish({ sessionId: first.sessionId, chunkCount: 1 });
         yield* service.append({ sessionId: second.sessionId, seq: 0, pcm: pcm(0.1) });
@@ -646,7 +655,7 @@ it.effect(
           "nl",
         );
         yield* settings.updateSettings({ dictation: { language: "invalid" } });
-        const third = yield* service.start;
+        const third = yield* service.start({});
         yield* service.append({ sessionId: third.sessionId, seq: 0, pcm: pcm(0.1) });
         yield* service.finish({ sessionId: third.sessionId, chunkCount: 1 });
         assert.deepStrictEqual(languages, ["en", "nl", ""]);
@@ -678,11 +687,11 @@ it.effect("switching models retires the previous recognizer", () =>
     yield* Effect.gen(function* () {
       const service = yield* Dictation.Dictation;
       const settings = yield* ServerSettings.ServerSettingsService;
-      const first = yield* service.start;
+      const first = yield* service.start({});
       yield* service.append({ sessionId: first.sessionId, seq: 0, pcm: pcm(0.1) });
       yield* service.finish({ sessionId: first.sessionId, chunkCount: 1 });
       yield* settings.updateSettings({ dictation: { localModel: "moonshine-base" } });
-      const second = yield* service.start;
+      const second = yield* service.start({});
       yield* Deferred.await(released);
       yield* service.append({ sessionId: second.sessionId, seq: 0, pcm: pcm(0.1) });
       yield* service.finish({ sessionId: second.sessionId, chunkCount: 1 });
@@ -755,7 +764,7 @@ it.effect("a silent tail preserves the locale detected in earlier speech", () =>
     const speechDecoded = yield* Deferred.make<void>();
     yield* Effect.gen(function* () {
       const service = yield* Dictation.Dictation;
-      const { sessionId } = yield* service.start;
+      const { sessionId } = yield* service.start({});
       yield* service.append({ sessionId, seq: 0, pcm: pcm(4) });
       yield* service.append({ sessionId, seq: 1, pcm: pcm(0.5, 0) });
       yield* Deferred.await(speechDecoded);
@@ -845,7 +854,7 @@ it.effect("warm loads the model once before any recording, and is a no-op when o
       yield* service.warm;
       yield* Effect.yieldNow;
       assert.strictEqual((yield* service.state).loadedModel, "parakeet-v3");
-      const { sessionId } = yield* service.start;
+      const { sessionId } = yield* service.start({});
       yield* service.append({ sessionId, seq: 0, pcm: pcm(0.1) });
       yield* service.finish({ sessionId, chunkCount: 1 });
       assert.strictEqual(loads, 1);
@@ -975,7 +984,7 @@ it.effect("uses Apple's engine on a Mac without downloading Parakeet", () =>
     const closed = { count: 0 };
     yield* Effect.gen(function* () {
       const service = yield* Dictation.Dictation;
-      const { sessionId } = yield* service.start;
+      const { sessionId } = yield* service.start({});
       const state = yield* service.state;
       assert.strictEqual(state.activeEngine, "apple");
       assert.strictEqual(state.supported, true);
@@ -1013,7 +1022,7 @@ it.effect("installs Apple's language assets when they are missing", () =>
     const states = yield* Effect.gen(function* () {
       const service = yield* Dictation.Dictation;
       // Starting waits for reconciliation, which begins the asset download.
-      const before = yield* service.start.pipe(Effect.flip);
+      const before = yield* service.start({}).pipe(Effect.flip);
       assert.strictEqual(before.reason, "not-installed");
       return yield* service.stateStream.pipe(
         Stream.filter((state) => state.ready),
@@ -1039,7 +1048,7 @@ it.effect("keeps Parakeet when the user picks it on a Mac", () =>
     const opened: Array<{ language: string; words: ReadonlyArray<string> }> = [];
     const result = yield* Effect.gen(function* () {
       const service = yield* Dictation.Dictation;
-      const { sessionId } = yield* service.start;
+      const { sessionId } = yield* service.start({});
       assert.strictEqual((yield* service.state).activeEngine, "parakeet");
       yield* service.append({ sessionId, seq: 0, pcm: pcm(1) });
       return yield* service.finish({ sessionId, chunkCount: 1 });
@@ -1056,7 +1065,7 @@ it.effect("reports a language Apple cannot transcribe as a failed install", () =
   Effect.gen(function* () {
     const state = yield* Effect.gen(function* () {
       const service = yield* Dictation.Dictation;
-      yield* service.start.pipe(Effect.flip);
+      yield* service.start({}).pipe(Effect.flip);
       return yield* service.state;
     }).pipe(
       Effect.provide(testLayer({ apple: fakeApple({ probe: appleProbe("unsupported", null) }) })),
@@ -1071,12 +1080,16 @@ it.effect("reports a language Apple cannot transcribe as a failed install", () =
 it.effect("streams live text with each append", () =>
   Effect.gen(function* () {
     const service = yield* Dictation.Dictation;
-    const { sessionId } = yield* service.start;
+    const { sessionId } = yield* service.start({});
     assert.deepStrictEqual(yield* service.append({ sessionId, seq: 0, pcm: pcm(0.5) }), {
       partial: "hearing 8000",
+      speaking: false,
+      endOfTurn: false,
     });
     assert.deepStrictEqual(yield* service.append({ sessionId, seq: 1, pcm: pcm(0.25) }), {
       partial: "hearing 8000+4000",
+      speaking: false,
+      endOfTurn: false,
     });
   }).pipe(Effect.provide(testLayer({ apple: fakeApple({}) })), Effect.scoped),
 );
@@ -1086,11 +1099,78 @@ it.effect("keeps a session alive while the first audio waits on the microphone p
     const service = yield* Dictation.Dictation;
     // Long enough since the server started that a stale idle clock would expire a new session.
     yield* TestClock.adjust("10 minutes");
-    const { sessionId } = yield* service.start;
+    const { sessionId } = yield* service.start({});
     // The idle sweep runs every 10 seconds; the user is still answering the prompt.
     yield* TestClock.adjust("20 seconds");
     yield* service.append({ sessionId, seq: 0, pcm: pcm(1) });
     const result = yield* service.finish({ sessionId, chunkCount: 1 });
     assert.strictEqual(result.text, "heard 16000");
+  }).pipe(Effect.provide(testLayer({ apple: fakeApple({}) })), Effect.scoped),
+);
+
+const released = { count: 0 };
+
+/** Hears speech in any frame louder than silence. */
+const loudnessVad = (released: { count: number }): VoiceActivity.VoiceActivity["Service"] => ({
+  open: Effect.succeed({
+    accept: (samples) => samples.some((sample) => Math.abs(sample) > 0.05),
+    release: () => {
+      released.count += 1;
+    },
+  }),
+});
+
+it.effect("a hands-free session reports speech and ends the turn after the silence window", () =>
+  Effect.gen(function* () {
+    const service = yield* Dictation.Dictation;
+    const started = yield* service.start({ handsFree: true });
+    assert.strictEqual(started.handsFree, true);
+    const { sessionId } = started;
+    let seq = 0;
+    const append = (seconds: number, value: number) =>
+      service.append({ sessionId, seq: seq++, pcm: pcm(seconds, value) });
+    const quiet = yield* append(0.5, 0);
+    assert.strictEqual(quiet.speaking, false);
+    const spoken = yield* append(1, 0.1);
+    assert.deepStrictEqual([spoken.speaking, spoken.endOfTurn], [true, false]);
+    // A pause under the window keeps the turn going.
+    for (let index = 0; index < 4; index++) assert.isFalse((yield* append(0.1, 0)).endOfTurn);
+    yield* append(0.2, 0.1);
+    const endedAfter: boolean[] = [];
+    for (let index = 0; index < 8; index++) endedAfter.push((yield* append(0.1, 0)).endOfTurn);
+    // The detector reports silence late; that lag counts toward the silence window.
+    const window = END_OF_TURN_SILENCE_MS - VAD_REPORT_LAG_MS;
+    assert.deepStrictEqual(
+      endedAfter,
+      endedAfter.map((_, index) => (index + 1) * 100 >= window + 100),
+    );
+    assert.isTrue(endedAfter.at(-1));
+    const result = yield* service.finish({ sessionId, chunkCount: seq });
+    assert.match(result.text, /^heard /);
+    assert.strictEqual(released.count, 1);
+  }).pipe(
+    Effect.provide(testLayer({ apple: fakeApple({}), vad: loudnessVad(released) })),
+    Effect.scoped,
+  ),
+);
+
+it.effect("sessions fall back to a manual stop without hands-free or a detector", () =>
+  Effect.gen(function* () {
+    const service = yield* Dictation.Dictation;
+    const manual = yield* service.start({});
+    assert.strictEqual(manual.handsFree, false);
+    const result = yield* service.append({ sessionId: manual.sessionId, seq: 0, pcm: pcm(1) });
+    assert.deepStrictEqual([result.speaking, result.endOfTurn], [false, false]);
+    yield* service.cancel({ sessionId: manual.sessionId });
+  }).pipe(
+    Effect.provide(testLayer({ apple: fakeApple({}), vad: loudnessVad({ count: 0 }) })),
+    Effect.scoped,
+  ),
+);
+
+it.effect("asking for hands-free where no detector is installed starts a manual session", () =>
+  Effect.gen(function* () {
+    const service = yield* Dictation.Dictation;
+    assert.strictEqual((yield* service.start({ handsFree: true })).handsFree, false);
   }).pipe(Effect.provide(testLayer({ apple: fakeApple({}) })), Effect.scoped),
 );

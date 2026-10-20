@@ -19,6 +19,7 @@ import * as DictationArtifacts from "./DictationArtifacts.ts";
 import * as DictationRecognizer from "./DictationRecognizer.ts";
 import * as AppleSpeech from "./AppleSpeech.ts";
 import * as DictationVocabulary from "./DictationVocabulary.ts";
+import * as VoiceActivity from "./VoiceActivity.ts";
 import { models } from "./models.ts";
 
 const fixture = process.env.T3_DICTATION_E2E_FIXTURE;
@@ -60,6 +61,7 @@ it.live.skipIf(!fixture)(
       );
       const layer = Dictation.layer.pipe(
         Layer.provide(AppleSpeech.layerUnavailable),
+        Layer.provide(VoiceActivity.layerUnavailable),
         Layer.provide(DictationVocabulary.layerEmpty),
         Layer.provide(DictationRecognizer.layer.pipe(Layer.provide(artifactsLayer))),
         Layer.provideMerge(artifactsLayer),
@@ -135,7 +137,7 @@ it.live.skipIf(!fixture)(
                   Array.from({ length: 4 }, () => Buffer.concat([audio, Buffer.alloc(12800)])),
                 );
           const beforeStart = yield* Clock.currentTimeMillis;
-          const { sessionId } = yield* service.start;
+          const { sessionId } = yield* service.start({});
           const startMs = (yield* Clock.currentTimeMillis) - beforeStart;
           let chunkCount = 0;
           for (let offset = 0; offset < recording.length; offset += 3200) {
