@@ -8,8 +8,15 @@ import { speechEnvironment } from "../state/speech";
 interface Pending {
   readonly registry: AtomRegistry.AtomRegistry;
   readonly environmentId: EnvironmentId;
+  readonly messageId: string;
   readonly text: string;
 }
+
+/**
+ * Where the front voice is in the current voice turn. While it is "pending",
+ * new agent replies wait; once it "answered", they are not read for that turn.
+ */
+export type FrontMode = "idle" | "pending" | "answered";
 
 export function decodeBase64(base64: string): ArrayBuffer {
   const binary = atob(base64);
@@ -36,6 +43,9 @@ class ReplySpeaker {
   /** Per message: how many opening sentences were queued, and whether it is finished. */
   #messages = new Map<string, { queued: number; done: boolean }>();
   #warnedFailure = false;
+  #front: FrontMode = "idle";
+  /** Resolved with `performance.now()` when a message's first sentence starts playing. */
+  #firstAudio = new Map<string, (at: number) => void>();
 
   readonly subscribe = (listener: () => void) => {
     this.#listeners.add(listener);
@@ -44,10 +54,41 @@ class ReplySpeaker {
 
   readonly isSpeaking = () => this.#speaking;
 
+  readonly frontMode = () => this.#front;
+
+  #notify() {
+    for (const listener of this.#listeners) listener();
+  }
+
+  /** A voice turn went out and the front voice is answering: hold new agent replies. */
+  holdForFront() {
+    this.#front = "pending";
+    this.#notify();
+  }
+
+  /** The front voice finished. When it fully answered, this turn's agent replies stay quiet. */
+  releaseFront(answered: boolean) {
+    if (this.#front !== "pending") return;
+    this.#front = answered ? "answered" : "idle";
+    this.#notify();
+  }
+
+  /** A new turn that is not a voice turn: agent replies are read again. */
+  clearFront() {
+    if (this.#front === "idle") return;
+    this.#front = "idle";
+    this.#notify();
+  }
+
+  /** Resolves with `performance.now()` once this message's first sentence starts playing. */
+  whenPlaying(messageId: string): Promise<number> {
+    return new Promise((resolve) => this.#firstAudio.set(messageId, resolve));
+  }
+
   #setSpeaking(speaking: boolean) {
     if (this.#speaking === speaking) return;
     this.#speaking = speaking;
-    for (const listener of this.#listeners) listener();
+    this.#notify();
   }
 
   #audio(): AudioContext {
@@ -79,7 +120,17 @@ class ReplySpeaker {
     readonly messageId: string;
     readonly text: string;
     readonly streaming: boolean;
+    /** The front voice's own reply, which the front mode never holds back. */
+    readonly front?: boolean;
   }) {
+    if (!input.front && this.isNew(input.messageId)) {
+      // Not recorded yet, so the reply is fed again once the front decides.
+      if (this.#front === "pending") return;
+      if (this.#front === "answered") {
+        this.markHeard([input.messageId]);
+        return;
+      }
+    }
     let entry = this.#messages.get(input.messageId);
     if (!entry) {
       entry = { queued: 0, done: false };
@@ -88,7 +139,12 @@ class ReplySpeaker {
     if (entry.done) return;
     const opening = spokenOpening(input.text, input.streaming);
     for (const text of opening.sentences.slice(entry.queued)) {
-      this.#queue.push({ registry: input.registry, environmentId: input.environmentId, text });
+      this.#queue.push({
+        registry: input.registry,
+        environmentId: input.environmentId,
+        messageId: input.messageId,
+        text,
+      });
     }
     entry.queued = Math.max(entry.queued, opening.sentences.length);
     if (opening.complete) entry.done = true;
@@ -109,6 +165,7 @@ class ReplySpeaker {
     }
     this.#sources.clear();
     this.#playheadEnd = 0;
+    this.#firstAudio.clear();
     this.#setSpeaking(false);
   }
 
@@ -142,6 +199,11 @@ class ReplySpeaker {
         source.connect(context.destination);
         const start = Math.max(context.currentTime + 0.02, this.#playheadEnd);
         this.#playheadEnd = start + buffer.duration;
+        const firstAudio = this.#firstAudio.get(next.messageId);
+        if (firstAudio) {
+          this.#firstAudio.delete(next.messageId);
+          firstAudio(performance.now() + (start - context.currentTime) * 1000);
+        }
         source.onended = () => {
           this.#sources.delete(source);
           this.#settle();

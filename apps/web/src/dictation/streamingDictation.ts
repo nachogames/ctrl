@@ -98,8 +98,8 @@ export function createStreamingDictation(input: {
   readonly handsFree: () => boolean;
   /** Hands-free only: the user started speaking. */
   readonly onSpeechStart: () => void;
-  /** Hands-free only: the user stopped speaking long enough to end the turn. */
-  readonly onEndOfTurn: () => void;
+  /** Hands-free only: the user stopped speaking long enough to end the turn, heard at `at` (`performance.now()`). */
+  readonly onEndOfTurn: (at: number) => void;
 }): {
   readonly dependencies: Omit<
     VoiceInputControllerDependencies,
@@ -158,7 +158,7 @@ export function createStreamingDictation(input: {
           }
           if (answer.endOfTurn && !target.endOfTurn) {
             target.endOfTurn = true;
-            input.onEndOfTurn();
+            input.onEndOfTurn(performance.now());
           }
         }
         // Answers can arrive out of order; only a newer chunk's text may replace the shown one.

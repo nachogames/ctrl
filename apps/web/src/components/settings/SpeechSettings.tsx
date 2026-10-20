@@ -23,6 +23,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { VoiceFrontSettings } from "./VoiceFrontSettings";
 
 /** Kokoro voices, listed before the server state arrives so the picker never jumps. */
 const VOICES = [
@@ -157,6 +158,7 @@ export function SpeechSettingsSection() {
               </span>
             }
           />
+          <VoiceFrontSettings environmentId={environmentId} locked={locked} />
           {connectedEnvironments.map((target) => (
             <RemovableVoice
               key={target.environmentId}

@@ -189,6 +189,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as Dictation from "./dictation/Dictation.ts";
 import * as Speech from "./speech/Speech.ts";
+import * as VoiceFront from "./voiceFront/VoiceFront.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
@@ -1271,7 +1272,10 @@ const layerDictationRpc = ServerDictationRpcGroup.toLayer(
 const layerSpeechRpc = ServerSpeechRpcGroup.toLayer(
   Effect.gen(function* () {
     const speech = yield* Speech.Speech;
+    const voiceFront = yield* VoiceFront.VoiceFront;
     return ServerSpeechRpcGroup.of({
+      [WS_METHODS.voiceFrontStatus]: () => voiceFront.status,
+      [WS_METHODS.voiceFrontRespond]: (input) => voiceFront.respond(input),
       [WS_METHODS.speechInstall]: () => speech.install,
       [WS_METHODS.speechRemove]: () => speech.remove,
       [WS_METHODS.speechSynthesize]: (input) => speech.synthesize(input),
@@ -3317,6 +3321,7 @@ export const layer = Layer.unwrap(
       Layer.succeed(HomeService.HomeService, yield* HomeService.HomeService),
       Layer.succeed(FleetService.FleetService, yield* FleetService.FleetService),
       Layer.succeed(FleetBroker.FleetBroker, yield* FleetBroker.FleetBroker),
+      Layer.succeed(VoiceFront.VoiceFront, yield* VoiceFront.VoiceFront),
     );
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;

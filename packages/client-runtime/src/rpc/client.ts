@@ -70,6 +70,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeDeviceState
   | typeof WS_METHODS.subscribeDictationState
   | typeof WS_METHODS.subscribeSpeechState
+  | typeof WS_METHODS.voiceFrontRespond
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
   | typeof WS_METHODS.fleetConnect

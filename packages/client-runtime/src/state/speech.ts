@@ -43,5 +43,18 @@ export function createSpeechEnvironmentAtoms<R, E>(
       label: "environment-data:speech:synthesize",
       tag: WS_METHODS.speechSynthesize,
     }),
+    /** Whether the front voice can answer on this environment, for settings. */
+    frontStatus: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice-front:status",
+      tag: WS_METHODS.voiceFrontStatus,
+    }),
+    /** The front voice's reply to one voice turn; each value carries the whole reply so far. */
+    frontReply: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:voice-front:reply",
+      tag: WS_METHODS.voiceFrontRespond,
+      completeWhen: (reply) => reply.done,
+      idleTtlMs: 0,
+      sensitiveInput: true,
+    }),
   };
 }

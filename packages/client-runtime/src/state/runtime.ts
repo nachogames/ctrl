@@ -807,6 +807,8 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
     readonly tag: TTag;
     readonly idleTtlMs?: number;
     readonly completeWhen?: (value: B) => boolean;
+    /** Keeps the input, such as spoken words, out of the atom's label. */
+    readonly sensitiveInput?: boolean;
     readonly transform?: (
       stream: Stream.Stream<
         EnvironmentRpcStreamValue<TTag>,
@@ -824,6 +826,7 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
     label: options.label,
     ...(options.completeWhen === undefined ? {} : { completeWhen: options.completeWhen }),
     ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
+    ...(options.sensitiveInput === undefined ? {} : { sensitiveInput: options.sensitiveInput }),
     subscribe: (input: EnvironmentRpcInput<TTag>) => {
       const stream = subscribe(options.tag, input);
       return options.transform === undefined

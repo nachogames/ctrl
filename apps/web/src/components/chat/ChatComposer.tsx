@@ -55,6 +55,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
+  VOICE_FRONT_MAX_TRANSCRIPT_LENGTH,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -73,6 +74,7 @@ import {
   memo,
   type ComponentProps,
   type ReactNode,
+  use,
   useEffect,
   useEffectEvent,
   useId,
@@ -83,6 +85,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
+import { RegistryContext } from "@effect/atom-react";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -300,6 +303,7 @@ import { VoiceReplyControls, voiceUnavailableReason } from "./VoiceReplyControls
 import { replySpeaker } from "../../speech/replySpeaker";
 import { useReplySpeaking, useVoiceMode } from "../../speech/voiceMode";
 import { CONVERSATION_LISTEN_TIMEOUT_MS, VoiceConversation } from "../../speech/voiceConversation";
+import { askVoiceFront, useFrontCaption } from "../../speech/voiceFront";
 import { NO_SPEECH_DETECTED_MESSAGE } from "@t3tools/client-runtime/voice-input";
 import { useDictationEnvironmentId } from "../../state/dictation";
 import { useSpeechState } from "../../state/speech";
@@ -2348,6 +2352,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const voiceMode = voiceModeSetting && voiceUnavailable === null;
   // Hands-free conversation: Talk starts it, each turn ends when the user stops speaking.
   const [conversation] = useState(() => new VoiceConversation());
+  const atomRegistry = use(RegistryContext);
+  /** When the environment heard the end of the current turn, for the latency log. */
+  const endOfTurnAtRef = useRef<number | null>(null);
+  const frontCaption = useFrontCaption();
   const conversationState = useSyncExternalStore(conversation.subscribe, conversation.getSnapshot);
   const conversationHeardSpeechRef = useRef(false);
   // These callbacks run after recording, once the handlers declared below exist.
@@ -2359,8 +2367,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // Barge-in: speaking over a reply that is being read stops it.
       if (conversation.active) replySpeaker.stop();
     },
-    onEndOfTurn: () => {
-      if (conversation.active) dictation.stop();
+    onEndOfTurn: (at) => {
+      if (!conversation.active) return;
+      endOfTurnAtRef.current = at;
+      dictation.stop();
     },
     quietError: (error) => conversation.active && error === NO_SPEECH_DETECTED_MESSAGE,
     ownerKey: `${composerDraftTargetKey}:${activePendingProgress?.activeQuestion?.id ?? "prompt"}`,
@@ -2399,8 +2409,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onCommitted: () => {
       if (voiceMode) {
         dictationInsertedRangeRef.current = null;
+        const transcript = promptRef.current.trim();
         conversation.turnSent();
         submitComposerStable();
+        // The thread gets the message either way; the front voice answers at once alongside it.
+        if (activeThreadId !== null && transcript.length > 0)
+          askVoiceFront({
+            registry: atomRegistry,
+            environmentId,
+            threadId: activeThreadId,
+            transcript: transcript.slice(0, VOICE_FRONT_MAX_TRANSCRIPT_LENGTH),
+            endOfSpeechAt: endOfTurnAtRef.current,
+          });
+        endOfTurnAtRef.current = null;
         return;
       }
       composerEditorRef.current?.focusAt(composerCursor);
@@ -4186,6 +4207,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (!submission.didDispatch) return;
     // Sending talks over whatever the last reply was still saying.
     replySpeaker.stop();
+    replySpeaker.clearFront();
     onTypingGuardSend();
     if (shouldBlurMobileComposerOnSubmit()) {
       blurMobileComposerAfterSend();
@@ -7367,6 +7389,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
+            {voiceMode && frontCaption ? (
+              <p aria-live="polite" className="px-3 pb-2 text-xs text-muted-foreground sm:px-4">
+                {frontCaption}
+              </p>
+            ) : null}
 
             {isComposerCollapsedMobile || isComposerApprovalState ? null : (
               <div

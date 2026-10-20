@@ -1,6 +1,6 @@
 import { RegistryContext } from "@effect/atom-react";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { use, useEffect, useRef } from "react";
+import { use, useEffect, useRef, useSyncExternalStore } from "react";
 
 import { replySpeaker } from "~/speech/replySpeaker";
 import { useVoiceMode } from "~/speech/voiceMode";
@@ -28,6 +28,8 @@ export function VoiceReplies(props: {
   const dictationReady = useDictationEnvironmentId(props.environmentId) !== null;
   const active = voiceMode && dictationReady && state?.ready === true;
   const activeKey = useRef<string | null>(null);
+  // Replies held while the front voice answers are fed again once it decides.
+  const frontMode = useSyncExternalStore(replySpeaker.subscribe, replySpeaker.frontMode);
 
   useEffect(() => {
     if (!active) replySpeaker.stop();
@@ -47,6 +49,8 @@ export function VoiceReplies(props: {
       replySpeaker.markHeard(assistant.map((message) => message.id));
       return;
     }
+    // The speaker holds new replies while the front voice decides; feed them once it has.
+    if (frontMode === "pending") return;
     // Only the newest few can be arriving; older history that loads late is not a reply.
     for (const message of assistant.slice(-3)) {
       if (
@@ -65,7 +69,7 @@ export function VoiceReplies(props: {
         streaming: message.streaming,
       });
     }
-  }, [active, props.environmentId, props.threadId, props.messages, registry]);
+  }, [active, frontMode, props.environmentId, props.threadId, props.messages, registry]);
 
   return null;
 }

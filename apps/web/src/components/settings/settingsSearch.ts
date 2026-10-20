@@ -754,6 +754,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["text to speech kokoro speaker voice shift"],
   },
   {
+    id: "voice-front",
+    title: "Fast front voice",
+    to: "/settings/integrations",
+    searchTerms: ["lm studio local model llm instant voice reply shift qwen"],
+  },
+  {
+    id: "voice-front-model",
+    title: "Front model",
+    to: "/settings/integrations",
+    searchTerms: ["lm studio model key qwen lms get voice front"],
+  },
+  {
+    id: "voice-front-endpoint",
+    title: "LM Studio endpoint",
+    to: "/settings/integrations",
+    searchTerms: ["lm studio server port url localhost 1234 voice front"],
+  },
+  {
     id: "browser-profiles",
     title: "Browser profiles",
     to: "/settings/integrations",

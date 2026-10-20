@@ -311,6 +311,12 @@ import {
   SpeechState,
 } from "./speech.ts";
 import {
+  VoiceFrontError,
+  VoiceFrontReply,
+  VoiceFrontRespondInput,
+  VoiceFrontStatus,
+} from "./voiceFront.ts";
+import {
   FleetHostRegistration,
   FleetHostRequest,
   FleetHostResponse,
@@ -543,6 +549,8 @@ export const WS_METHODS = {
   speechInstall: "speech.install",
   speechRemove: "speech.remove",
   speechSynthesize: "speech.synthesize",
+  voiceFrontStatus: "voiceFront.status",
+  voiceFrontRespond: "voiceFront.respond",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -1834,6 +1842,23 @@ const WsSubscribeSpeechStateRpc = Rpc.make(WS_METHODS.subscribeSpeechState, {
   stream: true,
 });
 
+const VoiceFrontRpcError = Schema.Union([VoiceFrontError, EnvironmentAuthorizationError]);
+
+/** Whether the front voice can answer here, and why not. Starts nothing. */
+const WsVoiceFrontStatusRpc = Rpc.make(WS_METHODS.voiceFrontStatus, {
+  payload: Schema.Struct({}),
+  success: VoiceFrontStatus,
+  error: VoiceFrontRpcError,
+});
+
+/** A short spoken reply to one voice turn, streamed as it is generated. */
+const WsVoiceFrontRespondRpc = Rpc.make(WS_METHODS.voiceFrontRespond, {
+  payload: VoiceFrontRespondInput,
+  success: VoiceFrontReply,
+  error: VoiceFrontRpcError,
+  stream: true,
+});
+
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: OrchestrationV2RpcSchemas.dispatchCommand.output,
@@ -2218,6 +2243,8 @@ export const WsSpeechRpcGroup = RpcGroup.make(
   WsSpeechRemoveRpc,
   WsSpeechSynthesizeRpc,
   WsSubscribeSpeechStateRpc,
+  WsVoiceFrontStatusRpc,
+  WsVoiceFrontRespondRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Everything but the review, Home, dictation, and speech RPCs, so the server builds their handlers apart; clients use `WsRpcGroup`. */

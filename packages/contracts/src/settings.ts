@@ -1,6 +1,7 @@
 import { SshDeviceHostConfigs } from "./device.ts";
 import { DictationSettings, DictationSettingsPatch } from "./dictation.ts";
 import { SpeechSettings, SpeechSettingsPatch } from "./speech.ts";
+import { VoiceFrontSettings, VoiceFrontSettingsPatch } from "./voiceFront.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -1156,6 +1157,9 @@ export const ServerSettings = Schema.Struct({
   speech: SpeechSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(SpeechSettings)({}))),
   ),
+  voiceFront: VoiceFrontSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(VoiceFrontSettings)({}))),
+  ),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -1480,6 +1484,7 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   dictation: Schema.optionalKey(DictationSettingsPatch),
   speech: Schema.optionalKey(SpeechSettingsPatch),
+  voiceFront: Schema.optionalKey(VoiceFrontSettingsPatch),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),

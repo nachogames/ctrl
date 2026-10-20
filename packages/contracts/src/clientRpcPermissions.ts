@@ -71,6 +71,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.speechInstall]: AuthOrchestrationOperateScope,
   [WS_METHODS.speechRemove]: AuthOrchestrationOperateScope,
   [WS_METHODS.speechSynthesize]: AuthOrchestrationOperateScope,
+  [WS_METHODS.voiceFrontRespond]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

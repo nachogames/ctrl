@@ -241,6 +241,14 @@ microphone listens again, so you can answer or talk over it. To end the conversa
 `Escape`, click the microphone (or its stop button, which sends what you said first), or turn
 the speaker off.
 
+For instant answers, turn on **Fast front voice** under **Spoken replies** and download its model
+into [LM Studio](https://lmstudio.ai) once:
+`lms get https://huggingface.co/lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit` (about
+2.3 GB). A small local model then answers each voice turn within a second while the agent works
+on it, and its words show under the composer. When it fully answers, the agent's reply is not
+read aloud. Ctrl starts LM Studio's server when it is not running, uses only the model you name
+(up to 6 GB), and LM Studio unloads it after 10 idle minutes.
+
 ## Queued messages
 
 On web and desktop, the composer shows **Interrupt** while the agent is working and the draft is
