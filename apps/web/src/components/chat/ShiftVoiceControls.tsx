@@ -1,4 +1,4 @@
-import { AudioLinesIcon, SquareIcon } from "lucide-react";
+import { SquareIcon, Volume2Icon, VolumeOffIcon } from "lucide-react";
 import type { PointerEvent } from "react";
 
 import { shiftSpeaker } from "~/speech/shiftSpeaker";
@@ -25,9 +25,9 @@ export function shiftVoiceUnavailableReason(input: {
 }
 
 /**
- * Voice mode for Shift's composer: a toggle that makes dictation send right
- * away and has Shift's replies read aloud, plus a stop button while it talks.
- * The toggle is disabled, with a hint, while either half cannot work.
+ * Voice controls for Shift's composer: a switch for reading Shift's replies
+ * aloud, plus a stop button while it talks. Talking itself starts from the
+ * mic, which turns this on. Disabled, with a hint, while either half cannot work.
  */
 export function ShiftVoiceControls(props: {
   readonly voiceMode: boolean;
@@ -60,8 +60,14 @@ export function ShiftVoiceControls(props: {
         <Tooltip>
           {/* A disabled button gets no pointer events, so a wrapper carries the hint. */}
           <TooltipTrigger render={<span className="inline-flex" />}>
-            <Toggle variant="ghost" size="sm" pressed={false} disabled aria-label="Voice mode">
-              <AudioLinesIcon />
+            <Toggle
+              variant="ghost"
+              size="sm"
+              pressed={false}
+              disabled
+              aria-label="Read replies aloud"
+            >
+              <VolumeOffIcon />
             </Toggle>
           </TooltipTrigger>
           <TooltipPopup>{props.unavailableReason}</TooltipPopup>
@@ -80,16 +86,16 @@ export function ShiftVoiceControls(props: {
                   if (pressed) shiftSpeaker.prime();
                   props.onVoiceModeChange(pressed);
                 }}
-                aria-label="Voice mode"
+                aria-label="Read replies aloud"
               />
             }
           >
-            <AudioLinesIcon />
+            {props.voiceMode ? <Volume2Icon /> : <VolumeOffIcon />}
           </TooltipTrigger>
           <TooltipPopup>
             {props.voiceMode
-              ? "Voice mode on: dictation sends, replies are read aloud"
-              : "Voice mode: send dictation right away and hear replies"}
+              ? "Reading Shift's replies aloud. Click to mute."
+              : "Read Shift's replies aloud. The mic talks to Shift."}
           </TooltipPopup>
         </Tooltip>
       )}

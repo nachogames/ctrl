@@ -6,7 +6,7 @@ import {
   type SpeechState,
 } from "@t3tools/contracts";
 import { PlayIcon, SquareIcon } from "lucide-react";
-import { type PointerEvent, type SyntheticEvent, use, useEffect, useState } from "react";
+import { use, useEffect, useState } from "react";
 
 import { formatBytes } from "~/lib/formatBytes";
 import { useVoicePreviewPlaying, voicePreview } from "~/speech/voicePreview";
@@ -71,6 +71,7 @@ export function SpeechSettingsSection() {
       ? environment.environmentId
       : null;
   const { state, error } = useSpeechState(environmentId);
+  const registry = use(RegistryContext);
   // A server from before spoken replies has no speech methods, so its subscription fails outright.
   const outdated = environmentId !== null && state === null && error !== null;
   const settings = useScopedSettings((unified) => unified.speech);
@@ -122,33 +123,38 @@ export function SpeechSettingsSection() {
             serverScoped
             settingKeys={["speech"]}
             control={
-              <Select
-                items={VOICES}
-                value={settings.voice}
-                disabled={locked}
-                onValueChange={(voice) => {
-                  if (voice !== null) updateSettings({ speech: { voice } });
-                }}
-              >
-                <SelectTrigger size="xs" className="w-40" aria-label="Reply voice">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {VOICES.map((voice) => (
-                    <SelectItem key={voice.value} value={voice.value}>
-                      <span className="flex w-full items-center justify-between gap-5">
-                        <span>{voice.label}</span>
-                        <VoicePreviewButton
-                          environmentId={environmentId}
-                          voice={voice.value}
-                          label={voice.label}
-                          ready={state?.ready === true}
-                        />
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
+              <span className="flex items-center gap-1">
+                <VoicePreviewButton
+                  environmentId={environmentId}
+                  voice={settings.voice}
+                  label={VOICES.find((voice) => voice.value === settings.voice)?.label ?? "voice"}
+                  ready={state?.ready === true}
+                />
+                <Select
+                  items={VOICES}
+                  value={settings.voice}
+                  disabled={locked}
+                  onValueChange={(voice) => {
+                    if (voice === null) return;
+                    updateSettings({ speech: { voice } });
+                    // Picking a voice plays its sample, so choosing is listening.
+                    if (state?.ready === true && environmentId !== null) {
+                      void voicePreview.play({ registry, environmentId, voice });
+                    }
+                  }}
+                >
+                  <SelectTrigger size="xs" className="w-40" aria-label="Reply voice">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    {VOICES.map((voice) => (
+                      <SelectItem key={voice.value} value={voice.value}>
+                        {voice.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </span>
             }
           />
           {connectedEnvironments.map((target) => (
@@ -164,14 +170,8 @@ export function SpeechSettingsSection() {
   );
 }
 
-/** Keeps a press on the preview button from also choosing the voice it sits in. */
-const isolate = (event: SyntheticEvent | PointerEvent) => {
-  event.stopPropagation();
-  event.preventDefault();
-};
-
 /**
- * Play/stop for one voice's sample, inside its picker item. Disabled until the
+ * Play/stop for the chosen voice's sample, next to the voice picker. Disabled until the
  * environment can synthesize, since that is when the voices are downloaded.
  */
 function VoicePreviewButton(props: {
@@ -187,7 +187,7 @@ function VoicePreviewButton(props: {
   if (!props.ready || environmentId === null) {
     return (
       <Tooltip>
-        <TooltipTrigger render={<span className="inline-flex" />} onPointerUp={isolate}>
+        <TooltipTrigger render={<span className="inline-flex" />}>
           <Button size="icon-xs" variant="ghost" disabled aria-label={`Preview ${props.label}`}>
             <PlayIcon />
           </Button>
@@ -201,13 +201,7 @@ function VoicePreviewButton(props: {
       size="icon-xs"
       variant="ghost"
       aria-label={active ? `Stop ${props.label}` : `Preview ${props.label}`}
-      onPointerDown={isolate}
-      onPointerUp={isolate}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-      }}
-      onClick={(event) => {
-        isolate(event);
+      onClick={() => {
         if (active) {
           voicePreview.stop();
           return;

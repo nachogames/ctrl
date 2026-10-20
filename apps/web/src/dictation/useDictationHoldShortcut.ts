@@ -20,6 +20,8 @@ export function useDictationHoldShortcut(input: {
   /** False while the composer cannot take text; presses are still claimed. */
   readonly enabled: boolean;
   readonly isDictateShortcut: (event: KeyboardEvent) => boolean;
+  /** Replaces starting dictation, as Shift's thread does to start a conversation. */
+  readonly start?: () => void;
 }) {
   const latest = useRef(input);
   useLayoutEffect(() => {
@@ -41,7 +43,7 @@ export function useDictationHoldShortcut(input: {
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      const { dictation, enabled, isDictateShortcut } = latest.current;
+      const { dictation, enabled, isDictateShortcut, start } = latest.current;
       const phase = dictation.readPhase();
       const active = phase === "preparing" || phase === "recording" || phase === "transcribing";
       // The terminal keeps its own Escape (vim, less) even while dictation runs.
@@ -62,7 +64,7 @@ export function useDictationHoldShortcut(input: {
       }
       if (active || !enabled) return;
       heldCode = event.code;
-      dictation.start();
+      (start ?? dictation.start)();
     };
 
     const onKeyUp = (event: KeyboardEvent) => {

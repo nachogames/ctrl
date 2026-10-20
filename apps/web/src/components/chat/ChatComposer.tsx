@@ -2397,6 +2397,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (inserted) composerEditorRef.current?.flashRange(inserted);
     },
   });
+  // In Shift's thread the mic and the hold shortcut start a conversation: it sends
+  // when you stop, and Shift answers aloud.
+  const shiftTalk =
+    isShiftThread && shiftVoiceUnavailable === null
+      ? {
+          label: "Talk to Shift",
+          start: () => {
+            shiftSpeaker.prime();
+            shiftSpeaker.stop();
+            setShiftVoiceMode(true);
+            dictation.start();
+          },
+        }
+      : null;
   const sendDisabledReason =
     (dictation.active ? "Finish dictation first." : null) ??
     externalSendDisabledReason ??
@@ -5439,6 +5453,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useDictationHoldShortcut({
     dictation,
     enabled: !composerTextUnavailable,
+    ...(shiftTalk ? { start: shiftTalk.start } : {}),
     isDictateShortcut: (event) =>
       !isCommandPaletteOpen() &&
       resolveShortcutCommand(event, keybindings, {
@@ -7362,6 +7377,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     dictation={dictation}
                     disabled={composerTextUnavailable}
                     shortcutLabel={shortcutLabelForCommand(keybindings, "composer.dictate")}
+                    {...(shiftTalk ? { talk: shiftTalk } : {})}
                   />
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
