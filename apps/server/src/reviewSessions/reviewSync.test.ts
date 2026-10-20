@@ -166,6 +166,30 @@ describe("planReviewSync", () => {
   });
 });
 
+describe("rawReviewItems", () => {
+  it("numbers a reviewer's inline comments but not the summary in their review body", () => {
+    const plan = planReviewSync({
+      sessionRound: 1,
+      roundState: "collecting",
+      existing: [],
+      now: at,
+      read: reviewRoundRead({
+        reviews: [
+          githubReview("PRR_dan", "dan", {
+            state: "CHANGES_REQUESTED",
+            body: "A couple of things to fix before this lands, see the comments.",
+          }),
+        ],
+        threads: [githubThread("T1", [threadComment("PRR_dan", "This leaks the listener.")])],
+      }),
+    });
+    const items = rawReviewItems({ round: 1, nextNumber: 1 }, [], plan.upserts);
+    expect(items.map((item) => [item.sourceKeys, item.sources])).toEqual([
+      [["gh:T1"], ["human:dan"]],
+    ]);
+  });
+});
+
 describe("itemGithubState", () => {
   it("is resolved only when every known thread is", () => {
     const threads = new Map([

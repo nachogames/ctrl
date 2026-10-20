@@ -329,7 +329,8 @@ export function rawReviewItems(
     if (source.state !== "done" || source.round !== session.round) continue;
     for (const comment of comments ?? []) {
       if (keys.has(comment.key) || !comment.body.trim()) continue;
-      if (source.kind === "copilot" && comment.key.startsWith("gh-review:")) continue;
+      // A review's body is its overview; triage lifts out any problem only it raises.
+      if (comment.key.startsWith("gh-review:")) continue;
       if (marker !== null && comment.body.includes(marker)) continue;
       keys.add(comment.key);
       const summary = comment.body.trim().split("\n")[0]!.slice(0, 180);

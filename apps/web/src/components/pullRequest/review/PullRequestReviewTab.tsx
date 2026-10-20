@@ -170,9 +170,9 @@ function GroupPullRequestReview({
   );
   const snapshot = query.data?.snapshot ?? null;
   const sessionId = snapshot?.session.id ?? null;
-  const reviewThreadId = snapshot?.session.reviewThreadId ?? null;
-  const reviewThreadKey =
-    reviewThreadId === null ? null : scopedThreadKey(scopeThreadRef(environmentId, reviewThreadId));
+  // The open point belongs to the chat beside the panel, whichever chat in the group it is: the
+  // composer chip and message tags read it under that chat's key.
+  const reviewThreadKey = sessionId === null ? null : scopedThreadKey(threadRef);
   const providers = useAtomValue(
     environmentServerConfigsAtom,
     (configs) => configs.get(environmentId)?.providers ?? EMPTY_SERVER_PROVIDERS,
@@ -205,8 +205,8 @@ function GroupPullRequestReview({
   const openNumber = useReviewPointFocusStore((state) =>
     reviewThreadKey === null ? null : (state.focus[reviewThreadKey]?.number ?? null),
   );
-  // Message counts come from the review chat's own history, loaded when the panel sits beside it.
-  const projection = useThreadProjection(reviewThreadId === threadRef.threadId ? threadRef : null);
+  // Message counts come from the history of the chat beside the panel.
+  const projection = useThreadProjection(threadRef);
   const messages = projection?.projection.messages ?? null;
   const mentions = useMemo(
     () => (messages === null ? NO_MENTIONS : reviewPointMentionCounts(messages)),
