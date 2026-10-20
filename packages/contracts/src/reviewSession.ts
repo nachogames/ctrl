@@ -366,12 +366,11 @@ export class ReviewSessionError extends Schema.TaggedError<ReviewSessionError>()
 ) {}
 
 /**
- * Older imports numbered a whole Copilot overview (`gh-review:<id>`); retain those records but
- * never treat them as work. A finding taken out of a review body has its own
- * `gh-review:<id>#<slug>` key and is an ordinary point.
+ * Older imports numbered a whole review body (`gh-review:<id>`), Copilot's or a person's, as a
+ * point; retain those records but never treat them as work. A finding taken out of a review body
+ * has its own `gh-review:<id>#<slug>` key and is an ordinary point.
  */
-export const isReviewOverview = (item: Pick<ReviewItem, "sources" | "sourceKeys">): boolean =>
-  item.sources.includes("copilot") &&
+export const isReviewOverview = (item: Pick<ReviewItem, "sourceKeys">): boolean =>
   item.sourceKeys.length > 0 &&
   item.sourceKeys.every((key) => key.startsWith("gh-review:") && !key.includes("#"));
 
