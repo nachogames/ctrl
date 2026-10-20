@@ -231,8 +231,8 @@ allow the microphone only over HTTPS or on localhost.
 
 With dictation and **Spoken replies** both on in **Settings → Integrations**, the speaker button
 next to the microphone turns on voice mode. Then the microphone and the hold shortcut send what
-you say as soon as you stop, and the first sentence or two of each new reply in that thread is
-read aloud. Start talking, send a message, or press the stop button to interrupt it. Voice mode
+you say as soon as you stop, and each new reply in that thread is read aloud: its prose and list
+items, up to about a dozen sentences, skipping code and tables. Start talking, send a message, or press the stop button to interrupt it. Voice mode
 is remembered on each device, for every thread.
 
 Clicking the microphone in voice mode starts a hands-free conversation. You don't click to send:

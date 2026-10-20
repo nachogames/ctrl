@@ -1,33 +1,44 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { plainSpokenText, spokenOpening } from "./spokenOpening.ts";
+import {
+  plainSpokenText,
+  SPOKEN_REPLY_MAX_CHARS,
+  SPOKEN_REPLY_MAX_SENTENCES,
+  spokenOpening,
+} from "./spokenOpening.ts";
 
 describe("spokenOpening", () => {
-  it("speaks the opening paragraph and stops at the first break", () => {
+  it("reads every paragraph and list item, not just the first", () => {
     expect(
       spokenOpening("The build finished. Two things need you.\n\n- Review PR 12\n- Answer", false),
-    ).toEqual({ sentences: ["The build finished.", "Two things need you."], complete: true });
-    expect(spokenOpening("All green.\n- one\n- two", false)).toEqual({
-      sentences: ["All green."],
+    ).toEqual({
+      sentences: ["The build finished.", "Two things need you.", "Review PR 12.", "Answer."],
       complete: true,
     });
     expect(spokenOpening("Short answer\n\nDetails here.", false)).toEqual({
-      sentences: ["Short answer"],
+      sentences: ["Short answer.", "Details here."],
       complete: true,
     });
   });
 
-  it("caps the opening at two sentences and about 300 characters", () => {
-    expect(spokenOpening("One. Two. Three.", false).sentences).toEqual(["One.", "Two."]);
-    const long = `${"word ".repeat(80)}end.`;
-    const [only] = spokenOpening(long, false).sentences;
-    expect(only!.length).toBeLessThanOrEqual(300);
-    expect(only!.endsWith("word")).toBe(true);
-    const second = `First is short. ${"x".repeat(300)}.`;
-    expect(spokenOpening(second, false)).toEqual({
-      sentences: ["First is short."],
+  it("skips code blocks and tables but keeps the prose around them", () => {
+    expect(spokenOpening("Here it is.\n```ts\nconst x = 1\n```\nThat's the fix.", false)).toEqual({
+      sentences: ["Here it is.", "That's the fix."],
       complete: true,
     });
+    expect(spokenOpening("| a | b |\n|---|---|\n| 1 | 2 |\nDone.", false).sentences).toEqual([
+      "Done.",
+    ]);
+  });
+
+  it("caps a reply at a dozen sentences and about 1200 characters", () => {
+    const many = Array.from({ length: 20 }, (_, index) => `Line ${index}.`).join(" ");
+    const capped = spokenOpening(many, false);
+    expect(capped.sentences).toHaveLength(SPOKEN_REPLY_MAX_SENTENCES);
+    expect(capped.complete).toBe(true);
+    const long = `${"word ".repeat(400)}end.`;
+    const [only] = spokenOpening(long, false).sentences;
+    expect(only!.length).toBeLessThanOrEqual(SPOKEN_REPLY_MAX_CHARS);
   });
 
   it("strips markdown, links and code", () => {
@@ -39,11 +50,10 @@ describe("spokenOpening", () => {
     expect(plainSpokenText("Use `a really long piece of code that goes on and on()` now")).toBe(
       "Use now",
     );
-    expect(spokenOpening("```ts\nconst x = 1\n```\nThat's the fix.", false)).toEqual({
-      sentences: [],
-      complete: true,
-    });
-    expect(spokenOpening("## Status\nAll good.", false).sentences).toEqual([]);
+    expect(spokenOpening("## Status\nAll good.", false).sentences).toEqual([
+      "Status.",
+      "All good.",
+    ]);
   });
 
   it("releases sentences while streaming only once they are complete", () => {
@@ -58,11 +68,12 @@ describe("spokenOpening", () => {
     });
     expect(spokenOpening("Hey, the build finished. Two things need you.\n", true)).toEqual({
       sentences: ["Hey, the build finished.", "Two things need you."],
-      complete: true,
+      complete: false,
     });
+    // Later paragraphs keep the message open: they are read too.
     expect(spokenOpening("Hey, the build finished. Two things need you.\n\nFirst", true)).toEqual({
       sentences: ["Hey, the build finished.", "Two things need you."],
-      complete: true,
+      complete: false,
     });
   });
 
@@ -71,7 +82,7 @@ describe("spokenOpening", () => {
     expect(spokenOpening("Opened [Fix it. Now](t3-thread://v1", true).sentences).toEqual([]);
     expect(spokenOpening("Opened [Fix it. Now](t3-thread://v1/a) for you. ", true)).toEqual({
       sentences: ["Opened Fix it.", "Now for you."],
-      complete: true,
+      complete: false,
     });
     expect(spokenOpening("Ran `a. b", true).sentences).toEqual([]);
   });
@@ -94,6 +105,7 @@ describe("spokenOpening", () => {
     expect(previous).toEqual([
       "Got it.",
       "I'm handing the redesign to a deeper agent and will report back.",
+      "Details follow.",
     ]);
   });
 });

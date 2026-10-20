@@ -61,8 +61,8 @@ function voiceStatus(state: SpeechState): { readonly label: string; readonly fai
 
 /**
  * Spoken replies for the environments selected in the settings header.
- * Turning them on downloads the Kokoro voice model; Shift's thread then reads
- * the start of each reply aloud in voice mode. The model can be removed while
+ * Turning them on downloads the Kokoro voice model; a thread in voice mode then
+ * reads each new reply aloud. The model can be removed while
  * spoken replies are off.
  */
 export function SpeechSettingsSection() {
@@ -96,7 +96,7 @@ export function SpeechSettingsSection() {
             ? "Update T3 Code on this machine to use spoken replies."
             : unsupported
               ? "This environment's platform has no supported voice model."
-              : `Read the start of Shift's replies aloud in voice mode with a local Kokoro voice${
+              : `Read replies aloud in voice mode with a local Kokoro voice${
                   downloadBytes ? ` (${formatBytes(downloadBytes)} download)` : ""
                 }. Text is not sent to any other service.`
         }

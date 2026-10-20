@@ -1,11 +1,12 @@
 /**
- * The part of an assistant message that is read aloud: its opening paragraph,
- * cut to a couple of plain sentences. Works on streaming text, so the first
- * sentence can be spoken as soon as it is complete.
+ * The part of an assistant message that is read aloud: its prose, paragraph by
+ * paragraph, with list items and headings as sentences and code and tables
+ * left out, capped so a long reply does not talk for minutes. Works on
+ * streaming text, so the first sentence can be spoken as soon as it is complete.
  */
 
-export const SPOKEN_OPENING_MAX_SENTENCES = 2;
-export const SPOKEN_OPENING_MAX_CHARS = 300;
+export const SPOKEN_REPLY_MAX_SENTENCES = 12;
+export const SPOKEN_REPLY_MAX_CHARS = 1200;
 
 export interface SpokenOpening {
   /** Sentences ready to speak, in order. Later calls on longer text only append. */
@@ -14,26 +15,41 @@ export interface SpokenOpening {
   readonly complete: boolean;
 }
 
-/** Lines that start something other than prose: headings, lists, code, tables, quotes. */
-const BLOCK_START = /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|```|~~~|\||>)/;
+const FENCE = /^\s*(```|~~~)/;
+const TABLE_ROW = /^\s*\|/;
+/** Heading, list and quote markers, which are not spoken. */
+const LINE_MARKER = /^\s*(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s?)/;
+const ENDS_SENTENCE = /[.!?:]["')\u201d\u2019]*$/;
 const ABBREVIATIONS = new Set(["e.g", "i.e", "vs", "etc", "mr", "mrs", "ms", "dr", "approx"]);
 
-/** The opening paragraph and whether it has ended. */
-function openingBlock(text: string, streaming: boolean): { block: string; ended: boolean } {
-  const source = text.replace(/^\s+/, "");
-  const lines = source.split("\n");
-  if (BLOCK_START.test(lines[0] ?? "")) return { block: "", ended: true };
-  const kept: string[] = [lines[0] ?? ""];
-  for (let index = 1; index < lines.length; index++) {
+/**
+ * The reply's prose as one run of text. Each finished line ends as a sentence,
+ * so paragraphs and list items are read as separate sentences. While streaming,
+ * the newest line may still be arriving and is kept as an open tail.
+ */
+function spokenProse(text: string, streaming: boolean): { settled: string; tail: string } {
+  const lines = text.split("\n");
+  let inFence = false;
+  let settled = "";
+  let tail = "";
+  for (let index = 0; index < lines.length; index++) {
     const line = lines[index]!;
-    // The newest line may still be arriving, so it cannot end the paragraph yet.
-    const settled = !streaming || index < lines.length - 1;
-    if (settled && (line.trim() === "" || BLOCK_START.test(line)))
-      return { block: kept.join(" "), ended: true };
-    if (!settled && BLOCK_START.test(line)) return { block: kept.join(" "), ended: true };
-    kept.push(line);
+    const arriving = streaming && index === lines.length - 1;
+    if (FENCE.test(line)) {
+      if (!arriving) inFence = !inFence;
+      continue;
+    }
+    if (inFence || TABLE_ROW.test(line)) continue;
+    const words = line.replace(LINE_MARKER, "").trim();
+    if (words === "") continue;
+    if (arriving) {
+      // Keeps trailing whitespace: it is what marks the tail's last sentence as finished.
+      tail = line.replace(LINE_MARKER, "").trimStart();
+      continue;
+    }
+    settled += `${ENDS_SENTENCE.test(words) ? words : `${words}.`} `;
   }
-  return { block: kept.join(" "), ended: !streaming };
+  return { settled, tail };
 }
 
 /** Cuts streaming text before a link, code span or tag that has not closed yet. */
@@ -105,9 +121,9 @@ function splitSentences(text: string): { sentences: string[]; rest: string } {
 
 /** A sentence over the cap ends at its last whole word within it. */
 function truncate(sentence: string): string {
-  const cut = sentence.slice(0, SPOKEN_OPENING_MAX_CHARS + 1);
+  const cut = sentence.slice(0, SPOKEN_REPLY_MAX_CHARS + 1);
   const space = cut.lastIndexOf(" ");
-  return (space > 0 ? cut.slice(0, space) : cut.slice(0, SPOKEN_OPENING_MAX_CHARS)).replace(
+  return (space > 0 ? cut.slice(0, space) : cut.slice(0, SPOKEN_REPLY_MAX_CHARS)).replace(
     /[,;:\s]+$/,
     "",
   );
@@ -119,27 +135,30 @@ function truncate(sentence: string): string {
  * text count then, so each returned sentence is final.
  */
 export function spokenOpening(markdown: string, streaming: boolean): SpokenOpening {
-  const { block, ended } = openingBlock(markdown, streaming);
-  const source = ended ? block : closedPrefix(block);
+  const prose = spokenProse(markdown, streaming);
+  const tail = closedPrefix(prose.tail);
   // Trailing whitespace is what marks a streamed sentence as finished.
-  const text = plainSpokenText(source) + (/\s$/.test(source) ? " " : "");
-  const split = splitSentences(text);
+  const text = `${plainSpokenText(prose.settled)} ${plainSpokenText(tail)}${
+    tail.length < prose.tail.length || /\s$/.test(tail) ? " " : ""
+  }`.replace(/^\s+/, "");
+  const split = splitSentences(prose.tail === "" ? `${text.trimEnd()} ` : text);
+  const ended = !streaming;
   const candidates = ended && split.rest ? [...split.sentences, split.rest] : split.sentences;
   const sentences: string[] = [];
   let length = 0;
   for (const candidate of candidates) {
     if (!/[\p{L}\p{N}]/u.test(candidate)) continue;
-    if (sentences.length === SPOKEN_OPENING_MAX_SENTENCES) return { sentences, complete: true };
-    if (length + candidate.length > SPOKEN_OPENING_MAX_CHARS) {
+    if (sentences.length === SPOKEN_REPLY_MAX_SENTENCES) return { sentences, complete: true };
+    if (length + candidate.length > SPOKEN_REPLY_MAX_CHARS) {
       if (sentences.length === 0) sentences.push(truncate(candidate));
       return { sentences, complete: true };
     }
     sentences.push(candidate);
     length += candidate.length + 1;
   }
-  if (sentences.length === SPOKEN_OPENING_MAX_SENTENCES) return { sentences, complete: true };
+  if (sentences.length === SPOKEN_REPLY_MAX_SENTENCES) return { sentences, complete: true };
   // An unfinished first sentence that is already over the cap will not get shorter.
-  if (!ended && sentences.length === 0 && split.rest.length > SPOKEN_OPENING_MAX_CHARS)
+  if (!ended && sentences.length === 0 && split.rest.length > SPOKEN_REPLY_MAX_CHARS)
     return { sentences: [truncate(split.rest)], complete: true };
   return { sentences, complete: ended };
 }
