@@ -400,6 +400,30 @@ export function mergeSidebarOrder(
 }
 
 /**
+ * The unit order to save after a drop. Keys of chats and groups that are
+ * gone drop out (checked against every environment, so hidden rows keep
+ * their spots). A row is saved under its chat's key or, as a group of one,
+ * its group's; once a drop places it under one, the other is dropped so an
+ * older spot can't win when the row switches back.
+ */
+export function pruneSidebarUnitOrder(input: {
+  readonly order: readonly string[];
+  /** The keys the drop just placed. */
+  readonly placed: readonly string[];
+  readonly liveKeys: ReadonlySet<string>;
+  /** [chat key, its group's key] for every grouped chat. */
+  readonly chatGroupKeys: ReadonlyArray<readonly [string, string]>;
+}): string[] {
+  const placed = new Set(input.placed);
+  const aliases = new Set<string>();
+  for (const [chatKey, groupKey] of input.chatGroupKeys) {
+    if (placed.has(groupKey) && !placed.has(chatKey)) aliases.add(chatKey);
+    if (placed.has(chatKey) && !placed.has(groupKey)) aliases.add(groupKey);
+  }
+  return input.order.filter((key) => input.liveKeys.has(key) && !aliases.has(key));
+}
+
+/**
  * Order keys for a reorder inside a group: the Pinned rule, over the group's
  * chats. Write them in the returned order, which runs bottom-up: keyless chats
  * sort above keyed ones in a group, so each write lands in its planned place
@@ -1407,13 +1431,26 @@ export function buildSidebarActiveTree<T extends SidebarActivityInput>(input: {
   readonly unitOrder?: ReadonlyArray<string>;
   readonly projectKeyOf: (item: T | EnvironmentThreadGroup) => string;
   readonly threadKeyOf: (thread: T) => string;
+  /** The key of a lone chat's hidden group, so its placement survives the group showing or hiding. */
+  readonly groupKeyOf?: (thread: T) => string | null;
   readonly isExpanded: (groupKey: string) => boolean;
   readonly isProjectCollapsed?: (projectKey: string) => boolean;
 }): ReadonlyArray<SidebarTreeEntry<T>> {
   const projectRank = new Map((input.projectOrder ?? []).map((key, index) => [key, index]));
   const unitRank = new Map((input.unitOrder ?? []).map((key, index) => [key, index]));
+  // A unit's key flips between a chat's key and its group's key as a group
+  // of one appears or hides; either key keeps the placement.
+  const rankOf = (keys: ReadonlyArray<string | null>) => {
+    let rank: number | undefined;
+    for (const key of keys) {
+      const keyRank = key === null ? undefined : unitRank.get(key);
+      if (keyRank !== undefined && (rank === undefined || keyRank < rank)) rank = keyRank;
+    }
+    return rank;
+  };
   type Unit = {
     readonly key: string;
+    readonly rank: number | undefined;
     readonly projectKey: string;
     readonly activityMs: number;
     readonly entries: () => SidebarTreeEntry<T>[];
@@ -1426,6 +1463,7 @@ export function buildSidebarActiveTree<T extends SidebarActivityInput>(input: {
     const activityMs = Math.max(...entry.members.map(sidebarActivityMs));
     units.push({
       key: entry.key,
+      rank: unitRank.get(entry.key) ?? rankOf(entry.members.map(input.threadKeyOf)),
       projectKey,
       activityMs,
       entries: () =>
@@ -1444,16 +1482,18 @@ export function buildSidebarActiveTree<T extends SidebarActivityInput>(input: {
     });
   }
   for (const thread of input.ungrouped) {
+    const key = input.threadKeyOf(thread);
     units.push({
-      key: input.threadKeyOf(thread),
+      key,
+      rank: unitRank.get(key) ?? rankOf([input.groupKeyOf?.(thread) ?? null]),
       projectKey: input.projectKeyOf(thread),
       activityMs: sidebarActivityMs(thread),
       entries: () => [{ kind: "thread", thread, groupKey: null }],
     });
   }
   const sortedUnits = units.toSorted((a, b) => {
-    const left = unitRank.get(a.key);
-    const right = unitRank.get(b.key);
+    const left = a.rank;
+    const right = b.rank;
     if (left === undefined && right === undefined) return b.activityMs - a.activityMs;
     if (left === undefined) return -1;
     if (right === undefined) return 1;

@@ -4,7 +4,7 @@ import type {
   EnvironmentThreadGroup,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
-import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import { presentThreadGroup, threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -355,9 +355,13 @@ export function useThreadGroupActions() {
           : readThreadGroup({ environmentId: thread.environmentId, groupId: thread.groupId });
       if (existing !== null) return existing;
       const created = await createGroupWith([thread]);
-      return created === null
-        ? null
-        : readThreadGroup({ environmentId: thread.environmentId, groupId: created.id });
+      if (created === null) return null;
+      // The create can resolve before the group reaches the store; the
+      // returned group carries everything a new chat or move needs.
+      return (
+        readThreadGroup({ environmentId: thread.environmentId, groupId: created.id }) ??
+        presentThreadGroup(thread.environmentId, created, [])
+      );
     },
     [createGroupWith],
   );

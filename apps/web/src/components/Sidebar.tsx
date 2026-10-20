@@ -167,6 +167,7 @@ import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
   useProjects,
+  readThreadShells,
   useThreadShells,
 } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
@@ -207,7 +208,7 @@ import {
   SidebarGroupRow,
 } from "./sidebar/SidebarGroupRow";
 import { SidebarProjectHeading } from "./sidebar/SidebarProjectHeading";
-import { indexThreadGroups, useThreadGroups } from "../state/threadGroups";
+import { indexThreadGroups, readThreadGroups, useThreadGroups } from "../state/threadGroups";
 import { readMoveToGroupState, useThreadGroupActions } from "../hooks/useThreadGroupActions";
 import { resolveGroupThreadsTarget } from "./moveToGroupMenu.logic";
 import {
@@ -242,6 +243,7 @@ import {
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
   mergeSidebarOrder,
+  pruneSidebarUnitOrder,
   resolveSidebarArrangement,
   type SidebarArrangement,
   planGroupMemberReorder,
@@ -1014,6 +1016,8 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   scopedProjectKeys: ReadonlySet<string> | null;
   environmentScopeId: EnvironmentId | null;
   routeDraftId: string | null;
+  /** The open draft already shows as a row in its group. */
+  routeDraftShownInGroup: boolean;
   onNavigateToDraft: (draftId: DraftId) => void;
   onDraftContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
@@ -1065,7 +1069,11 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
         // Open draft: render the frozen entry snapshot, or nothing for a
         // draft that has never been left. Gated on the LIVE session above so
         // send/discard still removes the row immediately.
-        if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
+        if (
+          !props.routeDraftShownInGroup &&
+          frozenActive.routeDraftId === draftKey &&
+          frozenActive.row !== null
+        ) {
           rows.push(frozenActive.row);
         }
         continue;
@@ -1084,6 +1092,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     frozenActive,
     props.environmentScopeId,
     props.routeDraftId,
+    props.routeDraftShownInGroup,
     props.scopedProjectKeys,
   ]);
   if (drafts.length === 0) {
@@ -2565,6 +2574,10 @@ function sidebarTreeEntryItem(entry: SidebarTreeEntry<EnvironmentThreadShell>): 
 
 const sidebarThreadKeyOf = (thread: EnvironmentThreadShell) =>
   scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+const sidebarThreadGroupKeyOf = (thread: EnvironmentThreadShell) =>
+  thread.groupId === null
+    ? null
+    : threadGroupKey({ environmentId: thread.environmentId, groupId: thread.groupId });
 /**
  * The drop line's spot in the list, from the rows at rest (they hold still
  * during an in-place rearrange). It starts where the target row's content does.
@@ -3572,6 +3585,7 @@ export default function Sidebar() {
         unitOrder: groupOrder,
         projectKeyOf: treeProjectKeyOf,
         threadKeyOf: sidebarThreadKeyOf,
+        groupKeyOf: sidebarThreadGroupKeyOf,
         isExpanded: isGroupExpanded,
         isProjectCollapsed,
       }),
@@ -4397,8 +4411,10 @@ export default function Sidebar() {
       // Stop normal section motion before dnd-kit measures the picked-up row.
       listMotionRef.current?.suspend();
       const list = threadListRef.current;
+      // Active rows stay below Pinned; a pinned group's chats stay in Pinned.
+      const belowPinned = arranging && activeSection === "active";
       const header = list?.querySelector<HTMLElement>(
-        arranging
+        belowPinned
           ? '[data-testid="sidebar-pinned-divider"]'
           : '[data-testid="sidebar-pinned-header"]',
       );
@@ -4514,11 +4530,23 @@ export default function Sidebar() {
     (arrangement: SidebarArrangement) => {
       const store = useUiStateStore.getState();
       if (arrangement.kind === "unit") {
-        // Keys of chats and groups that are gone drop out as the order is rewritten.
+        // Keys of chats and groups that are gone drop out as the order is
+        // rewritten. Check every environment, not just the rendered rows, so
+        // collapsed projects and filtered environments keep their placements.
+        const shells = readThreadShells();
         store.setGroupOrder(
-          mergeSidebarOrder(store.groupOrder, arrangement.order).filter(
-            (key) => threadByKeyRef.current.has(key) || threadGroupByKey.has(key),
-          ),
+          pruneSidebarUnitOrder({
+            order: mergeSidebarOrder(store.groupOrder, arrangement.order),
+            placed: arrangement.order,
+            liveKeys: new Set([
+              ...shells.map(sidebarThreadKeyOf),
+              ...indexThreadGroups(readThreadGroups()).keys(),
+            ]),
+            chatGroupKeys: shells.flatMap((thread) => {
+              const groupKey = sidebarThreadGroupKeyOf(thread);
+              return groupKey === null ? [] : [[sidebarThreadKeyOf(thread), groupKey] as const];
+            }),
+          }),
         );
         return;
       }
@@ -4536,7 +4564,7 @@ export default function Sidebar() {
         ...orderedProjects.map(getProjectOrderKey).filter((key) => !placed.has(key)),
       ]);
     },
-    [orderedProjects, projectGroupByScopeKey, projectGroups, threadGroupByKey],
+    [orderedProjects, projectGroupByScopeKey, projectGroups],
   );
   useEffect(() => {
     if (
@@ -4628,6 +4656,7 @@ export default function Sidebar() {
       unitOrder: groupOrder,
       projectKeyOf: treeProjectKeyOf,
       threadKeyOf: sidebarThreadKeyOf,
+      groupKeyOf: sidebarThreadGroupKeyOf,
       isExpanded: isGroupExpanded,
       isProjectCollapsed,
     }).map((entry) => sidebarListItemId(sidebarTreeEntryItem(entry)));
@@ -6398,8 +6427,11 @@ export default function Sidebar() {
                             thread={thread}
                             variant={rowVariant}
                             tree={tree}
+                            // A new group starts unpinned and awake, so "+"
+                            // on a pinned or snoozed chat would move it to Active.
                             onNewChatInGroup={
                               solo &&
+                              section === "active" &&
                               serverConfigs.get(thread.environmentId)?.environment.capabilities
                                 .threadGroups === true
                                 ? handleNewChatWithThread
@@ -6547,18 +6579,6 @@ export default function Sidebar() {
                         isContextDrag || dragState?.arranging
                           ? null
                           : (dragState?.activeSection ?? null);
-                      const items: ReactNode[] = [
-                        <SidebarDraftBlock
-                          key="draft-sessions"
-                          projectByKey={projectByKey}
-                          projectDisplayNameByKey={projectDisplayNameByKey}
-                          scopedProjectKeys={scopedProjectKeys}
-                          environmentScopeId={environmentScopeId}
-                          routeDraftId={routeDraftIdForRows}
-                          onNavigateToDraft={navigateToDraft}
-                          onDraftContextMenu={handleDraftContextMenu}
-                        />,
-                      ];
                       // The open "+ New chat in group" draft shows as a row at
                       // the end of its group's block, so it reads as that group's.
                       const inDraftGroup = (item: SidebarListItem | undefined) =>
@@ -6568,6 +6588,19 @@ export default function Sidebar() {
                           (item.kind === "thread" &&
                             (item.groupKey === routeDraftGroupKey ||
                               item.soloGroupKey === routeDraftGroupKey)));
+                      const items: ReactNode[] = [
+                        <SidebarDraftBlock
+                          key="draft-sessions"
+                          projectByKey={projectByKey}
+                          projectDisplayNameByKey={projectDisplayNameByKey}
+                          scopedProjectKeys={scopedProjectKeys}
+                          environmentScopeId={environmentScopeId}
+                          routeDraftId={routeDraftIdForRows}
+                          routeDraftShownInGroup={sidebarListItems.some(inDraftGroup)}
+                          onNavigateToDraft={navigateToDraft}
+                          onDraftContextMenu={handleDraftContextMenu}
+                        />,
+                      ];
                       for (const [index, item] of sidebarListItems.entries()) {
                         if (item.kind === "thread") {
                           items.push(

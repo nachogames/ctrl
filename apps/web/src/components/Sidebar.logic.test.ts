@@ -10,6 +10,7 @@ import {
   archiveSelectedThreadEntries,
   buildSidebarActiveTree,
   mergeSidebarOrder,
+  pruneSidebarUnitOrder,
   resolveSidebarArrangement,
   partitionThreadsByGroup,
   resolveForcedOpenGroupKey,
@@ -2833,6 +2834,41 @@ describe("buildSidebarActiveTree", () => {
     expect(before).toEqual(["project:b", "thread:b", "project:a", "group:g1", "group:g2"]);
   });
 
+  it("keeps a chat's place when its row becomes or stops being a group", () => {
+    const later = item("later", "a", "2026-03-09T09:00:00.000Z");
+    const lone = item("lone", "a", "2026-03-09T08:00:00.000Z");
+    const fresh = item("fresh", "a", "2026-03-09T12:00:00.000Z");
+    // Placed as a lone chat, then "+" made it a group: the group takes its spot.
+    const grouped = buildSidebarActiveTree({
+      ...base,
+      ungrouped: [later, fresh],
+      groups: [{ key: "g1", group: group("g1", "a"), members: [lone] }],
+      unitOrder: ["lone", "later"],
+      isExpanded: () => true,
+    });
+    expect(describeTree(grouped)).toEqual([
+      "project:a",
+      "thread:fresh",
+      "thread:lone solo:g1",
+      "thread:later",
+    ]);
+    // Placed as a group, then the group hid: the chat takes the group's spot.
+    const hidden = buildSidebarActiveTree({
+      ...base,
+      groupKeyOf: (thread) => (thread.id === "lone" ? "g1" : null),
+      ungrouped: [later, lone, fresh],
+      groups: [],
+      unitOrder: ["g1", "later"],
+      isExpanded: () => true,
+    });
+    expect(describeTree(hidden)).toEqual([
+      "project:a",
+      "thread:fresh",
+      "thread:lone",
+      "thread:later",
+    ]);
+  });
+
   it("emits only the heading of a collapsed project", () => {
     const tree = buildSidebarActiveTree({
       ...base,
@@ -3034,5 +3070,26 @@ describe("resolveSidebarEnvironmentScope", () => {
     expect(resolveSidebarEnvironmentScope([work, home], "environment-removed")).toBeNull();
     expect(resolveSidebarEnvironmentScope([work], "environment-work")).toBeNull();
     expect(resolveSidebarEnvironmentScope([work, home], null)).toBeNull();
+  });
+});
+
+describe("pruneSidebarUnitOrder", () => {
+  it("drops gone keys and the placed row's other key", () => {
+    expect(
+      pruneSidebarUnitOrder({
+        // "chat" was placed alone, then its group "g" was dragged.
+        order: ["chat", "x", "g", "gone"],
+        placed: ["x", "g"],
+        liveKeys: new Set(["chat", "x", "g"]),
+        chatGroupKeys: [["chat", "g"]],
+      }),
+    ).toEqual(["x", "g"]);
+  });
+
+  it("keeps the group's key until a drop places the chat on its own", () => {
+    const base = { liveKeys: new Set(["chat", "g"]), chatGroupKeys: [["chat", "g"]] as const };
+    expect(pruneSidebarUnitOrder({ ...base, order: ["g", "chat"], placed: ["chat"] })).toEqual([
+      "chat",
+    ]);
   });
 });
