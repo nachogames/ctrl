@@ -292,6 +292,17 @@ import {
   DeviceShutdownInput,
 } from "./device.ts";
 import {
+  DictationAppendInput,
+  DictationCancelInput,
+  DictationError,
+  DictationFinishInput,
+  DictationFinishResult,
+  DictationInstallInput,
+  DictationRemoveInput,
+  DictationStartResult,
+  DictationState,
+} from "./dictation.ts";
+import {
   FleetHostRegistration,
   FleetHostRequest,
   FleetHostResponse,
@@ -513,6 +524,14 @@ export const WS_METHODS = {
   deviceDetail: "device.detail",
   deviceAction: "device.action",
 
+  dictationInstall: "dictation.install",
+  dictationRemove: "dictation.remove",
+  dictationStart: "dictation.start",
+  dictationWarm: "dictation.warm",
+  dictationAppend: "dictation.append",
+  dictationFinish: "dictation.finish",
+  dictationCancel: "dictation.cancel",
+
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
@@ -629,6 +648,7 @@ export const WS_METHODS = {
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
+  subscribeDictationState: "subscribeDictationState",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -1724,6 +1744,53 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
+const DictationRpcError = Schema.Union([DictationError, EnvironmentAuthorizationError]);
+
+const WsDictationInstallRpc = Rpc.make(WS_METHODS.dictationInstall, {
+  payload: DictationInstallInput,
+  error: DictationRpcError,
+});
+
+const WsDictationRemoveRpc = Rpc.make(WS_METHODS.dictationRemove, {
+  payload: DictationRemoveInput,
+  error: DictationRpcError,
+});
+
+const WsDictationStartRpc = Rpc.make(WS_METHODS.dictationStart, {
+  payload: Schema.Struct({}),
+  success: DictationStartResult,
+  error: DictationRpcError,
+});
+
+/** Starts loading the speech model ahead of a likely dictation; a no-op when dictation is off. */
+const WsDictationWarmRpc = Rpc.make(WS_METHODS.dictationWarm, {
+  payload: Schema.Struct({}),
+  error: EnvironmentAuthorizationError,
+});
+
+const WsDictationAppendRpc = Rpc.make(WS_METHODS.dictationAppend, {
+  payload: DictationAppendInput,
+  error: DictationRpcError,
+});
+
+const WsDictationFinishRpc = Rpc.make(WS_METHODS.dictationFinish, {
+  payload: DictationFinishInput,
+  success: DictationFinishResult,
+  error: DictationRpcError,
+});
+
+const WsDictationCancelRpc = Rpc.make(WS_METHODS.dictationCancel, {
+  payload: DictationCancelInput,
+  error: DictationRpcError,
+});
+
+const WsSubscribeDictationStateRpc = Rpc.make(WS_METHODS.subscribeDictationState, {
+  payload: Schema.Struct({}),
+  success: DictationState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: OrchestrationV2RpcSchemas.dispatchCommand.output,
@@ -2090,7 +2157,19 @@ export const WsHomeRpcGroup = RpcGroup.make(
   WsFleetReportWatchEventsRpc,
 ).middleware(RpcScopeAuthorization);
 
-/** Everything but the review and Home RPCs, so the server builds their handlers apart; clients use `WsRpcGroup`. */
+/** Local dictation's RPCs, a group of their own for the same reason. */
+export const WsDictationRpcGroup = RpcGroup.make(
+  WsDictationInstallRpc,
+  WsDictationRemoveRpc,
+  WsDictationStartRpc,
+  WsDictationWarmRpc,
+  WsDictationAppendRpc,
+  WsDictationFinishRpc,
+  WsDictationCancelRpc,
+  WsSubscribeDictationStateRpc,
+).middleware(RpcScopeAuthorization);
+
+/** Everything but the review, Home, and dictation RPCs, so the server builds their handlers apart; clients use `WsRpcGroup`. */
 export const WsBaseRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -2293,4 +2372,8 @@ export const WsBaseRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeCommandOutputRpc,
 ).middleware(RpcScopeAuthorization);
 
-export const WsRpcGroup = WsBaseRpcGroup.merge(WsReviewSessionsRpcGroup, WsHomeRpcGroup);
+export const WsRpcGroup = WsBaseRpcGroup.merge(
+  WsReviewSessionsRpcGroup,
+  WsHomeRpcGroup,
+  WsDictationRpcGroup,
+);

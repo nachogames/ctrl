@@ -101,6 +101,7 @@ import {
   WS_METHODS,
   WsBaseRpcGroup,
   WsReviewSessionsRpcGroup,
+  WsDictationRpcGroup,
   WsHomeRpcGroup,
   HomeUnavailableError,
   WsRpcGroup,
@@ -185,6 +186,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
+import * as Dictation from "./dictation/Dictation.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
@@ -563,6 +565,7 @@ const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 const ServerWsBaseRpcGroup = WsBaseRpcGroup.middleware(RpcInstrumentation);
 const ServerReviewSessionsRpcGroup = WsReviewSessionsRpcGroup.middleware(RpcInstrumentation);
 const ServerHomeRpcGroup = WsHomeRpcGroup.middleware(RpcInstrumentation);
+const ServerDictationRpcGroup = WsDictationRpcGroup.middleware(RpcInstrumentation);
 // Replaying each intervening event costs a shell refetch; past this gap a
 // single O(active-threads) snapshot is cheaper and bounded.
 const SHELL_RESUME_MAX_GAP = 1_000;
@@ -1242,6 +1245,22 @@ const layerHomeRpc = ServerHomeRpcGroup.toLayer(
         ),
       [WS_METHODS.fleetRespond]: (input) => fleetBroker.respond(input),
       [WS_METHODS.fleetReportWatchEvents]: (input) => home.report(input),
+    });
+  }),
+);
+
+const layerDictationRpc = ServerDictationRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const dictation = yield* Dictation.Dictation;
+    return ServerDictationRpcGroup.of({
+      [WS_METHODS.dictationInstall]: (input) => dictation.install(input),
+      [WS_METHODS.dictationRemove]: (input) => dictation.remove(input),
+      [WS_METHODS.dictationStart]: () => dictation.start,
+      [WS_METHODS.dictationWarm]: () => dictation.warm,
+      [WS_METHODS.dictationAppend]: (input) => dictation.append(input),
+      [WS_METHODS.dictationFinish]: (input) => dictation.finish(input),
+      [WS_METHODS.dictationCancel]: (input) => dictation.cancel(input),
+      [WS_METHODS.subscribeDictationState]: () => dictation.stateStream,
     });
   }),
 );
@@ -3364,6 +3383,7 @@ export const layer = Layer.unwrap(
               ),
               layerReviewSessionsRpc,
               layerHomeRpc,
+              layerDictationRpc,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees

@@ -61,6 +61,13 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.fleetInvoke]: AuthOrchestrationOperateScope,
   [WS_METHODS.fleetRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.fleetReportWatchEvents]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationInstall]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationRemove]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationWarm]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationAppend]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationFinish]: AuthOrchestrationOperateScope,
+  [WS_METHODS.dictationCancel]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
