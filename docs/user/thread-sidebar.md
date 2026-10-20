@@ -81,10 +81,10 @@ thread is over takes the accent color. Section labels also
 identify empty sections and a collapsed settled shelf.
 
 Drag within the pinned section to change its order. Other rows slide aside to show the spot
-where the thread will land. On web and desktop, projects and chat groups keep their placement.
-Use **Move project up/down** or **Move group up/down** in their context menus to arrange them;
-that placement is saved on this client. Chats within each group, and ungrouped chats within a
-project, sort by recent conversation activity. On
+where the thread will land. On web and desktop, drag a project heading to move the project, and
+drag a group or a lone chat to move it within its project; that placement is saved on this
+client. Groups and chats you have not placed yet appear at the top of their project, newest
+first. Click a project heading to collapse or expand it. On
 mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
@@ -134,8 +134,8 @@ A chat group holds the chats that work toward one goal, such as a planning chat 
 that build and review its work. Chats in a group share a project and a workspace: the group's
 branch, worktree, and pull request. Groups are available on web and desktop.
 
-Every chat has a **Group** panel, even one on its own (see below). By default, single chats
-also appear as expandable groups in the sidebar. Turn off **Settings → General → Show single
+Every chat has a **Group** panel, even one on its own (see below). By default, a single chat
+shows as a one-row group with the group icon; click it to open the chat. Turn off **Settings → General → Show single
 chats as groups** to keep a plain chat row until a second chat joins. This changes presentation
 only and does not change saved group membership.
 
@@ -146,8 +146,10 @@ Groups only form when you ask for one:
   continues, and both are in the original chat's group. A group made for the handoff is named
   after the original chat; a group the chat already had, for example from setting a goal, keeps
   its name.
-- Drag a chat onto a group row to move it into that group, or onto another active chat to group
-  the two. Both chats must be in the same project.
+- Cmd-click (Ctrl-click on Windows and Linux) other chats to select them along with the open
+  chat, then right-click and choose **Group chats**. When the open chat, or one of the others, is
+  already in a group, the menu offers **Move to “group”** instead. All chats must be in the same
+  project.
 - Choose **Move to group…** in a chat's menu to move it into one of its project's groups that
   already has two or more chats.
 - Agents can do the same with the `t3_group_*` tools, for example to group a planning chat with
@@ -161,15 +163,16 @@ the chat to the group's branch and worktree. A busy chat cannot switch.
 
 Chats in a group sit under the group's row: in the active list beneath their project, or in
 **Pinned**, **Snoozed**, or **Settled** wherever the group is. Click the row to show or hide its
-chats; the group with the open chat stays open. On web and desktop, the chat with the most
-recent activity appears first without moving the group itself. On mobile, drag chats within an
-expanded group to arrange them manually; that saved member order follows other mobile clients.
+chats; the group with the open chat stays open. Drag chats within an expanded group to arrange
+them; that member order is saved on the server and follows your other clients.
 New chats appear at the top. A collapsed group shows its pull request number
 and its most urgent status, and hovering it shows how many chats it holds. A chat that was handed
 off is dimmed.
 
-**New chat in group**, at the end of an expanded group, starts a chat on the group's branch and
-worktree. It joins the group when you send its first message. The same action is in the group's
+The **+** on a group's row (or on a single chat's row) starts a new chat on the group's branch and
+worktree. The new chat shows as **New chat** inside the group, and the composer is headed **New
+chat in** the group's name. It joins the group when you send its first message; **start outside
+the group** under the heading drops it from the group first. The same action is in the group's
 menu, in the chat header's group menu, and in the Group panel. You can bind the
 `chat.newInGroup` command to a shortcut in [keybindings](./keybindings.md); it has none by
 default.

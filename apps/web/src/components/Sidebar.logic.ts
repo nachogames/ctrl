@@ -179,6 +179,8 @@ export type SidebarListItem =
       readonly key: string;
       readonly section: SidebarSection;
       readonly groupKey?: string | null;
+      /** The one-chat group this top-level row stands in for. */
+      readonly soloGroupKey?: string | null;
     }
   | { readonly kind: "group"; readonly key: string; readonly section: SidebarGroupSection }
   | { readonly kind: "project-heading"; readonly key: string }
@@ -256,93 +258,145 @@ export function resolveSidebarDropTarget(
   return { section, pinnedOrder, activeOrder };
 }
 
-/** Dropping a chat into a group: join a group, or group a lone Active chat first and then join. */
-export type SidebarGroupDropTarget =
-  | { readonly kind: "join"; readonly groupKey: string }
-  | { readonly kind: "create-with"; readonly threadKey: string };
+export interface SidebarArrangement {
+  readonly kind: "project" | "unit" | "member";
+  /** The project a unit drag reorders, or the group a member drag reorders. */
+  readonly scopeKey: string | null;
+  /** Project keys, unit keys, or member thread keys, in the order after the drop. */
+  readonly order: readonly string[];
+  readonly changed: boolean;
+  /** Where the drop line goes: above `beforeId`, or below `afterId` at the end. */
+  readonly line: { readonly beforeId: string } | { readonly afterId: string } | null;
+}
 
-interface SidebarGroupDropThread {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: string;
-  readonly lineage: { readonly relationshipToParent: "fork" | "subagent" | null };
-  readonly groupId?: ThreadGroupId | null;
+const isTopLevelActiveRow = (item: SidebarListItem) =>
+  item.kind === "group" || (item.kind === "thread" && (item.groupKey ?? null) === null);
+
+function sidebarUnitKey(item: SidebarListItem): string {
+  if (item.kind === "group") return item.key;
+  if (item.kind === "thread") return item.soloGroupKey ?? item.key;
+  if (item.kind === "project-heading") return item.key;
+  return sidebarListItemId(item);
 }
 
 /**
- * What dropping `activeThread` on `overItem` does to its group, or null when
- * the drop is not a group drop. A group row in any section takes the chat. An
- * Active-tree chat row takes it into its group, or groups with it when lone; a
- * lone chat that is the last member of a hidden group takes it into that group.
- * Pinned, Settled and shelf chat rows keep their pin and settle drops, and so
- * does an ungrouped chat dragged in from a shelf (its drop into Active means
- * unpin, un-settle or wake). Targets in another project, the chat's own group
- * and subagents never are group drops, nor is any drop where the chat's
- * server cannot run groups.
+ * A drag that rearranges rows in place: a project heading moves with its
+ * rows, a group row or lone chat moves inside its project, and a group's chat
+ * moves inside its group. The pointer past either end clamps to it. Null when
+ * `activeId` is none of these (pinned and parked chats keep lifecycle drops).
  */
-export function resolveSidebarGroupDropTarget(input: {
-  readonly activeThread: SidebarGroupDropThread & {
-    readonly key: string;
-    readonly section: SidebarSection;
-    readonly groupKey: string | null;
+export function resolveSidebarArrangement(input: {
+  readonly items: readonly SidebarListItem[];
+  readonly activeId: string;
+  readonly overId: string;
+}): SidebarArrangement | null {
+  const { items } = input;
+  const activeIndex = items.findIndex((item) => sidebarListItemId(item) === input.activeId);
+  const overIndex = items.findIndex((item) => sidebarListItemId(item) === input.overId);
+  const active = items[activeIndex];
+  if (active === undefined || overIndex === -1) return null;
+  const memberGroupKey = active.kind === "thread" ? (active.groupKey ?? null) : null;
+  const inGroup = (index: number) => {
+    const item = items[index];
+    return item?.kind === "thread" && (item.groupKey ?? null) === memberGroupKey;
   };
-  readonly overItem: SidebarListItem | undefined;
-  readonly groups: ReadonlyMap<string, Pick<EnvironmentThreadGroup, "environmentId" | "projectId">>;
-  readonly threads: ReadonlyMap<string, SidebarGroupDropThread>;
-  /** The chat's environment advertises `threadGroups`. */
-  readonly supportsGroups: boolean;
-}): SidebarGroupDropTarget | null {
-  const { activeThread: active, overItem } = input;
-  if (!input.supportsGroups) return null;
-  const isSubagent = (thread: SidebarGroupDropThread) =>
-    thread.lineage.relationshipToParent === "subagent";
-  if (isSubagent(active) || overItem === undefined) return null;
-  const sameProject = (target: Pick<SidebarGroupDropThread, "environmentId" | "projectId">) =>
-    target.environmentId === active.environmentId && target.projectId === active.projectId;
-  if (overItem.kind === "group") {
-    const group = input.groups.get(overItem.key);
-    if (group === undefined || !sameProject(group) || overItem.key === active.groupKey) {
+  let rangeStart: number;
+  let rangeEnd: number;
+  let kind: SidebarArrangement["kind"];
+  let scopeKey: string | null = null;
+  if (memberGroupKey !== null) {
+    kind = "member";
+    scopeKey = memberGroupKey;
+    rangeStart = activeIndex;
+    while (inGroup(rangeStart - 1)) rangeStart -= 1;
+    rangeEnd = activeIndex + 1;
+    while (inGroup(rangeEnd)) rangeEnd += 1;
+  } else {
+    const start = items.findIndex(
+      (item) => item.kind === "marker" && item.marker === "active-placeholder",
+    );
+    let end = items.length;
+    for (let index = start + 1; index < items.length; index += 1) {
+      if (items[index]!.kind === "marker") {
+        end = index;
+        break;
+      }
+    }
+    if (start === -1 || activeIndex <= start || activeIndex >= end) return null;
+    if (active.kind === "project-heading") {
+      kind = "project";
+      rangeStart = start + 1;
+      rangeEnd = end;
+    } else if (isTopLevelActiveRow(active)) {
+      kind = "unit";
+      let heading = activeIndex;
+      while (heading > start && items[heading]!.kind !== "project-heading") heading -= 1;
+      const headingItem = items[heading];
+      scopeKey = headingItem?.kind === "project-heading" ? headingItem.key : null;
+      rangeStart = heading + 1;
+      rangeEnd = rangeStart;
+      while (rangeEnd < end && items[rangeEnd]!.kind !== "project-heading") rangeEnd += 1;
+    } else {
       return null;
     }
-    return { kind: "join", groupKey: overItem.key };
   }
-  if (overItem.kind !== "thread" || overItem.key === active.key) return null;
-  if (overItem.section !== "active") return null;
-  if (active.groupKey === null && active.section !== "active") return null;
-  const target = input.threads.get(overItem.key);
-  if (target === undefined || isSubagent(target) || !sameProject(target)) return null;
-  const targetGroupKey = overItem.groupKey ?? null;
-  if (targetGroupKey !== null) {
-    return targetGroupKey === active.groupKey ? null : { kind: "join", groupKey: targetGroupKey };
+  const startsBlock = (item: SidebarListItem) =>
+    kind === "project"
+      ? item.kind === "project-heading"
+      : kind === "unit"
+        ? isTopLevelActiveRow(item)
+        : true;
+  const blocks: Array<{ readonly from: number; to: number }> = [];
+  for (let index = rangeStart; index < rangeEnd; index += 1) {
+    if (startsBlock(items[index]!) || blocks.length === 0)
+      blocks.push({ from: index, to: index + 1 });
+    else blocks.at(-1)!.to = index + 1;
   }
-  const hiddenGroupKey =
-    target.groupId == null
-      ? null
-      : threadGroupKey({ environmentId: target.environmentId, groupId: target.groupId });
-  const hiddenGroup = hiddenGroupKey === null ? undefined : input.groups.get(hiddenGroupKey);
-  if (hiddenGroupKey === null || hiddenGroup === undefined || !sameProject(hiddenGroup)) {
-    return { kind: "create-with", threadKey: overItem.key };
-  }
-  return hiddenGroupKey === active.groupKey ? null : { kind: "join", groupKey: hiddenGroupKey };
+  const blockAt = (index: number) =>
+    index < rangeStart
+      ? 0
+      : index >= rangeEnd
+        ? blocks.length - 1
+        : blocks.findIndex((block) => index >= block.from && index < block.to);
+  const from = blockAt(activeIndex);
+  const to = blockAt(overIndex);
+  if (from === -1 || to === -1) return null;
+  const moved = [...blocks];
+  const [lifted] = moved.splice(from, 1);
+  moved.splice(to, 0, lifted!);
+  const next = moved[to + 1];
+  const previous = moved[to - 1];
+  return {
+    kind,
+    scopeKey,
+    order: moved.map((block) => sidebarUnitKey(items[block.from]!)),
+    changed: from !== to,
+    line:
+      from === to
+        ? null
+        : next !== undefined
+          ? { beforeId: sidebarListItemId(items[next.from]!) }
+          : previous !== undefined
+            ? { afterId: sidebarListItemId(items[previous.to - 1]!) }
+            : null,
+  };
 }
 
 /**
- * The group whose chats a drop reorders: a member dropped on another member of
- * its own expanded group. Null for any other drop, or where the chat's server
- * cannot store the order.
+ * The full manual order after a drop rearranged `visible`: those keys move
+ * together to where the first of them was, and every other key keeps its
+ * place. New keys are fine; they join the block.
  */
-export function resolveSidebarGroupReorder(input: {
-  readonly activeItem: SidebarListItem | undefined;
-  readonly overItem: SidebarListItem | undefined;
-  /** The chat's environment advertises `threadGroupReorder`. */
-  readonly supportsReorder: boolean;
-}): string | null {
-  const { activeItem, overItem } = input;
-  if (!input.supportsReorder || activeItem?.kind !== "thread" || overItem?.kind !== "thread") {
-    return null;
-  }
-  const groupKey = activeItem.groupKey ?? null;
-  if (groupKey === null || overItem.key === activeItem.key) return null;
-  return overItem.groupKey === groupKey ? groupKey : null;
+export function mergeSidebarOrder(
+  current: readonly string[],
+  visible: readonly string[],
+): string[] {
+  const shown = new Set(visible);
+  const firstShown = current.findIndex((key) => shown.has(key));
+  const rest = current.filter((key) => !shown.has(key));
+  const at =
+    firstShown === -1 ? 0 : current.slice(0, firstShown).filter((key) => !shown.has(key)).length;
+  return [...rest.slice(0, at), ...visible, ...rest.slice(at)];
 }
 
 /**
@@ -1318,18 +1372,29 @@ export function partitionThreadsByGroup<
 }
 
 export type SidebarTreeEntry<T> =
-  | { readonly kind: "project-heading"; readonly projectKey: string }
+  | { readonly kind: "project-heading"; readonly projectKey: string; readonly collapsed: boolean }
   | {
       readonly kind: "group";
       readonly groupKey: string;
       readonly group: EnvironmentThreadGroup;
       readonly members: ReadonlyArray<T>;
     }
-  | { readonly kind: "thread"; readonly thread: T; readonly groupKey: string | null };
+  | {
+      readonly kind: "thread";
+      readonly thread: T;
+      readonly groupKey: string | null;
+      /** A group whose only chat this is: the chat's row stands in for the group. */
+      readonly soloGroupKey?: string | null;
+    };
 
 type SidebarActivityInput = Parameters<typeof sidebarActivityMs>[0];
 
-/** Projects and groups keep their placement; activity only orders chats within them. */
+/**
+ * The Active tree: projects in manual order, then each project's top-level
+ * rows (groups and lone chats) in manual order. Rows the user never placed
+ * sit on top, newest activity first. Chats inside a group keep the group's
+ * order. A group with one chat is that chat's row, with no children.
+ */
 export function buildSidebarActiveTree<T extends SidebarActivityInput>(input: {
   readonly ungrouped: ReadonlyArray<T>;
   readonly groups: ReadonlyArray<{
@@ -1338,42 +1403,73 @@ export function buildSidebarActiveTree<T extends SidebarActivityInput>(input: {
     readonly members: ReadonlyArray<T>;
   }>;
   readonly projectOrder?: ReadonlyArray<string>;
-  readonly groupOrder?: ReadonlyArray<string>;
+  /** Group keys and lone-chat keys, as placed by drag. */
+  readonly unitOrder?: ReadonlyArray<string>;
   readonly projectKeyOf: (item: T | EnvironmentThreadGroup) => string;
+  readonly threadKeyOf: (thread: T) => string;
   readonly isExpanded: (groupKey: string) => boolean;
+  readonly isProjectCollapsed?: (projectKey: string) => boolean;
 }): ReadonlyArray<SidebarTreeEntry<T>> {
-  const projectKeys = new Set([
-    ...input.groups
-      .filter((entry) => entry.members.length > 0)
-      .map((entry) => input.projectKeyOf(entry.group)),
-    ...input.ungrouped.map(input.projectKeyOf),
-  ]);
   const projectRank = new Map((input.projectOrder ?? []).map((key, index) => [key, index]));
-  const groupRank = new Map((input.groupOrder ?? []).map((key, index) => [key, index]));
-  const groups = input.groups.toSorted(
-    (a, b) =>
-      (groupRank.get(a.key) ?? Infinity) - (groupRank.get(b.key) ?? Infinity) ||
-      String(a.group.createdAt).localeCompare(String(b.group.createdAt)) ||
-      a.key.localeCompare(b.key),
-  );
-  const entries: SidebarTreeEntry<T>[] = [];
-  for (const projectKey of [...projectKeys].toSorted(
+  const unitRank = new Map((input.unitOrder ?? []).map((key, index) => [key, index]));
+  type Unit = {
+    readonly key: string;
+    readonly projectKey: string;
+    readonly activityMs: number;
+    readonly entries: () => SidebarTreeEntry<T>[];
+  };
+  const units: Unit[] = [];
+  for (const entry of input.groups) {
+    const [first] = entry.members;
+    if (first === undefined) continue;
+    const projectKey = input.projectKeyOf(entry.group);
+    const activityMs = Math.max(...entry.members.map(sidebarActivityMs));
+    units.push({
+      key: entry.key,
+      projectKey,
+      activityMs,
+      entries: () =>
+        entry.members.length === 1
+          ? [{ kind: "thread", thread: first, groupKey: null, soloGroupKey: entry.key }]
+          : [
+              { kind: "group", groupKey: entry.key, group: entry.group, members: entry.members },
+              ...(input.isExpanded(entry.key)
+                ? entry.members.map((thread): SidebarTreeEntry<T> => ({
+                    kind: "thread",
+                    thread,
+                    groupKey: entry.key,
+                  }))
+                : []),
+            ],
+    });
+  }
+  for (const thread of input.ungrouped) {
+    units.push({
+      key: input.threadKeyOf(thread),
+      projectKey: input.projectKeyOf(thread),
+      activityMs: sidebarActivityMs(thread),
+      entries: () => [{ kind: "thread", thread, groupKey: null }],
+    });
+  }
+  const sortedUnits = units.toSorted((a, b) => {
+    const left = unitRank.get(a.key);
+    const right = unitRank.get(b.key);
+    if (left === undefined && right === undefined) return b.activityMs - a.activityMs;
+    if (left === undefined) return -1;
+    if (right === undefined) return 1;
+    return left - right;
+  });
+  const projectKeys = [...new Set(units.map((unit) => unit.projectKey))].toSorted(
     (a, b) =>
       (projectRank.get(a) ?? Infinity) - (projectRank.get(b) ?? Infinity) || a.localeCompare(b),
-  )) {
-    entries.push({ kind: "project-heading", projectKey });
-    for (const entry of groups) {
-      if (input.projectKeyOf(entry.group) !== projectKey || entry.members.length === 0) continue;
-      const members = entry.members.toSorted((a, b) => sidebarActivityMs(b) - sidebarActivityMs(a));
-      entries.push({ kind: "group", groupKey: entry.key, group: entry.group, members });
-      if (input.isExpanded(entry.key)) {
-        for (const thread of members) entries.push({ kind: "thread", thread, groupKey: entry.key });
-      }
-    }
-    for (const thread of input.ungrouped
-      .filter((thread) => input.projectKeyOf(thread) === projectKey)
-      .toSorted((a, b) => sidebarActivityMs(b) - sidebarActivityMs(a))) {
-      entries.push({ kind: "thread", thread, groupKey: null });
+  );
+  const entries: SidebarTreeEntry<T>[] = [];
+  for (const projectKey of projectKeys) {
+    const collapsed = input.isProjectCollapsed?.(projectKey) ?? false;
+    entries.push({ kind: "project-heading", projectKey, collapsed });
+    if (collapsed) continue;
+    for (const unit of sortedUnits) {
+      if (unit.projectKey === projectKey) entries.push(...unit.entries());
     }
   }
   return entries;

@@ -11830,6 +11830,7 @@ export default function ChatView(props: ChatViewProps) {
                           draftId={draftId}
                           activeProjectRef={activeProjectRef}
                           activeProjectTitle={activeProject?.title ?? null}
+                          group={draftLaunchGroup}
                         />
                       </div>
                     </div>

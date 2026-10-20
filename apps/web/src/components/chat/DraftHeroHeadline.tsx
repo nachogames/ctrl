@@ -3,7 +3,8 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { FolderPlusIcon } from "lucide-react";
+import type { EnvironmentThreadGroup } from "@t3tools/client-runtime/state/models";
+import { FolderPlusIcon, LayersIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -55,12 +56,15 @@ interface DraftHeroHeadlineProps {
   readonly draftId: DraftId | null;
   readonly activeProjectRef: ScopedProjectRef | null;
   readonly activeProjectTitle: string | null;
+  /** The group a "+ New chat in group" draft joins on its first send. */
+  readonly group?: EnvironmentThreadGroup | null;
 }
 
 export function DraftHeroHeadline({
   draftId,
   activeProjectRef,
   activeProjectTitle,
+  group = null,
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
   const threads = useThreadShells();
@@ -73,6 +77,7 @@ export function DraftHeroHeadline({
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
   const {
@@ -411,6 +416,37 @@ export function DraftHeroHeadline({
         {noProjectShortcut ? <TooltipPopup side="bottom">{noProjectShortcut}</TooltipPopup> : null}
       </Tooltip>
     ) : null;
+
+  if (group !== null) {
+    // A new chat in a group names the group first, so it can't read as a
+    // fresh thread of the project.
+    return (
+      <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
+        <h1 className="flex w-full items-center justify-center gap-2.5 text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
+          <LayersIcon aria-hidden className="size-6 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate">New chat in {group.title}</span>
+        </h1>
+        <p className="mt-2 flex h-6 items-center gap-1.5 text-muted-foreground text-sm">
+          <span className="min-w-0 truncate">
+            {activeProjectDisplayName ?? "Project"}
+            {group.branch !== null ? ` · ${group.branch}` : ""}
+          </span>
+          {draftId ? (
+            <>
+              <span aria-hidden>·</span>
+              <InlineButton
+                tone="muted"
+                className="pointer-events-auto"
+                onClick={() => setDraftThreadContext(draftId, { groupId: null })}
+              >
+                start outside the group
+              </InlineButton>
+            </>
+          ) : null}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
