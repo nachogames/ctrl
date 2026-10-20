@@ -4,7 +4,7 @@ import type {
   EnvironmentThreadGroup,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
-import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import { presentThreadGroup, threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -23,6 +23,7 @@ import { useCallback, useMemo } from "react";
 
 import {
   groupWithTarget,
+  resolveGroupThreadsTarget,
   type MoveToGroupCandidate,
   moveWithWorkspaceConfirm,
   workspaceMismatchConfirmMessage,
@@ -345,9 +346,62 @@ export function useThreadGroupActions() {
     [createGroup],
   );
 
+  /** The group a lone chat's "+" adds to: its own, made a group of one if it has none. */
+  const groupOfThread = useCallback(
+    async (thread: EnvironmentThreadShell): Promise<EnvironmentThreadGroup | null> => {
+      const existing =
+        thread.groupId == null
+          ? null
+          : readThreadGroup({ environmentId: thread.environmentId, groupId: thread.groupId });
+      if (existing !== null) return existing;
+      const created = await createGroupWith([thread]);
+      if (created === null) return null;
+      // The create can resolve before the group reaches the store; the
+      // returned group carries everything a new chat or move needs.
+      return (
+        readThreadGroup({ environmentId: thread.environmentId, groupId: created.id }) ??
+        presentThreadGroup(thread.environmentId, created, [])
+      );
+    },
+    [createGroupWith],
+  );
+
   return useMemo(
     () => ({
       newChatInGroup,
+      /** "+" on a lone chat's row: a new chat that joins the lone chat's group. */
+      newChatWithThread: async (thread: EnvironmentThreadShell) => {
+        if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
+          toastManager.add({
+            type: "error",
+            title: "Chat unavailable",
+            description: "This connection cannot start chats in this project.",
+          });
+          return;
+        }
+        const group = await groupOfThread(thread);
+        if (group !== null) await newChatInGroup(group);
+      },
+      /**
+       * Groups chats picked together: the rest join `anchor`'s group, or the
+       * one group among them, or a new group around `anchor`.
+       */
+      groupThreads: async (
+        threads: ReadonlyArray<EnvironmentThreadShell>,
+        anchor: EnvironmentThreadShell,
+      ) => {
+        const target = resolveGroupThreadsTarget(threads, anchor);
+        if (target === null) return;
+        const group =
+          target.groupId === null
+            ? await groupOfThread(anchor)
+            : readThreadGroup({ environmentId: anchor.environmentId, groupId: target.groupId });
+        if (group === null) return;
+        for (const thread of threads) {
+          if (thread.groupId === group.id) continue;
+          if (!(await moveThreadIntoGroup(thread, group))) return;
+        }
+      },
       moveThreadIntoGroup,
       /** "Move to group… › <group>": the group must still exist when the menu closes. */
       moveThreadToGroupId: async (thread: EnvironmentThreadShell, groupId: string) => {
@@ -513,6 +567,7 @@ export function useThreadGroupActions() {
     [
       createGroupWith,
       deleteGroup,
+      groupOfThread,
       moveThreadCommand,
       moveThreadIntoGroup,
       newChatInGroup,

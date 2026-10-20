@@ -9,6 +9,9 @@ import {
   animateSidebarLayoutChanges,
   archiveSelectedThreadEntries,
   buildSidebarActiveTree,
+  mergeSidebarOrder,
+  pruneSidebarUnitOrder,
+  resolveSidebarArrangement,
   partitionThreadsByGroup,
   resolveForcedOpenGroupKey,
   resolveSidebarGroupExpanded,
@@ -57,8 +60,6 @@ import {
   sortLogicalProjectsForSidebar,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
-  resolveSidebarGroupDropTarget,
-  resolveSidebarGroupReorder,
   planGroupMemberReorder,
   planSidebarThreadDrop,
   sortPinnedThreadsForSidebar,
@@ -68,6 +69,7 @@ import {
   shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  sidebarListItemId,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -2808,59 +2810,61 @@ describe("buildSidebarActiveTree", () => {
     makeGroup({ id: ThreadGroupId.make(id), projectId: ProjectId.make(project) });
   const projectKeyOf = (entry: Item | EnvironmentThreadGroup) =>
     "project" in entry ? entry.project : entry.projectId;
+  const base = { projectKeyOf, threadKeyOf: (thread: Item) => thread.id };
   const describeTree = (entries: ReadonlyArray<SidebarTreeEntry<Item>>) =>
     entries.map((entry) =>
       entry.kind === "project-heading"
-        ? `project:${entry.projectKey}`
+        ? `project:${entry.projectKey}${entry.collapsed ? " (collapsed)" : ""}`
         : entry.kind === "group"
           ? `group:${entry.groupKey}`
-          : `thread:${entry.thread.id}${entry.groupKey === null ? "" : `@${entry.groupKey}`}`,
+          : `thread:${entry.thread.id}${entry.groupKey === null ? "" : `@${entry.groupKey}`}${
+              entry.soloGroupKey ? ` solo:${entry.soloGroupKey}` : ""
+            }`,
     );
+  const pair = [
+    item("first", "a", "2026-03-09T10:00:00.000Z"),
+    item("second", "a", "2026-03-09T12:00:00.000Z"),
+  ];
 
   it("keeps projects in manual order regardless of activity", () => {
     const tree = buildSidebarActiveTree({
+      ...base,
       ungrouped: [
         item("old", "a", "2026-03-09T10:00:00.000Z"),
         item("new", "b", "2026-03-09T11:00:00.000Z"),
       ],
       groups: [],
-      projectKeyOf,
+      projectOrder: ["a", "b"],
       isExpanded: () => false,
     });
     expect(describeTree(tree)).toEqual(["project:a", "thread:old", "project:b", "thread:new"]);
   });
 
-  it("puts a group with a newer member above an older ungrouped chat", () => {
+  it("puts unplaced rows on top by activity, above rows the user placed", () => {
     const tree = buildSidebarActiveTree({
-      ungrouped: [item("loose", "a", "2026-03-09T10:00:00.000Z")],
-      groups: [
-        {
-          key: "g1",
-          group: group("g1", "a"),
-          members: [item("member", "a", "2026-03-09T11:00:00.000Z")],
-        },
+      ...base,
+      ungrouped: [
+        item("placed", "a", "2026-03-09T13:00:00.000Z"),
+        item("older", "a", "2026-03-09T10:00:00.000Z"),
       ],
-      projectKeyOf,
+      groups: [{ key: "g1", group: group("g1", "a"), members: pair }],
+      unitOrder: ["placed"],
       isExpanded: () => false,
     });
-    expect(describeTree(tree)).toEqual(["project:a", "group:g1", "thread:loose"]);
+    expect(describeTree(tree)).toEqual(["project:a", "group:g1", "thread:older", "thread:placed"]);
   });
 
-  it("emits members after an expanded group by latest chat activity, and none for a collapsed one", () => {
-    const members = [
-      item("first", "a", "2026-03-09T10:00:00.000Z"),
-      item("second", "a", "2026-03-09T12:00:00.000Z"),
-    ];
+  it("keeps the group's member order and emits members only when expanded", () => {
     const input = {
+      ...base,
       ungrouped: [item("loose", "a", "2026-03-09T11:00:00.000Z")],
-      groups: [{ key: "g1", group: group("g1", "a"), members }],
-      projectKeyOf,
+      groups: [{ key: "g1", group: group("g1", "a"), members: pair }],
     };
     expect(describeTree(buildSidebarActiveTree({ ...input, isExpanded: () => true }))).toEqual([
       "project:a",
       "group:g1",
-      "thread:second@g1",
       "thread:first@g1",
+      "thread:second@g1",
       "thread:loose",
     ]);
     expect(describeTree(buildSidebarActiveTree({ ...input, isExpanded: () => false }))).toEqual([
@@ -2870,25 +2874,36 @@ describe("buildSidebarActiveTree", () => {
     ]);
   });
 
-  it("keeps manual project and group positions when a member chats", () => {
+  it("shows a one-chat group as that chat's row", () => {
+    const tree = buildSidebarActiveTree({
+      ...base,
+      ungrouped: [],
+      groups: [
+        { key: "g1", group: group("g1", "a"), members: [item("one", "a", "2026-03-09T10:00:00Z")] },
+      ],
+      isExpanded: () => true,
+    });
+    expect(describeTree(tree)).toEqual(["project:a", "thread:one solo:g1"]);
+  });
+
+  it("keeps manual positions when a member chats", () => {
     const input = {
+      ...base,
       ungrouped: [item("b", "b", "2026-03-09T10:00:00.000Z")],
       groups: [
-        {
-          key: "g1",
-          group: group("g1", "a"),
-          members: [item("one", "a", "2026-03-09T10:00:00.000Z")],
-        },
+        { key: "g1", group: group("g1", "a"), members: pair },
         {
           key: "g2",
           group: group("g2", "a"),
-          members: [item("two", "a", "2026-03-09T12:00:00.000Z")],
+          members: [
+            item("two", "a", "2026-03-09T12:00:00.000Z"),
+            item("three", "a", "2026-03-09T12:00:00.000Z"),
+          ],
         },
       ],
       projectOrder: ["b", "a"],
-      groupOrder: ["g1", "g2"],
-      projectKeyOf,
-      isExpanded: () => true,
+      unitOrder: ["g1", "g2"],
+      isExpanded: () => false,
     };
     const before = describeTree(buildSidebarActiveTree(input));
     input.groups[1]!.members[0] = {
@@ -2896,25 +2911,143 @@ describe("buildSidebarActiveTree", () => {
       latestUserMessageAt: "2026-03-10T12:00:00.000Z",
     };
     expect(describeTree(buildSidebarActiveTree(input))).toEqual(before);
-    expect(before).toEqual([
-      "project:b",
-      "thread:b",
+    expect(before).toEqual(["project:b", "thread:b", "project:a", "group:g1", "group:g2"]);
+  });
+
+  it("keeps a chat's place when its row becomes or stops being a group", () => {
+    const later = item("later", "a", "2026-03-09T09:00:00.000Z");
+    const lone = item("lone", "a", "2026-03-09T08:00:00.000Z");
+    const fresh = item("fresh", "a", "2026-03-09T12:00:00.000Z");
+    // Placed as a lone chat, then "+" made it a group: the group takes its spot.
+    const grouped = buildSidebarActiveTree({
+      ...base,
+      ungrouped: [later, fresh],
+      groups: [{ key: "g1", group: group("g1", "a"), members: [lone] }],
+      unitOrder: ["lone", "later"],
+      isExpanded: () => true,
+    });
+    expect(describeTree(grouped)).toEqual([
       "project:a",
-      "group:g1",
-      "thread:one@g1",
-      "group:g2",
-      "thread:two@g2",
+      "thread:fresh",
+      "thread:lone solo:g1",
+      "thread:later",
     ]);
+    // Placed as a group, then the group hid: the chat takes the group's spot.
+    const hidden = buildSidebarActiveTree({
+      ...base,
+      groupKeyOf: (thread) => (thread.id === "lone" ? "g1" : null),
+      ungrouped: [later, lone, fresh],
+      groups: [],
+      unitOrder: ["g1", "later"],
+      isExpanded: () => true,
+    });
+    expect(describeTree(hidden)).toEqual([
+      "project:a",
+      "thread:fresh",
+      "thread:lone",
+      "thread:later",
+    ]);
+  });
+
+  it("emits only the heading of a collapsed project", () => {
+    const tree = buildSidebarActiveTree({
+      ...base,
+      ungrouped: [item("x", "a", "2026-03-09T10:00:00.000Z")],
+      groups: [],
+      isExpanded: () => true,
+      isProjectCollapsed: (key) => key === "a",
+    });
+    expect(describeTree(tree)).toEqual(["project:a (collapsed)"]);
   });
 
   it("emits nothing for a group with no members", () => {
     const tree = buildSidebarActiveTree({
+      ...base,
       ungrouped: [],
       groups: [{ key: "g1", group: group("g1", "a"), members: [] }],
-      projectKeyOf,
       isExpanded: () => true,
     });
     expect(tree).toEqual([]);
+  });
+});
+
+describe("resolveSidebarArrangement", () => {
+  const heading = (key: string): SidebarListItem => ({ kind: "project-heading", key });
+  const row = (key: string, groupKey: string | null = null): SidebarListItem => ({
+    kind: "thread",
+    key,
+    section: "active",
+    groupKey,
+  });
+  const groupRow = (key: string): SidebarListItem => ({ kind: "group", key, section: "active" });
+  const items: SidebarListItem[] = [
+    { kind: "marker", marker: "pinned-header" },
+    { kind: "thread", key: "pinned", section: "pinned" },
+    { kind: "marker", marker: "pinned-divider" },
+    { kind: "marker", marker: "active-placeholder" },
+    heading("a"),
+    groupRow("g1"),
+    row("m1", "g1"),
+    row("m2", "g1"),
+    row("loose"),
+    heading("b"),
+    row("b1"),
+    { kind: "marker", marker: "settled-header" },
+  ];
+  const arrange = (activeId: string, overId: string) =>
+    resolveSidebarArrangement({ items, activeId, overId });
+
+  it("moves a project with its rows, the line below the last project", () => {
+    expect(arrange("sidebar-project-a", "b1")).toMatchObject({
+      kind: "project",
+      order: ["b", "a"],
+      line: { afterId: "b1" },
+    });
+  });
+
+  it("moves a group with its chats inside its project, clamped to it", () => {
+    expect(arrange("sidebar-group-g1", "b1")).toMatchObject({
+      kind: "unit",
+      scopeKey: "a",
+      order: ["loose", "g1"],
+      changed: true,
+      line: { afterId: "loose" },
+    });
+  });
+
+  it("keeps a lone chat in its project, even over Pinned", () => {
+    expect(arrange("loose", "sidebar-group-g1")).toMatchObject({
+      order: ["loose", "g1"],
+      line: { beforeId: "sidebar-group-g1" },
+    });
+    expect(arrange("loose", "pinned")?.order).toEqual(["loose", "g1"]);
+  });
+
+  it("moves a group's chat among its group's chats", () => {
+    expect(arrange("m2", "m1")).toMatchObject({
+      kind: "member",
+      scopeKey: "g1",
+      order: ["m2", "m1"],
+      line: { beforeId: "m1" },
+    });
+  });
+
+  it("draws no line when the row stays put, and leaves pinned chats to lifecycle drops", () => {
+    expect(arrange("loose", "loose")).toMatchObject({ changed: false, line: null });
+    expect(arrange("pinned", "loose")).toBeNull();
+  });
+});
+
+describe("mergeSidebarOrder", () => {
+  it("moves the shown keys as a block and keeps the others in place", () => {
+    expect(mergeSidebarOrder(["x", "a", "y", "b"], ["b", "a", "new"])).toEqual([
+      "x",
+      "b",
+      "a",
+      "new",
+      "y",
+    ]);
+    expect(mergeSidebarOrder([], ["a"])).toEqual(["a"]);
   });
 });
 
@@ -2963,232 +3096,6 @@ describe("resolveForcedOpenGroupKey", () => {
       resolveForcedOpenGroupKey({ routeThreadKey: "env:loose", groupKeyByThreadKey }),
     ).toBeNull();
     expect(resolveForcedOpenGroupKey({ routeThreadKey: null, groupKeyByThreadKey })).toBeNull();
-  });
-});
-
-describe("resolveSidebarGroupDropTarget", () => {
-  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
-  const inProject = {
-    environmentId: localEnvironmentId,
-    projectId: "project-a",
-    lineage: { relationshipToParent: null },
-    groupId: null as ThreadGroupId | null,
-  };
-  const groups = new Map([
-    ["group:auth", { environmentId: localEnvironmentId, projectId: ProjectId.make("project-a") }],
-    ["group:docs", { environmentId: localEnvironmentId, projectId: ProjectId.make("project-a") }],
-    ["group:other", { environmentId: localEnvironmentId, projectId: ProjectId.make("project-b") }],
-  ]);
-  const threads = new Map([
-    ["env:lone", inProject],
-    ["env:member", inProject],
-    ["env:pinned", inProject],
-    ["env:elsewhere", { ...inProject, projectId: "project-b" }],
-    ["env:remote", { ...inProject, environmentId: remoteEnvironmentId }],
-  ]);
-  const active = (
-    overrides: Partial<Parameters<typeof resolveSidebarGroupDropTarget>[0]["activeThread"]> = {},
-  ) => ({
-    ...inProject,
-    key: "env:dragged",
-    section: "active" as const,
-    groupKey: null,
-    ...overrides,
-  });
-  const resolve = (overItem: SidebarListItem | undefined, activeThread = active()) =>
-    resolveSidebarGroupDropTarget({
-      activeThread,
-      overItem,
-      groups,
-      threads,
-      supportsGroups: true,
-    });
-
-  it("offers no group drop where the chat's server cannot run groups", () => {
-    const drop = (overItem: SidebarListItem) =>
-      resolveSidebarGroupDropTarget({
-        activeThread: active(),
-        overItem,
-        groups,
-        threads,
-        supportsGroups: false,
-      });
-    expect(drop({ kind: "group", key: "group:auth", section: "active" })).toBeNull();
-    expect(
-      drop({ kind: "thread", key: "env:member", section: "active", groupKey: null }),
-    ).toBeNull();
-  });
-
-  it("joins a group row in any section", () => {
-    for (const section of ["pinned", "active", "snoozed", "settled"] as const) {
-      expect(resolve({ kind: "group", key: "group:auth", section })).toEqual({
-        kind: "join",
-        groupKey: "group:auth",
-      });
-    }
-    expect(
-      resolve(
-        { kind: "group", key: "group:auth", section: "pinned" },
-        active({ section: "pinned" }),
-      ),
-    ).toEqual({ kind: "join", groupKey: "group:auth" });
-  });
-
-  it("joins the group of an Active-tree member row", () => {
-    expect(
-      resolve({ kind: "thread", key: "env:member", section: "active", groupKey: "group:docs" }),
-    ).toEqual({ kind: "join", groupKey: "group:docs" });
-  });
-
-  it("groups with a lone Active chat", () => {
-    expect(resolve({ kind: "thread", key: "env:lone", section: "active", groupKey: null })).toEqual(
-      {
-        kind: "create-with",
-        threadKey: "env:lone",
-      },
-    );
-  });
-
-  it("moves a grouped chat to another group", () => {
-    const grouped = active({ groupKey: "group:auth", section: "pinned" });
-    expect(resolve({ kind: "group", key: "group:docs", section: "active" }, grouped)).toEqual({
-      kind: "join",
-      groupKey: "group:docs",
-    });
-    expect(
-      resolve({ kind: "thread", key: "env:lone", section: "active", groupKey: null }, grouped),
-    ).toEqual({ kind: "create-with", threadKey: "env:lone" });
-  });
-
-  it("is not a group drop onto the chat's own group or its own row", () => {
-    const grouped = active({ groupKey: "group:auth" });
-    expect(resolve({ kind: "group", key: "group:auth", section: "active" }, grouped)).toBeNull();
-    expect(
-      resolve(
-        { kind: "thread", key: "env:member", section: "active", groupKey: "group:auth" },
-        grouped,
-      ),
-    ).toBeNull();
-    expect(resolve({ kind: "thread", key: "env:dragged", section: "active" })).toBeNull();
-  });
-
-  it("is not a group drop across projects or environments", () => {
-    expect(resolve({ kind: "group", key: "group:other", section: "active" })).toBeNull();
-    expect(resolve({ kind: "thread", key: "env:elsewhere", section: "active" })).toBeNull();
-    expect(resolve({ kind: "thread", key: "env:remote", section: "active" })).toBeNull();
-  });
-
-  it("never groups a subagent", () => {
-    expect(
-      resolve(
-        { kind: "group", key: "group:auth", section: "active" },
-        active({ lineage: { relationshipToParent: "subagent" } }),
-      ),
-    ).toBeNull();
-  });
-
-  it("keeps pin and settle drops on Pinned and Settled chat rows", () => {
-    expect(resolve({ kind: "thread", key: "env:pinned", section: "pinned" })).toBeNull();
-    expect(resolve({ kind: "thread", key: "env:pinned", section: "settled" })).toBeNull();
-  });
-
-  it("keeps an ungrouped shelf chat's drop into Active as unpin, un-settle or wake", () => {
-    for (const section of ["pinned", "settled", "snoozed"] as const) {
-      expect(
-        resolve({ kind: "thread", key: "env:lone", section: "active" }, active({ section })),
-      ).toBeNull();
-    }
-  });
-
-  it("joins the hidden group of a lone chat instead of forming a new one", () => {
-    const soloGroupId = ThreadGroupId.make("group-solo");
-    const soloKey = threadGroupKey({ environmentId: localEnvironmentId, groupId: soloGroupId });
-    const drop = (activeThread = active()) =>
-      resolveSidebarGroupDropTarget({
-        activeThread,
-        overItem: { kind: "thread", key: "env:solo", section: "active", groupKey: null },
-        groups: new Map([
-          ...groups,
-          [soloKey, { environmentId: localEnvironmentId, projectId: ProjectId.make("project-a") }],
-        ]),
-        threads: new Map([...threads, ["env:solo", { ...inProject, groupId: soloGroupId }]]),
-        supportsGroups: true,
-      });
-    expect(drop()).toEqual({ kind: "join", groupKey: soloKey });
-    // A grouped chat dragged out of its visible group joins it too.
-    expect(drop(active({ groupKey: "group:auth" }))).toEqual({ kind: "join", groupKey: soloKey });
-  });
-
-  it("forms a new group with a lone chat whose group is unknown or elsewhere", () => {
-    const strayGroupId = ThreadGroupId.make("group-stray");
-    const strayKey = threadGroupKey({ environmentId: localEnvironmentId, groupId: strayGroupId });
-    const drop = (projectId: string | null) =>
-      resolveSidebarGroupDropTarget({
-        activeThread: active(),
-        overItem: { kind: "thread", key: "env:solo", section: "active", groupKey: null },
-        groups:
-          projectId === null
-            ? groups
-            : new Map([
-                ...groups,
-                [
-                  strayKey,
-                  { environmentId: localEnvironmentId, projectId: ProjectId.make(projectId) },
-                ],
-              ]),
-        threads: new Map([...threads, ["env:solo", { ...inProject, groupId: strayGroupId }]]),
-        supportsGroups: true,
-      });
-    expect(drop(null)).toEqual({ kind: "create-with", threadKey: "env:solo" });
-    expect(drop("project-b")).toEqual({ kind: "create-with", threadKey: "env:solo" });
-  });
-
-  it("ignores markers, headings and unknown groups", () => {
-    expect(resolve({ kind: "marker", marker: "pinned-divider" })).toBeNull();
-    expect(resolve({ kind: "project-heading", key: "project-a" })).toBeNull();
-    expect(resolve({ kind: "group", key: "group:gone", section: "active" })).toBeNull();
-    expect(resolve(undefined)).toBeNull();
-  });
-});
-
-describe("resolveSidebarGroupReorder", () => {
-  const member = (key: string, groupKey: string | null): SidebarListItem => ({
-    kind: "thread",
-    key,
-    section: "active",
-    groupKey,
-  });
-
-  it("reorders when a member drops on another member of its own group", () => {
-    expect(
-      resolveSidebarGroupReorder({
-        activeItem: member("env:a", "group:auth"),
-        overItem: member("env:b", "group:auth"),
-        supportsReorder: true,
-      }),
-    ).toBe("group:auth");
-  });
-
-  it("is not a reorder across groups, onto itself, onto a group row, or without support", () => {
-    const resolve = (overItem: SidebarListItem | undefined, supportsReorder = true) =>
-      resolveSidebarGroupReorder({
-        activeItem: member("env:a", "group:auth"),
-        overItem,
-        supportsReorder,
-      });
-    expect(resolve(member("env:b", "group:docs"))).toBeNull();
-    expect(resolve(member("env:b", null))).toBeNull();
-    expect(resolve(member("env:a", "group:auth"))).toBeNull();
-    expect(resolve({ kind: "group", key: "group:auth", section: "active" })).toBeNull();
-    expect(resolve(undefined)).toBeNull();
-    expect(resolve(member("env:b", "group:auth"), false)).toBeNull();
-    expect(
-      resolveSidebarGroupReorder({
-        activeItem: member("env:a", null),
-        overItem: member("env:b", null),
-        supportsReorder: true,
-      }),
-    ).toBeNull();
   });
 });
 
@@ -3243,5 +3150,26 @@ describe("resolveSidebarEnvironmentScope", () => {
     expect(resolveSidebarEnvironmentScope([work, home], "environment-removed")).toBeNull();
     expect(resolveSidebarEnvironmentScope([work], "environment-work")).toBeNull();
     expect(resolveSidebarEnvironmentScope([work, home], null)).toBeNull();
+  });
+});
+
+describe("pruneSidebarUnitOrder", () => {
+  it("drops gone keys and the placed row's other key", () => {
+    expect(
+      pruneSidebarUnitOrder({
+        // "chat" was placed alone, then its group "g" was dragged.
+        order: ["chat", "x", "g", "gone"],
+        placed: ["x", "g"],
+        liveKeys: new Set(["chat", "x", "g"]),
+        chatGroupKeys: [["chat", "g"]],
+      }),
+    ).toEqual(["x", "g"]);
+  });
+
+  it("keeps the group's key until a drop places the chat on its own", () => {
+    const base = { liveKeys: new Set(["chat", "g"]), chatGroupKeys: [["chat", "g"]] as const };
+    expect(pruneSidebarUnitOrder({ ...base, order: ["g", "chat"], placed: ["chat"] })).toEqual([
+      "chat",
+    ]);
   });
 });

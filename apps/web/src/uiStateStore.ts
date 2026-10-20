@@ -482,6 +482,7 @@ interface UiStateStore extends UiState {
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   setGroupExpanded: (key: string, expanded: boolean) => void;
   setGroupOrder: (order: string[]) => void;
+  setProjectOrder: (order: string[]) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
@@ -508,6 +509,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   setGroupExpanded: (key, expanded) => set((state) => setGroupExpanded(state, key, expanded)),
   setGroupOrder: (order) => set({ groupOrder: order }),
+  setProjectOrder: (order) => set({ projectOrder: order }),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),

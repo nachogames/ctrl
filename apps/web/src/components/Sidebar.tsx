@@ -29,7 +29,7 @@ import {
   type DragStartEvent,
   type Modifier,
 } from "@dnd-kit/core";
-import { arrayMove, SortableContext, useSortable } from "@dnd-kit/sortable";
+import { SortableContext, useSortable } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -165,6 +165,7 @@ import {
 } from "../state/environments";
 import {
   readThreadShell,
+  readThreadShells,
   useAllEnvironmentProjectSnapshotsReady,
   useProjects,
   useServerConfigs,
@@ -182,6 +183,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
+import { threadGroupKey } from "@t3tools/client-runtime/state/entities";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
@@ -198,11 +200,15 @@ import {
   isThreadGroupSnoozed,
   type ThreadGroupMenuId,
 } from "./threadGroupMenu.logic";
-import { SidebarSoloGroupRow } from "./sidebar/SidebarSoloGroupRow";
-import { SidebarGroupNewChatRow, SidebarGroupRow } from "./sidebar/SidebarGroupRow";
+import {
+  SidebarGroupDraftRow,
+  SidebarGroupNewChatButton,
+  SidebarGroupRow,
+} from "./sidebar/SidebarGroupRow";
 import { SidebarProjectHeading } from "./sidebar/SidebarProjectHeading";
-import { indexThreadGroups, useThreadGroups } from "../state/threadGroups";
+import { indexThreadGroups, readThreadGroups, useThreadGroups } from "../state/threadGroups";
 import { readMoveToGroupState, useThreadGroupActions } from "../hooks/useThreadGroupActions";
+import { resolveGroupThreadsTarget } from "./moveToGroupMenu.logic";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
@@ -234,10 +240,11 @@ import {
   resolveAdjacentThreadId,
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
-  resolveSidebarGroupDropTarget,
-  resolveSidebarGroupReorder,
+  mergeSidebarOrder,
+  pruneSidebarUnitOrder,
+  resolveSidebarArrangement,
+  type SidebarArrangement,
   planGroupMemberReorder,
-  type SidebarGroupDropTarget,
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
   resolveSidebarRowAccessibility,
@@ -505,9 +512,38 @@ function sidebarTreeEntryItem(entry: SidebarTreeEntry<EnvironmentThreadShell>): 
         key: threadShellKey(entry.thread),
         section: "active",
         groupKey: entry.groupKey,
+        soloGroupKey: entry.soloGroupKey ?? null,
       };
   }
 }
+
+const sidebarThreadGroupKeyOf = (thread: EnvironmentThreadShell) =>
+  thread.groupId === null
+    ? null
+    : threadGroupKey({ environmentId: thread.environmentId, groupId: thread.groupId });
+/**
+ * The drop line's spot in the list, from the rows at rest (they hold still
+ * during an in-place rearrange). It starts where the target row's content does.
+ */
+function measureArrangeLine(
+  list: HTMLElement | null,
+  line: NonNullable<SidebarArrangement["line"]>,
+): { readonly top: number; readonly left: number } | null {
+  const id = "beforeId" in line ? line.beforeId : line.afterId;
+  const row = list?.querySelector<HTMLElement>(
+    `[data-sidebar-item="${globalThis.CSS.escape(id)}"]`,
+  );
+  if (!list || !row) return null;
+  const listRect = list.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const scale = list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
+  const edge = "beforeId" in line ? rowRect.top : rowRect.bottom;
+  const inset = Number(row.dataset.sidebarItemInset ?? 0);
+  return { top: (edge - listRect.top) / scale, left: inset };
+}
+
+// Its own namespace in projectExpandedById, apart from the legacy sidebar's keys.
+const activeTreeProjectExpansionKey = (projectKey: string) => `active-tree:${projectKey}`;
 
 function routeThreadOnly(
   threads: readonly EnvironmentThreadShell[],
@@ -529,6 +565,8 @@ function useSidebarThreads(input: {
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly optimisticGroupOrder: SidebarOptimisticGroupOrder | null;
   readonly routeThreadKey: string | null;
+  /** The open draft's project, so a collapsed project opens for it too. */
+  readonly routeDraftProject: { readonly environmentId: string; readonly projectId: string } | null;
   readonly environmentScopeId: EnvironmentId | null;
   readonly projectGroups: readonly SidebarProjectSnapshot[];
 }) {
@@ -539,6 +577,7 @@ function useSidebarThreads(input: {
     optimisticDrop,
     optimisticGroupOrder,
     routeThreadKey,
+    routeDraftProject,
     environmentScopeId,
     projectGroups,
   } = input;
@@ -695,15 +734,42 @@ function useSidebarThreads(input: {
     const physicalKey = `${item.environmentId}:${item.projectId}`;
     return logicalProjectKeyByPhysicalKey.get(physicalKey) ?? physicalKey;
   };
+  const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
+  const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
+  const isProjectCollapsed = (projectKey: string) =>
+    projectExpandedById[activeTreeProjectExpansionKey(projectKey)] === false;
+  const toggleProjectCollapsed = (projectKey: string, collapsed: boolean) =>
+    setProjectExpanded(activeTreeProjectExpansionKey(projectKey), !collapsed);
+  // Opening a chat or draft in a collapsed project opens the project once.
+  const routeThread =
+    routeThreadKey === null
+      ? undefined
+      : threads.find((thread) => threadShellKey(thread) === routeThreadKey);
+  const routeProjectKey =
+    routeThread !== undefined
+      ? treeProjectKeyOf(routeThread)
+      : routeDraftProject === null
+        ? null
+        : treeProjectKeyOf(routeDraftProject);
+  const lastRouteProjectKeyRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (routeProjectKey !== null && routeProjectKey !== lastRouteProjectKeyRef.current) {
+      setProjectExpanded(activeTreeProjectExpansionKey(routeProjectKey), true);
+    }
+    lastRouteProjectKeyRef.current = routeProjectKey;
+  }, [lastRouteProjectKeyRef, routeProjectKey, setProjectExpanded]);
   const projectOrder = projectGroups.map((project) => project.projectKey);
   const buildActiveTree = (ungrouped: readonly EnvironmentThreadShell[]) =>
     buildSidebarActiveTree({
       ungrouped,
       groups: activeGroups,
       projectOrder,
-      groupOrder,
+      unitOrder: groupOrder,
       projectKeyOf: treeProjectKeyOf,
+      threadKeyOf: threadShellKey,
+      groupKeyOf: sidebarThreadGroupKeyOf,
       isExpanded: isGroupExpanded,
+      isProjectCollapsed,
     });
   const activeTree = buildActiveTree(activeThreads);
   // Rendered thread rows of the Active tree, in tree order.
@@ -787,6 +853,8 @@ function useSidebarThreads(input: {
     visibleWorkingThreads,
     isGroupExpanded,
     toggleGroupExpanded,
+    isProjectCollapsed,
+    toggleProjectCollapsed,
     treeProjectKeyOf,
     buildActiveTree,
     activeTree,
@@ -904,7 +972,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
             preferredIds: optimisticGroupOrder.order,
             getId: threadShellKey,
           })
-        : canonicalMembers.toSorted((a, b) => sidebarActivityMs(b) - sidebarActivityMs(a));
+        : canonicalMembers;
     const section = resolveSidebarGroupSection({ group, members, now: preciseNow });
     sectionGroups[section].push({ key, group, members, section });
     for (const member of members) {
@@ -1744,6 +1812,8 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   scopedProjectKeys: ReadonlySet<string> | null;
   environmentScopeId: EnvironmentId | null;
   routeDraftId: string | null;
+  /** The open draft already shows as a row in its group. */
+  routeDraftShownInGroup: boolean;
   onNavigateToDraft: (draftId: DraftId) => void;
   onDraftContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
@@ -1782,7 +1852,11 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
         continue;
       }
       if (draftKey === props.routeDraftId) {
-        if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
+        if (
+          !props.routeDraftShownInGroup &&
+          frozenActive.routeDraftId === draftKey &&
+          frozenActive.row !== null
+        ) {
           rows.push(frozenActive.row);
         }
         continue;
@@ -1863,9 +1937,12 @@ type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
   // Placement in the project › group › chat tree (slim rows only): "root" is
-  // an ungrouped chat under its project heading, "member" a chat in a group.
+  // an ungrouped chat under its project heading, "member" a chat in a group,
+  // and "solo" a one-chat group shown as its chat, with the group's icon.
   // Tree rows drop the favicon, since the heading or group names the project.
-  tree?: "root" | "member" | undefined;
+  tree?: "root" | "member" | "solo" | undefined;
+  /** The "+" for a new chat in this row's group (solo rows). */
+  onNewChatInGroup?: ((threadRef: ScopedThreadRef) => void) | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
   snoozeSupported: boolean;
@@ -1874,8 +1951,6 @@ type SidebarThreadRowProps = {
   sortable?: SortableThreadRowBag | undefined;
   dropVerb: SidebarDropVerb | null;
   dragOverPinned: boolean;
-  /** The dragged chat would join this row's group (or form one with it). */
-  isGroupDropTarget?: boolean;
   sweepAction: SidebarSweepAction | null;
   snoozeWakeLabelText: string | null;
   wokeAt: string | null;
@@ -2256,11 +2331,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     shouldRecede &&
       status === "working" &&
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
-    (isFileDragOver || props.isGroupDropTarget) && "ring-1 ring-inset ring-primary/70",
-    (isFileDragOver || props.isGroupDropTarget) &&
-      !props.isActive &&
-      !isSelected &&
-      "bg-sidebar-row-hover",
+    isFileDragOver && "ring-1 ring-inset ring-primary/70",
+    isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
     props.sortable?.isDragging &&
       "bg-sidebar bg-linear-to-b from-sidebar-row-active to-sidebar-row-active text-sidebar-foreground opacity-100 shadow-lg",
   );
@@ -2281,6 +2353,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         ...sortable.listeners,
       }
     : {};
+  // Where the row's content starts, for the drop line (see measureArrangeLine).
+  const rowContentInset =
+    props.tree === "member" ? 45 : props.tree === "root" ? 28 : props.tree === "solo" ? 6 : 8;
   const destinationVerb = sortable?.isDragging
     ? props.dropVerb
     : props.sweepAction === "unsnooze"
@@ -2483,6 +2558,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
         {prBadge}
+        {props.onNewChatInGroup && !sortable?.isDragging ? (
+          <SidebarGroupNewChatButton
+            title={thread.title}
+            onClick={() =>
+              props.onNewChatInGroup?.(scopeThreadRef(thread.environmentId, thread.id))
+            }
+          />
+        ) : null}
         {sortable?.isDragging ? (
           dragDestination
         ) : (
@@ -2593,6 +2676,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     return (
       <li
         data-thread-item={threadKey}
+        data-sidebar-item={threadKey}
+        data-sidebar-item-inset={rowContentInset}
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
@@ -2616,6 +2701,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   "flex h-9 items-center gap-2.5 px-2.5",
                   props.tree === "root" && "pl-7",
                   props.tree === "member" && "pl-6",
+                  props.tree === "solo" && "gap-2 pl-1.5",
                 )}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
@@ -2624,7 +2710,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               />
             }
           >
-            {props.tree === "member" ? (
+            {props.tree === "solo" ? (
+              <>
+                {/* Where a group's chevron sits, so stack icons line up. */}
+                <span aria-hidden className="w-3.5 shrink-0" />
+                <LayersIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                {slimContent}
+              </>
+            ) : props.tree === "member" ? (
               // The guide line runs down the group's members, inside the row
               // surface so hover and selection still span the full width.
               <span className="flex h-full min-w-0 flex-1 items-center gap-2.5 border-l border-sidebar-border pl-5">
@@ -2645,6 +2738,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   return (
     <li
       data-thread-item={threadKey}
+      data-sidebar-item={threadKey}
+      data-sidebar-item-inset={rowContentInset}
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
@@ -3294,9 +3389,14 @@ export default function Sidebar() {
     readonly occurredAt: string;
     readonly activationY: number | null;
     readonly targetSection: SidebarSection | null;
-    /** Sortable id of the hovered row while the drop would join a group. */
-    readonly groupTargetId: string | null;
     readonly contextDrag: boolean;
+    /** The drag rearranges rows in place; see resolveSidebarArrangement. */
+    readonly arranging: boolean;
+  } | null>(null);
+  // Where an in-place rearrange would land, in list coordinates.
+  const [arrangeLine, setArrangeLine] = useState<{
+    readonly top: number;
+    readonly left: number;
   } | null>(null);
   const dragSensorRef = useRef<SidebarPointerSensor | null>(null);
   const contextDragKeyRef = useRef<string | null>(null);
@@ -3383,6 +3483,17 @@ export default function Sidebar() {
     setPersistedProjectScopeKey,
   ]);
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
+  // The open draft's group, from "+ New chat in group".
+  const routeDraftGroupKey =
+    routeDraftIdForRows !== null &&
+    routeDraftThread != null &&
+    routeDraftThread.promotedTo == null &&
+    routeDraftThread.groupId
+      ? threadGroupKey({
+          environmentId: routeDraftThread.environmentId,
+          groupId: routeDraftThread.groupId,
+        })
+      : null;
   const visibleDraftSessionCount = useComposerDraftStore((store) => {
     let count = 0;
     for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
@@ -3480,6 +3591,8 @@ export default function Sidebar() {
     sidebarThreadCount,
     isGroupExpanded,
     toggleGroupExpanded,
+    isProjectCollapsed,
+    toggleProjectCollapsed,
     treeProjectKeyOf,
     buildActiveTree,
     activeTree,
@@ -3492,6 +3605,7 @@ export default function Sidebar() {
     optimisticDrop,
     optimisticGroupOrder,
     routeThreadKey,
+    routeDraftProject: routeDraftThread ?? null,
     environmentScopeId,
     projectGroups,
   });
@@ -3677,6 +3791,16 @@ export default function Sidebar() {
     const threadKey = scopedThreadKey(threadRef);
     if (isModClick) {
       event.preventDefault();
+      // The open chat is always part of a new selection.
+      const routeKey = routeThreadKeyRef.current;
+      if (
+        routeKey !== null &&
+        routeKey !== threadKey &&
+        !useThreadSelectionStore.getState().hasSelection() &&
+        threadByKeyRef.current.has(routeKey)
+      ) {
+        toggleThreadSelection(routeKey);
+      }
       toggleThreadSelection(threadKey);
       return;
     }
@@ -3817,7 +3941,6 @@ export default function Sidebar() {
   // Working rows can supply chat context, but never preview sidebar movement.
   const isContextDrag = dragState?.contextDrag === true || dragState?.activeSection === "working";
   const dragTargetSection = isContextDrag ? null : (dragState?.targetSection ?? null);
-  const dragGroupTargetId = isContextDrag ? null : (dragState?.groupTargetId ?? null);
   const finishThreadDrag = (started: boolean) => {
     dragSensorRef.current = null;
     contextDragKeyRef.current = null;
@@ -3825,6 +3948,7 @@ export default function Sidebar() {
     if (started) {
       listMotionRef.current?.release();
       setDragState(null);
+      setArrangeLine(null);
     }
   };
   const attachDragSensor = (sensor: SidebarPointerSensor) => {
@@ -3848,7 +3972,7 @@ export default function Sidebar() {
     return bounds !== undefined && (point.x < bounds.left || point.x > bounds.right);
   };
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
-    const contextDrag = pointerOutsideThreadList(point);
+    const contextDrag = contextDragKeyRef.current !== null && pointerOutsideThreadList(point);
     setDragState((current) =>
       current === null || current.contextDrag === contextDrag
         ? current
@@ -3865,7 +3989,7 @@ export default function Sidebar() {
     return true;
   };
   const dropThreadContextDrag = (point: { x: number; y: number }) => {
-    if (!pointerOutsideThreadList(point)) return false;
+    if (contextDragKeyRef.current === null || !pointerOutsideThreadList(point)) return false;
     dropThreadContext(point, contextDragThreads());
     return true;
   };
@@ -4009,31 +4133,46 @@ export default function Sidebar() {
 
   const handleThreadDragStart = (event: DragStartEvent) => {
     const activeKey = String(event.active.id);
-    contextDragKeyRef.current = activeKey;
+    const isThread = threadByKeyRef.current.has(activeKey);
+    // Headings and group rows only rearrange the Active tree; they never
+    // drag out as context.
+    contextDragKeyRef.current = isThread ? activeKey : null;
     // A grouped chat sits in its group's section.
     const activeGroupKey = groupKeyByThreadKeyRef.current.get(activeKey);
-    const activeSection =
-      sectionByThreadKey.get(activeKey) ??
-      (activeGroupKey === undefined
-        ? undefined
-        : groupEntryByKeyRef.current.get(activeGroupKey)?.section);
+    const activeSection = isThread
+      ? (sectionByThreadKey.get(activeKey) ??
+        (activeGroupKey === undefined
+          ? undefined
+          : groupEntryByKeyRef.current.get(activeGroupKey)?.section))
+      : "active";
     if (activeSection === undefined) return;
+    // Active-tree rows and group chats only rearrange where they are: no
+    // section labels open, and the lifted row stays below Pinned.
+    const arranging = !isThread || activeSection === "active" || activeGroupKey !== undefined;
     listMotionRef.current?.suspend();
     const list = threadListRef.current;
-    const header = list?.querySelector<HTMLElement>('[data-testid="sidebar-pinned-header"]');
+    // Active rows stay below Pinned; a pinned group's chats stay in Pinned.
+    const belowPinned = arranging && activeSection === "active";
+    const header = list?.querySelector<HTMLElement>(
+      belowPinned
+        ? '[data-testid="sidebar-pinned-divider"]'
+        : '[data-testid="sidebar-pinned-header"]',
+    );
     if (list && header) {
       const listRect = list.getBoundingClientRect();
       const scale = list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
       dragLabelOffsetRef.current =
-        header.getBoundingClientRect().top - listRect.top + SIDEBAR_DRAG_LABEL_HEIGHT * scale;
+        header.getBoundingClientRect().top -
+        listRect.top +
+        (arranging ? 0 : SIDEBAR_DRAG_LABEL_HEIGHT * scale);
     } else {
       dragLabelOffsetRef.current = 0;
     }
     setDragState({
       activeKey,
       activeSection,
+      arranging,
       targetSection: activeSection,
-      groupTargetId: null,
       contextDrag: false,
       occurredAt: new Date().toISOString(),
       activationY:
@@ -4116,7 +4255,7 @@ export default function Sidebar() {
   useEffect(() => {
     if (
       dragState !== null &&
-      !sidebarListItems.some((item) => item.kind === "thread" && item.key === dragState.activeKey)
+      !sidebarListItems.some((item) => sidebarListItemId(item) === dragState.activeKey)
     ) {
       cancelThreadDrag();
     }
@@ -4140,54 +4279,71 @@ export default function Sidebar() {
   const sidebarListItemById = new Map(
     sidebarListItems.map((item) => [sidebarListItemId(item), item] as const),
   );
-  // A drop onto a group row or an Active chat row that joins (or forms) a group.
-  const resolveGroupDrop = (activeKey: string, overId: string): SidebarGroupDropTarget | null => {
-    const activeItem = sidebarListItemById.get(activeKey);
-    const thread = threadByKey.get(activeKey);
-    if (activeItem?.kind !== "thread" || thread === undefined) return null;
-    return resolveSidebarGroupDropTarget({
-      activeThread: {
-        ...thread,
-        key: activeKey,
-        section: activeItem.section,
-        groupKey: activeItem.groupKey ?? null,
-      },
-      overItem: sidebarListItemById.get(overId),
-      groups: threadGroupByKey,
-      threads: threadByKey,
-      supportsGroups:
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadGroups === true,
-    });
+  // A drag that rearranges rows in place: projects, the groups and lone
+  // chats inside a project, and the chats inside a group.
+  const resolveArrangement = (activeId: string, overId: string) => {
+    const arrangement = resolveSidebarArrangement({ items: sidebarListItems, activeId, overId });
+    if (arrangement?.kind !== "member") return arrangement;
+    // A group's chat order lives on the server, which must be able to store it.
+    const thread = threadByKey.get(activeId);
+    return thread !== undefined &&
+      serverConfigs.get(thread.environmentId)?.environment.capabilities.threadGroupReorder === true
+      ? arrangement
+      : null;
   };
-  // A drop onto another chat of the dragged chat's own expanded group reorders it.
-  const resolveGroupReorder = (activeKey: string, overId: string): string | null => {
-    if (!threadByKey.has(activeKey)) return null;
-    return resolveSidebarGroupReorder({
-      activeItem: sidebarListItemById.get(activeKey),
-      overItem: sidebarListItemById.get(overId),
-      // Activity owns member order; dragging still supports moving between groups.
-      supportsReorder: false,
-    });
+  // Order is per device, like project order: the drop writes the full order
+  // of what it rearranged and leaves everything else in place.
+  const commitArrangement = (arrangement: SidebarArrangement) => {
+    const store = useUiStateStore.getState();
+    if (arrangement.kind === "unit") {
+      const shells = readThreadShells();
+      store.setGroupOrder(
+        pruneSidebarUnitOrder({
+          order: mergeSidebarOrder(store.groupOrder, arrangement.order),
+          placed: arrangement.order,
+          liveKeys: new Set([
+            ...shells.map(threadShellKey),
+            ...indexThreadGroups(readThreadGroups()).keys(),
+          ]),
+          chatGroupKeys: shells.flatMap((thread) => {
+            const groupKey = sidebarThreadGroupKeyOf(thread);
+            return groupKey === null ? [] : [[threadShellKey(thread), groupKey] as const];
+          }),
+        }),
+      );
+      return;
+    }
+    const logicalOrder = mergeSidebarOrder(
+      projectGroups.map((project) => project.projectKey),
+      arrangement.order,
+    );
+    const physicalOrder = logicalOrder.flatMap(
+      (projectKey) =>
+        projectGroupByScopeKey.get(projectKey)?.memberProjects.map(getProjectOrderKey) ?? [],
+    );
+    const placed = new Set(physicalOrder);
+    store.setProjectOrder([
+      ...physicalOrder,
+      ...orderedProjects.map(getProjectOrderKey).filter((key) => !placed.has(key)),
+    ]);
   };
   const handleThreadDragOver = (event: DragOverEvent) => {
     const activeKey = String(event.active.id);
     const overId = event.over ? String(event.over.id) : null;
-    const groupTarget = overId === null ? null : resolveGroupDrop(activeKey, overId);
-    // A group drop changes no section, so no section reads as the target;
-    // nor does any hover of a grouped chat, which only moves between groups.
+    const arrangement = overId === null ? null : resolveArrangement(activeKey, overId);
+    // Rearranging changes no section, so no section reads as the target;
+    // nor does any hover of a grouped chat, which only reorders its group.
     const target =
-      overId === null || groupTarget !== null || groupKeyByThreadKey.has(activeKey)
+      overId === null || arrangement !== null || groupKeyByThreadKey.has(activeKey)
         ? null
         : resolveSidebarDropTarget(sidebarListItems, activeKey, overId);
     setDragState((current) =>
       current === null || current.activeKey !== activeKey
         ? current
-        : {
-            ...current,
-            targetSection: target?.section ?? null,
-            groupTargetId: groupTarget === null ? null : overId,
-          },
+        : { ...current, targetSection: target?.section ?? null },
     );
+    const line = arrangement?.line ?? null;
+    setArrangeLine(line === null ? null : measureArrangeLine(threadListRef.current, line));
   };
   const sortableIds = sidebarListItems.map(sidebarListItemId);
   // Outside a drag the orders are constants, so the strategy, and with it
@@ -4205,18 +4361,16 @@ export default function Sidebar() {
   const sidebarSortingStrategy = createSidebarSortingStrategy({
     items: sidebarListItems,
     enabled: !isContextDrag,
-    boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT,
+    boundaryLabelHeight: dragState?.arranging ? 0 : SIDEBAR_DRAG_LABEL_HEIGHT,
     settledOrder: draggedSettledOrder,
     ...(draggedActiveOrder === undefined ? {} : { activeOrder: draggedActiveOrder }),
     settledExpanded: settledShelfExpanded,
     settledVisibleCount,
     routeThreadKey,
     snoozedThreadCount: snoozedThreads.length + snoozedGroups.length,
-    // Group drops, and every hover of a grouped chat, leave the list in
-    // place, except a reorder inside the chat's own group.
-    holdsLayout: (activeId, overId) =>
-      groupKeyByThreadKey.has(activeId) || resolveGroupDrop(activeId, overId) !== null,
-    reordersInPlace: (activeId, overId) => resolveGroupReorder(activeId, overId) !== null,
+    // Every hover of a grouped chat leaves the list in place.
+    holdsLayout: (activeId) => groupKeyByThreadKey.has(activeId),
+    arranges: (activeId, overId) => resolveArrangement(activeId, overId) !== null,
   });
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
@@ -4225,11 +4379,14 @@ export default function Sidebar() {
     if (draggedThreadKey === undefined || draggedFromSection === undefined)
       return createSidebarCollisionDetection(() => true);
     const source = threadByKey.get(draggedThreadKey);
-    if (source === undefined) return createSidebarCollisionDetection(() => false);
+    if (source === undefined) {
+      return createSidebarCollisionDetection(
+        (id) => resolveArrangement(draggedThreadKey, id) !== null,
+      );
+    }
     return createSidebarCollisionDetection(
       (id) => {
-        if (resolveGroupDrop(draggedThreadKey, id) !== null) return true;
-        if (resolveGroupReorder(draggedThreadKey, id) !== null) return true;
+        if (resolveArrangement(draggedThreadKey, id) !== null) return true;
         // A grouped chat's own pin and settle state no longer place it.
         if (groupKeyByThreadKey.has(draggedThreadKey)) return false;
         const target = resolveSidebarDropTarget(sidebarListItems, draggedThreadKey, id);
@@ -4262,32 +4419,17 @@ export default function Sidebar() {
   })();
   const handleThreadDragEnd = (event: DragEndEvent) => {
     const activeKey = String(event.active.id);
-    const groupTarget =
-      event.over === null ? null : resolveGroupDrop(activeKey, String(event.over.id));
-    if (groupTarget !== null) {
-      const moved = threadByKey.get(activeKey);
-      if (moved === undefined) return;
-      if (groupTarget.kind === "join") {
-        // A hidden group has no entry of its own: its lone chat is the target row.
-        const group = threadGroupByKey.get(groupTarget.groupKey);
-        if (group === undefined || !checkThreadOperations([moved])) return;
-        void groupActions.moveThreadIntoGroup(moved, group);
-        return;
-      }
-      const target = threadByKey.get(groupTarget.threadKey);
-      if (target === undefined || !checkThreadOperations([moved, target])) return;
-      void groupActions.groupThreadWith(target, moved);
+    const arrangement =
+      event.over === null ? null : resolveArrangement(activeKey, String(event.over.id));
+    if (arrangement !== null && arrangement.kind !== "member") {
+      if (arrangement.changed) commitArrangement(arrangement);
       return;
     }
-    const reorderGroupKey =
-      event.over === null ? null : resolveGroupReorder(activeKey, String(event.over.id));
-    if (reorderGroupKey !== null) {
+    if (arrangement !== null) {
+      const reorderGroupKey = arrangement.scopeKey;
+      if (!arrangement.changed || reorderGroupKey === null) return;
       const members = groupEntryByKey.get(reorderGroupKey)?.members ?? [];
-      const currentOrder = members.map(threadShellKey);
-      const fromIndex = currentOrder.indexOf(activeKey);
-      const toIndex = currentOrder.indexOf(String(event.over!.id));
-      if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
-      const order = arrayMove(currentOrder, fromIndex, toIndex);
+      const order = arrangement.order;
       const assignments = planGroupMemberReorder({
         orderedIds: order,
         keysById: new Map(members.map((thread) => [threadShellKey(thread), thread.groupOrderKey])),
@@ -4567,9 +4709,42 @@ export default function Sidebar() {
         pinnedCount: pinnedSelectedThreads.length,
       });
       const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+      // The open chat anchors a grouping: the others join its group.
+      const groupAnchor =
+        selectedThreads.find(
+          (thread) =>
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+            routeThreadKeyRef.current,
+        ) ?? selectedThreads[0];
+      const groupTarget =
+        groupAnchor === undefined ||
+        serverConfigs.get(groupAnchor.environmentId)?.environment.capabilities.threadGroups !== true
+          ? null
+          : resolveGroupThreadsTarget(selectedThreads, groupAnchor);
+      const groupTargetTitle =
+        groupTarget?.groupId == null || groupAnchor === undefined
+          ? null
+          : (threadGroupByKey.get(
+              threadGroupKey({
+                environmentId: groupAnchor.environmentId,
+                groupId: groupTarget.groupId,
+              }),
+            )?.title ?? null);
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
+            ...(groupTarget !== null
+              ? [
+                  {
+                    id: "group",
+                    label:
+                      groupTargetTitle === null
+                        ? `Group chats (${count})`
+                        : `Move to “${groupTargetTitle}” (${groupTarget.moving})`,
+                    disabled: !canOperateThreads(selectedThreads),
+                  },
+                ]
+              : []),
             ...(unpinMenuItem
               ? [{ ...unpinMenuItem, disabled: !canOperateThreads(pinnedSelectedThreads) }]
               : []),
@@ -4637,6 +4812,12 @@ export default function Sidebar() {
               : selectedThreads;
       if (clicked.value === "settle" && actionTargets.length === 0) return;
       if (clicked.value !== "mark-unread" && !checkThreadOperations(actionTargets)) return;
+      if (clicked.value === "group") {
+        if (groupAnchor === undefined) return;
+        clearSelection();
+        await groupActions.groupThreads(selectedThreads, groupAnchor);
+        return;
+      }
       if (clicked.value?.startsWith("snooze:")) {
         const preset =
           clicked.value === "snooze:custom"
@@ -5152,6 +5333,10 @@ export default function Sidebar() {
     const entry = groupEntryByKeyRef.current.get(groupKey);
     if (entry) void groupActions.newChatInGroup(entry.group);
   });
+  const handleNewChatWithThread = useStableCallback((threadRef: ScopedThreadRef) => {
+    const thread = threadByKeyRef.current.get(scopedThreadKey(threadRef));
+    if (thread) void groupActions.newChatWithThread(thread);
+  });
   const handleGroupContextMenu = useStableCallback(
     (groupKey: string, position: { x: number; y: number }) => {
       void (async () => {
@@ -5163,54 +5348,23 @@ export default function Sidebar() {
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            [
-              ...buildThreadGroupMenuItems({
-                canOperate: readEnvironmentScope(
-                  group.environmentId,
-                  AuthOrchestrationOperateScope,
-                ),
-                isPinned: group.pinnedAt !== null,
-                isSnoozed: isThreadGroupSnoozed(group, Date.now()),
-                isSettled: section === "settled",
-                supports: {
-                  settlement: capabilities?.threadSettlement === true,
-                  snooze: capabilities?.threadSnooze === true,
-                  threadGroups: capabilities?.threadGroups === true,
-                },
-                snoozePresets,
-              }),
-              ...(section === "active"
-                ? [
-                    { id: "move-group-up" as const, label: "Move group up" },
-                    { id: "move-group-down" as const, label: "Move group down" },
-                  ]
-                : []),
-            ],
+            buildThreadGroupMenuItems({
+              canOperate: readEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope),
+              isPinned: group.pinnedAt !== null,
+              isSnoozed: isThreadGroupSnoozed(group, Date.now()),
+              isSettled: section === "settled",
+              supports: {
+                settlement: capabilities?.threadSettlement === true,
+                snooze: capabilities?.threadSnooze === true,
+                threadGroups: capabilities?.threadGroups === true,
+              },
+              snoozePresets,
+            }),
             position,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         const action: ThreadGroupMenuId = clicked.value;
-        if (action === "move-group-up" || action === "move-group-down") {
-          const keys = activeTree
-            .filter(
-              (node) =>
-                node.kind === "group" && treeProjectKeyOf(node.group) === treeProjectKeyOf(group),
-            )
-            .map((node) => (node.kind === "group" ? node.groupKey : ""));
-          const index = keys.indexOf(groupKey);
-          const target = index + (action === "move-group-up" ? -1 : 1);
-          if (index >= 0 && target >= 0 && target < keys.length) {
-            [keys[index], keys[target]] = [keys[target]!, keys[index]!];
-            useUiStateStore
-              .getState()
-              .setGroupOrder([
-                ...keys,
-                ...useUiStateStore.getState().groupOrder.filter((key) => !keys.includes(key)),
-              ]);
-          }
-          return;
-        }
         if (action !== "open-group-panel" && !checkThreadOperations([group])) return;
         if (action.startsWith("snooze-group:")) {
           const preset =
@@ -5274,35 +5428,10 @@ export default function Sidebar() {
                 label: isScoped ? "Show all projects" : `Filter by ${project.displayName}`,
                 icon: "folder-tree",
               },
-              { id: "move-project-up" as const, label: "Move project up" },
-              { id: "move-project-down" as const, label: "Move project down" },
             ],
             position,
           ),
         );
-        if (
-          clicked._tag === "Success" &&
-          (clicked.value === "move-project-up" || clicked.value === "move-project-down")
-        ) {
-          const visibleKeys = new Set(
-            activeTree
-              .filter((entry) => entry.kind === "project-heading")
-              .map((entry) => (entry.kind === "project-heading" ? entry.projectKey : "")),
-          );
-          const visibleProjects = projectGroups.filter((entry) =>
-            visibleKeys.has(entry.projectKey),
-          );
-          const index = visibleProjects.findIndex((entry) => entry.projectKey === projectKey);
-          const target = visibleProjects[index + (clicked.value === "move-project-up" ? -1 : 1)];
-          if (target)
-            useUiStateStore
-              .getState()
-              .reorderProjects(
-                orderedProjects.map(getProjectOrderKey),
-                project.memberProjects.map(getProjectOrderKey),
-                target.memberProjects.map(getProjectOrderKey),
-              );
-        }
         if (clicked._tag === "Success" && clicked.value === "filter-by-project") {
           setProjectScopeKey(isScoped ? null : projectKey);
         }
@@ -5737,8 +5866,15 @@ export default function Sidebar() {
                           groupKey === null &&
                           (section === "pinned" || section === "working");
                         const rowVariant = isCard ? "card" : "slim";
-                        const tree =
-                          groupKey !== null || (soloGroupsEnabled && section !== "settled")
+                        // With groups of one on, a lone chat is its group's row.
+                        const solo =
+                          soloGroupsEnabled &&
+                          groupKey === null &&
+                          section !== "settled" &&
+                          section !== "working";
+                        const tree = solo
+                          ? "solo"
+                          : groupKey !== null
                             ? "member"
                             : section === "active"
                               ? "root"
@@ -5750,14 +5886,30 @@ export default function Sidebar() {
                             contextDrag={isContextDrag}
                             sortableDisabled={
                               renamingThreadKey === threadKey ||
-                              // Grouped chats drag only into other groups, which
-                              // needs no ordering capability.
-                              (groupKey === null && !draggableThreadKeys.has(threadKey)) ||
+                              // Active-tree rows always rearrange; elsewhere a drop
+                              // needs the pin-order capability.
+                              (groupKey === null &&
+                                section !== "active" &&
+                                !draggableThreadKeys.has(threadKey)) ||
+                              // Grouped chats drag only to reorder their group.
+                              (groupKey !== null &&
+                                serverConfigs.get(thread.environmentId)?.environment.capabilities
+                                  .threadGroupReorder !== true) ||
                               optimisticDrop !== null
                             }
                             thread={thread}
                             variant={rowVariant}
                             tree={tree}
+                            // A new group starts unpinned and awake, so "+"
+                            // on a pinned or snoozed chat would move it to Active.
+                            onNewChatInGroup={
+                              solo &&
+                              section === "active" &&
+                              serverConfigs.get(thread.environmentId)?.environment.capabilities
+                                .threadGroups === true
+                                ? handleNewChatWithThread
+                                : undefined
+                            }
                             // Snoozed rows wake, settled rows un-settle, and cards
                             // settle. A group member acts on its own settle state.
                             variantAction={
@@ -5793,7 +5945,6 @@ export default function Sidebar() {
                             dragOverPinned={
                               dragState?.activeKey === threadKey && dragTargetSection === "pinned"
                             }
-                            isGroupDropTarget={dragGroupTargetId === threadKey}
                             sweepAction={
                               actionSweep?.keys.has(threadKey) ? actionSweep.action : null
                             }
@@ -5854,7 +6005,20 @@ export default function Sidebar() {
                           />
                         );
                       };
-                      const from = isContextDrag ? null : (dragState?.activeSection ?? null);
+                      // In-place rearranges open no section labels or targets.
+                      const from =
+                        isContextDrag || dragState?.arranging
+                          ? null
+                          : (dragState?.activeSection ?? null);
+                      // The open "+ New chat in group" draft shows as a row at
+                      // the end of its group's block, so it reads as that group's.
+                      const inDraftGroup = (item: SidebarListItem | undefined) =>
+                        routeDraftGroupKey !== null &&
+                        item !== undefined &&
+                        ((item.kind === "group" && item.key === routeDraftGroupKey) ||
+                          (item.kind === "thread" &&
+                            (item.groupKey === routeDraftGroupKey ||
+                              item.soloGroupKey === routeDraftGroupKey)));
                       const items: ReactNode[] = [
                         <SidebarDraftBlock
                           key="draft-sessions"
@@ -5863,87 +6027,57 @@ export default function Sidebar() {
                           scopedProjectKeys={scopedProjectKeys}
                           environmentScopeId={environmentScopeId}
                           routeDraftId={routeDraftIdForRows}
+                          routeDraftShownInGroup={sidebarListItems.some(inDraftGroup)}
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       ];
-                      // "+ New chat in group" closes each expanded group's block.
-                      const pushNewChatRowAfter = (index: number) => {
-                        const item = sidebarListItems[index];
-                        if (item === undefined) return;
-                        const blockKey =
-                          item.kind === "group"
-                            ? isGroupExpanded(item.key)
-                              ? item.key
-                              : null
-                            : item.kind === "thread"
-                              ? (item.groupKey ?? null)
-                              : null;
-                        if (blockKey === null) return;
-                        const next = sidebarListItems[index + 1];
-                        if (next?.kind === "thread" && next.groupKey === blockKey) return;
-                        items.push(
-                          <SidebarGroupNewChatRow
-                            key={`group-new-chat:${blockKey}`}
-                            groupKey={blockKey}
-                            onNewChat={handleNewChatInGroup}
-                          />,
-                        );
-                      };
                       for (const [index, item] of sidebarListItems.entries()) {
-                        pushNewChatRowAfter(index - 1);
                         if (item.kind === "thread") {
-                          const thread = threadByKey.get(item.key)!;
-                          if (
-                            soloGroupsEnabled &&
-                            item.groupKey == null &&
-                            item.section !== "settled"
-                          ) {
-                            const soloKey = `solo:${item.key}`;
-                            const expanded = groupExpandedById[soloKey] ?? true;
+                          const thread = threadByKey.get(item.key);
+                          if (thread !== undefined) {
                             items.push(
-                              <SidebarSoloGroupRow
-                                key={sidebarListItemId(item)}
-                                title={thread.title}
-                                expanded={expanded}
-                                onToggle={() => setGroupExpanded(soloKey, !expanded)}
-                                onContextMenu={(position) =>
-                                  handleThreadContextMenu(
-                                    scopeThreadRef(thread.environmentId, thread.id),
-                                    position,
-                                  )
-                                }
-                              >
-                                {renderThreadRow(thread, item.section, null)}
-                              </SidebarSoloGroupRow>,
+                              renderThreadRow(thread, item.section, item.groupKey ?? null),
                             );
-                            continue;
                           }
-                          items.push(renderThreadRow(thread, item.section, item.groupKey ?? null));
-                          continue;
-                        }
-                        if (item.kind === "group") {
+                        } else if (item.kind === "group") {
                           const entry = groupEntryByKey.get(item.key);
-                          if (!entry) continue;
+                          if (entry) {
+                            items.push(
+                              <SidebarGroupRow
+                                key={sidebarListItemId(item)}
+                                sortableId={sidebarListItemId(item)}
+                                groupKey={item.key}
+                                group={entry.group}
+                                members={entry.members}
+                                section={item.section}
+                                expanded={isGroupExpanded(item.key)}
+                                draggable={
+                                  item.section === "active" &&
+                                  optimisticDrop === null &&
+                                  renamingGroupKey !== item.key
+                                }
+                                isRenaming={renamingGroupKey === item.key}
+                                onToggle={toggleGroupExpanded}
+                                onNewChat={handleNewChatInGroup}
+                                onContextMenu={handleGroupContextMenu}
+                                onCommitRename={commitGroupRename}
+                                onCancelRename={cancelGroupRename}
+                              />,
+                            );
+                          }
+                        }
+                        if (inDraftGroup(item) && !inDraftGroup(sidebarListItems[index + 1])) {
                           items.push(
-                            <SidebarGroupRow
-                              key={sidebarListItemId(item)}
-                              sortableId={sidebarListItemId(item)}
-                              groupKey={item.key}
-                              group={entry.group}
-                              members={entry.members}
-                              section={item.section}
-                              expanded={isGroupExpanded(item.key)}
-                              isDropTarget={dragGroupTargetId === sidebarListItemId(item)}
-                              isRenaming={renamingGroupKey === item.key}
-                              onToggle={toggleGroupExpanded}
-                              onContextMenu={handleGroupContextMenu}
-                              onCommitRename={commitGroupRename}
-                              onCancelRename={cancelGroupRename}
+                            <SidebarGroupDraftRow
+                              key={`group-draft:${routeDraftGroupKey}`}
+                              groupTitle={
+                                threadGroupByKey.get(routeDraftGroupKey!)?.title ?? "group"
+                              }
                             />,
                           );
-                          continue;
                         }
+                        if (item.kind === "thread" || item.kind === "group") continue;
                         if (item.kind === "project-heading") {
                           const project = projectGroupByScopeKey.get(item.key) ?? null;
                           items.push(
@@ -5953,6 +6087,9 @@ export default function Sidebar() {
                               projectKey={item.key}
                               project={project}
                               displayName={project?.displayName ?? "Project"}
+                              collapsed={isProjectCollapsed(item.key)}
+                              draggable={optimisticDrop === null}
+                              onToggleCollapsed={toggleProjectCollapsed}
                               onContextMenu={handleProjectHeadingContextMenu}
                             />,
                           );
@@ -5965,7 +6102,7 @@ export default function Sidebar() {
                                 key="pinned-header"
                                 marker="pinned-header"
                                 label="Pinned"
-                                visible={from !== null}
+                                visible={from !== null && !dragState?.arranging}
                                 isDropTarget={dragTargetSection === "pinned"}
                               />,
                             );
@@ -5976,7 +6113,7 @@ export default function Sidebar() {
                                 key="pinned-divider"
                                 marker="pinned-divider"
                                 label="Active"
-                                visible={from !== null}
+                                visible={from !== null && !dragState?.arranging}
                                 isDropTarget={dragTargetSection === "active"}
                               />,
                             );
@@ -6084,9 +6221,15 @@ export default function Sidebar() {
                             break;
                         }
                       }
-                      pushNewChatRowAfter(sidebarListItems.length - 1);
                       return items;
                     })()}
+                    {arrangeLine !== null ? (
+                      <li
+                        aria-hidden
+                        className="pointer-events-none absolute right-1 z-30 h-0.5 -translate-y-1/2 list-none rounded-full bg-primary"
+                        style={{ top: arrangeLine.top, left: arrangeLine.left }}
+                      />
+                    ) : null}
                     {settledShelfExpanded && hiddenSettledCount > 0 ? (
                       <li className="list-none">
                         <button

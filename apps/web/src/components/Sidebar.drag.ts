@@ -1,5 +1,5 @@
 import { closestCenter, type CollisionDetection, type Modifier } from "@dnd-kit/core";
-import { arrayMove, verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
+import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
   resolveSidebarDropTarget,
   sidebarListItemId,
@@ -111,9 +111,9 @@ export function createSidebarSortingStrategy(input: {
   /** True while the hovered row is a drop target in itself (a group drop):
    * nothing moves, so the target stays under the pointer to be highlighted. */
   holdsLayout?: (activeId: string, overId: string) => boolean;
-  /** True while the hovered row is another chat of the dragged chat's group:
-   * the rows move as a plain list reorder, and no section changes. */
-  reordersInPlace?: (activeId: string, overId: string) => boolean;
+  /** True while the drag rearranges rows in place (see
+   * resolveSidebarArrangement): nothing moves, and a drop line marks the spot. */
+  arranges?: (activeId: string, overId: string) => boolean;
 }): SortingStrategy {
   if (input.enabled === false) return () => stationary;
   const { items } = input;
@@ -125,15 +125,14 @@ export function createSidebarSortingStrategy(input: {
     const active = items[activeIndex];
     const over = items[overIndex] ?? active;
     if (active?.kind !== "thread" || !over || !rects[0]) return [];
+    if (input.arranges?.(active.key, sidebarListItemId(over))) return [];
     // A held layout keeps every row in its rest order, still opening the
     // boundary labels' space so they never sit on top of the rows below them.
-    const reorders = input.reordersInPlace?.(active.key, sidebarListItemId(over)) ?? false;
-    const held = !reorders && (input.holdsLayout?.(active.key, sidebarListItemId(over)) ?? false);
-    const target =
-      held || reorders
-        ? null
-        : resolveSidebarDropTarget(items, active.key, sidebarListItemId(over));
-    if (!held && !reorders && !target) return [];
+    const held = input.holdsLayout?.(active.key, sidebarListItemId(over)) ?? false;
+    const target = held
+      ? null
+      : resolveSidebarDropTarget(items, active.key, sidebarListItemId(over));
+    if (!held && !target) return [];
     // Every non-marker row by section, in list order. Project headings belong
     // to Active; group rows and their members keep their section.
     const rows: Record<SidebarSection, SidebarListItem[]> = {
@@ -251,12 +250,7 @@ export function createSidebarSortingStrategy(input: {
       section("settled");
       return projected;
     };
-    const projected =
-      target !== null
-        ? projectSections(target)
-        : reorders
-          ? arrayMove([...items], activeIndex, overIndex)
-          : [...items];
+    const projected = target !== null ? projectSections(target) : [...items];
     const fallbackHeight = (item: SidebarListItem) => {
       switch (item.kind) {
         case "project-heading":
