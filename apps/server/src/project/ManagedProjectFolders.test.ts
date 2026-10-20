@@ -611,6 +611,8 @@ it("keeps the user's Home instructions while refreshing T3's section", () => {
     .concat("\nAlways answer in French.\n");
   const refreshed = ManagedProjectFolders.refreshHomeAgents(edited);
   assert.include(refreshed!, "You are Shift");
+  assert.include(refreshed!, "## Talking with the user");
+  assert.include(refreshed!, "Open every reply with one or two short, plain sentences");
   assert.include(refreshed!, "Always answer in French.");
   assert.isNull(ManagedProjectFolders.refreshHomeAgents(refreshed));
   assert.isNull(ManagedProjectFolders.refreshHomeAgents("# My own file\n"));

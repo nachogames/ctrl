@@ -26,6 +26,21 @@ so choose a model you trust with that.
   thread, when you want it to step in.
 - Shift cannot delete threads or projects.
 
+## Talk to Shift
+
+Shift can listen and answer out loud, all on your machine at no cost:
+
+1. In **Settings → Integrations**, turn on **Dictation** and **Spoken replies**.
+   Each downloads a local model the first time. Pick a voice under **Reply voice**.
+2. In Shift's thread, turn on voice mode with the waveform button next to the
+   microphone.
+3. Hold **Option+Space** and speak. When you let go, your words are sent to Shift
+   right away, and Shift reads the first sentence or two of its reply aloud.
+
+Start talking or send a message to interrupt it, or press the stop button. Shift
+answers quick questions itself and hands bigger thinking to a stronger agent,
+then tells you the short version. Voice mode is remembered on each device.
+
 ## Other machines
 
 Shift reaches your other machines through the desktop app's own connections.

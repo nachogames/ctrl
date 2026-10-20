@@ -96,6 +96,8 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as Dictation from "./dictation/Dictation.ts";
 import * as DictationArtifacts from "./dictation/DictationArtifacts.ts";
 import * as DictationRecognizer from "./dictation/DictationRecognizer.ts";
+import * as Speech from "./speech/Speech.ts";
+import * as SpeechSynthesizer from "./speech/SpeechSynthesizer.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
@@ -319,6 +321,11 @@ const layerPlatformServices = NodeServices.layer;
 const layerDictationArtifacts = DictationArtifacts.layer;
 const layerDictation = Dictation.layer.pipe(
   Layer.provide(DictationRecognizer.layer.pipe(Layer.provide(layerDictationArtifacts))),
+  Layer.provide(layerDictationArtifacts),
+  Layer.provide(layerServerSettings),
+);
+const layerSpeech = Speech.layer.pipe(
+  Layer.provide(SpeechSynthesizer.layer.pipe(Layer.provide(layerDictationArtifacts))),
   Layer.provide(layerDictationArtifacts),
   Layer.provide(layerServerSettings),
 );
@@ -621,6 +628,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   Layer.provideMerge(layerServerSettings),
   Layer.provideMerge(layerDictation),
+  Layer.provideMerge(layerSpeech),
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),

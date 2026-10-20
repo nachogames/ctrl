@@ -374,7 +374,12 @@ import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSki
 import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useProjectClone } from "../state/projectClones";
-import { projectCloneDisplayName, projectCloneProgressSummary } from "@t3tools/contracts";
+import {
+  isHomeThreadId,
+  projectCloneDisplayName,
+  projectCloneProgressSummary,
+} from "@t3tools/contracts";
+import { ShiftVoiceReplies } from "./home/ShiftVoiceReplies";
 import {
   type EnvironmentPresentation,
   useEnvironmentProviders,
@@ -8032,6 +8037,14 @@ export default function ChatView(props: ChatViewProps) {
               />
             </div>
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
+              {isServerThread && isHomeThreadId(threadId) ? (
+                <ShiftVoiceReplies
+                  key={`${environmentId}:${threadId}`}
+                  environmentId={environmentId}
+                  threadId={threadId}
+                  messages={timelineMessages}
+                />
+              ) : null}
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}

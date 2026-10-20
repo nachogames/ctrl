@@ -735,6 +735,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["speech transcription automatic detect english spoken"],
   },
   {
+    id: "speech-replies",
+    title: "Spoken replies",
+    to: "/settings/integrations",
+    searchTerms: ["text to speech voice read aloud shift kokoro local talk"],
+  },
+  {
+    id: "speech-voice",
+    title: "Reply voice",
+    to: "/settings/integrations",
+    searchTerms: ["text to speech kokoro speaker voice shift"],
+  },
+  {
     id: "browser-profiles",
     title: "Browser profiles",
     to: "/settings/integrations",

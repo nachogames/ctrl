@@ -79,6 +79,10 @@ const testLayer = (
                 }),
               ),
             ),
+          speechPaths: { runtime: "/unused", model: "/unused" },
+          inspectSpeech: Effect.succeed({ runtime, model: { _tag: "not-installed" } }),
+          installSpeech: () => Effect.void,
+          removeSpeech: Effect.void,
         } satisfies DictationArtifacts.DictationArtifacts["Service"];
       }),
     ),

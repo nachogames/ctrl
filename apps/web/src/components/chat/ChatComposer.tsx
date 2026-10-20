@@ -49,6 +49,7 @@ import type {
 import {
   EnvironmentRequestInvalidError,
   AuthOrchestrationOperateScope,
+  isHomeThreadId,
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -296,6 +297,9 @@ import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerDictationControl } from "./ComposerDictationControl";
+import { ShiftVoiceControls } from "./ShiftVoiceControls";
+import { shiftSpeaker } from "../../speech/shiftSpeaker";
+import { useShiftVoiceMode } from "../../speech/voiceMode";
 import { useComposerDictation } from "../../dictation/useComposerDictation";
 import { useDictationHoldShortcut } from "../../dictation/useDictationHoldShortcut";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
@@ -2329,6 +2333,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
+  // In Shift's thread, voice mode sends each dictation as soon as it is transcribed.
+  const isShiftThread = activeThreadId !== null && isHomeThreadId(activeThreadId);
+  const [shiftVoiceModeSetting, setShiftVoiceMode] = useShiftVoiceMode();
+  const voiceMode = isShiftThread && shiftVoiceModeSetting;
   // These callbacks run after recording, once the handlers declared below exist.
   const dictationInsertedRangeRef = useRef<{ start: number; end: number } | null>(null);
   const dictation = useComposerDictation({
@@ -2365,6 +2373,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
     },
     onCommitted: () => {
+      if (voiceMode) {
+        dictationInsertedRangeRef.current = null;
+        submitComposerStable();
+        return;
+      }
       composerEditorRef.current?.focusAt(composerCursor);
       const inserted = dictationInsertedRangeRef.current;
       dictationInsertedRangeRef.current = null;
@@ -2475,6 +2488,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsComposerScrollCollapsed,
     restoreAfterTimelineReachedEnd,
   } = useComposerFocusState();
+  // Starting to dictate to Shift stops it mid-sentence.
+  const dictationPhase = dictation.state.phase;
+  useEffect(() => {
+    if (isShiftThread && (dictationPhase === "preparing" || dictationPhase === "recording"))
+      shiftSpeaker.stop();
+  }, [isShiftThread, dictationPhase]);
   // Focusing the composer usually comes right before dictating; load the speech model early.
   const warmDictation = dictation.warm;
   useEffect(() => {
@@ -4068,6 +4087,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
     setComposerSubmissionError(submission.validationMessage);
     if (!submission.didDispatch) return;
+    // Sending to Shift talks over whatever it was still saying.
+    if (isShiftThread) shiftSpeaker.stop();
     onTypingGuardSend();
     if (shouldBlurMobileComposerOnSubmit()) {
       blurMobileComposerAfterSend();
@@ -7316,6 +7337,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <TooltipPopup>Attach files</TooltipPopup>
                       </Tooltip>
                     </>
+                  ) : null}
+                  {isShiftThread ? (
+                    <ShiftVoiceControls
+                      voiceMode={voiceMode}
+                      onVoiceModeChange={setShiftVoiceMode}
+                    />
                   ) : null}
                   <ComposerDictationControl
                     dictation={dictation}

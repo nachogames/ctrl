@@ -4,6 +4,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
 import { DictationSettingsSection } from "./DictationSettings";
+import { SpeechSettingsSection } from "./SpeechSettings";
 import {
   AuthSettingsWriteScope,
   BrowserImportFailureReason,
@@ -1630,6 +1631,7 @@ export function IntegrationsSettingsPanel() {
       </SettingsSection>
       <DeviceIntegrationSettings />
       <DictationSettingsSection />
+      <SpeechSettingsSection />
     </SettingsPageContainer>
   );
 }

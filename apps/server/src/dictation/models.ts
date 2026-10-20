@@ -1,4 +1,4 @@
-import type { DictationModelId } from "@t3tools/contracts";
+import type { DictationModelId, SpeechVoiceId } from "@t3tools/contracts";
 import { cleanWhisperText } from "./audio.ts";
 
 type ResolveFile = (name: string) => string;
@@ -256,3 +256,92 @@ export function runtimeFor(platform: string, arch: string) {
     url: `https://registry.npmjs.org/${name}/-/${name}-${runtimeVersion}.tgz`,
   };
 }
+
+/**
+ * Kokoro v1.0 (int8) for spoken replies. Only the English pieces of the
+ * multi-language release are fetched: the model, voice table, tokens, US
+ * lexicon, and the espeak-ng files English phonemization reads.
+ */
+export const speechModel = {
+  directory: "kokoro-int8-multi-lang-v1_0",
+  label: "Kokoro v1.0",
+  files: [
+    {
+      name: "model.int8.onnx",
+      bytes: 114203756,
+      sha256: "4b86207ef680e394d8343bee22dfc4c512e5c707c6d9578e3f35ab09bffd6b36",
+    },
+    {
+      name: "voices.bin",
+      bytes: 28200960,
+      sha256: "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
+    },
+    {
+      name: "tokens.txt",
+      bytes: 687,
+      sha256: "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
+    },
+    {
+      name: "lexicon-us-en.txt",
+      bytes: 5956885,
+      sha256: "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
+    },
+    {
+      name: "espeak-ng-data/phontab",
+      bytes: 55796,
+      sha256: "886f3fa402cb0ba73d483aa8ad000af47a6b7cc06293c75a97913fba68a530f6",
+    },
+    {
+      name: "espeak-ng-data/phonindex",
+      bytes: 39074,
+      sha256: "3ca7b8fa3b42624e4b0f152707e7a39245fce569aa99ea47c055d9e622fcf0c4",
+    },
+    {
+      name: "espeak-ng-data/phondata",
+      bytes: 550424,
+      sha256: "4e0288957874029a8c3c9f41a8f517ad4bf18127046decbdd4b9d1d6807ce3a3",
+    },
+    {
+      name: "espeak-ng-data/intonations",
+      bytes: 2040,
+      sha256: "3f8af65fd3eda9759a10f021d61361c120871f463515229c925995c7f90918cc",
+    },
+    {
+      name: "espeak-ng-data/en_dict",
+      bytes: 166944,
+      sha256: "71bd330ba8a2e3e8076e631508208ef49449d6147c17b7bd2b4b1e1468292e35",
+    },
+    {
+      name: "espeak-ng-data/lang/gmw/en",
+      bytes: 140,
+      sha256: "4605d5330801de3641c6e366d15f129ea1f5ffbce8722642aba01ace07ab9c83",
+    },
+    {
+      name: "espeak-ng-data/lang/gmw/en-US",
+      bytes: 257,
+      sha256: "41534c2a22df5dd4f1052ff9e1a33a3ea7bff5a26b5c02bdad5ba8ddb7524704",
+    },
+  ].map((file) => ({
+    ...file,
+    url: `https://huggingface.co/csukuangfj/kokoro-int8-multi-lang-v1_0/resolve/2a360693d79b88b49b88e29aec2b53577f41f206/${file.name}`,
+  })),
+  /** Speaker ids come from the model's `id2speaker` metadata. */
+  voices: {
+    af_heart: { label: "Heart", speaker: 3 },
+    af_bella: { label: "Bella", speaker: 2 },
+    af_nicole: { label: "Nicole", speaker: 6 },
+    am_michael: { label: "Michael", speaker: 16 },
+    am_fenrir: { label: "Fenrir", speaker: 14 },
+    am_puck: { label: "Puck", speaker: 18 },
+  } satisfies Record<SpeechVoiceId, { label: string; speaker: number }>,
+  config: (resolve: ResolveFile) => ({
+    kokoro: {
+      model: resolve("model.int8.onnx"),
+      voices: resolve("voices.bin"),
+      tokens: resolve("tokens.txt"),
+      lexicon: resolve("lexicon-us-en.txt"),
+      dataDir: resolve("espeak-ng-data"),
+      lang: "en-us",
+    },
+  }),
+};

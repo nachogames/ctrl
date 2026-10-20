@@ -58,6 +58,7 @@ export * from "./browserImport.ts";
 export * from "./browserProfile.ts";
 export * from "./device.ts";
 export * from "./dictation.ts";
+export * from "./speech.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./resourceTelemetry.ts";

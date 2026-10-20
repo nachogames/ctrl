@@ -7,11 +7,20 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import * as DictationArtifacts from "./DictationArtifacts.ts";
+import { runtimeFor, speechModel } from "./models.ts";
 
 const layer = (http: HttpClient.HttpClient) =>
   DictationArtifacts.layer.pipe(
+    // A supported host, so runtime paths and native file names are the same on every machine.
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(HostProcess.Platform, "darwin"),
+        Layer.succeed(HostProcess.Architecture, "arm64"),
+      ),
+    ),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-dictation-artifacts-" })),
     Layer.provideMerge(NodeServices.layer),
@@ -80,4 +89,83 @@ it.effect("cancels a pending download and removes its staging files", () =>
       Effect.scoped,
     );
   }),
+);
+
+it("pins every voice file the Kokoro config reads", () => {
+  const names = speechModel.files.map((file) => file.name);
+  assert.strictEqual(new Set(names).size, names.length);
+  for (const file of speechModel.files) {
+    assert.match(file.sha256, /^[0-9a-f]{64}$/);
+    assert.isAbove(file.bytes, 0);
+    assert.match(
+      file.url,
+      /^https:\/\/huggingface\.co\/csukuangfj\/kokoro-int8-multi-lang-v1_0\/resolve\/[0-9a-f]{40}\//,
+    );
+    assert.isTrue(file.url.endsWith(`/${file.name}`));
+  }
+  const { kokoro } = speechModel.config((name) => name);
+  for (const required of [kokoro.model, kokoro.voices, kokoro.tokens, kokoro.lexicon])
+    assert.include(names, required);
+  for (const espeak of ["phontab", "phonindex", "phondata", "intonations", "en_dict"])
+    assert.include(names, `${kokoro.dataDir}/${espeak}`);
+  const speakers = Object.values(speechModel.voices).map((voice) => voice.speaker);
+  assert.strictEqual(new Set(speakers).size, speakers.length);
+});
+
+const installRuntimeFiles = Effect.gen(function* () {
+  const service = yield* DictationArtifacts.DictationArtifacts;
+  const fs = yield* FileSystem.FileSystem;
+  for (const name of runtimeFor("darwin", "arm64")!.nativeFiles) {
+    yield* fs.makeDirectory(service.speechPaths.runtime, { recursive: true });
+    yield* fs.writeFileString(`${service.speechPaths.runtime}/${name}`, "native");
+  }
+});
+
+it.effect("a corrupt voice download reuses the runtime and leaves nothing behind", () =>
+  Effect.gen(function* () {
+    const service = yield* DictationArtifacts.DictationArtifacts;
+    const fs = yield* FileSystem.FileSystem;
+    yield* installRuntimeFiles;
+    const reported: string[] = [];
+    const error = yield* service
+      .installSpeech((artifact, state) =>
+        Effect.sync(() => {
+          reported.push(`${artifact}:${state._tag}`);
+        }),
+      )
+      .pipe(Effect.flip);
+    assert.strictEqual(error.message, "The voice download failed integrity verification.");
+    assert.deepStrictEqual(reported.slice(0, 2), ["runtime:installed", "speech:installing"]);
+    assert.notInclude(reported, "speech:installed");
+    assert.strictEqual(yield* fs.exists(`${service.speechPaths.model}.tmp`), false);
+    const state = yield* service.inspectSpeech;
+    assert.strictEqual(state.runtime._tag, "installed");
+    assert.strictEqual(state.model._tag, "not-installed");
+  }).pipe(
+    Effect.provide(
+      layer(
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("corrupt"))),
+        ),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect("removing the voice keeps the shared runtime", () =>
+  Effect.gen(function* () {
+    const service = yield* DictationArtifacts.DictationArtifacts;
+    const fs = yield* FileSystem.FileSystem;
+    yield* installRuntimeFiles;
+    yield* fs.makeDirectory(service.speechPaths.runtime, { recursive: true });
+    for (const directory of [service.speechPaths.model, `${service.speechPaths.model}.tmp`]) {
+      yield* fs.makeDirectory(`${directory}/espeak-ng-data`, { recursive: true });
+      yield* fs.writeFileString(`${directory}/espeak-ng-data/phontab`, "voice bytes");
+    }
+    yield* service.removeSpeech;
+    assert.strictEqual(yield* fs.exists(service.speechPaths.model), false);
+    assert.strictEqual(yield* fs.exists(`${service.speechPaths.model}.tmp`), false);
+    assert.strictEqual(yield* fs.exists(service.speechPaths.runtime), true);
+  }).pipe(Effect.provide(layer(HttpClient.make(() => Effect.never))), Effect.scoped),
 );

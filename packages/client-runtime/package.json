@@ -111,6 +111,10 @@
       "types": "./src/providerUpdateRequiredModels.ts",
       "default": "./src/providerUpdateRequiredModels.ts"
     },
+    "./spoken-opening": {
+      "types": "./src/spokenOpening.ts",
+      "default": "./src/spokenOpening.ts"
+    },
     "./voice-input": {
       "types": "./src/voice-input/index.ts",
       "default": "./src/voice-input/index.ts"
@@ -194,6 +198,10 @@
     "./state/dictation": {
       "types": "./src/state/dictation.ts",
       "default": "./src/state/dictation.ts"
+    },
+    "./state/speech": {
+      "types": "./src/state/speech.ts",
+      "default": "./src/state/speech.ts"
     },
     "./state/deviceHubAccess": {
       "types": "./src/state/deviceHubAccess.ts",

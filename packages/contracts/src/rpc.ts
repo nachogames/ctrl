@@ -303,6 +303,12 @@ import {
   DictationState,
 } from "./dictation.ts";
 import {
+  SpeechError,
+  SpeechSynthesizeInput,
+  SpeechSynthesizeResult,
+  SpeechState,
+} from "./speech.ts";
+import {
   FleetHostRegistration,
   FleetHostRequest,
   FleetHostResponse,
@@ -532,6 +538,10 @@ export const WS_METHODS = {
   dictationFinish: "dictation.finish",
   dictationCancel: "dictation.cancel",
 
+  speechInstall: "speech.install",
+  speechRemove: "speech.remove",
+  speechSynthesize: "speech.synthesize",
+
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
@@ -649,6 +659,7 @@ export const WS_METHODS = {
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
   subscribeDictationState: "subscribeDictationState",
+  subscribeSpeechState: "subscribeSpeechState",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -1791,6 +1802,34 @@ const WsSubscribeDictationStateRpc = Rpc.make(WS_METHODS.subscribeDictationState
   stream: true,
 });
 
+const SpeechRpcError = Schema.Union([SpeechError, EnvironmentAuthorizationError]);
+
+/** Starts or retries the voice model download; returns before it completes. */
+const WsSpeechInstallRpc = Rpc.make(WS_METHODS.speechInstall, {
+  payload: Schema.Struct({}),
+  error: SpeechRpcError,
+});
+
+/** Deletes the voice model. Spoken replies must be off; the shared runtime stays. */
+const WsSpeechRemoveRpc = Rpc.make(WS_METHODS.speechRemove, {
+  payload: Schema.Struct({}),
+  error: SpeechRpcError,
+});
+
+/** Speaks one short chunk of text, loading the voice model on first use. */
+const WsSpeechSynthesizeRpc = Rpc.make(WS_METHODS.speechSynthesize, {
+  payload: SpeechSynthesizeInput,
+  success: SpeechSynthesizeResult,
+  error: SpeechRpcError,
+});
+
+const WsSubscribeSpeechStateRpc = Rpc.make(WS_METHODS.subscribeSpeechState, {
+  payload: Schema.Struct({}),
+  success: SpeechState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: OrchestrationV2RpcSchemas.dispatchCommand.output,
@@ -2169,7 +2208,15 @@ export const WsDictationRpcGroup = RpcGroup.make(
   WsSubscribeDictationStateRpc,
 ).middleware(RpcScopeAuthorization);
 
-/** Everything but the review, Home, and dictation RPCs, so the server builds their handlers apart; clients use `WsRpcGroup`. */
+/** Spoken replies' RPCs, a group of their own for the same reason. */
+export const WsSpeechRpcGroup = RpcGroup.make(
+  WsSpeechInstallRpc,
+  WsSpeechRemoveRpc,
+  WsSpeechSynthesizeRpc,
+  WsSubscribeSpeechStateRpc,
+).middleware(RpcScopeAuthorization);
+
+/** Everything but the review, Home, dictation, and speech RPCs, so the server builds their handlers apart; clients use `WsRpcGroup`. */
 export const WsBaseRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -2376,4 +2423,5 @@ export const WsRpcGroup = WsBaseRpcGroup.merge(
   WsReviewSessionsRpcGroup,
   WsHomeRpcGroup,
   WsDictationRpcGroup,
+  WsSpeechRpcGroup,
 );
