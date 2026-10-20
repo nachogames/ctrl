@@ -2569,16 +2569,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         {sortable?.isDragging ? (
           dragDestination
         ) : (
+          // On hover the time gives way to the row action, which then sits
+          // in flow so it hugs the PR badge and "+" instead of leaving a gap.
           <span
             className={cn(
               "relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
+              // Pulled into the row gap so the action sits right beside the "+".
+              !isWoke && "group-any-hover/sidebar-row:-ml-1.5 group-any-hover/sidebar-row:min-w-0",
               props.sweepAction !== null && "hidden",
             )}
           >
             <span
               className={cn(
-                "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
-                !isWoke && "group-any-hover/sidebar-row:opacity-0",
+                "inline-flex justify-end tabular-nums text-secondary-label",
+                !isWoke && "group-any-hover/sidebar-row:hidden",
               )}
             >
               {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
@@ -2625,10 +2629,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   aria-label="Wake thread now"
                   onClick={handleUnsnoozeClick}
                   onPointerDown={handleActionPointerDown}
-                  className={cn(
-                    "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
-                    isWoke && "group-any-hover/sidebar-row:static",
-                  )}
+                  className="pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:static group-any-hover/sidebar-row:opacity-100"
                 >
                   <AlarmClockOffIcon className="mb-px size-3" />
                 </button>
@@ -2642,10 +2643,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       aria-label="Un-settle thread"
                       onClick={handleUnsettleClick}
                       onPointerDown={handleActionPointerDown}
-                      className={cn(
-                        "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
-                        isWoke && "group-any-hover/sidebar-row:static",
-                      )}
+                      className="pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:static group-any-hover/sidebar-row:opacity-100"
                     />
                   }
                 >
@@ -2659,10 +2657,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 aria-label="Settle thread"
                 onClick={handleSettleClick}
                 onPointerDown={handleActionPointerDown}
-                className={cn(
-                  "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
-                  isWoke && "group-any-hover/sidebar-row:static",
-                )}
+                className="pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:static group-any-hover/sidebar-row:opacity-100"
               >
                 <CheckIcon className="size-3" />
               </button>
@@ -5329,6 +5324,11 @@ export default function Sidebar() {
     const entry = groupEntryByKeyRef.current.get(groupKey);
     if (entry) void groupActions.renameGroup(entry.group, title);
   });
+  // A group row's click opens its first chat; the caret alone expands and collapses.
+  const handleOpenGroup = useStableCallback((groupKey: string) => {
+    const first = groupEntryByKeyRef.current.get(groupKey)?.members[0];
+    if (first) void navigateToThread(scopeThreadRef(first.environmentId, first.id));
+  });
   const handleNewChatInGroup = useStableCallback((groupKey: string) => {
     const entry = groupEntryByKeyRef.current.get(groupKey);
     if (entry) void groupActions.newChatInGroup(entry.group);
@@ -5438,6 +5438,19 @@ export default function Sidebar() {
       })();
     },
   );
+
+  // The heading's "+": a new chat in that project, on the scoped machine when one is picked.
+  const handleProjectHeadingNewChat = useStableCallback((projectKey: string) => {
+    const project = projectGroupByScopeKey.get(projectKey);
+    if (!project) return;
+    const target =
+      (environmentScopeId === null
+        ? null
+        : project.memberProjects.find((member) => member.environmentId === environmentScopeId)) ??
+      project;
+    if (isMobile) setOpenMobile(false);
+    void handleNewThreadRef.current(scopeProjectRef(target.environmentId, target.id));
+  });
 
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
@@ -6059,6 +6072,7 @@ export default function Sidebar() {
                                 }
                                 isRenaming={renamingGroupKey === item.key}
                                 onToggle={toggleGroupExpanded}
+                                onOpen={handleOpenGroup}
                                 onNewChat={handleNewChatInGroup}
                                 onContextMenu={handleGroupContextMenu}
                                 onCommitRename={commitGroupRename}
@@ -6090,6 +6104,7 @@ export default function Sidebar() {
                               collapsed={isProjectCollapsed(item.key)}
                               draggable={optimisticDrop === null}
                               onToggleCollapsed={toggleProjectCollapsed}
+                              onNewChat={handleProjectHeadingNewChat}
                               onContextMenu={handleProjectHeadingContextMenu}
                             />,
                           );

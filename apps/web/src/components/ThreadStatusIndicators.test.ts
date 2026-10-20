@@ -647,6 +647,30 @@ describe("threadChangeRequestSnapshotsAtom", () => {
 });
 
 describe("prStatusIndicator", () => {
+  it("shows an open pull request's review outcome in place of its open state", () => {
+    const pr = status().pr;
+    if (!pr) throw new Error("Expected pull request fixture");
+
+    expect(prStatusIndicator({ ...pr, reviewDecision: "approved" }, undefined)).toMatchObject({
+      tooltipLead: "PR #42 - Open, approved",
+    });
+    const changes = prStatusIndicator({ ...pr, reviewDecision: "changes-requested" }, undefined);
+    expect(changes?.tooltipLead).toBe("PR #42 - Open, changes requested");
+    expect(changes?.colorClass).toContain("text-amber-600");
+    expect(
+      prStatusIndicator({ ...pr, reviewDecision: "review-required" }, undefined),
+    ).toMatchObject({ tooltipLead: "PR #42 - Open", Icon: PullRequestGlyph.pullRequest });
+    // Merged, closed and draft keep their state: the review no longer decides anything.
+    expect(
+      prStatusIndicator({ ...pr, state: "merged", reviewDecision: "approved" }, undefined)
+        ?.tooltipLead,
+    ).toBe("PR #42 - Merged");
+    expect(
+      prStatusIndicator({ ...pr, isDraft: true, reviewDecision: "changes-requested" }, undefined)
+        ?.tooltipLead,
+    ).toBe("PR #42 - Draft");
+  });
+
   it("formats PR tooltips with number, uppercase status, and title", () => {
     expect(prStatusIndicator(status().pr, undefined)).toMatchObject({
       tooltip: "PR #42 - Open: PR branch",

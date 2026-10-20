@@ -162,8 +162,9 @@ When a chat moves into a group that works in another workspace, T3 Code asks fir
 the chat to the group's branch and worktree. A busy chat cannot switch.
 
 Chats in a group sit under the group's row: in the active list beneath their project, or in
-**Pinned**, **Snoozed**, or **Settled** wherever the group is. Click the row to show or hide its
-chats; the group with the open chat stays open. Drag chats within an expanded group to arrange
+**Pinned**, **Snoozed**, or **Settled** wherever the group is. Click the row to open the group's
+first chat; click its arrow (or press Right and Left) to show or hide its chats. The group with
+the open chat stays open. Drag chats within an expanded group to arrange
 them; that member order is saved on the server and follows your other clients.
 New chats appear at the top. A collapsed group shows its pull request number
 and its most urgent status, and hovering it shows how many chats it holds. A chat that was handed
@@ -176,6 +177,14 @@ the group** under the heading drops it from the group first. The same action is 
 menu, in the chat header's group menu, and in the Group panel. You can bind the
 `chat.newInGroup` command to a shortcut in [keybindings](./keybindings.md); it has none by
 default.
+
+The **+** on a project heading starts a new chat in that project, as its own group.
+**New group** under the new chat's heading lists the project's groups; pick one to start the
+chat in that group instead.
+
+The pull request number on a group or chat row takes the color of its state. An open pull request that was
+approved, or that has changes requested, shows that review outcome instead; hover the number to
+read it.
 
 The **Group** panel (`G`, the right panel launcher, or the command palette) shows the open chat's
 group: its title and goal, which you can edit, cards for its branch, pull request, tickets, frontend, worktree and activity,
