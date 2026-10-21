@@ -122,7 +122,7 @@ export function VoiceFrontSettings(props: {
                   <GeminiKeyControl
                     environmentId={props.environmentId}
                     disabled={props.locked}
-                    keySet={status !== "unavailable" && status?.gemini.keySet === true}
+                    keySet={status !== "unavailable" && status?.gemini?.keySet === true}
                     onChanged={() => setStatusVersion((version) => version + 1)}
                   />
                 }
@@ -337,11 +337,11 @@ function LocalStatusLine(props: { readonly status: StatusResult }) {
 function GeminiStatusLine(props: { readonly status: StatusResult }) {
   const { status } = props;
   if (status === null) return null;
-  if (status === "unavailable" || !("gemini" in status))
+  const gemini = status === "unavailable" ? undefined : status.gemini;
+  if (!gemini)
     return (
       <span className="text-xs text-destructive">Update Ctrl on this machine to use Gemini.</span>
     );
-  const { gemini } = status;
   const spend = `${usd(gemini.monthSpendUsd)} of ${usd(gemini.monthlyCapUsd)} this month`;
   const label = !gemini.keySet
     ? "No key set"

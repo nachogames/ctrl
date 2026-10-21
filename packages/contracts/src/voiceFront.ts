@@ -157,7 +157,8 @@ export const VoiceFrontStatus = Schema.Struct({
   /** Size of the configured model on disk, when LM Studio reports it. */
   modelBytes: Schema.NullOr(Schema.Number),
   maxModelBytes: Schema.Number,
-  gemini: VoiceFrontGeminiStatus,
+  /** Missing from environments that predate the Gemini engine. */
+  gemini: Schema.optionalKey(VoiceFrontGeminiStatus),
 });
 export type VoiceFrontStatus = typeof VoiceFrontStatus.Type;
 
