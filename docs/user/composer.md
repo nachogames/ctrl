@@ -241,6 +241,11 @@ microphone listens again, so you can answer or talk over it. To end the conversa
 `Escape`, click the microphone (or its stop button, which sends what you said first), or turn
 the speaker off.
 
+A pause mid-sentence keeps the microphone listening for up to about two seconds; a finished
+sentence goes out in about half a second. That judgement comes from a small turn model (about
+23 MB) Ctrl downloads with the voice files, or on the first conversation after an update. Until it
+is there, your words go out after a fixed short pause.
+
 For instant answers, turn on **Fast front voice** under **Spoken replies** and download its model
 into [LM Studio](https://lmstudio.ai) once:
 `lms get https://huggingface.co/lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit` (about
