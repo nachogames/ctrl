@@ -108,6 +108,7 @@ export function PullRequestDetailGhost({
     ? resolvePullRequestState({
         state: seed.state,
         isDraft: seed.isDraft ?? false,
+        reviewDecision: seed.reviewDecision,
       })
     : null;
   // Passing list rollups can omit workflows awaiting approval; wait for detail to claim success.

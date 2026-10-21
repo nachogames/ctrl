@@ -17,10 +17,7 @@ import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useSharedPullRequestSummary } from "~/state/pullRequests";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
-import {
-  resolvePullRequestReviewOutcome,
-  resolvePullRequestState,
-} from "../pullRequest/pullRequestPresentation";
+import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import {
   compactSidebarTimeLabel,
@@ -74,21 +71,20 @@ function GroupPullRequestNumber(props: { group: EnvironmentThreadGroup }) {
   const presentation =
     status === null
       ? null
-      : resolvePullRequestState({ state: status.state, isDraft: status.isDraft ?? false });
-  const review =
-    status?.state === "open" && status.isDraft !== true
-      ? resolvePullRequestReviewOutcome(status.reviewDecision)
-      : null;
-  const Icon = review?.Icon ?? presentation?.Icon ?? PullRequestGlyph.pullRequest;
+      : resolvePullRequestState({
+          state: status.state,
+          isDraft: status.isDraft ?? false,
+          reviewDecision: status.reviewDecision,
+        });
+  const Icon = presentation?.Icon ?? PullRequestGlyph.pullRequest;
   const tone =
-    review?.toneClassName ??
-    (presentation === null || status?.state === "closed" || presentation.label === "Draft"
+    presentation === null || status?.state === "closed" || presentation.label === "Draft"
       ? "text-muted-foreground"
-      : presentation.toneClassName);
+      : presentation.toneClassName;
   const label = [
     `Pull request #${link.number}`,
     presentation?.label,
-    review?.label ??
+    presentation?.reviewLabel ??
       (status?.state === "open" && status.reviewDecision === "review-required"
         ? "Awaiting review"
         : undefined),

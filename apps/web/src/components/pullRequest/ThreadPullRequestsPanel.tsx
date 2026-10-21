@@ -147,6 +147,7 @@ function LinkRowImpl({
         <PullRequestRowGlyph
           state={snapshot.state}
           isDraft={snapshot.isDraft}
+          reviewDecision={snapshot.reviewDecision}
           mergeability={snapshot.mergeability}
           baseBranch={snapshot.baseBranch}
         />

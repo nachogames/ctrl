@@ -26,6 +26,7 @@ import {
   PullRequestDiffStat,
   PullRequestLabelChip,
   PullRequestReviewDecisionGlyph,
+  resolvePullRequestState,
 } from "./pullRequestPresentation";
 
 const LABEL_SLOTS = [
@@ -129,6 +130,7 @@ function PullRequestRowImpl({
         <PullRequestRowGlyph
           state={entry.state}
           isDraft={entry.isDraft}
+          reviewDecision={entry.reviewDecision}
           mergeability={entry.mergeability}
           baseBranch={entry.baseBranch}
           className="mt-0.75 self-start"
@@ -164,7 +166,8 @@ function PullRequestRowImpl({
                   }}
                 />
               )}
-              {entry.reviewDecision === undefined ? null : (
+              {entry.reviewDecision === undefined ||
+              resolvePullRequestState(entry).reviewLabel !== undefined ? null : (
                 <PullRequestReviewDecisionGlyph decision={entry.reviewDecision} />
               )}
             </>

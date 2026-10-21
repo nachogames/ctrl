@@ -1534,7 +1534,11 @@ export function PullRequestDetailPanel({
     !conflicting &&
     allowedMergeMethods.length > 1;
   const statePresentation = detail
-    ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
+    ? resolvePullRequestState({
+        state: detail.state,
+        isDraft: detail.isDraft,
+        reviewDecision: sharedSummary?.reviewDecision,
+      })
     : null;
   const showsDeleteBranch = detail !== null && canDeletePullRequestBranch(detail);
   const environmentConnected = environments.some(

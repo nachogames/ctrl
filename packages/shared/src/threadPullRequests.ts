@@ -312,12 +312,17 @@ export function resolveThreadPullRequestChains(
   return chains;
 }
 
+/** A stack's overall verdict: any open layer asking for changes, or every open layer approved. */
+export type ThreadPullRequestStackReview = "approved" | "changes-requested";
+
 export type ThreadPullRequestBadge = {
   readonly state: "open" | "closed" | "merged" | "draft";
 } & (
   | {
       readonly kind: "stack";
       readonly layers: number;
+      /** Absent while any open layer still awaits a verdict, or when nothing is open. */
+      readonly review?: ThreadPullRequestStackReview;
     }
   | { readonly kind: "pull-request"; readonly others: number }
 );
@@ -337,11 +342,24 @@ export function resolveThreadPullRequestBadge(
         : "closed";
   const chains = resolveThreadPullRequestChains(visible);
   if (visible.length > 1 && chains.length === 1) {
-    return { kind: "stack", layers: visible.length, state };
+    const review = resolveStackReview(visible);
+    return { kind: "stack", layers: visible.length, state, ...(review === null ? {} : { review }) };
   }
   return { kind: "pull-request", others: visible.length - 1, state };
 }
 
+// Merged and closed layers are settled, so only open layers decide; an unsynced layer is unknown.
+function resolveStackReview(
+  links: ReadonlyArray<ThreadPullRequestLink>,
+): ThreadPullRequestStackReview | null {
+  const open = links.filter((link) => (link.snapshot?.state ?? "open") === "open");
+  if (open.length === 0) return null;
+  const decisions = open.map((link) => link.snapshot?.reviewDecision ?? null);
+  if (decisions.includes("changes-requested")) return "changes-requested";
+  return decisions.every((decision) => decision === "approved") ? "approved" : null;
+}
+
+/** Search terms for visible PR links, the legacy projection, and the branch PR. */
 export function threadPullRequestSearchTerms(thread: {
   readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;

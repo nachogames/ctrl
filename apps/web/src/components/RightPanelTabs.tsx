@@ -784,6 +784,7 @@ function PullRequestSurfaceIcon({
   const presentation = resolvePullRequestState({
     state: status.state,
     isDraft: status.isDraft ?? detail?.isDraft ?? seed?.isDraft ?? false,
+    reviewDecision: "reviewDecision" in status ? status.reviewDecision : undefined,
   });
   return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
 }

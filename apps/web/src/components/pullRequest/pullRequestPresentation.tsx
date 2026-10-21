@@ -116,9 +116,20 @@ export function PullRequestReviewDecisionGlyph({
 export function resolvePullRequestState(input: {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
-}): PullRequestStatePresentation {
+  readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
+}): PullRequestStatePresentation & { readonly reviewLabel?: string } {
   const key = input.state === "open" && input.isDraft ? "draft" : input.state;
-  return PULL_REQUEST_STATE_PRESENTATION[key];
+  const presentation = PULL_REQUEST_STATE_PRESENTATION[key];
+  // An open pull request's verdict takes over its glyph and tone; the state label stays.
+  const review = key === "open" ? resolvePullRequestReviewOutcome(input.reviewDecision) : null;
+  return review === null
+    ? presentation
+    : {
+        ...presentation,
+        Icon: review.Icon,
+        toneClassName: review.toneClassName,
+        reviewLabel: review.label,
+      };
 }
 
 export interface PullRequestConflictPresentation {
@@ -146,13 +157,18 @@ export function resolvePullRequestConflict(input: {
 export function PullRequestStateGlyph({
   state,
   isDraft,
+  reviewDecision,
   className,
 }: {
   state: PullRequestState;
   isDraft: boolean;
+  reviewDecision?: PullRequestReviewDecision | null | undefined;
   className?: string;
 }) {
-  const presentation = resolvePullRequestState({ state, isDraft });
+  const presentation = resolvePullRequestState({ state, isDraft, reviewDecision });
+  const label = presentation.reviewLabel
+    ? `${presentation.label}, ${presentation.reviewLabel.toLowerCase()}`
+    : presentation.label;
   return (
     <Tooltip>
       {/* The list row is itself a button, so the trigger stays a span: an interactive one would
@@ -160,11 +176,11 @@ export function PullRequestStateGlyph({
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
         <presentation.Icon
           role="img"
-          aria-label={presentation.label}
+          aria-label={label}
           className={cn("size-4 shrink-0", presentation.toneClassName, className)}
         />
       </TooltipTrigger>
-      <TooltipPopup>{presentation.label}</TooltipPopup>
+      <TooltipPopup>{label}</TooltipPopup>
     </Tooltip>
   );
 }

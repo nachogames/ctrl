@@ -377,6 +377,37 @@ describe("chain selection and badge state", () => {
     },
   );
 
+  it.each([
+    ["approved", "approved", "approved"],
+    ["approved", "changes-requested", "changes-requested"],
+    ["review-required", "changes-requested", "changes-requested"],
+    ["approved", "review-required", undefined],
+    ["approved", null, undefined],
+  ] as const)("reads a stack with %s and %s reviews as %s", (bottomReview, topReview, review) => {
+    const links = [
+      link(1, {
+        snapshot: snapshot({ headBranch: "base", reviewDecision: bottomReview }),
+      }),
+      link(2, { snapshot: snapshot({ baseBranch: "base", reviewDecision: topReview }) }),
+    ];
+    expect(resolveThreadPullRequestBadge(links)).toEqual({
+      kind: "stack",
+      layers: 2,
+      state: "open",
+      ...(review === undefined ? {} : { review }),
+    });
+  });
+
+  it("judges a stack's review by its open layers alone", () => {
+    const links = [
+      link(1, {
+        snapshot: snapshot({ state: "merged", headBranch: "base", reviewDecision: null }),
+      }),
+      link(2, { snapshot: snapshot({ baseBranch: "base", reviewDecision: "approved" }) }),
+    ];
+    expect(resolveThreadPullRequestBadge(links)).toMatchObject({ review: "approved" });
+  });
+
   it.each(["open", "merged", "closed"] as const)(
     "targets the top of a derived %s chain despite a later bottom update and link",
     (state) => {

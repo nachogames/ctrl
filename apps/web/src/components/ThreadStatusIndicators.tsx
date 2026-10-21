@@ -147,6 +147,7 @@ export function linkedPullRequestSnapshotStatus(
       title: snapshot.title,
       state: snapshot.state,
       isDraft: snapshot.isDraft,
+      ...(snapshot.reviewDecision === undefined ? {} : { reviewDecision: snapshot.reviewDecision }),
       headRef: snapshot.headBranch,
       baseRef: snapshot.baseBranch,
       ...(snapshot.updatedAt === null ? {} : { updatedAt: snapshot.updatedAt }),
@@ -166,6 +167,8 @@ export interface ThreadPullRequestBadgePresentation {
   readonly toneClassName: string;
   readonly label: string;
   readonly text: string | number;
+  /** A stack's review verdict, drawn ahead of the stack glyph; the badge takes its tone. */
+  readonly ReviewIcon?: PullRequestGlyphIcon;
 }
 
 export function resolveThreadPullRequestBadgePresentation({
@@ -181,11 +184,20 @@ export function resolveThreadPullRequestBadgePresentation({
 }): ThreadPullRequestBadgePresentation | null {
   if (badge?.kind === "stack") {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
+    const review =
+      badge.review === undefined ? null : resolvePullRequestReviewOutcome(badge.review);
+    const reviewLabel =
+      badge.review === "approved"
+        ? ", all approved"
+        : review
+          ? `, ${review.label.toLowerCase()}`
+          : "";
     return {
       Icon: PullRequestGlyph.stack,
-      toneClassName: aggregate.toneClassName,
-      label: `Stack of ${badge.layers} pull requests, ${aggregate.label.toLowerCase()}`,
+      toneClassName: review?.toneClassName ?? aggregate.toneClassName,
+      label: `Stack of ${badge.layers} pull requests, ${aggregate.label.toLowerCase()}${reviewLabel}`,
       text: badge.layers,
+      ...(review === null ? {} : { ReviewIcon: review.Icon }),
     };
   }
   if (number === undefined || url === undefined) return null;
@@ -292,6 +304,9 @@ function PullRequestBadge({
         <span
           className={cn("contents font-normal text-xs tabular-nums", presentation.toneClassName)}
         >
+          {presentation.ReviewIcon ? (
+            <presentation.ReviewIcon aria-hidden className="size-3 shrink-0" />
+          ) : null}
           <presentation.Icon aria-hidden className="size-3 shrink-0" />
           <span>{presentation.text}</span>
         </span>
@@ -343,7 +358,11 @@ export function ThreadPullRequestsMiniList({
         const presentation =
           snapshot === null
             ? null
-            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
+            : resolvePullRequestState({
+                state: snapshot.state,
+                isDraft: snapshot.isDraft,
+                reviewDecision: snapshot.reviewDecision,
+              });
         return (
           <ThreadPullRequestMiniListItem
             key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
@@ -378,7 +397,11 @@ function ThreadPullRequestMiniListItem({
   number: number;
   url: string;
   title: string;
-  presentation: Pick<ThreadPullRequestBadgePresentation, "Icon" | "toneClassName"> | null;
+  presentation:
+    | (Pick<ThreadPullRequestBadgePresentation, "Icon" | "toneClassName"> & {
+        readonly reviewLabel?: string;
+      })
+    | null;
   depth?: number;
   onOpenPullRequest?: ((event: MouseEvent<HTMLAnchorElement>, url: string) => void) | undefined;
   children?: ReactNode;
@@ -390,6 +413,9 @@ function ThreadPullRequestMiniListItem({
         aria-hidden
         className={cn("size-3 shrink-0", presentation?.toneClassName ?? "stroke-muted-foreground")}
       />
+      {presentation?.reviewLabel ? (
+        <span className="sr-only">{presentation.reviewLabel}</span>
+      ) : null}
       <span className="shrink-0 font-mono tabular-nums">#{number}</span>
       <span className="min-w-0 truncate text-foreground/75">{title}</span>
       {children}
@@ -421,20 +447,20 @@ export function prStatusIndicator(
 ): PrStatusIndicator | null {
   if (!pr) return null;
   const { shortLabel } = sourceControlClients.get(provider?.kind).changeRequest;
-  const state = resolvePullRequestState({ state: pr.state, isDraft: pr.isDraft === true });
-  // An open pull request's review outcome outranks its open state.
-  const review =
-    pr.state === "open" && pr.isDraft !== true
-      ? resolvePullRequestReviewOutcome(pr.reviewDecision)
-      : null;
-  const stateLabel =
-    review === null ? state.label : `${state.label}, ${review.label.toLowerCase()}`;
+  const state = resolvePullRequestState({
+    state: pr.state,
+    isDraft: pr.isDraft === true,
+    reviewDecision: pr.reviewDecision,
+  });
+  const stateLabel = state.reviewLabel
+    ? `${state.label}, ${state.reviewLabel.toLowerCase()}`
+    : state.label;
 
   const tooltipLead = `${shortLabel} #${pr.number} - ${stateLabel}`;
   return {
     label: `${shortLabel} ${stateLabel.toLowerCase()}`,
-    colorClass: review?.toneClassName ?? state.toneClassName,
-    Icon: review?.Icon ?? state.Icon,
+    colorClass: state.toneClassName,
+    Icon: state.Icon,
     tooltip: `${tooltipLead}: ${pr.title}`,
     tooltipLead,
     tooltipTitle: pr.title,
@@ -445,12 +471,13 @@ export function prStatusIndicator(
 export function ChangeRequestStatusIcon({
   state,
   isDraft = false,
+  reviewDecision,
   className,
-}: Pick<NonNullable<ThreadPr>, "state"> & {
+}: Pick<NonNullable<ThreadPr>, "state" | "reviewDecision"> & {
   readonly isDraft?: boolean | undefined;
   readonly className?: string | undefined;
 }) {
-  const presentation = resolvePullRequestState({ state, isDraft });
+  const presentation = resolvePullRequestState({ state, isDraft, reviewDecision });
   return <presentation.Icon className={className} />;
 }
 
@@ -952,7 +979,12 @@ export function ThreadRowLeadingStatus({
               />
             }
           >
-            <ChangeRequestStatusIcon state={pr.state} isDraft={pr.isDraft} className="size-3" />
+            <ChangeRequestStatusIcon
+              state={pr.state}
+              isDraft={pr.isDraft}
+              reviewDecision={pr.reviewDecision}
+              className="size-3"
+            />
           </TooltipTrigger>
           <TooltipPopup side="top">
             <PrStatusTooltipContent status={prStatus} />

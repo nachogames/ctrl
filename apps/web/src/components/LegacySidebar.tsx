@@ -700,6 +700,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     <ChangeRequestStatusIcon
                       state={pr.state}
                       isDraft={pr.isDraft}
+                      reviewDecision={pr.reviewDecision}
                       className="size-3"
                     />
                   </a>
