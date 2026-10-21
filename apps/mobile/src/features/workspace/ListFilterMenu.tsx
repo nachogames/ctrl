@@ -38,3 +38,25 @@ export function ListFilterMenu(props: {
     </Menu>
   );
 }
+
+/** A one-tap filter choice styled like the menu pills, with an optional status dot. */
+export function ListFilterChip(props: {
+  readonly label: string;
+  readonly active: boolean;
+  readonly indicator?: "attention" | "working" | null;
+  readonly accessibilityLabel?: string;
+  readonly onPress: () => void;
+}) {
+  const { themeAppearance } = useAppearancePreferences();
+  return (
+    <Chip
+      label={props.label}
+      selected={props.active}
+      indicator={props.indicator ?? null}
+      glass
+      colorScheme={themeAppearance}
+      accessibilityLabel={props.accessibilityLabel ?? props.label}
+      onPress={props.onPress}
+    />
+  );
+}

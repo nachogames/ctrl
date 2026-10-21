@@ -12,6 +12,8 @@ export function useThreadListV2ShelfPreferences() {
   const settledShelfExpanded =
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
   const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled === true;
+  // Project sections are the default; only an explicit false turns them off.
+  const byProject = !loaded || preferencesResult.value.threadListByProject !== false;
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
 
@@ -48,6 +50,7 @@ export function useThreadListV2ShelfPreferences() {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    byProject,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,

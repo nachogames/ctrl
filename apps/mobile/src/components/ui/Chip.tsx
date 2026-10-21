@@ -18,6 +18,8 @@ export function Chip(props: {
   readonly selected?: boolean;
   readonly icon?: AppSymbolName;
   readonly trailingIcon?: AppSymbolName;
+  /** A leading status dot: something needs attention, or something is working. */
+  readonly indicator?: "attention" | "working" | null;
   readonly size?: "small" | "default";
   readonly glass?: boolean;
   readonly colorScheme?: "light" | "dark";
@@ -33,6 +35,16 @@ export function Chip(props: {
   const iconColor = props.selected ? "accent-primary-foreground" : "accent-icon-muted";
   const content = (
     <>
+      {props.indicator ? (
+        <View
+          className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            props.indicator === "attention"
+              ? "bg-adaptive-amber-700-300"
+              : "bg-adaptive-sky-600-400",
+          )}
+        />
+      ) : null}
       {props.icon ? (
         <SymbolView name={props.icon} size={15} tintColorClassName={iconColor} />
       ) : null}

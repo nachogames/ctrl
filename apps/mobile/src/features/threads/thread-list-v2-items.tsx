@@ -137,7 +137,7 @@ const SIDEBAR_V2_ROW_RADIUS = 12;
 function ThreadListV2Section(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
-  readonly tone?: "default" | "snoozed";
+  readonly tone?: "default" | "snoozed" | "attention";
   readonly disclosure?: {
     readonly expanded: boolean;
     readonly disabled?: boolean;
@@ -157,11 +157,13 @@ function ThreadListV2Section(props: {
       <Text
         className={cn(
           "text-xs font-t3-medium",
-          sidebarPane
-            ? "text-drawer-foreground-muted"
-            : snoozed
-              ? "text-foreground-secondary"
-              : "text-foreground-tertiary",
+          props.tone === "attention"
+            ? "text-warning-foreground"
+            : sidebarPane
+              ? "text-drawer-foreground-muted"
+              : snoozed
+                ? "text-foreground-secondary"
+                : "text-foreground-tertiary",
         )}
       >
         {props.label}
@@ -214,6 +216,7 @@ function ThreadListV2Section(props: {
 export const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
+  readonly tone?: "default" | "attention";
 }) {
   return <ThreadListV2Section {...props} />;
 });
@@ -482,6 +485,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozePresetMinute: string;
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
+  /** Under a project heading the project line is dropped; status and time move to the branch line. */
+  readonly hideProject?: boolean;
   readonly providers: ReadonlyArray<ThreadListProvider> | undefined;
   readonly providerInstance: ThreadRowProviderInstance | null;
   readonly environmentLabel: string | null;
@@ -911,75 +916,78 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
       : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
-  const cardContent = (
-    <>
-      <View className="flex-row items-center gap-1.5">
-        {props.project ? (
-          <ProjectFavicon
-            environmentId={thread.environmentId}
-            faviconPath={props.project.faviconPath}
-            projectIcon={props.project.projectIcon}
-            size={15}
-            projectTitle={props.project.title}
-            workspaceRoot={props.project.workspaceRoot}
-          />
-        ) : null}
-        <Text
-          className={cn(
-            "flex-1 text-sm font-t3-medium",
-            selected
-              ? selectedThreadRowColors.mutedForegroundClassName
-              : rowAppearance.mutedForegroundClassName,
-          )}
-          numberOfLines={1}
-        >
-          {props.projectTitle ?? props.project?.title ?? ""}
-        </Text>
-        {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
-        {pinnedRow ? (
-          <SymbolView
-            name="pin"
-            size={11}
-            tintColorClassName={rowAppearance.mutedIconTintClassName}
-            type="monochrome"
-          />
-        ) : null}
-        {statusLabel ? (
-          <View className="flex-row items-center gap-1">
-            <SymbolView
-              name={statusLabel.icon}
-              size={13}
-              tintColorClassName={
-                selected ? selectedThreadRowColors.iconTintClassName : statusLabel.iconTintClassName
-              }
-              type="monochrome"
-              weight="semibold"
-            />
-            <Text
-              className={cn(
-                "text-xs font-t3-bold",
-                selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
-              )}
-            >
-              {statusLabel.label}
-            </Text>
-          </View>
-        ) : (
-          <Text
-            className={cn(
-              "text-xs tabular-nums",
-              selected
-                ? selectedThreadRowColors.foregroundClassName
-                : rowAppearance.tertiaryForegroundClassName,
-            )}
-          >
-            {timeLabel}
-          </Text>
-        )}
-      </View>
+  const statusOrTime = statusLabel ? (
+    <View className="flex-row items-center gap-1">
+      <SymbolView
+        name={statusLabel.icon}
+        size={13}
+        tintColorClassName={
+          selected ? selectedThreadRowColors.iconTintClassName : statusLabel.iconTintClassName
+        }
+        type="monochrome"
+        weight="semibold"
+      />
       <Text
         className={cn(
-          "mt-1 text-base",
+          "text-xs font-t3-bold",
+          selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
+        )}
+      >
+        {statusLabel.label}
+      </Text>
+    </View>
+  ) : (
+    <Text
+      className={cn(
+        "text-xs tabular-nums",
+        selected
+          ? selectedThreadRowColors.foregroundClassName
+          : rowAppearance.tertiaryForegroundClassName,
+      )}
+    >
+      {timeLabel}
+    </Text>
+  );
+  const cardContent = (
+    <>
+      {props.hideProject ? null : (
+        <View className="flex-row items-center gap-1.5">
+          {props.project ? (
+            <ProjectFavicon
+              environmentId={thread.environmentId}
+              faviconPath={props.project.faviconPath}
+              projectIcon={props.project.projectIcon}
+              size={15}
+              projectTitle={props.project.title}
+              workspaceRoot={props.project.workspaceRoot}
+            />
+          ) : null}
+          <Text
+            className={cn(
+              "flex-1 text-sm font-t3-medium",
+              selected
+                ? selectedThreadRowColors.mutedForegroundClassName
+                : rowAppearance.mutedForegroundClassName,
+            )}
+            numberOfLines={1}
+          >
+            {props.projectTitle ?? props.project?.title ?? ""}
+          </Text>
+          {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          {pinnedRow ? (
+            <SymbolView
+              name="pin"
+              size={11}
+              tintColorClassName={rowAppearance.mutedIconTintClassName}
+              type="monochrome"
+            />
+          ) : null}
+          {statusOrTime}
+        </View>
+      )}
+      <Text
+        className={cn(
+          props.hideProject ? "text-base" : "mt-1 text-base",
           !recede && "font-t3-medium",
           selected
             ? selectedThreadRowColors.foregroundClassName
@@ -1067,6 +1075,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : (
           <View className="flex-1" />
         )}
+        {props.hideProject && props.hasQueuedMessages ? (
+          <QueuedMessageIcon selected={selected} />
+        ) : null}
+        {props.hideProject ? statusOrTime : null}
         {pr ? (
           <Pressable
             // Padding cancelled by negative margin grows the touch target into

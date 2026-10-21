@@ -20,6 +20,7 @@ import {
   pendingThreadOrderAtom,
   threadDropBusyAtom,
   threadArrangementOpenAtom,
+  homeArrangesInPlaceAtom,
 } from "../../state/thread-order";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -560,7 +561,8 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
 
 export function ThreadArrangementHost() {
   const open = useAtomValue(threadArrangementOpenAtom);
-  return open ? (
+  const inPlace = useAtomValue(homeArrangesInPlaceAtom);
+  return open && !inPlace ? (
     <ThreadArrangementSheet onClose={() => appAtomRegistry.set(threadArrangementOpenAtom, false)} />
   ) : null;
 }

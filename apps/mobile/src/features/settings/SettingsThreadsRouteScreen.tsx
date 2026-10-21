@@ -47,6 +47,7 @@ export function SettingsThreadsRouteScreen() {
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
           <AutoSettleSettingsRows />
+          <ListLayoutSettingsSection />
           <BetaSettingsSection />
           <LegacySettingsSection />
         </ScrollView>
@@ -253,6 +254,31 @@ function AutoSettleSettingsRows() {
           </View>
         </SettingsSection>
       ) : null}
+    </View>
+  );
+}
+
+/** Device-local Home list layout. */
+function ListLayoutSettingsSection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const byProject =
+    !AsyncResult.isSuccess(preferences) || preferences.value.threadListByProject !== false;
+
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Thread list">
+        <SettingsSwitchRow
+          icon="folder.fill"
+          label="Group by project"
+          value={byProject}
+          onValueChange={(value) => savePreferences({ threadListByProject: value })}
+        />
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Show active threads under their project, with chats in the same group stacked into one row.
+        Threads that need you stay at the top. Tap Edit beside the project chips to arrange them.
+      </Text>
     </View>
   );
 }
