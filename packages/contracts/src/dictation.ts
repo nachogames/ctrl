@@ -11,7 +11,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Sample rate every client sends. The server never resamples or decodes containers. */
 export const DICTATION_SAMPLE_RATE = 16_000;
@@ -158,6 +158,12 @@ export const DictationStartInput = Schema.Struct({
    * finish without a click. Ignored where the detector is not installed.
    */
   handsFree: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Hands-free voice mode: the thread this turn talks to. With the Gemini
+   * front voice, the environment streams the turn's speech to that thread's
+   * live session as it is heard.
+   */
+  voiceThreadId: Schema.optionalKey(ThreadId),
 });
 export type DictationStartInput = typeof DictationStartInput.Type;
 

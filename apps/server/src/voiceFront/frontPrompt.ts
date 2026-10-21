@@ -1,5 +1,7 @@
 import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 
+import { TOOL_HAND_OFF } from "./geminiProtocol.ts";
+
 /** Threads listed in Shift's snapshot, newest first. */
 export const SNAPSHOT_THREAD_LIMIT = 12;
 /** Messages of a regular thread the front sees. */
@@ -77,21 +79,44 @@ export function threadLine(
   };
 }
 
-/** The instructions for one kind of thread. Exported for tests. */
-export function systemPrompt(kind: FrontContext["kind"]): string {
-  const worker = kind === "shift" ? "Shift" : "the agent";
-  const example =
-    kind === "shift" ? "On it, I'll have Shift dig into that." : "Got it, the agent's on it.";
+/** Who does the real work in this kind of thread. */
+export const workerName = (kind: FrontContext["kind"]) =>
+  kind === "shift" ? "Shift" : "the agent";
+
+const handoffExample = (kind: FrontContext["kind"]) =>
+  kind === "shift" ? "On it, I'll have Shift dig into that." : "Got it, the agent's on it.";
+
+/** Rules every front voice follows, local or Gemini. */
+function sharedRules(kind: FrontContext["kind"]): string {
+  const worker = kind === "shift" ? "Shift" : "The agent";
   return `You are the voice of Ctrl, the app where the user runs coding agents in threads. You sound like a friendly coworker at the next desk who answers right away.
 
 Rules:
 - Reply in one or two short spoken sentences. Plain words only: no markdown, lists, code, emoji, or links.
 - Only state facts that are in the context. Never invent threads, states, numbers, or results.
-- You cannot do anything yourself, so never offer to. ${worker === "Shift" ? "Shift" : "The agent"} does the work and reads the same message.
+- You cannot do anything yourself, so never offer to. ${worker} does the work and reads the same message.`;
+}
+
+/** The instructions for one kind of thread. Exported for tests. */
+export function systemPrompt(kind: FrontContext["kind"]): string {
+  return `${sharedRules(kind)}
 - Begin with exactly one tag.
 - [answered]: you fully answer from the context. Use it for greetings, small talk, and questions about what threads are doing, what finished, or what needs the user; answer those yourself from the context.
 - [handoff]: the user asks for work to be done (build, fix, change, check, research), a decision, or facts that are not in the context.
-- After [handoff], say briefly that ${worker} is on it, for example: "${example}"`;
+- After [handoff], say briefly that ${workerName(kind)} is on it, for example: "${handoffExample(kind)}"`;
+}
+
+/**
+ * The Gemini front's instructions: the same rules, with tools in place of the
+ * tags. Its context comes from check_threads, so it is never stale.
+ */
+export function geminiInstructions(kind: FrontContext["kind"]): string {
+  const worker = workerName(kind);
+  return `${sharedRules(kind)}
+- The context is what check_threads returns. Call it before you answer anything about what threads are doing, what finished, or what needs the user.
+- Answer greetings and small talk yourself, without tools.
+- When the user asks for work to be done (build, fix, change, check, research), a decision, or facts check_threads does not give you, call ${TOOL_HAND_OFF}, then say briefly that ${worker} is on it, for example: "${handoffExample(kind)}"
+- If the user starts talking, stop and listen.`;
 }
 
 export function contextText(context: FrontContext): string {

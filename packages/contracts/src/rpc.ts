@@ -311,9 +311,11 @@ import {
   SpeechState,
 } from "./speech.ts";
 import {
+  VoiceFrontEndInput,
   VoiceFrontError,
   VoiceFrontReply,
   VoiceFrontRespondInput,
+  VoiceFrontSetGeminiKeyInput,
   VoiceFrontStatus,
 } from "./voiceFront.ts";
 import {
@@ -551,6 +553,8 @@ export const WS_METHODS = {
   speechSynthesize: "speech.synthesize",
   voiceFrontStatus: "voiceFront.status",
   voiceFrontRespond: "voiceFront.respond",
+  voiceFrontEnd: "voiceFront.end",
+  voiceFrontSetGeminiKey: "voiceFront.setGeminiKey",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -1859,6 +1863,18 @@ const WsVoiceFrontRespondRpc = Rpc.make(WS_METHODS.voiceFrontRespond, {
   stream: true,
 });
 
+/** Hands-free voice ended in a thread; closes its Gemini session. */
+const WsVoiceFrontEndRpc = Rpc.make(WS_METHODS.voiceFrontEnd, {
+  payload: VoiceFrontEndInput,
+  error: VoiceFrontRpcError,
+});
+
+/** Stores or removes the Gemini API key on the environment. */
+const WsVoiceFrontSetGeminiKeyRpc = Rpc.make(WS_METHODS.voiceFrontSetGeminiKey, {
+  payload: VoiceFrontSetGeminiKeyInput,
+  error: VoiceFrontRpcError,
+});
+
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: OrchestrationV2RpcSchemas.dispatchCommand.output,
@@ -2245,6 +2261,8 @@ export const WsSpeechRpcGroup = RpcGroup.make(
   WsSubscribeSpeechStateRpc,
   WsVoiceFrontStatusRpc,
   WsVoiceFrontRespondRpc,
+  WsVoiceFrontEndRpc,
+  WsVoiceFrontSetGeminiKeyRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Everything but the review, Home, dictation, and speech RPCs, so the server builds their handlers apart; clients use `WsRpcGroup`. */

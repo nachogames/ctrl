@@ -19,6 +19,7 @@ import {
   type DictationStartInput,
   type DictationStartResult,
   type DictationState,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -26,6 +27,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -134,7 +136,31 @@ interface Session {
   pendingCheck: number | null;
   /** Samples the detector has heard, its clock. */
   heardSamples: number;
+  /** Hands-free voice mode only: the thread this turn talks to, which hears its audio live. */
+  voiceThreadId: ThreadId | null;
+  /** The end of this turn was announced to `voiceAudio`. */
+  voiceEnded: boolean;
 }
+
+/**
+ * A hands-free voice turn's audio as the detector heard it, for a live voice
+ * front that listens along (Gemini). `speech` is the detector's verdict for
+ * the chunk after the reply-echo gate. A session ends with "endOfTurn" when
+ * the user finished, then always with "closed".
+ */
+export type VoiceAudioEvent =
+  | {
+      readonly _tag: "audio";
+      readonly threadId: ThreadId;
+      readonly sessionId: DictationSessionId;
+      readonly samples: Float32Array;
+      readonly speech: boolean;
+    }
+  | {
+      readonly _tag: "endOfTurn" | "closed";
+      readonly threadId: ThreadId;
+      readonly sessionId: DictationSessionId;
+    };
 
 export class Dictation extends Context.Service<
   Dictation,
@@ -155,6 +181,8 @@ export class Dictation extends Context.Service<
       input: DictationFinishInput,
     ) => Effect.Effect<DictationFinishResult, DictationError>;
     readonly cancel: (input: DictationCancelInput) => Effect.Effect<void, DictationError>;
+    /** Audio of hands-free sessions started with a `voiceThreadId`, as it is heard. */
+    readonly voiceAudio: Stream.Stream<VoiceAudioEvent>;
   }
 >()("t3/dictation/Dictation") {}
 
@@ -227,6 +255,17 @@ const make = Effect.gen(function* () {
   const native = yield* Semaphore.make(1);
   const lifecycle = yield* Semaphore.make(1);
   const sessions = new Map<DictationSessionId, Session>();
+  const voiceAudio = yield* PubSub.unbounded<VoiceAudioEvent>();
+  /** Tells listeners the turn ended, once. */
+  const announceEnd = (session: Session) => {
+    if (!session.voiceThreadId || session.voiceEnded || !session.turn?.state.endOfTurn) return;
+    session.voiceEnded = true;
+    PubSub.publishUnsafe(voiceAudio, {
+      _tag: "endOfTurn",
+      threadId: session.voiceThreadId,
+      sessionId: session.id,
+    });
+  };
   let loaded: LoadedModel | null = null;
   let lastModelUse = yield* Clock.currentTimeMillis;
   let installing: Installation | null = null;
@@ -243,6 +282,12 @@ const make = Effect.gen(function* () {
     session.pendingSamples = 0;
     session.vad?.release();
     session.vad = null;
+    if (session.voiceThreadId)
+      PubSub.publishUnsafe(voiceAudio, {
+        _tag: "closed",
+        threadId: session.voiceThreadId,
+        sessionId: session.id,
+      });
     yield* Deferred.succeed(session.changed, undefined);
     session.worker?.interruptUnsafe();
     if (session.apple) yield* session.apple.close;
@@ -668,6 +713,8 @@ const make = Effect.gen(function* () {
       classifier,
       pendingCheck: null,
       heardSamples: 0,
+      voiceThreadId: vad ? (input.voiceThreadId ?? null) : null,
+      voiceEnded: false,
     };
     if (vad)
       session.turn = createTurnDetector(
@@ -761,8 +808,18 @@ const make = Effect.gen(function* () {
       session.recent?.push(chunk);
       session.heardSamples += chunk.length;
       const atMs = (session.heardSamples / DICTATION_SAMPLE_RATE) * 1000;
-      turn.push(gate.accept(frame, playback, atMs), atMs);
+      const speech = gate.accept(frame, playback, atMs);
+      turn.push(speech, atMs);
+      if (session.voiceThreadId)
+        PubSub.publishUnsafe(voiceAudio, {
+          _tag: "audio",
+          threadId: session.voiceThreadId,
+          sessionId: session.id,
+          samples: chunk,
+          speech,
+        });
     }
+    announceEnd(session);
   };
   /**
    * Asks Smart Turn about the pause the detector just reported, off the
@@ -780,6 +837,7 @@ const make = Effect.gen(function* () {
       if (session.closed || probability === null) return;
       const finished = probability >= TURN_COMPLETE_PROBABILITY;
       turn.verdict(pause, finished);
+      announceEnd(session);
       yield* Effect.logDebug("Smart Turn verdict.").pipe(
         Effect.annotateLogs({
           probability: Math.round(probability * 1000) / 1000,
@@ -981,6 +1039,7 @@ const make = Effect.gen(function* () {
     append,
     finish,
     cancel,
+    voiceAudio: Stream.fromPubSub(voiceAudio),
   });
 });
 

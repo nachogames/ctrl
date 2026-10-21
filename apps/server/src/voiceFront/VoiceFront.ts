@@ -7,9 +7,13 @@
  * never loads or unloads a model itself. If the server is down it starts it
  * with `lms server start`.
  *
+ * With the Gemini engine selected, a turn's reply is Gemini's spoken answer
+ * from `GeminiLive`, and the local model answers only when Gemini cannot.
+ *
  * @module VoiceFront
  */
 import {
+  type ThreadId,
   VOICE_FRONT_MAX_MODEL_BYTES,
   VoiceFrontError,
   type VoiceFrontReply,
@@ -24,6 +28,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -31,6 +36,8 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as GeminiLive from "./GeminiLive.ts";
+import type { LiveTurn, TurnEvent } from "./LiveSession.ts";
 import { chatMessages, parseFrontOutput } from "./frontPrompt.ts";
 import {
   checkModel,
@@ -48,6 +55,8 @@ export const VOICE_FRONT_IDLE_TTL_SECONDS = 600;
 const MAX_REPLY_TOKENS = 90;
 /** A size check stays good this long, so turns do not each run `lms ls`. */
 const SIZE_CHECK_TTL_MS = 60_000;
+/** Longest wait for Gemini's first word before the local front answers instead. */
+export const GEMINI_FIRST_AUDIO_TIMEOUT_MS = 8_000;
 
 export class VoiceFront extends Context.Service<
   VoiceFront,
@@ -56,6 +65,9 @@ export class VoiceFront extends Context.Service<
     readonly respond: (
       input: VoiceFrontRespondInput,
     ) => Stream.Stream<VoiceFrontReply, VoiceFrontError>;
+    /** Hands-free voice ended in this thread. */
+    readonly end: (threadId: ThreadId) => Effect.Effect<void>;
+    readonly setGeminiKey: (key: string | null) => Effect.Effect<void, VoiceFrontError>;
   }
 >()("t3/voiceFront/VoiceFront") {}
 
@@ -68,6 +80,7 @@ const make = Effect.gen(function* () {
   const processes = yield* ProcessRunner.ProcessRunner;
   const fs = yield* FileSystem.FileSystem;
   const contexts = yield* VoiceFrontContext.VoiceFrontContext;
+  const gemini = yield* GeminiLive.GeminiLive;
   const lmsPath = (yield* Path.Path).join(NodeOS.homedir(), ...LMS_PATH_SEGMENTS);
   const isVoiceFrontError = Schema.is(VoiceFrontError);
   let checked: { readonly model: string; readonly sizeBytes: number; readonly at: number } | null =
@@ -146,7 +159,11 @@ const make = Effect.gen(function* () {
 
   const status = Effect.gen(function* () {
     const current = yield* readSettings;
-    const base = { settings: current, maxModelBytes: VOICE_FRONT_MAX_MODEL_BYTES };
+    const base = {
+      settings: current,
+      maxModelBytes: VOICE_FRONT_MAX_MODEL_BYTES,
+      gemini: yield* gemini.status,
+    };
     if (!current.enabled) return { ...base, problem: null, modelBytes: null };
     // Status never starts anything: a stopped server is fine, the next turn starts it.
     const problem = yield* Effect.gen(function* () {
@@ -164,7 +181,7 @@ const make = Effect.gen(function* () {
     return { ...base, ...problem };
   });
 
-  const respond = (input: VoiceFrontRespondInput) =>
+  const respondLocally = (input: VoiceFrontRespondInput) =>
     Stream.unwrap(
       Effect.gen(function* () {
         const current = yield* readSettings;
@@ -255,7 +272,89 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  return VoiceFront.of({ status, respond });
+  /** The local reply, opened with `notice` when the user should hear why it is not Gemini. */
+  const localWithNotice = (input: VoiceFrontRespondInput, notice: string | null) =>
+    notice === null
+      ? respondLocally(input)
+      : respondLocally(input).pipe(
+          Stream.map((reply) => ({ ...reply, text: `${notice} ${reply.text}`.trim() })),
+          // With no local front either, the notice is still said.
+          Stream.catch(() =>
+            Stream.succeed<VoiceFrontReply>({
+              text: notice,
+              done: true,
+              answered: false,
+              firstTokenMs: null,
+            }),
+          ),
+        );
+
+  /** Gemini's spoken answer, or the local one if it fails before saying anything. */
+  const fromTurn = (input: VoiceFrontRespondInput, turn: LiveTurn, startedAt: number) => {
+    let heard = false;
+    let handedOff = false;
+    let firstTokenMs: number | null = null;
+    const reply = (fields: Partial<VoiceFrontReply>): VoiceFrontReply => ({
+      text: "",
+      done: false,
+      answered: false,
+      firstTokenMs,
+      ...fields,
+    });
+    const events = Stream.callback<TurnEvent>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() => turn.subscribe((event) => Queue.offerUnsafe(queue, event))),
+        (unsubscribe) => Effect.sync(unsubscribe),
+      ),
+    );
+    return events.pipe(
+      Stream.timeoutOrElse({
+        duration: `${GEMINI_FIRST_AUDIO_TIMEOUT_MS} millis`,
+        orElse: () =>
+          Stream.succeed<TurnEvent>({ type: "failed", message: "Gemini did not answer in time." }),
+      }),
+      Stream.flatMap((event: TurnEvent): Stream.Stream<VoiceFrontReply, VoiceFrontError> => {
+        switch (event.type) {
+          case "audio":
+            heard = true;
+            return Stream.fromEffect(
+              Effect.map(Clock.currentTimeMillis, (nowMs) => {
+                firstTokenMs ??= nowMs - startedAt;
+                return reply({ audio: [event.data] });
+              }),
+            );
+          case "handoff":
+            handedOff = true;
+            return Stream.empty;
+          case "interrupted":
+            return Stream.succeed(reply({ done: true, interrupted: true }));
+          case "done":
+            return Stream.succeed(reply({ done: true, answered: heard && !handedOff }));
+          case "failed":
+            if (heard) return Stream.succeed(reply({ done: true }));
+            return Stream.unwrap(
+              Effect.map(gemini.notice("failed"), (notice) => localWithNotice(input, notice)),
+            );
+        }
+      }),
+      Stream.takeUntil((value) => value.done),
+    );
+  };
+
+  const respond = (input: VoiceFrontRespondInput) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const current = yield* readSettings;
+        if (!current.enabled || current.engine !== "gemini") return respondLocally(input);
+        const startedAt = yield* Clock.currentTimeMillis;
+        const claimed = yield* gemini.claim(input.threadId);
+        return claimed._tag === "turn"
+          ? fromTurn(input, claimed.turn, startedAt)
+          : localWithNotice(input, claimed.notice);
+      }),
+    );
+
+  return VoiceFront.of({ status, respond, end: gemini.end, setGeminiKey: gemini.setKey });
 });
 
 export const layer = Layer.effect(VoiceFront, make);

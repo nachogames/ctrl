@@ -2,6 +2,7 @@ import * as Layer from "effect/Layer";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as GeminiLive from "../voiceFront/GeminiLive.ts";
 import * as VoiceFront from "../voiceFront/VoiceFront.ts";
 import * as VoiceFrontContext from "../voiceFront/VoiceFrontContext.ts";
 import * as FleetBroker from "./FleetBroker.ts";
@@ -13,5 +14,9 @@ export const HomeLayer = Layer.mergeAll(
   HomeService.layer,
   FleetBroker.layer,
   FleetService.layer.pipe(Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry)),
-  VoiceFront.layer.pipe(Layer.provide(VoiceFrontContext.layer), Layer.provide(ProcessRunner.layer)),
+  VoiceFront.layer.pipe(
+    Layer.provide(GeminiLive.layer),
+    Layer.provide(VoiceFrontContext.layer),
+    Layer.provide(ProcessRunner.layer),
+  ),
 );

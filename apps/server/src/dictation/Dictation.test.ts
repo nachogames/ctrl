@@ -6,6 +6,7 @@ import {
   type DictationState,
   type DictationInstallState,
   type DictationModelId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -1164,6 +1165,46 @@ it.effect("a hands-free session reports speech and ends the turn after the silen
     assert.strictEqual(released.count, 1);
   }).pipe(
     Effect.provide(testLayer({ apple: fakeApple({}), vad: loudnessVad(released) })),
+    Effect.scoped,
+  ),
+);
+
+it.effect("a voice turn's audio reaches live listeners with each chunk's speech verdict", () =>
+  Effect.gen(function* () {
+    const service = yield* Dictation.Dictation;
+    const listened = yield* service.voiceAudio.pipe(
+      Stream.takeUntil((event) => event._tag === "closed"),
+      Stream.runCollect,
+      Effect.forkScoped,
+    );
+    yield* Effect.yieldNow;
+    const { sessionId } = yield* service.start({
+      handsFree: true,
+      voiceThreadId: ThreadId.make("home:shift"),
+    });
+    let seq = 0;
+    const append = (seconds: number, value: number) =>
+      service.append({ sessionId, seq: seq++, pcm: pcm(seconds, value) });
+    yield* append(0.2, 0);
+    yield* append(0.5, 0.3);
+    for (let index = 0; index < 10; index++) yield* append(0.1, 0);
+    yield* service.cancel({ sessionId });
+    const events = Array.from(yield* Fiber.join(listened));
+    const tags = events.map((event) =>
+      event._tag === "audio" ? (event.speech ? "speech" : "quiet") : event._tag,
+    );
+    assert.deepStrictEqual(tags.slice(0, 2), ["quiet", "speech"]);
+    // The turn ends once, then the session closes.
+    assert.deepStrictEqual(
+      tags.filter((tag) => tag === "endOfTurn" || tag === "closed"),
+      ["endOfTurn", "closed"],
+    );
+    // Without a thread, nothing is published.
+    const other = yield* service.start({ handsFree: true });
+    yield* service.append({ sessionId: other.sessionId, seq: 0, pcm: pcm(0.2, 0.3) });
+    yield* service.cancel({ sessionId: other.sessionId });
+  }).pipe(
+    Effect.provide(testLayer({ apple: fakeApple({}), vad: loudnessVad({ count: 0 }) })),
     Effect.scoped,
   ),
 );

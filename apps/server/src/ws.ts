@@ -1276,6 +1276,8 @@ const layerSpeechRpc = ServerSpeechRpcGroup.toLayer(
     return ServerSpeechRpcGroup.of({
       [WS_METHODS.voiceFrontStatus]: () => voiceFront.status,
       [WS_METHODS.voiceFrontRespond]: (input) => voiceFront.respond(input),
+      [WS_METHODS.voiceFrontEnd]: (input) => voiceFront.end(input.threadId),
+      [WS_METHODS.voiceFrontSetGeminiKey]: (input) => voiceFront.setGeminiKey(input.key),
       [WS_METHODS.speechInstall]: () => speech.install,
       [WS_METHODS.speechRemove]: () => speech.remove,
       [WS_METHODS.speechSynthesize]: (input) => speech.synthesize(input),

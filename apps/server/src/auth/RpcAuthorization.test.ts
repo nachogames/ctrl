@@ -76,6 +76,16 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudInstallRelayClient)).toBe(AuthRelayWriteScope);
   });
 
+  it("lets operators end a voice session but only settings writers store the Gemini key", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.voiceFrontEnd)).toBe(AuthOrchestrationOperateScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.voiceFrontSetGeminiKey)).toBe(
+      AuthSettingsWriteScope,
+    );
+    expect(clientRpcRequiredScopes(WS_METHODS.voiceFrontSetGeminiKey, { key: null })).toEqual([
+      AuthSettingsWriteScope,
+    ]);
+  });
+
   it("requires permission to operate on a thread before uploading feedback", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.providerUploadFeedback)).toBe(
       AuthOrchestrationOperateScope,

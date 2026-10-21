@@ -224,6 +224,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeSpeechState]: AuthOrchestrationReadScope,
   [WS_METHODS.voiceFrontStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.voiceFrontRespond]: AuthOrchestrationOperateScope,
+  [WS_METHODS.voiceFrontEnd]: AuthOrchestrationOperateScope,
+  [WS_METHODS.voiceFrontSetGeminiKey]: AuthSettingsWriteScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,

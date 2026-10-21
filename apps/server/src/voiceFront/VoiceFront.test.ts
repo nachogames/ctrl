@@ -12,6 +12,8 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { chatMessages, contextText, parseFrontOutput, threadState } from "./frontPrompt.ts";
 import { checkModel, sseDelta } from "./LmStudio.ts";
+import * as GeminiLive from "./GeminiLive.ts";
+import { LiveTurn } from "./LiveSession.ts";
 import * as VoiceFront from "./VoiceFront.ts";
 import * as VoiceFrontContext from "./VoiceFrontContext.ts";
 
@@ -129,8 +131,30 @@ interface Harness {
   serverUp: boolean;
 }
 
-const testLayer = (harness: Harness, model: string) =>
+const noGemini: GeminiLive.GeminiLive["Service"] = {
+  status: Effect.succeed({
+    keySet: false,
+    monthSpendUsd: 0,
+    monthlyCapUsd: 10,
+    capped: false,
+    problem: null,
+  }),
+  setKey: () => Effect.void,
+  claim: () => Effect.succeed({ _tag: "fallback", notice: null }),
+  notice: () => Effect.succeed(null),
+  end: () => Effect.void,
+};
+
+const testLayer = (
+  harness: Harness,
+  model: string,
+  options: {
+    readonly gemini?: GeminiLive.GeminiLive["Service"];
+    readonly engine?: "local" | "gemini";
+  } = {},
+) =>
   VoiceFront.layer.pipe(
+    Layer.provide(Layer.succeed(GeminiLive.GeminiLive, options.gemini ?? noGemini)),
     Layer.provide(
       Layer.succeed(VoiceFrontContext.VoiceFrontContext, {
         load: () =>
@@ -181,7 +205,11 @@ const testLayer = (harness: Harness, model: string) =>
     ),
     Layer.provide(FileSystem.layerNoop({ exists: () => Effect.succeed(true) })),
     Layer.provide(NodePath.layer),
-    Layer.provide(ServerSettings.layerTest({ voiceFront: { enabled: true, model } })),
+    Layer.provide(
+      ServerSettings.layerTest({
+        voiceFront: { enabled: true, model, engine: options.engine ?? "local" },
+      }),
+    ),
   );
 
 const respond = Effect.gen(function* () {
@@ -235,5 +263,95 @@ describe("VoiceFront", () => {
       const status = yield* (yield* VoiceFront.VoiceFront).status;
       assert.match(status.problem ?? "", /over the 6\.0 GB limit/);
     }).pipe(Effect.provide(testLayer(harness, "zai-org/glm-4.7-flash")));
+  });
+
+  it.effect("speaks Gemini's audio and reads the agent's reply after a hand-off", () => {
+    const harness: Harness = { lmsCalls: [], chatBodies: [], serverUp: true };
+    const turn = new LiveTurn(0);
+    turn.emit({ type: "audio", data: "AAAA" });
+    turn.emit({ type: "handoff" });
+    turn.emit({ type: "audio", data: "BBBB" });
+    turn.emit({ type: "done" });
+    return Effect.gen(function* () {
+      const replies = Array.from(yield* respond);
+      assert.deepStrictEqual(
+        replies.flatMap((reply) => reply.audio ?? []),
+        ["AAAA", "BBBB"],
+      );
+      const last = replies.at(-1)!;
+      assert.isTrue(last.done);
+      // Gemini handed off, so the agent's reply is read.
+      assert.isFalse(last.answered);
+      assert.strictEqual(harness.chatBodies.length, 0);
+    }).pipe(
+      Effect.provide(
+        testLayer(harness, "qwen3-4b-instruct-2507-mlx", {
+          engine: "gemini",
+          gemini: { ...noGemini, claim: () => Effect.succeed({ _tag: "turn", turn }) },
+        }),
+      ),
+    );
+  });
+
+  it.effect("ends at once when the user talks over Gemini", () => {
+    const harness: Harness = { lmsCalls: [], chatBodies: [], serverUp: true };
+    const turn = new LiveTurn(0);
+    turn.emit({ type: "audio", data: "AAAA" });
+    turn.emit({ type: "interrupted" });
+    return Effect.gen(function* () {
+      const last = Array.from(yield* respond).at(-1)!;
+      assert.isTrue(last.done);
+      assert.isTrue(last.interrupted);
+    }).pipe(
+      Effect.provide(
+        testLayer(harness, "qwen3-4b-instruct-2507-mlx", {
+          engine: "gemini",
+          gemini: { ...noGemini, claim: () => Effect.succeed({ _tag: "turn", turn }) },
+        }),
+      ),
+    );
+  });
+
+  it.effect("falls back to the local front, saying why once, when Gemini cannot answer", () => {
+    const harness: Harness = { lmsCalls: [], chatBodies: [], serverUp: true };
+    const turn = new LiveTurn(0);
+    turn.emit({ type: "failed", message: "Gemini disconnected" });
+    return Effect.gen(function* () {
+      const last = Array.from(yield* respond).at(-1)!;
+      assert.strictEqual(last.text, "Gemini is out. Hey! Two threads are running.");
+      assert.isTrue(last.answered);
+      assert.strictEqual(harness.chatBodies.length, 1);
+    }).pipe(
+      Effect.provide(
+        testLayer(harness, "qwen3-4b-instruct-2507-mlx", {
+          engine: "gemini",
+          gemini: {
+            ...noGemini,
+            claim: () => Effect.succeed({ _tag: "turn", turn }),
+            notice: () => Effect.succeed("Gemini is out."),
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect("still says the notice when the local front cannot answer either", () => {
+    const harness: Harness = { lmsCalls: [], chatBodies: [], serverUp: true };
+    return Effect.gen(function* () {
+      const replies = Array.from(yield* respond);
+      assert.deepStrictEqual(replies, [
+        { text: "Over the cap.", done: true, answered: false, firstTokenMs: null },
+      ]);
+    }).pipe(
+      Effect.provide(
+        testLayer(harness, "zai-org/glm-4.7-flash", {
+          engine: "gemini",
+          gemini: {
+            ...noGemini,
+            claim: () => Effect.succeed({ _tag: "fallback", notice: "Over the cap." }),
+          },
+        }),
+      ),
+    );
   });
 });

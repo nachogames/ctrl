@@ -240,6 +240,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeSpeechState]: "speech",
   [WS_METHODS.voiceFrontStatus]: "speech",
   [WS_METHODS.voiceFrontRespond]: "speech",
+  [WS_METHODS.voiceFrontEnd]: "speech",
+  [WS_METHODS.voiceFrontSetGeminiKey]: "speech",
   [WS_METHODS.subscribeServerConfig]: "server",
   [WS_METHODS.subscribeServerLifecycle]: "server",
   [WS_METHODS.subscribeAuthAccess]: "auth",
