@@ -24,11 +24,20 @@ describe("reviewBrief", () => {
   });
 
   it("ends with the user's review rules, below the safety rules they cannot override", () => {
-    const brief = reviewBrief(sessionFixture(), "Always run a local review first.");
+    const brief = reviewBrief(sessionFixture(), {
+      text: "Always run a local review first.",
+      fromProject: false,
+    });
     expect(brief.trimEnd().endsWith("Always run a local review first.")).toBe(true);
     expect(brief).toContain("never over the Rules section");
     expect(brief).toContain("t3_environment_preferences_update (reviewInstructions");
     expect(reviewBrief(sessionFixture())).toContain("None yet.");
+  });
+
+  it("sends the user to the project's Settings when a project override supplies the rules", () => {
+    const brief = reviewBrief(sessionFixture(), { text: "Project rule.", fromProject: true });
+    expect(brief).toContain("this project's Settings");
+    expect(brief).not.toContain("t3_environment_preferences_update (reviewInstructions");
   });
 
   it("treats pull request text as data and checks the stack", () => {

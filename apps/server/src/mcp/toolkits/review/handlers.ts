@@ -134,13 +134,17 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
       // Unreadable settings still open the review; the brief just lacks the user's rules.
       const userRules = yield* Settings.ServerSettingsService.pipe(
         Effect.flatMap((service) => service.getSettings),
-        Effect.map(
-          (settings) =>
-            resolveProjectSettings(settings, result.snapshot.session.projectId).settings
-              .reviewInstructions,
-        ),
+        Effect.map((settings) => {
+          const resolved = resolveProjectSettings(settings, result.snapshot.session.projectId);
+          return {
+            text: resolved.settings.reviewInstructions,
+            fromProject: resolved.sources.reviewInstructions === "project",
+          };
+        }),
         Effect.catch((cause) =>
-          Effect.logWarning("review rules unavailable", { cause }).pipe(Effect.as("")),
+          Effect.logWarning("review rules unavailable", { cause }).pipe(
+            Effect.as({ text: "", fromProject: false }),
+          ),
         ),
       );
       return {
