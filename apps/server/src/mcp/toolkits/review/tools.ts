@@ -21,6 +21,7 @@ import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
+import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const reviewTool = {
@@ -112,6 +113,7 @@ const ReviewSessionOpenTool = Tool.make("review_session_open", {
     }),
   }),
   success: Schema.Struct({ ...Snapshot, created: Schema.Boolean, brief: Schema.String }),
+  dependencies: [...reviewTool.dependencies, Settings.ServerSettingsService],
 })
   .annotate(Tool.Title, "Open a pull request review")
   .annotate(Tool.Destructive, false);
