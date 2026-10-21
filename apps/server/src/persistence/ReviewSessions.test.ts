@@ -233,26 +233,65 @@ it.effect("moves a review to a later round with its triage mark and comments", (
   ),
 );
 
-it.effect("hands a review to another chat", () =>
+it.effect("hands a review to another chat and its group", () =>
   Effect.gen(function* () {
     const repo = yield* repository;
     const other = ThreadId.make("thread:other");
+    const otherGroup = ThreadGroupId.make("group:other");
     yield* repo.insertSession(session);
     yield* repo.setSessionReviewThread({
       sessionId: session.id,
       reviewThreadId: other,
+      groupId: otherGroup,
       updatedAt: "2026-10-13T11:00:00.000Z",
     });
     const stored = Option.getOrNull(yield* repo.getSession(session.id));
     assert.deepEqual(
-      [stored?.reviewThreadId, stored?.updatedAt, stored?.round],
-      [other, "2026-10-13T11:00:00.000Z", 1],
+      [stored?.reviewThreadId, stored?.groupId, stored?.updatedAt, stored?.round],
+      [other, otherGroup, "2026-10-13T11:00:00.000Z", 1],
     );
     assert.deepEqual(
       (yield* repo.listLiveSessionsForThread(other)).map((live) => live.id),
       [session.id],
     );
     assert.deepEqual(yield* repo.listLiveSessionsForThread(session.reviewThreadId), []);
+  }).pipe(
+    Effect.provide(ReviewSessions.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
+  ),
+);
+
+it.effect("finds a pull request's one review whichever group holds it", () =>
+  Effect.gen(function* () {
+    const repo = yield* repository;
+    const elsewhere: ReviewSession = {
+      ...session,
+      id: ReviewSessionId.make("review:elsewhere"),
+      groupId: ThreadGroupId.make("group:elsewhere"),
+      updatedAt: "2026-10-13T12:00:00.000Z",
+    };
+    const finished: ReviewSession = {
+      ...session,
+      id: ReviewSessionId.make("review:finished"),
+      groupId: ThreadGroupId.make("group:finished"),
+      phase: "done",
+      updatedAt: "2026-10-14T12:00:00.000Z",
+    };
+    yield* repo.insertSession(session);
+    yield* repo.insertSession(elsewhere);
+    yield* repo.insertSession(finished);
+    const live = (groupId: string) =>
+      repo
+        .findLiveSession({ key: session.pullRequest, groupId: ThreadGroupId.make(groupId) })
+        .pipe(Effect.map((found) => Option.getOrNull(found)?.id));
+    // The caller's own group wins; otherwise the newest live review.
+    assert.equal(yield* live("group:review"), session.id);
+    assert.equal(yield* live("group:new"), elsewhere.id);
+    // The tab shows a live review over a newer finished one.
+    const latest = yield* repo.findLatestSessionForPullRequest({
+      repository: "NachoGames/Ctrl",
+      number: 23,
+    });
+    assert.equal(Option.getOrNull(latest)?.id, elsewhere.id);
   }).pipe(
     Effect.provide(ReviewSessions.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
   ),

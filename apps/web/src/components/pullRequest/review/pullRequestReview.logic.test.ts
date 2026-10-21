@@ -20,6 +20,7 @@ import {
   toggledDecision,
   triageButton,
   triageInFlight,
+  trimReviewExcerpt,
 } from "./pullRequestReview.logic";
 
 const round = (n: number, state: "collecting" | "applying" | "applied") => ({
@@ -238,7 +239,7 @@ it("keeps stale round history and offers reverification after a base merge", () 
   expect(views[0]!.history?.map((item) => item.number)).toEqual([2]);
   expect(views[1]!.items.map((item) => item.number)).toEqual([1]);
   expect(triageButton(views[0]!, [])).toEqual({
-    label: "Recheck stale findings",
+    label: "Recheck 1 against the new code",
     ready: true,
     busy: false,
   });
@@ -291,5 +292,21 @@ describe("foldPostedReviews", () => {
     ).toBe(0);
     expect(foldPostedReviews([posted], "NeilMcEachin").hidden.size).toBe(0);
     expect(foldPostedReviews([local, posted], "dan").hidden.size).toBe(0);
+  });
+});
+
+describe("trimReviewExcerpt", () => {
+  it("keeps the last lines of a new file's hunk, numbered where they really are", () => {
+    const added = Array.from({ length: 120 }, (_, i) => `+line ${i + 1}`);
+    const trimmed = trimReviewExcerpt([`@@ -0,0 +1,120 @@`, ...added].join("\n"), 3);
+    expect(trimmed).toBe("@@ -0,0 +118,3 @@\n+line 118\n+line 119\n+line 120");
+  });
+  it("counts context and removed lines when moving the start", () => {
+    const hunk = ["@@ -10,4 +10,4 @@ fn", " a", "-b", "+B", " c", " d"].join("\n");
+    expect(trimReviewExcerpt(hunk, 2)).toBe("@@ -12,2 +12,2 @@ fn\n c\n d");
+  });
+  it("leaves a short hunk alone", () => {
+    const hunk = "@@ -1,2 +1,2 @@\n a\n+b";
+    expect(trimReviewExcerpt(hunk)).toBe(hunk);
   });
 });

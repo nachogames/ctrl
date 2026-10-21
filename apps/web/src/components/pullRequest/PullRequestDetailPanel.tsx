@@ -2862,9 +2862,15 @@ export function PullRequestDetailPanel({
                     threadRef ?? (startedReview?.key === reviewKey ? startedReview.thread : null)
                   }
                   reference={reference}
+                  status={{
+                    checks: detail.checks,
+                    reviewDecision: sharedSummary?.reviewDecision,
+                    headSha: detail.headSha,
+                  }}
                   fallback={
                     <HostPullRequestReview
                       detail={detail}
+                      reviewDecision={sharedSummary?.reviewDecision}
                       environmentId={environmentId}
                       reference={reference}
                       active={tab === "review"}

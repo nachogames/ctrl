@@ -2,18 +2,21 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   reviewHistoryRounds,
+  reviewProgress,
   reviewResolutionLabel,
 } from "@t3tools/client-runtime/state/review-sessions";
 import type {
   EnvironmentId,
   PullRequestDetailView,
   PullRequestRef,
+  PullRequestReviewDecision,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 import { useEnvironmentQuery } from "~/state/query";
 import { reviewSessionEnvironment } from "~/state/reviewSessions";
 import { Button } from "../../ui/button";
+import { ReviewProgressCard } from "./ReviewProgressCard";
 import { ReviewHistoryGroup } from "./ReviewRoundCard";
 import { ReviewLocalOfferRow, ReviewSourceRow } from "./ReviewSourceRow";
 import { useReviewCommand } from "./useReviewCommand";
@@ -21,12 +24,14 @@ import { useReviewCommand } from "./useReviewCommand";
 /** Uses the same GitHub normalization and round rows as chat reviews, without creating a chat. */
 export function HostPullRequestReview({
   detail,
+  reviewDecision,
   reference,
   environmentId,
   active,
   onStarted,
 }: {
   detail: PullRequestDetailView;
+  reviewDecision?: PullRequestReviewDecision | null | undefined;
   reference: PullRequestRef;
   environmentId: EnvironmentId;
   active: boolean;
@@ -56,8 +61,29 @@ export function HostPullRequestReview({
     if (result._tag === "Success") onStarted(scopeThreadRef(environmentId, result.value.threadId));
   };
   const data = query.data;
+  const viewerLogin = data?.viewerLogin ?? null;
+  const authorLogin = detail.author?.login ?? null;
+  const progress =
+    data === null
+      ? null
+      : reviewProgress({
+          role:
+            viewerLogin !== null &&
+            authorLogin !== null &&
+            viewerLogin.toLowerCase() !== authorLogin.toLowerCase()
+              ? "reviewer"
+              : "author",
+          viewerLogin,
+          authorLogin,
+          sources: data.sources,
+          items: data.items,
+          checks: detail.checks,
+          reviewDecision,
+          headSha: detail.headSha,
+        });
   return (
-    <div className="h-full overflow-auto p-3">
+    <div className="flex h-full flex-col gap-2.5 overflow-auto p-3">
+      {progress === null ? null : <ReviewProgressCard progress={progress} />}
       <section
         aria-label="Review workspace"
         className="flex flex-col gap-2 rounded-xl border border-border/70 bg-background p-2.5 shadow-sm"

@@ -204,7 +204,7 @@ it.effect("refuses a decision the user did not state, and records one they did",
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
 
-it.effect("keeps one live review per pull request per group", () =>
+it.effect("keeps one live review per pull request across groups", () =>
   Effect.gen(function* () {
     const reviews = yield* service;
     const first = yield* reviews.open(openInput);
@@ -217,11 +217,22 @@ it.effect("keeps one live review per pull request per group", () =>
       [[1, "collecting"]],
     );
 
+    // Opened from another group, the same review moves to that group's chat.
+    const otherChat = ThreadId.make("thread:other-group");
     const otherGroup = yield* reviews.open({
       ...openInput,
       groupId: ThreadGroupId.make("group:other"),
+      reviewThreadId: otherChat,
     });
-    assert.isTrue(otherGroup.created);
+    assert.isFalse(otherGroup.created);
+    assert.deepEqual(
+      [
+        otherGroup.snapshot.session.id,
+        otherGroup.snapshot.session.groupId,
+        otherGroup.snapshot.session.reviewThreadId,
+      ],
+      [first.snapshot.session.id, ThreadGroupId.make("group:other"), otherChat],
+    );
 
     yield* reviews.advanceRound({
       sessionId: first.snapshot.session.id,
@@ -789,5 +800,25 @@ it.effect("persists inline self-review thread IDs during apply and merges retrie
       "PRRT_existing",
       "PRRT_self",
     ]);
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);
+
+it.effect("takes your decision on a point from an earlier commit as its recheck", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("gh:T1")] });
+    // A push marks the open point stale until it is looked at again.
+    yield* repo.markItemsStale(sessionId);
+    yield* reviews.decide({
+      sessionId,
+      number: 1,
+      decision: "decline",
+      authority: { _tag: "panel" },
+    });
+    const [point] = (yield* reviews.read(sessionId)).items;
+    assert.deepEqual([point?.decision, point?.stale], ["decline", false]);
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );

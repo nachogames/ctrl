@@ -280,13 +280,14 @@ export type ReviewSessionSnapshot = typeof ReviewSessionSnapshot.Type;
 
 /** The review of one pull request in the group of `threadId`. */
 export const ReviewSessionSubscribeInput = Schema.Struct({
-  threadId: ThreadId,
+  /** The chat beside the tab; it starts a review when the pull request has none. */
+  threadId: Schema.optional(ThreadId),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
 });
 export type ReviewSessionSubscribeInput = typeof ReviewSessionSubscribeInput.Type;
 
-/** The latest review of that pull request in the group, or null when there is none. */
+/** The pull request's review, or null when there is none. */
 export const ReviewSessionSubscribeResult = Schema.Struct({
   snapshot: Schema.NullOr(ReviewSessionSnapshot),
 });

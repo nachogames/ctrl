@@ -315,17 +315,24 @@ request or project skill installation is needed. Discovery runs in the backgroun
 the tab discovers the PR immediately. GitHub feedback refreshes periodically.
 A review's overall summary, Copilot's or a reviewer's, is never a point by itself; a problem a
 summary raises that no inline comment covers becomes its own point when the agent triages. Resolved findings remain in history and do not
-need another decision. Each completed Copilot pass starts a review round, with failed retries and reviews of the same
-commit grouped alongside it. Each round shows how many findings are still open or resolved,
-including resolutions made directly on GitHub.
+need another decision. A PR has one review, whichever chat or group you open it from. Each
+reviewed commit is a round, whether the review came from GitHub or ran in T3 Code. Each round
+shows how many findings are still open or resolved, including resolutions made directly on GitHub.
+The top of the tab sums it up: what stands between you and approving (or merging, on your own
+PR), CI, and how many issues each round found, so you can see whether it is settling down.
 On the Pull Requests page, the **Review** tab also shows requested and completed GitHub
 reviews before a chat exists. Choose **Run your review** under **Your review** to create
 the review chat and isolated checkout and start an independent review.
-When the PR head changes, unresolved findings become stale so they can be checked again.
-Their history, decisions, and reply drafts remain available; choose **Recheck stale findings**.
+The review workspace lists every round that still has something open, each with its reviews,
+then all open points together under one Triage. A round moves to History once everything in it is
+resolved. When the PR head changes, open points from an earlier commit are marked **code changed**
+or **not touched** until you choose **Recheck N against the new code**. Their decisions and reply drafts remain; choose
+**Recheck N against the new code**.
 Ask the agent to triage when you want explanations and recommendations, or to run an
 independent local review.
-Any ordinary chat in the PR’s group can update the same review panel. Ask about `#3` in any
+Any ordinary chat in the PR’s group can update the same review panel. Review actions started
+from anywhere else go to the review's chat, and if every chat for the PR is gone, a new group
+and chat are created for it. Ask about `#3` in any
 of those chats, or open a point's own chat. Questions leave decisions alone;
 say `#3 fix` or `#3 decline` to decide. Conclusions and reply drafts stay with the point.
 
@@ -357,4 +364,6 @@ deletes that draft. Read it on GitHub and submit it with your verdict; the tab s
 When the author asks for your review again, choose **Re-review**. Each of your open threads is
 checked against the new code (**Resolve** or **Keep open** with a follow-up), and your review runs
 again on the new commits. Both go out together in one new pending review. Only your own threads
-are ever resolved. After you approve, choose **Finish**.
+are ever resolved. There is nothing to close after you approve: the review follows GitHub, so it
+comes back when the author pushes or asks for your review again, and ends when the PR is merged
+or closed.

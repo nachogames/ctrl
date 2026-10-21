@@ -174,8 +174,15 @@ export function triageButton(
     return { label: "Triaging…", busy: true, ready: false };
   }
   const untriaged = view.sources.filter((source) => source.state === "done" && !source.triaged);
-  if ((view.history ?? []).some((item) => item.stale && item.githubState !== "resolved")) {
-    return { label: "Recheck stale findings", busy: false, ready: true };
+  const recheck = (view.history ?? []).filter(
+    (item) => item.stale && item.githubState !== "resolved",
+  ).length;
+  if (recheck > 0) {
+    return {
+      label: `Recheck ${recheck} against the new code`,
+      busy: false,
+      ready: true,
+    };
   }
   const label = reviewTriageLabel(untriaged.length);
   if (label !== null) return { label, busy: false, ready: true };
@@ -264,4 +271,31 @@ export function foldPostedReviews(
     );
   }
   return { hidden, postedFor };
+}
+
+const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/;
+
+/**
+ * GitHub's comment hunk runs from the top of the diff hunk down to the commented line, which on
+ * a new file is the whole file. Keep the last `keep` lines, ending at the comment, and rewrite
+ * the header so their line numbers stay right.
+ */
+export function trimReviewExcerpt(excerpt: string, keep = 8): string {
+  const lines = excerpt.replace(/\n+$/, "").split("\n");
+  const header = HUNK_HEADER.exec(lines[0] ?? "");
+  if (header === null) return lines.slice(-keep).join("\n");
+  const body = lines.slice(1);
+  if (body.length <= keep) return excerpt;
+  const counts = (part: ReadonlyArray<string>) => ({
+    old: part.filter((line) => !line.startsWith("+") && !line.startsWith("\\")).length,
+    new: part.filter((line) => !line.startsWith("-") && !line.startsWith("\\")).length,
+  });
+  const skipped = counts(body.slice(0, -keep));
+  const kept = body.slice(-keep);
+  const shown = counts(kept);
+  const oldStart = Number(header[1]) + skipped.old;
+  const newStart = Number(header[2]) + skipped.new;
+  return [`@@ -${oldStart},${shown.old} +${newStart},${shown.new} @@${header[3]}`, ...kept].join(
+    "\n",
+  );
 }

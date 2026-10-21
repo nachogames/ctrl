@@ -150,6 +150,11 @@ export const ReviewPointRow = memo(function ReviewPointRow({
               <TooltipPopup side="top">Your messages about this point</TooltipPopup>
             </Tooltip>
           ) : null}
+          {item.stale ? (
+            <span className="shrink-0 text-2xs text-muted-foreground">
+              earlier commit · {item.githubState === "outdated" ? "code changed" : "not touched"}
+            </span>
+          ) : null}
           {decision === null ? null : (
             <Badge variant={decision === "fix" ? "info" : "secondary"}>{label(decision)}</Badge>
           )}

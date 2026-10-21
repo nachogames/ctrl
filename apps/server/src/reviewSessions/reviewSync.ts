@@ -7,6 +7,7 @@ import type {
   ReviewSource,
   ReviewSourceComment,
 } from "@t3tools/contracts";
+import { reviewRole } from "@t3tools/contracts";
 import type { ProviderChangeRequestReviewRound } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 const COPILOT_LOGIN = /^(copilot|copilot-pull-request-reviewer)(\[bot\])?$/i;
@@ -416,4 +417,39 @@ export function repairUnknownLocalSources(
         ]
       : [],
   );
+}
+
+/** Why GitHub brings a finished review back, or null while nothing new wants you. */
+export type ReviewReopenReason = "requested" | "new-commits" | "new-review";
+
+/**
+ * A finished review comes back when GitHub moved past where it ended: someone asked you to
+ * review again (even after you approved), commits landed after it finished, or, on your own
+ * pull request, someone else reviewed it since.
+ */
+export function reviewReopenReason(
+  session: Pick<ReviewSession, "headSha" | "updatedAt" | "authorLogin" | "viewerLogin">,
+  read: Pick<ProviderChangeRequestReviewRound, "headSha" | "reviews" | "pendingReviewers">,
+): ReviewReopenReason | null {
+  const viewer = session.viewerLogin?.toLowerCase() ?? null;
+  const reviewing = reviewRole(session) === "reviewer";
+  if (
+    reviewing &&
+    viewer !== null &&
+    read.pendingReviewers.some((reviewer) => reviewer.login.toLowerCase() === viewer)
+  )
+    return "requested";
+  if (read.headSha !== null && session.headSha !== null && read.headSha !== session.headSha)
+    return "new-commits";
+  if (
+    !reviewing &&
+    read.reviews.some(
+      (review) =>
+        review.submittedAt !== null &&
+        review.submittedAt > session.updatedAt &&
+        review.author?.login.toLowerCase() !== viewer,
+    )
+  )
+    return "new-review";
+  return null;
 }
