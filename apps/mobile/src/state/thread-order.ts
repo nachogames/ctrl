@@ -12,7 +12,6 @@ import { environmentServerConfigsAtom } from "./server";
 import { environmentThreadShells } from "./threads";
 import { queuedThreadKeysAtom } from "./use-thread-outbox";
 
-// Covers lifecycle commands before a cross-section move can acquire an order hold.
 export const threadArrangementOpenAtom = Atom.make(false).pipe(Atom.keepAlive);
 
 /** True while a Home list grouped by project is mounted: it arranges in place, so the sheet stays closed. */
@@ -36,7 +35,6 @@ export function usePendingThreadOrder(nowMinute: string, snoozeWakeTick: number)
 
 let refreshPendingOrder: (() => void) | undefined;
 
-/** Shared by Home and the navigation sidebar, including their action guards. */
 export function getPendingThreadOrder(): PendingThreadOrder | null {
   refreshPendingOrder?.();
   return appAtomRegistry.get(pendingThreadOrderAtom);

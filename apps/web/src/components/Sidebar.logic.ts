@@ -57,22 +57,16 @@ export function resolveSidebarRowAccessibility(input: {
   readonly isActive: boolean;
 }): { readonly label: string; readonly current: "page" | undefined } {
   return {
-    // The title is the row's identity and must lead when users scan tasks.
-    // Only static context belongs here; nested action labels remain separate controls.
     label: [input.title, input.statusLabel, input.projectDisplayName].filter(Boolean).join(", "),
     current: input.isActive ? "page" : undefined,
   };
 }
 
-// Visible sidebar rows are prewarmed into the thread-detail cache so opening a
-// nearby thread usually reuses an already-hot subscription. Each prewarmed
-// thread holds a live, fully hydrated detail subscription (all messages and
-// activities, growing as agents work) for as long as the row stays visible,
-// so this limit is a direct renderer-heap and server-load multiplier — keep
-// it small; cold opens still render instantly from the cached snapshot.
+// Each prewarmed thread holds a live, fully hydrated detail subscription (all
+// messages and activities, growing as agents work) for as long as the row stays
+// visible, so this limit is a direct renderer-heap and server-load multiplier —
+// keep it small; cold opens still render instantly from the cached snapshot.
 const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
-// A small buffer keeps the next few rows warm without leasing every row that
-// content-visibility leaves mounted below the scroll viewport.
 const SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX = 160;
 
 export function useSidebarRowSubscriptionLease(isActive: boolean): {
@@ -81,17 +75,12 @@ export function useSidebarRowSubscriptionLease(isActive: boolean): {
 } {
   const [row, setRow] = React.useState<HTMLElement | null>(null);
   const [isNearViewport, setIsNearViewport] = React.useState(isActive);
+  // The active row stays leased after it deactivates until the observer reports.
+  if (isActive && !isNearViewport) setIsNearViewport(true);
+  const canObserve = typeof IntersectionObserver !== "undefined";
 
   React.useEffect(() => {
-    if (isActive) {
-      setIsNearViewport(true);
-      return;
-    }
-    if (row === null) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setIsNearViewport(true);
-      return;
-    }
+    if (isActive || row === null || !canObserve) return;
 
     const scrollRoot = row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
     const observer = new IntersectionObserver(
@@ -103,24 +92,24 @@ export function useSidebarRowSubscriptionLease(isActive: boolean): {
     );
     observer.observe(row);
     return () => observer.disconnect();
-  }, [isActive, row]);
+  }, [canObserve, isActive, row]);
 
   return {
-    leaseLiveStatus: isActive || isNearViewport,
+    leaseLiveStatus: isActive || isNearViewport || !canObserve,
     rowRef: setRow,
   };
 }
 
-// A row keeps the last live value it rendered so a released lease never
-// blanks its badge. The value is bound to `key`, so a different worktree or
-// linked pull request cannot reuse the previous one.
 export function useRetainedValue<T>(key: string | null, value: T | null): T | null {
-  const retained = React.useRef<{ readonly key: string; readonly value: T } | null>(null);
-  if (key !== null && value !== null) {
-    retained.current = { key, value };
+  const [retained, setRetained] = React.useState<{
+    readonly key: string;
+    readonly value: T;
+  } | null>(null);
+  if (key !== null && value !== null && (retained?.key !== key || retained.value !== value)) {
+    setRetained({ key, value });
   }
   if (value !== null) return value;
-  return key !== null && retained.current?.key === key ? retained.current.value : null;
+  return key !== null && retained?.key === key ? retained.value : null;
 }
 
 // Sidebar.motion handles ordinary section changes. Sortable transforms own
@@ -128,17 +117,13 @@ export function useRetainedValue<T>(key: string | null, value: T | null): T | nu
 export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
   args.isSorting ? defaultAnimateLayoutChanges(args) : false;
 
-// Rows and section markers share one sortable list. The separators resolve
-// the lifecycle action; Sidebar.drag previews the resulting layout. Pinned
-// and active threads keep the dragged position; settled threads use time
-// order. Snoozed rows can leave the shelf, but dropping into it is not
-// supported because snoozing requires a wake time. The Working shelf (beta)
-// follows live status, so it is neither a drag source nor a destination.
+// Snoozed rows can leave the shelf, but dropping into it is not supported
+// because snoozing requires a wake time. The Working shelf (beta) follows live
+// status, so its rows only drag out as chat context, never between sidebar
+// sections.
 
 export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
 
-/** Resolve the shelf a visible thread belongs to. Snooze is temporary and
- * wins until its wake boundary; settlement then wins over a stale pin. */
 export function resolveSidebarThreadSection(input: {
   readonly snoozed: boolean;
   readonly settled: boolean;
@@ -150,17 +135,12 @@ export function resolveSidebarThreadSection(input: {
   return "active";
 }
 
-/** Sortable ids: thread rows use their scoped key; structural items use a
-    colon-free prefix: scoped thread keys always contain a colon. */
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
 
 export type SidebarListMarker =
-  /** The top boundary is also a landing target when there are no pins. */
   | "pinned-header"
-  /** Stand-in rows so an empty section has somewhere for the gap to open. */
   | "active-placeholder"
   | "settled-placeholder"
-  /** The boundary between pinned and active rows. */
   | "pinned-divider"
   | "working-header"
   | "snoozed-header"
@@ -179,6 +159,8 @@ export type SidebarListItem =
       readonly key: string;
       readonly section: SidebarSection;
       readonly groupKey?: string | null;
+      /** The one-chat group this top-level row stands in for. */
+      readonly soloGroupKey?: string | null;
     }
   | { readonly kind: "group"; readonly key: string; readonly section: SidebarGroupSection }
   | { readonly kind: "project-heading"; readonly key: string }
@@ -197,10 +179,6 @@ export function sidebarListItemId(item: SidebarListItem): string {
   }
 }
 
-/** The section a slot belongs to, read off the markers around it: from
-    the top down, everything before the pinned divider is pinned, then the
-    inbox until the first shelf header, each shelf until the next header,
-    then settled. */
 function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number): SidebarSection {
   let section: SidebarSection = "pinned";
   for (let i = 0; i < index && i < items.length; i += 1) {
@@ -214,8 +192,6 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
   return section;
 }
 
-/** Resolve the destination section and manual order from an arrayMove across
- * the separators. The working and snoozed shelves are never destinations. */
 export type SidebarDropTarget = {
   readonly section: "pinned" | "active" | "settled";
   readonly pinnedOrder: readonly string[];
@@ -256,108 +232,180 @@ export function resolveSidebarDropTarget(
   return { section, pinnedOrder, activeOrder };
 }
 
-/** Dropping a chat into a group: join a group, or group a lone Active chat first and then join. */
-export type SidebarGroupDropTarget =
-  | { readonly kind: "join"; readonly groupKey: string }
-  | { readonly kind: "create-with"; readonly threadKey: string };
+export interface SidebarArrangement {
+  readonly kind: "project" | "unit" | "member";
+  /** The project a unit drag reorders, or the group a member drag reorders. */
+  readonly scopeKey: string | null;
+  /** Project keys, unit keys, or member thread keys, in the order after the drop. */
+  readonly order: readonly string[];
+  readonly changed: boolean;
+  /** Where the drop line goes: above `beforeId`, or below `afterId` at the end. */
+  readonly line: { readonly beforeId: string } | { readonly afterId: string } | null;
+}
 
-interface SidebarGroupDropThread {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: string;
-  readonly lineage: { readonly relationshipToParent: "fork" | "subagent" | null };
-  readonly groupId?: ThreadGroupId | null;
+const isTopLevelActiveRow = (item: SidebarListItem) =>
+  item.kind === "group" || (item.kind === "thread" && (item.groupKey ?? null) === null);
+
+function sidebarUnitKey(item: SidebarListItem): string {
+  if (item.kind === "group") return item.key;
+  if (item.kind === "thread") return item.soloGroupKey ?? item.key;
+  if (item.kind === "project-heading") return item.key;
+  return sidebarListItemId(item);
 }
 
 /**
- * What dropping `activeThread` on `overItem` does to its group, or null when
- * the drop is not a group drop. A group row in any section takes the chat. An
- * Active-tree chat row takes it into its group, or groups with it when lone; a
- * lone chat that is the last member of a hidden group takes it into that group.
- * Pinned, Settled and shelf chat rows keep their pin and settle drops, and so
- * does an ungrouped chat dragged in from a shelf (its drop into Active means
- * unpin, un-settle or wake). Targets in another project, the chat's own group
- * and subagents never are group drops, nor is any drop where the chat's
- * server cannot run groups.
+ * A drag that rearranges rows in place: a project heading moves with its
+ * rows, a group row or lone chat moves inside its project, and a group's chat
+ * moves inside its group. The pointer past either end clamps to it. Null when
+ * `activeId` is none of these (pinned and parked chats keep lifecycle drops).
  */
-export function resolveSidebarGroupDropTarget(input: {
-  readonly activeThread: SidebarGroupDropThread & {
-    readonly key: string;
-    readonly section: SidebarSection;
-    readonly groupKey: string | null;
+export function resolveSidebarArrangement(input: {
+  readonly items: readonly SidebarListItem[];
+  readonly activeId: string;
+  readonly overId: string;
+}): SidebarArrangement | null {
+  const { items } = input;
+  const activeIndex = items.findIndex((item) => sidebarListItemId(item) === input.activeId);
+  const overIndex = items.findIndex((item) => sidebarListItemId(item) === input.overId);
+  const active = items[activeIndex];
+  if (active === undefined || overIndex === -1) return null;
+  const memberGroupKey = active.kind === "thread" ? (active.groupKey ?? null) : null;
+  const inGroup = (index: number) => {
+    const item = items[index];
+    return item?.kind === "thread" && (item.groupKey ?? null) === memberGroupKey;
   };
-  readonly overItem: SidebarListItem | undefined;
-  readonly groups: ReadonlyMap<string, Pick<EnvironmentThreadGroup, "environmentId" | "projectId">>;
-  readonly threads: ReadonlyMap<string, SidebarGroupDropThread>;
-  /** The chat's environment advertises `threadGroups`. */
-  readonly supportsGroups: boolean;
-}): SidebarGroupDropTarget | null {
-  const { activeThread: active, overItem } = input;
-  if (!input.supportsGroups) return null;
-  const isSubagent = (thread: SidebarGroupDropThread) =>
-    thread.lineage.relationshipToParent === "subagent";
-  if (isSubagent(active) || overItem === undefined) return null;
-  const sameProject = (target: Pick<SidebarGroupDropThread, "environmentId" | "projectId">) =>
-    target.environmentId === active.environmentId && target.projectId === active.projectId;
-  if (overItem.kind === "group") {
-    const group = input.groups.get(overItem.key);
-    if (group === undefined || !sameProject(group) || overItem.key === active.groupKey) {
+  let rangeStart: number;
+  let rangeEnd: number;
+  let kind: SidebarArrangement["kind"];
+  let scopeKey: string | null = null;
+  if (memberGroupKey !== null) {
+    kind = "member";
+    scopeKey = memberGroupKey;
+    rangeStart = activeIndex;
+    while (inGroup(rangeStart - 1)) rangeStart -= 1;
+    rangeEnd = activeIndex + 1;
+    while (inGroup(rangeEnd)) rangeEnd += 1;
+  } else {
+    const start = items.findIndex(
+      (item) => item.kind === "marker" && item.marker === "active-placeholder",
+    );
+    let end = items.length;
+    for (let index = start + 1; index < items.length; index += 1) {
+      if (items[index]!.kind === "marker") {
+        end = index;
+        break;
+      }
+    }
+    if (start === -1 || activeIndex <= start || activeIndex >= end) return null;
+    if (active.kind === "project-heading") {
+      kind = "project";
+      rangeStart = start + 1;
+      rangeEnd = end;
+    } else if (isTopLevelActiveRow(active)) {
+      kind = "unit";
+      let heading = activeIndex;
+      while (heading > start && items[heading]!.kind !== "project-heading") heading -= 1;
+      const headingItem = items[heading];
+      scopeKey = headingItem?.kind === "project-heading" ? headingItem.key : null;
+      rangeStart = heading + 1;
+      rangeEnd = rangeStart;
+      while (rangeEnd < end && items[rangeEnd]!.kind !== "project-heading") rangeEnd += 1;
+    } else {
       return null;
     }
-    return { kind: "join", groupKey: overItem.key };
   }
-  if (overItem.kind !== "thread" || overItem.key === active.key) return null;
-  if (overItem.section !== "active") return null;
-  if (active.groupKey === null && active.section !== "active") return null;
-  const target = input.threads.get(overItem.key);
-  if (target === undefined || isSubagent(target) || !sameProject(target)) return null;
-  const targetGroupKey = overItem.groupKey ?? null;
-  if (targetGroupKey !== null) {
-    return targetGroupKey === active.groupKey ? null : { kind: "join", groupKey: targetGroupKey };
+  const startsBlock = (item: SidebarListItem) =>
+    kind === "project"
+      ? item.kind === "project-heading"
+      : kind === "unit"
+        ? isTopLevelActiveRow(item)
+        : true;
+  const blocks: Array<{ readonly from: number; to: number }> = [];
+  for (let index = rangeStart; index < rangeEnd; index += 1) {
+    if (startsBlock(items[index]!) || blocks.length === 0)
+      blocks.push({ from: index, to: index + 1 });
+    else blocks.at(-1)!.to = index + 1;
   }
-  const hiddenGroupKey =
-    target.groupId == null
-      ? null
-      : threadGroupKey({ environmentId: target.environmentId, groupId: target.groupId });
-  const hiddenGroup = hiddenGroupKey === null ? undefined : input.groups.get(hiddenGroupKey);
-  if (hiddenGroupKey === null || hiddenGroup === undefined || !sameProject(hiddenGroup)) {
-    return { kind: "create-with", threadKey: overItem.key };
-  }
-  return hiddenGroupKey === active.groupKey ? null : { kind: "join", groupKey: hiddenGroupKey };
+  const blockAt = (index: number) =>
+    index < rangeStart
+      ? 0
+      : index >= rangeEnd
+        ? blocks.length - 1
+        : blocks.findIndex((block) => index >= block.from && index < block.to);
+  const from = blockAt(activeIndex);
+  const to = blockAt(overIndex);
+  if (from === -1 || to === -1) return null;
+  const moved = [...blocks];
+  const [lifted] = moved.splice(from, 1);
+  moved.splice(to, 0, lifted!);
+  const next = moved[to + 1];
+  const previous = moved[to - 1];
+  return {
+    kind,
+    scopeKey,
+    order: moved.map((block) => sidebarUnitKey(items[block.from]!)),
+    changed: from !== to,
+    line:
+      from === to
+        ? null
+        : next !== undefined
+          ? { beforeId: sidebarListItemId(items[next.from]!) }
+          : previous !== undefined
+            ? { afterId: sidebarListItemId(items[previous.to - 1]!) }
+            : null,
+  };
 }
 
 /**
- * The group whose chats a drop reorders: a member dropped on another member of
- * its own expanded group. Null for any other drop, or where the chat's server
- * cannot store the order.
+ * The full manual order after a drop rearranged `visible`: those keys move
+ * together to where the first of them was, and every other key keeps its
+ * place. New keys are fine; they join the block.
  */
-export function resolveSidebarGroupReorder(input: {
-  readonly activeItem: SidebarListItem | undefined;
-  readonly overItem: SidebarListItem | undefined;
-  /** The chat's environment advertises `threadGroupReorder`. */
-  readonly supportsReorder: boolean;
-}): string | null {
-  const { activeItem, overItem } = input;
-  if (!input.supportsReorder || activeItem?.kind !== "thread" || overItem?.kind !== "thread") {
-    return null;
+export function mergeSidebarOrder(
+  current: readonly string[],
+  visible: readonly string[],
+): string[] {
+  const shown = new Set(visible);
+  const firstShown = current.findIndex((key) => shown.has(key));
+  const rest = current.filter((key) => !shown.has(key));
+  const at =
+    firstShown === -1 ? 0 : current.slice(0, firstShown).filter((key) => !shown.has(key)).length;
+  return [...rest.slice(0, at), ...visible, ...rest.slice(at)];
+}
+
+/**
+ * The unit order to save after a drop. Keys of chats and groups that are
+ * gone drop out (checked against every environment, so hidden rows keep
+ * their spots). A row is saved under its chat's key or, as a group of one,
+ * its group's; once a drop places it under one, the other is dropped so an
+ * older spot can't win when the row switches back.
+ */
+export function pruneSidebarUnitOrder(input: {
+  readonly order: readonly string[];
+  /** The keys the drop just placed. */
+  readonly placed: readonly string[];
+  readonly liveKeys: ReadonlySet<string>;
+  /** [chat key, its group's key] for every grouped chat. */
+  readonly chatGroupKeys: ReadonlyArray<readonly [string, string]>;
+}): string[] {
+  const placed = new Set(input.placed);
+  const aliases = new Set<string>();
+  for (const [chatKey, groupKey] of input.chatGroupKeys) {
+    if (placed.has(groupKey) && !placed.has(chatKey)) aliases.add(chatKey);
+    if (placed.has(chatKey) && !placed.has(groupKey)) aliases.add(groupKey);
   }
-  const groupKey = activeItem.groupKey ?? null;
-  if (groupKey === null || overItem.key === activeItem.key) return null;
-  return overItem.groupKey === groupKey ? groupKey : null;
+  return input.order.filter((key) => input.liveKeys.has(key) && !aliases.has(key));
 }
 
 export { planGroupMemberReorder } from "@t3tools/client-runtime/state/thread-sort";
 
 export type SidebarThreadDropPlan =
   | { readonly kind: "none" }
-  /** Within the pinned block: the existing key writes. */
   | {
       readonly kind: "reorder-pinned";
       readonly order: readonly string[];
       readonly assignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
     }
-  /** From another section into the pinned block. Fresh pins take `orderKey`
-      on the pin command. `extraAssignments` land afterward, including the
-      moved row when it was already pinned beneath a snooze. */
   | {
       readonly kind: "pin";
       readonly order: readonly string[];
@@ -366,7 +414,6 @@ export type SidebarThreadDropPlan =
     }
   | {
       readonly kind: "move-active";
-      /** Null when the inbox is time-ordered: the drop has no placement. */
       readonly order: readonly string[] | null;
       readonly assignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
       readonly unpin: boolean;
@@ -375,9 +422,6 @@ export type SidebarThreadDropPlan =
     }
   | { readonly kind: "settle" };
 
-/** What dropping in `to` does to a thread lifted from `from`, for the badge
-    on the lifted row. Null while reordering inside one section and for the
-    working and snoozed shelves, which cannot be drop targets. */
 export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake";
 
 export function resolveSidebarDropVerb(
@@ -392,7 +436,6 @@ export function resolveSidebarDropVerb(
   return "wake";
 }
 
-/** Eligible rows between the pressed action and the pointer, in sidebar order. */
 export function resolveSidebarSweepKeys(
   orderedKeys: readonly string[],
   originKey: string,
@@ -405,10 +448,6 @@ export function resolveSidebarSweepKeys(
   return orderedKeys.slice(Math.min(origin, target), Math.max(origin, target) + 1).filter(canApply);
 }
 
-/** The thread row at a pointer height, clamped to the rows visible in the
-    sidebar's scroll viewport. A gap between rows resolves to the row above
-    it. Rows carry their key in data-thread-item, which departing motion
-    clones drop. */
 export function sidebarThreadKeyAtY(list: HTMLElement, y: number): string | null {
   const viewport = list.closest('[data-slot="scroll-area-viewport"]')?.getBoundingClientRect();
   const visibleY = viewport ? Math.min(Math.max(y, viewport.top), viewport.bottom - 1) : y;
@@ -423,19 +462,16 @@ export function sidebarThreadKeyAtY(list: HTMLElement, y: number): string | null
 export function planSidebarThreadDrop(input: {
   readonly activeKey: string;
   readonly activeSection: SidebarSection;
-  /** Snoozed threads can retain pinning and settlement beneath the shelf. */
   readonly activePinned?: boolean;
   readonly activeSettled?: boolean;
   readonly supportsSettlement?: boolean;
   readonly target: SidebarDropTarget;
-  /** All pinned keys in displayed order before the drop. */
   readonly pinnedOrder: readonly string[];
   readonly pinnedKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly reorderableKeys?: ReadonlySet<string>;
   readonly activeOrder: readonly string[];
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeReorderableKeys?: ReadonlySet<string>;
-  /** Working beta: the inbox sorts by time, so drops only change lifecycle. */
   readonly activeTimeOrdered?: boolean;
 }): SidebarThreadDropPlan {
   const {
@@ -451,13 +487,10 @@ export function planSidebarThreadDrop(input: {
     activeKeysById,
     activeReorderableKeys,
   } = input;
+  if (activeSection === "working") return { kind: "none" };
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
   }
-  // Rows whose server cannot store an order (an older server, or a machine
-  // that is offline) are never written. Keyless ones sort outside the keyed
-  // run, so they leave the plan; keyed ones stay as bounds. Before, one keyless row
-  // refused every drop that needed fresh keys for its neighbors.
   const arrange = (
     order: readonly string[],
     keysById: ReadonlyMap<string, string | null | undefined>,
@@ -474,8 +507,6 @@ export function planSidebarThreadDrop(input: {
   };
   switch (target.section) {
     case "active": {
-      // Like the settled tail: threads can enter a time-ordered inbox, but
-      // not be arranged inside it.
       if (input.activeTimeOrdered) {
         return activeSection === "active"
           ? { kind: "none" }
@@ -511,7 +542,6 @@ export function planSidebarThreadDrop(input: {
       return activeSection === "settled" ? { kind: "none" } : { kind: "settle" };
     case "pinned": {
       const order = target.pinnedOrder;
-      // Dropped back where it started: nothing to write.
       if (
         activeSection === "pinned" &&
         order.length === pinnedOrder.length &&
@@ -538,8 +568,6 @@ export function planSidebarThreadDrop(input: {
   }
 }
 
-/** Project a drop's lifecycle fields before sorting its destination. Reusing
-    the server's re-entry rules keeps the preview in place when events arrive. */
 export function applySidebarThreadDrop<
   T extends Pick<
     SidebarThreadSummary,
@@ -606,7 +634,7 @@ export type ThreadTraversalDirection = "previous" | "next";
 
 /**
  * Shared-worktree checks must exclude only successful deletions, never the
- * whole batch. A null result skips an entry that the caller can no longer find.
+ * whole batch.
  */
 export async function deleteSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },
@@ -746,11 +774,6 @@ export function buildBulkTitleRegenerationContextMenuItem(input: {
   };
 }
 
-/**
- * Bulk unpin follows the same "count only what the action will touch" rule
- * as title regeneration: on a mixed selection the label counts the pinned
- * rows alone, and the item disappears when nothing selected is pinned.
- */
 export function buildBulkUnpinContextMenuItem(input: {
   pinnedCount: number;
 }): ContextMenuItem<"unpin"> | null {
@@ -763,6 +786,7 @@ export interface ThreadStatusPill {
     | "Working"
     | "Connecting"
     | "Completed"
+    | "Failed"
     | "Pending Approval"
     | "Awaiting Input"
     | "Waiting"
@@ -775,6 +799,7 @@ export interface ThreadStatusPill {
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
+  Failed: 3.5,
   Working: 3,
   Connecting: 3,
   Waiting: 2.5,
@@ -878,9 +903,9 @@ export function useThreadJumpHintVisibility(): {
     };
   }, []);
 
-  const updateThreadJumpHintsVisibility = React.useCallback((shouldShow: boolean) => {
+  const updateThreadJumpHintsVisibility = (shouldShow: boolean) => {
     controllerRef.current?.sync(shouldShow);
-  }, []);
+  };
 
   return {
     showThreadJumpHints,
@@ -888,13 +913,6 @@ export function useThreadJumpHintVisibility(): {
   };
 }
 
-/**
- * Effective visited watermark for a thread. Servers with visited tracking
- * project `lastVisitedAt` on the shell and are authoritative — that value is
- * shared across every device connected to the environment. Pre-tracking
- * servers omit the field, and the browser's locally persisted watermark keeps
- * working as before.
- */
 export function resolveThreadLastVisitedAt(
   serverLastVisitedAt: string | null | undefined,
   localLastVisitedAt: string | undefined,
@@ -917,6 +935,20 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
+/**
+ * A failed latest run the person hasn't looked at since it ended. Unlike a
+ * completion, a thread nobody has opened yet (an automation's, say) counts:
+ * its failure still needs someone.
+ */
+function hasUnseenFailure(thread: ThreadStatusInput): boolean {
+  if (thread.latestRun?.status !== "failed") return false;
+  if (!thread.lastVisitedAt) return true;
+  const completedAt = Date.parse(thread.latestRun.completedAt ?? "");
+  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
+  if (Number.isNaN(completedAt) || Number.isNaN(lastVisitedAt)) return true;
+  return completedAt > lastVisitedAt;
+}
+
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
@@ -936,7 +968,6 @@ function nodeClosest(node: object | null, selector: string): unknown {
   return node.closest(selector);
 }
 
-/** Clicks on a nested link keep the link's meaning. The row must not treat them as multi-select. */
 export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
   if (target == null || typeof target !== "object") return false;
   if (nodeClosest(target, "a[href]") !== null) return true;
@@ -949,10 +980,6 @@ export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
   return nodeClosest(parent, "a[href]") !== null;
 }
 
-// Shift+click on the new thread button creates directly in the current
-// project, skipping the command palette's project picker. With a single
-// project there is nothing to pick, so a plain click already creates
-// immediately and the modifier changes nothing.
 export function shouldCreateNewThreadInCurrentProject(
   shiftKey: boolean,
   projectGroupCount: number,
@@ -1076,17 +1103,6 @@ export function resolveThreadRowClassName(input: {
   );
 }
 
-// ── Sidebar v2 status model ─────────────────────────────────────────
-// Six visual states, three colors: color is reserved for "act now"
-// (approval), "in motion" (working), and "broken" (failed). Ready is the
-// unlabeled resting state — the agent stopped and is waiting on the user,
-// whether it finished, asked a question, or proposed a plan. Waiting
-// (runtime status "idle") is the agent stopped with background work that will
-// wake it (subagents, monitors): not the user's turn yet, so it renders grey
-// like working, not as a false Done. Commands it left running, such as a dev
-// server, do not hold the thread; it reads as ready.
-// Unread completion is tracked separately: it describes whether a ready
-// thread needs attention, not what the thread is currently doing.
 export type SidebarThreadStatus =
   | "approval"
   | "input"
@@ -1138,7 +1154,6 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
-// ---------------------------------------------------------------------------
 // Chat groups. A chat in a known visible group renders under its group,
 // wherever the group is placed; its own pin/snooze/settle no longer place it.
 
@@ -1302,18 +1317,29 @@ export function partitionThreadsByGroup<
 }
 
 export type SidebarTreeEntry<T> =
-  | { readonly kind: "project-heading"; readonly projectKey: string }
+  | { readonly kind: "project-heading"; readonly projectKey: string; readonly collapsed: boolean }
   | {
       readonly kind: "group";
       readonly groupKey: string;
       readonly group: EnvironmentThreadGroup;
       readonly members: ReadonlyArray<T>;
     }
-  | { readonly kind: "thread"; readonly thread: T; readonly groupKey: string | null };
+  | {
+      readonly kind: "thread";
+      readonly thread: T;
+      readonly groupKey: string | null;
+      /** A group whose only chat this is: the chat's row stands in for the group. */
+      readonly soloGroupKey?: string | null;
+    };
 
 type SidebarActivityInput = Parameters<typeof sidebarActivityMs>[0];
 
-/** Projects and groups keep their placement; activity only orders chats within them. */
+/**
+ * The Active tree: projects in manual order, then each project's top-level
+ * rows (groups and lone chats) in manual order. Rows the user never placed
+ * sit on top, newest activity first. Chats inside a group keep the group's
+ * order. A group with one chat is that chat's row, with no children.
+ */
 export function buildSidebarActiveTree<T extends SidebarActivityInput>(input: {
   readonly ungrouped: ReadonlyArray<T>;
   readonly groups: ReadonlyArray<{
@@ -1322,42 +1348,89 @@ export function buildSidebarActiveTree<T extends SidebarActivityInput>(input: {
     readonly members: ReadonlyArray<T>;
   }>;
   readonly projectOrder?: ReadonlyArray<string>;
-  readonly groupOrder?: ReadonlyArray<string>;
+  /** Group keys and lone-chat keys, as placed by drag. */
+  readonly unitOrder?: ReadonlyArray<string>;
   readonly projectKeyOf: (item: T | EnvironmentThreadGroup) => string;
+  readonly threadKeyOf: (thread: T) => string;
+  /** The key of a lone chat's hidden group, so its placement survives the group showing or hiding. */
+  readonly groupKeyOf?: (thread: T) => string | null;
   readonly isExpanded: (groupKey: string) => boolean;
+  readonly isProjectCollapsed?: (projectKey: string) => boolean;
 }): ReadonlyArray<SidebarTreeEntry<T>> {
-  const projectKeys = new Set([
-    ...input.groups
-      .filter((entry) => entry.members.length > 0)
-      .map((entry) => input.projectKeyOf(entry.group)),
-    ...input.ungrouped.map(input.projectKeyOf),
-  ]);
   const projectRank = new Map((input.projectOrder ?? []).map((key, index) => [key, index]));
-  const groupRank = new Map((input.groupOrder ?? []).map((key, index) => [key, index]));
-  const groups = input.groups.toSorted(
-    (a, b) =>
-      (groupRank.get(a.key) ?? Infinity) - (groupRank.get(b.key) ?? Infinity) ||
-      String(a.group.createdAt).localeCompare(String(b.group.createdAt)) ||
-      a.key.localeCompare(b.key),
-  );
-  const entries: SidebarTreeEntry<T>[] = [];
-  for (const projectKey of [...projectKeys].toSorted(
+  const unitRank = new Map((input.unitOrder ?? []).map((key, index) => [key, index]));
+  // A unit's key flips between a chat's key and its group's key as a group
+  // of one appears or hides; either key keeps the placement.
+  const rankOf = (keys: ReadonlyArray<string | null>) => {
+    let rank: number | undefined;
+    for (const key of keys) {
+      const keyRank = key === null ? undefined : unitRank.get(key);
+      if (keyRank !== undefined && (rank === undefined || keyRank < rank)) rank = keyRank;
+    }
+    return rank;
+  };
+  type Unit = {
+    readonly key: string;
+    readonly rank: number | undefined;
+    readonly projectKey: string;
+    readonly activityMs: number;
+    readonly entries: () => SidebarTreeEntry<T>[];
+  };
+  const units: Unit[] = [];
+  for (const entry of input.groups) {
+    const [first] = entry.members;
+    if (first === undefined) continue;
+    const projectKey = input.projectKeyOf(entry.group);
+    const activityMs = Math.max(...entry.members.map(sidebarActivityMs));
+    units.push({
+      key: entry.key,
+      rank: unitRank.get(entry.key) ?? rankOf(entry.members.map(input.threadKeyOf)),
+      projectKey,
+      activityMs,
+      entries: () =>
+        entry.members.length === 1
+          ? [{ kind: "thread", thread: first, groupKey: null, soloGroupKey: entry.key }]
+          : [
+              { kind: "group", groupKey: entry.key, group: entry.group, members: entry.members },
+              ...(input.isExpanded(entry.key)
+                ? entry.members.map((thread): SidebarTreeEntry<T> => ({
+                    kind: "thread",
+                    thread,
+                    groupKey: entry.key,
+                  }))
+                : []),
+            ],
+    });
+  }
+  for (const thread of input.ungrouped) {
+    const key = input.threadKeyOf(thread);
+    units.push({
+      key,
+      rank: unitRank.get(key) ?? rankOf([input.groupKeyOf?.(thread) ?? null]),
+      projectKey: input.projectKeyOf(thread),
+      activityMs: sidebarActivityMs(thread),
+      entries: () => [{ kind: "thread", thread, groupKey: null }],
+    });
+  }
+  const sortedUnits = units.toSorted((a, b) => {
+    const left = a.rank;
+    const right = b.rank;
+    if (left === undefined && right === undefined) return b.activityMs - a.activityMs;
+    if (left === undefined) return -1;
+    if (right === undefined) return 1;
+    return left - right;
+  });
+  const projectKeys = [...new Set(units.map((unit) => unit.projectKey))].toSorted(
     (a, b) =>
       (projectRank.get(a) ?? Infinity) - (projectRank.get(b) ?? Infinity) || a.localeCompare(b),
-  )) {
-    entries.push({ kind: "project-heading", projectKey });
-    for (const entry of groups) {
-      if (input.projectKeyOf(entry.group) !== projectKey || entry.members.length === 0) continue;
-      const members = entry.members.toSorted((a, b) => sidebarActivityMs(b) - sidebarActivityMs(a));
-      entries.push({ kind: "group", groupKey: entry.key, group: entry.group, members });
-      if (input.isExpanded(entry.key)) {
-        for (const thread of members) entries.push({ kind: "thread", thread, groupKey: entry.key });
-      }
-    }
-    for (const thread of input.ungrouped
-      .filter((thread) => input.projectKeyOf(thread) === projectKey)
-      .toSorted((a, b) => sidebarActivityMs(b) - sidebarActivityMs(a))) {
-      entries.push({ kind: "thread", thread, groupKey: null });
+  );
+  const entries: SidebarTreeEntry<T>[] = [];
+  for (const projectKey of projectKeys) {
+    const collapsed = input.isProjectCollapsed?.(projectKey) ?? false;
+    entries.push({ kind: "project-heading", projectKey, collapsed });
+    if (collapsed) continue;
+    for (const unit of sortedUnits) {
+      if (unit.projectKey === projectKey) entries.push(...unit.entries());
     }
   }
   return entries;
@@ -1429,9 +1502,6 @@ export function shouldShowSidebarV2Duration(status: SidebarThreadStatus): boolea
   return status === "working";
 }
 
-/** First VALID timestamp wins: `a ?? b` falls through on null, but a present-
-    yet-malformed string must also fall through to the next candidate rather
-    than sink the row to the epoch. */
 export function firstValidTimestampMs(
   ...candidates: ReadonlyArray<string | null | undefined>
 ): number {
@@ -1444,26 +1514,17 @@ export function firstValidTimestampMs(
 }
 
 export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
-// The Working section beta folds and orders the inbox the same way on mobile.
 export {
   isThreadWorking as isSidebarThreadWorking,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
 } from "@t3tools/client-runtime/state/thread-inbox";
 
-// Pinned-reorder key math and the keyed sort live in client-runtime
-// (state/thread-sort) so web and mobile compute identical pinned orders.
 export { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 
 const EMPTY_CONTENT_MATCH_KEYS: ReadonlySet<string> = new Set<string>();
 
-/**
- * Search the already-ordered sidebar thread collection by title or linked PR,
- * plus any thread whose messages the server matched (`contentMatchKeys`, keyed
- * by `threadSearchMatchKey`). Keeping the input order means lifecycle ordering
- * (active, snoozed, settled) remains stable while the user narrows the list.
- */
 export function searchSidebarThreads<
   T extends {
     readonly environmentId: EnvironmentId;
@@ -1497,11 +1558,6 @@ export function searchSidebarThreads<
   return [...titleMatches, ...contentMatches];
 }
 
-/**
- * Whether a PR's search terms contain every whitespace-separated token of the
- * query. Search results use this to pick the PR number to show, so it has to
- * accept the multi-token queries the command palette matches on.
- */
 export function pullRequestMatchesSearchQuery(
   pullRequest: Parameters<typeof threadPullRequestSearchTerms>[0],
   query: string,
@@ -1546,9 +1602,6 @@ export function reduceSidebarProjectScopeMenuState(
   }
 }
 
-/** The timestamp a working thread's elapsed label counts from: when its
-    current work started (request time until adoption). Background wakes do
-    not reset it. Malformed timestamps fall through to the next candidate. */
 export function resolveWorkingStartedAt(
   thread: Pick<SidebarThreadSummary, "latestRun" | "runtime">,
 ): string | null {
@@ -1613,6 +1666,15 @@ export function resolveThreadStatusPill(input: {
       label: "Waiting",
       colorClass: "text-sidebar-muted-foreground",
       dotClass: "bg-sidebar-muted-foreground",
+      pulse: false,
+    };
+  }
+
+  if (hasUnseenFailure(thread)) {
+    return {
+      label: "Failed",
+      colorClass: "text-red-600 dark:text-red-300/90",
+      dotClass: "bg-red-500 dark:bg-red-300/90",
       pulse: false,
     };
   }
@@ -1806,11 +1868,6 @@ export function sortSidebarV2ProjectGroups<
   );
 }
 
-/**
- * Sorts the cross-environment project collection used by landing surfaces.
- * Project ids are only unique within an environment, and archived threads
- * must not make a project appear recently active.
- */
 export function sortScopedProjectsForSidebar<
   TProject extends ScopedSidebarProject,
   TThread extends ScopedSidebarThread,

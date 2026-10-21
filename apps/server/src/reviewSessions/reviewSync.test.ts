@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  itemFixture,
+  localSourceFixture,
+  sourceComment,
   actor,
   githubReview,
   githubThread,
@@ -8,7 +11,14 @@ import {
   threadComment,
   at,
 } from "./testkit.ts";
-import { isCopilotLogin, itemGithubState, planReviewSync, shouldSyncReview } from "./reviewSync.ts";
+import {
+  isCopilotLogin,
+  itemGithubState,
+  planReviewSync,
+  rawReviewItems,
+  repairUnknownLocalSources,
+  shouldSyncReview,
+} from "./reviewSync.ts";
 
 describe("planReviewSync", () => {
   it("files reviewers, shows Copilot as reviewing, and skips the author's own posts", () => {
@@ -60,10 +70,123 @@ describe("planReviewSync", () => {
     expect(plan.removals).toEqual([]);
   });
 
+  describe("on someone else's pull request", () => {
+    const asReviewer = (fields: Parameters<typeof reviewRoundRead>[0]) =>
+      reviewRoundRead({ authorLogin: "dan", viewerLogin: "NeilMcEachin", ...fields });
+    const marker = "<!-- ctrl-review:review:1:1:3 -->";
+
+    it("files your pending review while the round is held, and its submission with a verdict", () => {
+      const pending = planReviewSync({
+        sessionId: "review:1",
+        sessionRound: 1,
+        roundState: "applied",
+        existing: [],
+        now: at,
+        read: asReviewer({
+          reviews: [
+            githubReview("PRR_mine", "NeilMcEachin", { state: "PENDING", submittedAt: null }),
+            githubReview("PRR_copilot", "copilot-pull-request-reviewer", { isBot: true }),
+          ],
+          threads: [githubThread("T1", [threadComment("PRR_mine", `Null session. ${marker}`)])],
+        }),
+      });
+      // Copilot waits for the next round; your own review is this round's.
+      expect(pending.upserts.map(({ source }) => [source.id, source.state, source.posted])).toEqual(
+        [["PRR_mine", "pending", true]],
+      );
+      const submitted = planReviewSync({
+        sessionId: "review:1",
+        sessionRound: 1,
+        roundState: "applied",
+        existing: pending.upserts.map(({ source }) => source),
+        now: at,
+        read: asReviewer({
+          reviews: [githubReview("PRR_mine", "NeilMcEachin", { state: "CHANGES_REQUESTED" })],
+          threads: [githubThread("T1", [threadComment("PRR_mine", `Null session. ${marker}`)])],
+        }),
+      });
+      expect(submitted.upserts.map(({ source }) => [source.state, source.verdict])).toEqual([
+        ["done", "changes-requested"],
+      ]);
+    });
+
+    it("reads a re-request of your review as the Re-review signal, not a reviewer to wait for", () => {
+      const plan = planReviewSync({
+        sessionRound: 1,
+        roundState: "applied",
+        existing: [],
+        now: at,
+        read: asReviewer({ pendingReviewers: [actor("NeilMcEachin")] }),
+      });
+      expect(plan.viewerRequested).toBe(true);
+      expect(plan.upserts).toEqual([]);
+    });
+
+    it("never turns what Ctrl posted into new points, and names your own GitHub comments `you`", () => {
+      const plan = planReviewSync({
+        sessionId: "review:1",
+        sessionRound: 1,
+        roundState: "collecting",
+        existing: [],
+        now: at,
+        read: asReviewer({
+          reviews: [githubReview("PRR_mine", "NeilMcEachin")],
+          threads: [
+            githubThread("T1", [threadComment("PRR_mine", `Posted by Ctrl. ${marker}`)]),
+            githubThread("T2", [threadComment("PRR_mine", "Written on GitHub.")]),
+          ],
+        }),
+      });
+      const items = rawReviewItems({ round: 1, nextNumber: 1 }, [], plan.upserts, {
+        sessionId: "review:1",
+        viewerLogin: "NeilMcEachin",
+      });
+      expect(items.map((item) => [item.sourceKeys, item.sources])).toEqual([[["gh:T2"], ["you"]]]);
+    });
+  });
+
+  it("files your own pending review on your own pull request as before: not at all", () => {
+    const plan = planReviewSync({
+      sessionRound: 1,
+      roundState: "collecting",
+      existing: [],
+      now: at,
+      read: reviewRoundRead({
+        reviews: [githubReview("PRR_own", "nach", { state: "PENDING", body: "draft" })],
+      }),
+    });
+    expect(plan.upserts).toEqual([]);
+    expect(plan.viewerRequested).toBe(false);
+  });
+
   it("names Copilot under either login", () => {
     expect(isCopilotLogin("Copilot")).toBe(true);
     expect(isCopilotLogin("copilot-pull-request-reviewer[bot]")).toBe(true);
     expect(isCopilotLogin("dan")).toBe(false);
+  });
+});
+
+describe("rawReviewItems", () => {
+  it("numbers a reviewer's inline comments but not the summary in their review body", () => {
+    const plan = planReviewSync({
+      sessionRound: 1,
+      roundState: "collecting",
+      existing: [],
+      now: at,
+      read: reviewRoundRead({
+        reviews: [
+          githubReview("PRR_dan", "dan", {
+            state: "CHANGES_REQUESTED",
+            body: "A couple of things to fix before this lands, see the comments.",
+          }),
+        ],
+        threads: [githubThread("T1", [threadComment("PRR_dan", "This leaks the listener.")])],
+      }),
+    });
+    const items = rawReviewItems({ round: 1, nextNumber: 1 }, [], plan.upserts);
+    expect(items.map((item) => [item.sourceKeys, item.sources])).toEqual([
+      [["gh:T1"], ["human:dan"]],
+    ]);
   });
 });
 
@@ -92,5 +215,34 @@ describe("shouldSyncReview", () => {
     expect(shouldSyncReview(mark, { ...next, waiting: true }, 60_000)).toBe(true);
     expect(shouldSyncReview(mark, { ...next, fingerprint: null }, 60_000)).toBe(true);
     expect(shouldSyncReview(mark, next, 10 * 60_000)).toBe(true);
+  });
+});
+
+describe("the local review's raw findings", () => {
+  it("are raised by your review, not by a nameless reviewer", () => {
+    const items = rawReviewItems(
+      { round: 1, nextNumber: 1 },
+      [],
+      [
+        {
+          source: localSourceFixture("local:run-1"),
+          comments: [sourceComment("local:src/app.ts:null-session", "Null session.")],
+        },
+      ],
+    );
+    expect(items.map((item) => item.sources)).toEqual([["local-review"]]);
+  });
+
+  it("repairs points an older import named human:unknown, leaving real reviewers alone", () => {
+    const merged = itemFixture(1, {
+      sourceKeys: ["local:src/app.ts:null-session"],
+      sources: ["human:unknown", "local-review"],
+      draftReply: "Noticed this too.",
+    });
+    const github = itemFixture(2, { sourceKeys: ["gh:T1"], sources: ["human:unknown"] });
+    const repaired = repairUnknownLocalSources([merged, github]);
+    expect(repaired.map((item) => [item.sources, item.draftReply])).toEqual([
+      [["local-review"], null],
+    ]);
   });
 });

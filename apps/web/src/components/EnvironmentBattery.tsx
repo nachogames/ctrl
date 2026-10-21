@@ -10,10 +10,13 @@ import { useEnvironment } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
+/** Inner width of the battery body, in viewBox units. */
+const BATTERY_FILL_WIDTH = 16;
+
 function batteryFillClassName(percent: number): string {
-  if (percent <= 20) return "bg-destructive";
-  if (percent <= 50) return "bg-warning";
-  return "bg-success";
+  if (percent <= 20) return "fill-destructive";
+  if (percent <= 50) return "fill-warning";
+  return "fill-success";
 }
 
 export function batteryLabel(battery: HostBattery): string {
@@ -34,28 +37,48 @@ export function EnvironmentBattery(props: {
   const { battery } = props;
   if (battery == null) return null;
   const label = batteryLabel(battery);
+  // One SVG with fixed geometry, so the body, fill, and bolt keep their proportions at any
+  // size. Inline style, not classes: buttons, menus, and composer controls restyle nested
+  // SVGs (`[&_svg]:-mx-0.5`, `size-*`, `opacity-*`), which used to shift the bolt.
+  const fillWidth = (BATTERY_FILL_WIDTH * Math.max(battery.percent, 8)) / 100;
   const glyph = (
-    <span className="relative flex items-center">
-      <span className="flex h-2.5 w-5 rounded-[3px] border border-muted-foreground/60 p-px">
-        <span
-          className={cn("h-full rounded-[1.5px]", batteryFillClassName(battery.percent))}
-          // At least a sliver, so an almost-empty battery still reads as red.
-          style={{ width: `${Math.max(battery.percent, 8)}%` }}
-        />
-      </span>
-      <span className="h-1 w-0.5 rounded-r-[1px] bg-muted-foreground/60" />
+    <svg
+      aria-hidden
+      viewBox="0 0 22 10"
+      overflow="visible"
+      style={{ width: "1.375rem", height: "0.625rem", margin: 0, opacity: 1 }}
+    >
+      <rect
+        x={0.5}
+        y={0.5}
+        width={19}
+        height={9}
+        rx={2.5}
+        fill="none"
+        strokeWidth={1}
+        className="stroke-muted-foreground/60"
+      />
+      {/* At least a sliver, so an almost-empty battery still reads as red. */}
+      <rect
+        x={2}
+        y={2}
+        width={fillWidth}
+        height={6}
+        rx={1}
+        className={batteryFillClassName(battery.percent)}
+      />
+      <rect x={20.5} y={3} width={1.5} height={4} rx={0.75} className="fill-muted-foreground/60" />
       {battery.pluggedIn ? (
-        <svg
-          aria-hidden
-          viewBox="0 0 24 24"
-          className="absolute top-1/2 left-1 size-3 -translate-y-1/2 fill-foreground stroke-background [paint-order:stroke]"
+        // The bolt's 24-unit path, scaled and centered on the body.
+        <path
+          d="M13 2 4 14h7l-1 8 9-12h-7z"
+          transform="translate(5.4 0.2) scale(0.4)"
+          className="fill-foreground stroke-background [paint-order:stroke]"
           strokeWidth={3}
           strokeLinejoin="round"
-        >
-          <path d="M13 2 4 14h7l-1 8 9-12h-7z" />
-        </svg>
+        />
       ) : null}
-    </span>
+    </svg>
   );
   const className = cn("inline-flex shrink-0 items-center", props.className);
   if (props.tooltip === false) {

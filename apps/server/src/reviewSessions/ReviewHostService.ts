@@ -61,7 +61,7 @@ export const make = Effect.gen(function* () {
   const read: ReviewHostService["Service"]["read"] = (input) =>
     Effect.gen(function* () {
       const data = yield* pullRequests.reviewRound(input);
-      if (data === null) return { sources: [], items: [], comments: {} };
+      if (data === null) return { viewerLogin: null, sources: [], items: [], comments: {} };
       const plan = planReviewSync({
         sessionRound: 1,
         roundState: "collecting",
@@ -70,8 +70,11 @@ export const make = Effect.gen(function* () {
         now: DateTime.formatIso(yield* DateTime.now),
       });
       return {
+        viewerLogin: data.viewerLogin,
         sources: plan.upserts.map(({ source }) => source),
-        items: rawReviewItems({ round: 1, nextNumber: 1 }, [], plan.upserts).map((item) => ({
+        items: rawReviewItems({ round: 1, nextNumber: 1 }, [], plan.upserts, {
+          viewerLogin: data.viewerLogin,
+        }).map((item) => ({
           ...item,
           githubState: itemGithubState(item.githubThreadIds, plan.threads),
         })),

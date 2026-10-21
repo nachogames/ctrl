@@ -2,7 +2,7 @@ import type {
   EnvironmentThreadGroup,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
-import { ChevronRightIcon, LayersIcon, PlusIcon } from "lucide-react";
+import { ChevronRightIcon, LayersIcon, PlusIcon, SquarePenIcon } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -14,6 +14,7 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useSharedPullRequestSummary } from "~/state/pullRequests";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
@@ -29,6 +30,9 @@ import {
 import { snoozeWakeLabel } from "../Sidebar.snooze";
 import { useStaticSidebarSortable } from "./useStaticSidebarSortable";
 
+export const SIDEBAR_LIFTED_ROW_CLASS =
+  "bg-sidebar bg-linear-to-b from-sidebar-row-active to-sidebar-row-active text-sidebar-foreground shadow-lg";
+
 // Same hues as the thread status pills (amber approval, indigo input, sky working).
 const STATUS_DOT: Partial<Record<SidebarThreadStatus, { label: string; className: string }>> = {
   approval: { label: "Needs approval", className: "bg-amber-500 dark:bg-amber-300/90" },
@@ -43,7 +47,10 @@ function relativeLabel(ms: number): string {
     : "";
 }
 
-/** `#412`, coloured by state: open green, merged purple, closed and draft grey. */
+/**
+ * `#412`, coloured by state: open green, merged purple, closed and draft grey.
+ * An open one shows its review outcome instead: approved, or changes requested.
+ */
 function GroupPullRequestNumber(props: { group: EnvironmentThreadGroup }) {
   const link = props.group.pullRequest;
   const reference = useMemo(
@@ -64,20 +71,43 @@ function GroupPullRequestNumber(props: { group: EnvironmentThreadGroup }) {
   const presentation =
     status === null
       ? null
-      : resolvePullRequestState({ state: status.state, isDraft: status.isDraft ?? false });
+      : resolvePullRequestState({
+          state: status.state,
+          isDraft: status.isDraft ?? false,
+          reviewDecision: status.reviewDecision,
+        });
   const Icon = presentation?.Icon ?? PullRequestGlyph.pullRequest;
   const tone =
     presentation === null || status?.state === "closed" || presentation.label === "Draft"
       ? "text-muted-foreground"
       : presentation.toneClassName;
+  const label = [
+    `Pull request #${link.number}`,
+    presentation?.label,
+    presentation?.reviewLabel ??
+      (status?.state === "open" && status.reviewDecision === "review-required"
+        ? "Awaiting review"
+        : undefined),
+  ]
+    .filter((part) => part !== undefined)
+    .join(" · ");
   return (
-    <span className={cn("inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums", tone)}>
-      <Icon aria-hidden className="size-3" />
-      <span>
-        <span className="sr-only">Pull request </span>
-        {link.number}
-      </span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className={cn("inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums", tone)}
+          />
+        }
+      >
+        <Icon aria-hidden className="size-3" />
+        <span>
+          <span className="sr-only">{label}</span>
+          <span aria-hidden>{link.number}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -127,8 +157,9 @@ function GroupTitleInput(props: {
 }
 
 /**
- * A chat group: one 32px line that toggles its members open. It is not a
- * navigation target; its context menu holds the group actions.
+ * A chat group: one 32px line. Clicking it opens the group's first chat; its
+ * caret toggles its members open, its context menu holds the group actions,
+ * its + starts a new chat in the group, and in Active it drags to rearrange.
  */
 export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
   sortableId: string;
@@ -137,18 +168,21 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
   members: ReadonlyArray<EnvironmentThreadShell>;
   section: SidebarGroupSection;
   expanded: boolean;
-  /** A dragged chat would join this group. */
-  isDropTarget?: boolean;
+  draggable: boolean;
   isRenaming: boolean;
   onToggle: (groupKey: string, expanded: boolean) => void;
+  onOpen: (groupKey: string) => void;
+  onNewChat: (groupKey: string) => void;
   onContextMenu: (groupKey: string, position: { x: number; y: number }) => void;
   onCommitRename: (groupKey: string, title: string) => void;
   onCancelRename: () => void;
 }) {
   const { expanded, group, groupKey, members, onCancelRename, onCommitRename, onContextMenu } =
     props;
-  const { onToggle } = props;
-  const { setNodeRef, style } = useStaticSidebarSortable(props.sortableId);
+  const { onNewChat, onOpen, onToggle } = props;
+  const { setNodeRef, style, listeners, isDragging } = useStaticSidebarSortable(props.sortableId, {
+    draggable: props.draggable,
+  });
   const status = resolveThreadGroupStatus(members);
   const dot = status === null ? undefined : STATUS_DOT[status];
   const newestActivityMs = members.reduce(
@@ -164,16 +198,25 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
         : relativeLabel(newestActivityMs);
   const countLabel = `${members.length} ${members.length === 1 ? "chat" : "chats"}`;
 
-  const toggle = useCallback(() => onToggle(groupKey, !expanded), [expanded, groupKey, onToggle]);
-  const handleKeyDown = useCallback(
-    (event: ReactKeyboardEvent) => {
-      if (event.target !== event.currentTarget) return;
-      if (event.key !== "Enter" && event.key !== " ") return;
+  const toggle = () => onToggle(groupKey, !expanded);
+  // Opening shows the group too, so the chat it opens is visible in the list.
+  const open = () => {
+    if (!expanded) onToggle(groupKey, true);
+    onOpen(groupKey);
+  };
+  // Enter opens the first chat; the arrow keys expand and collapse, as in a tree.
+  const handleKeyDown = (event: ReactKeyboardEvent) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      toggle();
-    },
-    [toggle],
-  );
+      open();
+    } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+      const expand = event.key === "ArrowRight";
+      if (expand === expanded) return;
+      event.preventDefault();
+      onToggle(groupKey, expand);
+    }
+  };
   const handleContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       event.preventDefault();
@@ -186,34 +229,50 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
   return (
     <li
       ref={setNodeRef}
+      data-sidebar-item={props.sortableId}
+      data-sidebar-item-inset={6}
       data-thread-selection-safe
       data-testid="sidebar-group-row"
       className="list-none"
       style={style}
     >
       <div
+        {...listeners}
         role="button"
         tabIndex={0}
-        aria-expanded={expanded}
         aria-label={`${group.title}, group of ${countLabel}${dot ? `, ${dot.label}` : ""}`}
         className={cn(
           "group/sidebar-group flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-1.5 text-left text-sm outline-none select-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           parked ? "text-secondary-label hover:text-sidebar-foreground" : "text-sidebar-foreground",
-          // Same highlight as a row taking a file drop.
-          props.isDropTarget && "bg-sidebar-row-hover ring-1 ring-inset ring-primary/70",
+          // Lifted like a dragged chat: opaque, so rows passing beneath never show through.
+          isDragging && SIDEBAR_LIFTED_ROW_CLASS,
         )}
-        onClick={toggle}
+        onClick={open}
         onKeyDown={handleKeyDown}
         onContextMenu={handleContextMenu}
       >
-        {/* Rotates on toggle only; nothing repaints at rest. */}
-        <ChevronRightIcon
-          aria-hidden
-          className={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
-            expanded && "rotate-90",
-          )}
-        />
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-expanded={expanded}
+          aria-label={expanded ? `Collapse ${group.title}` : `Expand ${group.title}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            toggle();
+          }}
+          // A press on the caret must not start a drag of the row.
+          onPointerDown={(event) => event.stopPropagation()}
+          className="-m-1 inline-flex size-5.5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-sidebar-row-active hover:text-foreground"
+        >
+          {/* Rotates on toggle only; nothing repaints at rest. */}
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "size-3.5 transition-transform duration-150 motion-reduce:transition-none",
+              expanded && "rotate-90",
+            )}
+          />
+        </button>
         <LayersIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         {props.isRenaming ? (
           <GroupTitleInput
@@ -226,6 +285,7 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
           <span className="min-w-0 flex-1 truncate font-medium">{group.title}</span>
         )}
         <GroupPullRequestNumber group={group} />
+        <SidebarGroupNewChatButton title={group.title} onClick={() => onNewChat(groupKey)} />
         <span className="ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end text-xs text-secondary-label tabular-nums">
           {/* On hover a collapsed group trades its time for its chat count;
               a status dot stays beside it. */}
@@ -250,27 +310,50 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
   );
 });
 
+/** The group header's "+": a new chat that joins this group on its first send. */
+export function SidebarGroupNewChatButton(props: { title: string; onClick: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`New chat in ${props.title}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onClick();
+            }}
+            // A press on the button must not start a drag of the row.
+            onPointerDown={(event) => event.stopPropagation()}
+            // Takes no room at rest, so the PR number sits beside the time.
+            className="hidden size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-sidebar-row-active hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-focus-within/sidebar-group:inline-flex group-hover/sidebar-group:inline-flex group-focus-within/sidebar-row:inline-flex group-any-hover/sidebar-row:inline-flex"
+          />
+        }
+      >
+        <PlusIcon aria-hidden className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">New chat in group</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 /**
- * "+ New chat in group", the last child of an expanded group: a muted row that
- * brightens on hover or focus, so the space it takes always reads as an action.
+ * The open "+ New chat in group" draft, shown as the last chat of its group
+ * so the composer's chat is plainly a new one in that group.
  */
-export const SidebarGroupNewChatRow = memo(function SidebarGroupNewChatRow(props: {
-  groupKey: string;
-  onNewChat: (groupKey: string) => void;
-}) {
-  const { groupKey, onNewChat } = props;
+export function SidebarGroupDraftRow(props: { groupTitle: string }) {
   return (
     <li data-thread-selection-safe className="list-none">
-      <button
-        type="button"
-        onClick={() => onNewChat(groupKey)}
-        className="flex h-7 w-full cursor-pointer items-center rounded-md px-2.5 pl-6 text-left text-xs text-sidebar-muted-foreground/60 outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      <div
+        aria-current="page"
+        aria-label={`New chat in ${props.groupTitle}`}
+        className="flex h-9 w-full items-center rounded-md bg-sidebar-row-active px-2.5 pl-6 text-sm text-sidebar-foreground select-none"
       >
-        <span className="flex h-full min-w-0 flex-1 items-center gap-2 border-l border-sidebar-border pl-5">
-          <PlusIcon aria-hidden className="size-3.5 shrink-0" />
-          New chat in group
+        <span className="flex h-full min-w-0 flex-1 items-center gap-2.5 border-l border-sidebar-border pl-5">
+          <SquarePenIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate">New chat</span>
         </span>
-      </button>
+      </div>
     </li>
   );
-});
+}

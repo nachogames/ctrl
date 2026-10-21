@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Pressable, ScrollView, View } from "react-native";
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { ListFilterChip, ListFilterMenu } from "../workspace/ListFilterMenu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 

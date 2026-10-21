@@ -647,6 +647,30 @@ describe("threadChangeRequestSnapshotsAtom", () => {
 });
 
 describe("prStatusIndicator", () => {
+  it("shows an open pull request's review outcome in place of its open state", () => {
+    const pr = status().pr;
+    if (!pr) throw new Error("Expected pull request fixture");
+
+    expect(prStatusIndicator({ ...pr, reviewDecision: "approved" }, undefined)).toMatchObject({
+      tooltipLead: "PR #42 - Open, approved",
+    });
+    const changes = prStatusIndicator({ ...pr, reviewDecision: "changes-requested" }, undefined);
+    expect(changes?.tooltipLead).toBe("PR #42 - Open, changes requested");
+    expect(changes?.colorClass).toContain("text-amber-600");
+    expect(
+      prStatusIndicator({ ...pr, reviewDecision: "review-required" }, undefined),
+    ).toMatchObject({ tooltipLead: "PR #42 - Open", Icon: PullRequestGlyph.pullRequest });
+    // Merged, closed and draft keep their state: the review no longer decides anything.
+    expect(
+      prStatusIndicator({ ...pr, state: "merged", reviewDecision: "approved" }, undefined)
+        ?.tooltipLead,
+    ).toBe("PR #42 - Merged");
+    expect(
+      prStatusIndicator({ ...pr, isDraft: true, reviewDecision: "changes-requested" }, undefined)
+        ?.tooltipLead,
+    ).toBe("PR #42 - Draft");
+  });
+
   it("formats PR tooltips with number, uppercase status, and title", () => {
     expect(prStatusIndicator(status().pr, undefined)).toMatchObject({
       tooltip: "PR #42 - Open: PR branch",
@@ -674,6 +698,38 @@ describe("prStatusIndicator", () => {
       tooltipLead: "PR #42 - Draft",
     });
   });
+
+  it.each([
+    ["approved", "Approved", "text-emerald-600 dark:text-emerald-300/90"],
+    ["changes-requested", "Changes requested", "text-amber-600/90 dark:text-amber-400/80"],
+  ] as const)("replaces an open PR's glyph with its %s verdict", (decision, label, tone) => {
+    const pr = status().pr;
+    if (!pr) throw new Error("Expected pull request fixture");
+
+    const indicator = prStatusIndicator({ ...pr, reviewDecision: decision }, undefined);
+    expect(indicator).toMatchObject({
+      colorClass: tone,
+      tooltipLead: `PR #42 - Open, ${label.toLowerCase()}`,
+    });
+    expect(indicator?.Icon).not.toBe(PullRequestGlyph.pullRequest);
+  });
+
+  it.each([
+    ["merged", false, "approved"],
+    ["open", true, "approved"],
+    ["open", false, "review-required"],
+  ] as const)(
+    "keeps the state glyph for a %s (draft %s) PR with a %s review",
+    (state, isDraft, decision) => {
+      const pr = status().pr;
+      if (!pr) throw new Error("Expected pull request fixture");
+
+      const plain = prStatusIndicator({ ...pr, state, isDraft }, undefined);
+      expect(
+        prStatusIndicator({ ...pr, state, isDraft, reviewDecision: decision }, undefined),
+      ).toEqual(plain);
+    },
+  );
 });
 
 describe("resolveThreadPullRequestBadgePresentation", () => {
@@ -799,6 +855,21 @@ describe("resolveThreadPullRequestBadgePresentation", () => {
       });
     },
   );
+
+  it.each([
+    ["approved", "all approved", "text-emerald-600 dark:text-emerald-300/90"],
+    ["changes-requested", "changes requested", "text-amber-600/90 dark:text-amber-400/80"],
+  ] as const)("tones the badge with the %s stack verdict", (review, labelSuffix, tone) => {
+    expect(
+      resolveThreadPullRequestBadgePresentation({
+        badge: { kind: "stack", layers: 3, state: "open", review },
+        status: null,
+      }),
+    ).toMatchObject({
+      label: `Stack of 3 pull requests, open, ${labelSuffix}`,
+      toneClassName: tone,
+    });
+  });
 
   it("omits the control when neither a stack nor a linked identity can be shown", () => {
     expect(resolveThreadPullRequestBadgePresentation({ badge: null, status: null })).toBeNull();

@@ -2,7 +2,7 @@ import { useMemo, useRef, type ReactNode } from "react";
 import { View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 
 export interface ArrangeDragHandlers {

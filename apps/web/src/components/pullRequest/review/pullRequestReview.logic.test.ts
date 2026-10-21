@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   draftUpdateLabel,
+  foldPostedReviews,
   offersLocalReview,
   ranOnLabel,
   replyTarget,
@@ -247,4 +248,48 @@ it("keeps stale round history and offers reverification after a base merge", () 
       [],
     ),
   ).toBeNull();
+});
+
+describe("foldPostedReviews", () => {
+  const base = {
+    isBot: false,
+    commitSha: "abc",
+    commentCount: 2,
+    triaged: true,
+    threadId: null,
+    ranOn: null,
+    url: null,
+    updatedAt: "2026-10-16T10:00:00.000Z",
+  };
+  const local = {
+    ...base,
+    id: "local:1",
+    round: 1,
+    kind: "local",
+    state: "done",
+    author: null,
+  } as ReviewSource;
+  const posted = {
+    ...base,
+    id: "PRR_mine",
+    round: 1,
+    kind: "human",
+    state: "done",
+    author: "NeilMcEachin",
+    posted: true,
+  } as ReviewSource;
+
+  it("shows the review Ctrl posted as your local review, once", () => {
+    const folded = foldPostedReviews([local, posted], "NeilMcEachin");
+    expect([...folded.hidden]).toEqual(["PRR_mine"]);
+    expect(folded.postedFor.get("local:1")?.id).toBe("PRR_mine");
+  });
+
+  it("keeps a review you wrote straight on GitHub, or one with no local run, as its own row", () => {
+    expect(
+      foldPostedReviews([local, { ...posted, posted: false }], "NeilMcEachin").hidden.size,
+    ).toBe(0);
+    expect(foldPostedReviews([posted], "NeilMcEachin").hidden.size).toBe(0);
+    expect(foldPostedReviews([local, posted], "dan").hidden.size).toBe(0);
+  });
 });

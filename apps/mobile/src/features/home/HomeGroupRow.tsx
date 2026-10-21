@@ -2,10 +2,10 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { memo } from "react";
 import { View } from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
-import { ControlPillMenu } from "../../components/ControlPill";
-import { RowPressable } from "../../components/RowPressable";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { Menu } from "../../components/ui/Menu";
+import { RowPressable } from "../../components/ui/RowPressable";
 import { cn } from "../../lib/cn";
 
 /**
@@ -30,11 +30,7 @@ export const HomeGroupRow = memo(function HomeGroupRow(props: {
   const count = props.threads.length;
   const actions = [{ id: "arrange", title: "Arrange", image: "line.3.horizontal" }];
   return (
-    <ControlPillMenu
-      actions={actions}
-      shouldOpenOnLongPress
-      onPressAction={() => props.onArrange()}
-    >
+    <Menu actions={actions} shouldOpenOnLongPress onPressAction={() => props.onArrange()}>
       <RowPressable
         accessibilityRole="button"
         accessibilityLabel={`${props.title}, ${count} chats${props.workingCount > 0 ? `, ${props.workingCount} working` : ""}`}
@@ -47,7 +43,7 @@ export const HomeGroupRow = memo(function HomeGroupRow(props: {
         <View className={sidebarPane ? "px-3 py-2.5" : "px-5 py-2.5"}>
           <View className="flex-row items-center gap-1.5">
             <SymbolView
-              name="square.3.layers.3d"
+              name="bubble.left.and.bubble.right"
               size={11}
               tintColorClassName="accent-foreground-tertiary"
               type="monochrome"
@@ -92,6 +88,6 @@ export const HomeGroupRow = memo(function HomeGroupRow(props: {
           <View className="ml-5 mt-1 h-px bg-border-subtle" />
         ) : null}
       </RowPressable>
-    </ControlPillMenu>
+    </Menu>
   );
 });

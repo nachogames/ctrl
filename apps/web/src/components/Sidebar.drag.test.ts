@@ -211,7 +211,6 @@ describe("sidebar collision detection", () => {
       expect(at(330)).toBe("active");
       expect(at(317)).toBe("active");
       expect(at(316)).toBe("pinned");
-      // The preview moves the divider; a stationary pointer must not undo the drop target.
       boundaryTop = 400;
       expect(at(316)).toBe("pinned");
       expect(at(399)).toBe("pinned");
@@ -297,7 +296,6 @@ describe("sidebar drag projection", () => {
     const restored = preview({ ...input, enabled: false }, active, over);
     for (const transform of restored.values()) expect(transform).toEqual(stationary);
 
-    // Returning to the sidebar resumes the same live reorder preview.
     expect(preview({ ...input, enabled: true }, active, over)).toEqual(reordered);
   });
 
@@ -352,7 +350,6 @@ describe("sidebar drag projection", () => {
       settledExpanded: true,
     });
     const args = layout(pinned, active, over);
-    // dnd-kit moves the lifted row by the pointer delta, so only peers matter.
     for (let index = 0; index < pinned.length; index += 1) {
       if (index === args.activeIndex) continue;
       expect(strategy({ ...args, index })).toEqual(verticalListSortingStrategy({ ...args, index }));
@@ -451,8 +448,6 @@ describe("sidebar drag projection", () => {
       settledHeader,
       thread("s", "settled"),
     ];
-    // Reorder inside active: the header gap shifts every row, the divider
-    // gap shifts the active rows and the shelf below by a second label.
     const result = preview(
       { items, settledOrder: [], settledExpanded: true, boundaryLabelHeight: 16 },
       "a2",
@@ -680,45 +675,6 @@ describe("sidebar drag projection", () => {
     ).toBe(true);
   });
 
-  it("moves a group's chats around a member reordered inside the group", () => {
-    const member = (key: string): SidebarListItem => ({
-      kind: "thread",
-      key,
-      section: "active",
-      groupKey: "g",
-    });
-    const items: SidebarListItem[] = [
-      pinnedHeader,
-      divider,
-      { kind: "project-heading", key: "one" },
-      { kind: "group", key: "g", section: "active" },
-      member("m1"),
-      member("m2"),
-      member("m3"),
-      thread("a1", "active"),
-      settledHeader,
-      marker("settled-placeholder"),
-    ];
-    const result = preview(
-      {
-        items,
-        settledOrder: [],
-        settledExpanded: true,
-        holdsLayout: () => true,
-        reordersInPlace: (active, over) => active === "m3" && over === "m1",
-      },
-      "m3",
-      "m1",
-      1,
-      36,
-    );
-    expect(result.get("sidebar-group-g")).toEqual(stationary);
-    expect(result.get("m1")?.y).toBe(37);
-    expect(result.get("m2")?.y).toBe(37);
-    expect(result.get("m3")).toEqual(stationary);
-    expect(result.get("a1")).toEqual(stationary);
-  });
-
   it("keeps the boundary labels' space while the layout is held", () => {
     const items: SidebarListItem[] = [
       pinnedHeader,
@@ -884,9 +840,7 @@ describe("sidebar drag projection", () => {
       marker("settled-placeholder"),
     ];
     const input = { items, settledOrder: [], settledExpanded: false };
-    // By pointer, the unpinned row lands between a1 and a2.
     expect(preview(input, "p", "a1").get("a2")?.y).toBe(0);
-    // By time, it lands below a2, and the shelf does not move.
     const byTime = preview({ ...input, activeOrder: ["a1", "a2", "p"] }, "p", "a1");
     expect(byTime.get("a2")?.y).toBe(-83);
     expect(byTime.get(sidebarMarkerId("working-header"))).toEqual(stationary);
@@ -1105,5 +1059,29 @@ describe("lifted card clearance", () => {
   it("follows the list when it scrolls and includes content preceding Pins", () => {
     expect(511 + apply(511, 36, -500, 96).y).toBe(128);
     expect(511 + apply(511, 36, -500, 136, 114).y).toBe(250);
+  });
+});
+
+describe("sidebar arrange preview", () => {
+  it("holds every row still while a drag rearranges in place", () => {
+    const items: SidebarListItem[] = [
+      pinnedHeader,
+      divider,
+      marker("active-placeholder"),
+      { kind: "project-heading", key: "a" },
+      { kind: "thread", key: "a1", section: "active" },
+      { kind: "project-heading", key: "b" },
+      { kind: "thread", key: "b1", section: "active" },
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const transforms = preview(
+      { items, settledOrder: [], settledExpanded: false, arranges: () => true },
+      "a1",
+      "b1",
+      1,
+      36,
+    );
+    for (const transform of transforms.values()) expect(transform).toEqual(stationary);
   });
 });

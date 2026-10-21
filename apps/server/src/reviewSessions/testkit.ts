@@ -155,6 +155,7 @@ export const githubThread = (
 
 export const reviewRoundRead = (fields: Partial<Read> = {}): Read => ({
   authorLogin: "nach",
+  viewerLogin: "nach",
   headSha: "abc123",
   reviews: [],
   pendingReviewers: [],

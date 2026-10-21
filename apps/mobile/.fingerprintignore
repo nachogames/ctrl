@@ -8,6 +8,10 @@ ios/
 dist/
 web-build/
 
+# Kotlin 2 writes session files into every Gradle project it compiles,
+# including native modules in node_modules, during the APK build.
+**/.kotlin/**/*
+
 # Test files
 **/*.test.ts
 **/*.test.tsx

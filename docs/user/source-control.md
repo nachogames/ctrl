@@ -283,7 +283,8 @@ watching inside GitHub's rate limit. Comments from your own account do not wake 
 when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
 failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
 Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
-watch. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
+watch. Watching a pull request again does not repeat check or conflict news its last
+watch already reported; unlinking the pull request clears that. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
 it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
 watched pull request shows an eye; click it to stop watching.
 
@@ -312,7 +313,8 @@ Linked GitHub PRs automatically collect existing and future reviews. Open the PR
 **Review** tab to see feedback as numbered points, initially marked Needs a call. No agent
 request or project skill installation is needed. Discovery runs in the background; opening
 the tab discovers the PR immediately. GitHub feedback refreshes periodically.
-Copilot overviews stay with their review summaries. Resolved findings remain in history and do not
+A review's overall summary, Copilot's or a reviewer's, is never a point by itself; a problem a
+summary raises that no inline comment covers becomes its own point when the agent triages. Resolved findings remain in history and do not
 need another decision. Each completed Copilot pass starts a review round, with failed retries and reviews of the same
 commit grouped alongside it. Each round shows how many findings are still open or resolved,
 including resolutions made directly on GitHub.
@@ -332,3 +334,21 @@ you to confirm, including the displayed recommendations, then runs in the review
 Points without a decision or recommendation still need your call. It fixes accepted points, runs checks, commits
 and pushes, and posts the approved replies. Human reviewers' threads stay open. New reviews
 arrive in the same session; after applying, the next round lets you check them again.
+
+### Reviewing someone else's PR
+
+When the PR was written by someone other than the GitHub account T3 Code uses, the **Review** tab
+works for you as the reviewer. Your GitHub reviews show as yours; a review the tab posted for you
+appears once, under **Your review**.
+
+Run your review, then triage it with Copilot and anyone else's comments. Only the points your
+review raised need a choice: **Post** a new comment or **Skip** it. When someone already raised
+the same problem, choose **+1 on their thread**, **Post my own** comment, or **Skip**.
+**Prepare pending review** puts everything into a pending review on GitHub and changes no code.
+If you already have a pending review there, you choose whether to add to it or start fresh, which
+deletes that draft. Read it on GitHub and submit it with your verdict; the tab suggests one.
+
+When the author asks for your review again, choose **Re-review**. Each of your open threads is
+checked against the new code (**Resolve** or **Keep open** with a follow-up), and your review runs
+again on the new commits. Both go out together in one new pending review. Only your own threads
+are ever resolved. After you approve, choose **Finish**.
