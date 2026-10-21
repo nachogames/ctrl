@@ -80,3 +80,59 @@ export function ListFilterMenu(props: {
     </ControlPillMenu>
   );
 }
+
+/** A one-tap filter choice styled like the menu pills, with an optional status dot. */
+export function ListFilterChip(props: {
+  readonly label: string;
+  readonly active: boolean;
+  readonly indicator?: "attention" | "working" | null;
+  readonly accessibilityLabel?: string;
+  readonly onPress: () => void;
+}) {
+  const { themeAppearance } = useAppearancePreferences();
+  const content = (
+    <>
+      {props.indicator ? (
+        <View
+          className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            props.indicator === "attention"
+              ? "bg-adaptive-amber-700-300"
+              : "bg-adaptive-sky-600-400",
+          )}
+        />
+      ) : null}
+      <Text
+        numberOfLines={1}
+        className={cn(
+          "max-w-[180px] text-sm font-t3-medium",
+          props.active ? "text-primary-foreground" : "text-foreground-muted",
+        )}
+      >
+        {props.label}
+      </Text>
+    </>
+  );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={props.accessibilityLabel ?? props.label}
+      accessibilityState={{ selected: props.active }}
+      hitSlop={6}
+      onPress={props.onPress}
+    >
+      {NATIVE_LIQUID_GLASS_SUPPORTED ? (
+        <FilterGlass
+          isInteractive
+          colorScheme={themeAppearance}
+          tintColorClassName={props.active ? "accent-primary" : undefined}
+          className={PILL}
+        >
+          {content}
+        </FilterGlass>
+      ) : (
+        <View className={cn(PILL, props.active ? "bg-primary" : "bg-subtle")}>{content}</View>
+      )}
+    </Pressable>
+  );
+}

@@ -15,6 +15,9 @@ import { queuedThreadKeysAtom } from "./use-thread-outbox";
 // Covers lifecycle commands before a cross-section move can acquire an order hold.
 export const threadArrangementOpenAtom = Atom.make(false).pipe(Atom.keepAlive);
 
+/** True while a Home list grouped by project is mounted: it arranges in place, so the sheet stays closed. */
+export const homeArrangesInPlaceAtom = Atom.make(false).pipe(Atom.keepAlive);
+
 export const threadDropBusyAtom = Atom.make(false).pipe(Atom.keepAlive);
 
 export const pendingThreadOrderAtom = Atom.make<PendingThreadOrder | null>(null).pipe(

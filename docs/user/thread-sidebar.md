@@ -132,7 +132,23 @@ you, so you cannot drag or move threads within it. Your saved order returns when
 
 A chat group holds the chats that work toward one goal, such as a planning chat and the chats
 that build and review its work. Chats in a group share a project and a workspace: the group's
-branch, worktree, and pull request. Groups are available on web and desktop.
+branch, worktree, and pull request. You make and manage groups on web and desktop. The mobile
+thread list shows them.
+
+On mobile, the thread list sorts active threads under their project, with threads waiting on an
+approval or answer above every project under **Needs you**. A group with two or more active chats
+in a project shows as one stacked row above the project's other threads; tap it to show its chats.
+Tap a project's name to fold its section, and tap again to open it. The project chips above the
+list show one project at a time; only projects with unsettled threads get a chip, and a dot on a
+chip means a thread there needs you or is working. To rearrange the list, tap **Edit** beside the project chips. A drag handle appears on every
+project, group, and thread: projects move among projects (they fold while you drag), groups and
+threads share one order inside their project, and a chat moves within its group. Open a group to
+arrange its chats. Tap **Done** to finish. Project
+order and the order inside each project are saved on that device; chat order inside a group is
+shared with your other devices.
+**Move up** and **Move down** move a thread past the next group or thread in its project. Turn off **Settings → Thread
+behavior → Group by project** to go back to one list in your saved order. Search results are
+always one list.
 
 Every chat has a **Group** panel, even one on its own (see below). By default, single chats
 also appear as expandable groups in the sidebar. Turn off **Settings → General → Show single

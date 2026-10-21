@@ -12,10 +12,23 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { planGroupMemberReorder } from "@t3tools/client-runtime/state/thread-sort";
+import { AsyncResult } from "effect/reactivity";
 import { useFocusEffect } from "@react-navigation/native";
-import { use, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
+import {
+  Alert,
+  BackHandler,
   Platform,
   ScrollView,
   View,
@@ -52,6 +65,7 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
+  ThreadListV2SectionDivider,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -66,7 +80,8 @@ import {
   threadListInboxReturns,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
-  type ThreadListV2ListItem,
+  isThreadListV2ListItem,
+  resolveThreadListV2Status,
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
@@ -79,9 +94,37 @@ import { createSwipeRowActivation } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { useMaterialFabScroll } from "./MaterialFabScrollContext";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
-import { ThreadListFilters } from "./ThreadListFilters";
+import {
+  ProjectFilterChips,
+  ThreadListFilters,
+  type ProjectChipIndicator,
+} from "./ThreadListFilters";
+import { HomeGroupRow } from "./HomeGroupRow";
+import { HomeProjectHeader } from "./HomeProjectHeader";
+import {
+  buildHomeProjectSections,
+  homeListItemsAreEqual,
+  mergeArrangedKeys,
+  moveKey,
+  type HomeListItem,
+  type HomeProjectSections,
+} from "./homeProjectSections";
+import { HomeArrangeRow } from "./HomeArrangeRow";
+import { ListFilterChip } from "../workspace/ListFilterMenu";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { homeArrangesInPlaceAtom, threadArrangementOpenAtom } from "../../state/thread-order";
+import { environmentThreadGroups, threadEnvironment } from "../../state/threads";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
+
+/** A drag handle in Edit mode, and the offset of the row being dragged. */
+interface ArrangeStamp {
+  readonly handle: true;
+  readonly liftOffset?: number;
+}
+type ListItem = HomeListItem & { readonly arrange?: ArrangeStamp };
 
 interface HomeScreenProps {
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -357,7 +400,7 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [searchMode, insets.top, restoredOffset]);
   const swipeRowActivation = useMemo(() => createSwipeRowActivation(), []);
   const activateVisibleRows = useCallback(
-    (rows: ReadonlyArray<ThreadListV2ListItem>) => {
+    (rows: ReadonlyArray<{ readonly key: string }>) => {
       const state = listRef.current?.getState();
       if (state === undefined || !(state.end >= 0)) return;
       swipeRowActivation.activate(
@@ -474,8 +517,14 @@ export function HomeScreen(props: HomeScreenProps) {
     },
     [props.onPinThread],
   );
+  // In project sections, Move up/down steps through the project's rows (groups
+  // included) in the device-local row order; see `moveRowRef` below.
+  const moveRowRef = useRef<
+    ((thread: EnvironmentThreadShell, direction: "up" | "down") => boolean) | null
+  >(null);
   const handleMoveThread = useCallback(
     (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
+      if (typeof direction === "string" && moveRowRef.current?.(thread, direction)) return;
       void props.onMoveThread(thread, direction);
     },
     [props.onMoveThread],
@@ -528,6 +577,7 @@ export function HomeScreen(props: HomeScreenProps) {
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    byProject,
   } = useThreadListV2ShelfPreferences();
   // The queued-start and snooze helpers need a clock while the list stays open.
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
@@ -707,13 +757,522 @@ export function HomeScreen(props: HomeScreenProps) {
     ],
   );
 
-  useThreadJumpShortcuts(threadListV2Items, props.onSelectThread);
+  const threadGroups = useAtomValue(environmentThreadGroups.threadGroupsAtom);
+  const groupByThreadKey = useMemo(() => {
+    const map = new Map<
+      string,
+      { readonly key: string; readonly title: string; readonly index: number }
+    >();
+    for (const group of threadGroups) {
+      if (!group.visible) continue;
+      const key = `${group.environmentId}:${group.id}`;
+      for (const [index, threadId] of group.threadIds.entries()) {
+        map.set(scopedThreadKey(group.environmentId, threadId), { key, title: group.title, index });
+      }
+    }
+    return map;
+  }, [threadGroups]);
+  const projectScopeByKey = useMemo(
+    () => new Map(projectScopes.map((scope) => [scope.key, scope])),
+    [projectScopes],
+  );
+  const projectScopeByProjectKey = useMemo(
+    () =>
+      new Map(
+        projectScopes.flatMap((scope) =>
+          scope.projectRefs.map(
+            (projectRef) =>
+              [
+                scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+                { key: scope.key, title: scope.title },
+              ] as const,
+          ),
+        ),
+      ),
+    [projectScopes],
+  );
+  const [expandedGroupKeys, setExpandedGroupKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleGroup = useCallback((groupKey: string) => {
+    setExpandedGroupKeys((current) => {
+      const next = new Set(current);
+      if (!next.delete(groupKey)) next.add(groupKey);
+      return next;
+    });
+  }, []);
+  const openGroupKey =
+    selectedThreadKey === null ? undefined : groupByThreadKey.get(selectedThreadKey)?.key;
+  // Search results stay one flat list ranked by match.
+  const sectionedByProject = byProject && !hasSearchQuery;
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const projectOrder = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.threadListProjectOrder
+    : undefined;
+  const rowOrder = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.threadListRowOrder
+    : undefined;
+  const collapsedProjects = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.threadListCollapsedProjects
+    : undefined;
+  const collapsedProjectKeys = useMemo(() => new Set(collapsedProjects ?? []), [collapsedProjects]);
+  const toggleProject = useCallback(
+    (projectKey: string) => {
+      const next = new Set(collapsedProjectKeys);
+      if (!next.delete(projectKey)) next.add(projectKey);
+      savePreferences({ threadListCollapsedProjects: [...next] });
+    },
+    [collapsedProjectKeys, savePreferences],
+  );
+  // Holding a project header folds every project and lifts it; the order
+  // follows the finger and saves on release, then the old folding returns.
+  const [projectDrag, setProjectDrag] = useState<{
+    readonly key: string;
+    readonly order: ReadonlyArray<string>;
+    readonly from: number;
+    readonly startTop: number;
+    readonly liftedTop: number | null;
+    readonly translation: number;
+  } | null>(null);
+  const [projectHeaderHeight, setProjectHeaderHeight] = useState(40);
+  const projectDragLayout = useMemo(() => {
+    if (projectDrag === null) return null;
+    const delta =
+      projectDrag.startTop +
+      projectDrag.translation -
+      (projectDrag.liftedTop ?? projectDrag.startTop);
+    const target = Math.max(
+      0,
+      Math.min(
+        projectDrag.order.length - 1,
+        projectDrag.from + Math.round(delta / projectHeaderHeight),
+      ),
+    );
+    const order = projectDrag.order.filter((key) => key !== projectDrag.key);
+    order.splice(target, 0, projectDrag.key);
+    return {
+      order,
+      liftOffset:
+        projectDrag.liftedTop === null
+          ? 0
+          : delta - (target - projectDrag.from) * projectHeaderHeight,
+    };
+  }, [projectDrag, projectHeaderHeight]);
+  // Arrange mode: drag handles on groups, chats and threads, each moving among
+  // its siblings. Row heights vary, so the target slot comes from measured heights.
+  const [arrangeMode, setArrangeMode] = useState(false);
+  const rowHeightsRef = useRef(new Map<string, number>());
+  const [rowDrag, setRowDrag] = useState<{
+    readonly key: string;
+    readonly siblings: string;
+    readonly keys: ReadonlyArray<string>;
+    readonly translation: number;
+  } | null>(null);
+  const rowDragLayout = useMemo(() => {
+    if (rowDrag === null) return null;
+    const height = (key: string) => rowHeightsRef.current.get(key) ?? 72;
+    const from = rowDrag.keys.indexOf(rowDrag.key);
+    const oldTop = rowDrag.keys.slice(0, from).reduce((sum, key) => sum + height(key), 0);
+    const center = oldTop + rowDrag.translation + height(rowDrag.key) / 2;
+    const rest = rowDrag.keys.filter((key) => key !== rowDrag.key);
+    let target = rest.length;
+    let top = 0;
+    for (const [index, key] of rest.entries()) {
+      if (center < top + height(key) / 2) {
+        target = index;
+        break;
+      }
+      top += height(key);
+    }
+    const newTop = rest.slice(0, target).reduce((sum, key) => sum + height(key), 0);
+    const order = [...rest];
+    order.splice(target, 0, rowDrag.key);
+    return { order, target, liftOffset: oldTop + rowDrag.translation - newTop };
+  }, [rowDrag]);
+  const homeSections = useMemo((): HomeProjectSections | null => {
+    if (!sectionedByProject) return null;
+    return buildHomeProjectSections({
+      ...(projectDragLayout
+        ? { projectOrder: projectDragLayout.order }
+        : projectOrder
+          ? { projectOrder }
+          : {}),
+      ...(rowOrder ? { rowOrder } : {}),
+      collapsedProjectKeys: projectDrag ? new Set(projectDrag.order) : collapsedProjectKeys,
+      ...(rowDrag && rowDragLayout
+        ? { liveOrder: { siblings: rowDrag.siblings, order: rowDragLayout.order } }
+        : {}),
+      items: threadListV2Items,
+      showProjectHeaders: v2ScopedProjectGroup === null,
+      projectOf: (thread) =>
+        projectScopeByProjectKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
+        null,
+      groupOf: (thread) =>
+        groupByThreadKey.get(scopedThreadKey(thread.environmentId, thread.id)) ?? null,
+      // The group holding the open chat (iPad split view) stays open.
+      // Groups fold while one is dragged so the project's groups sit together.
+      expandedGroupKeys: rowDrag?.siblings.startsWith("rows:")
+        ? new Set<string>()
+        : openGroupKey === undefined
+          ? expandedGroupKeys
+          : new Set([...expandedGroupKeys, openGroupKey]),
+    });
+  }, [
+    rowDrag,
+    rowDragLayout,
+    projectDrag,
+    projectDragLayout,
+    projectOrder,
+    rowOrder,
+    collapsedProjectKeys,
+    openGroupKey,
+    sectionedByProject,
+    threadListV2Items,
+    v2ScopedProjectGroup,
+    projectScopeByProjectKey,
+    groupByThreadKey,
+    expandedGroupKeys,
+  ]);
+  // Edit and drag state ride on the items: the recycled list only redraws rows whose item changed.
+  const homeListItems = useMemo((): ReadonlyArray<ListItem> => {
+    const base: ReadonlyArray<ListItem> = homeSections?.items ?? threadListV2Items;
+    if (homeSections === null || (!arrangeMode && projectDrag === null && rowDrag === null)) {
+      return base;
+    }
+    const projectHandles =
+      projectDrag !== null || (arrangeMode && homeSections.projects.length > 1);
+    return base.map((item): ListItem => {
+      if (item.type === "home-section") {
+        if (item.projectKey === undefined || !projectHandles) return item;
+        return {
+          ...item,
+          arrange:
+            projectDrag?.key === item.projectKey
+              ? { handle: true, liftOffset: projectDragLayout?.liftOffset ?? 0 }
+              : { handle: true },
+        };
+      }
+      if (!arrangeMode || !homeSections.siblings.has(item.key)) return item;
+      return {
+        ...item,
+        arrange:
+          rowDrag?.key === item.key
+            ? { handle: true, liftOffset: rowDragLayout?.liftOffset ?? 0 }
+            : { handle: true },
+      };
+    });
+  }, [
+    homeSections,
+    threadListV2Items,
+    arrangeMode,
+    projectDrag,
+    projectDragLayout,
+    rowDrag,
+    rowDragLayout,
+  ]);
+  const visibleProjectKeysRef = useRef<ReadonlyArray<string>>([]);
+  visibleProjectKeysRef.current = projectDrag
+    ? visibleProjectKeysRef.current
+    : (homeSections?.projects.map((project) => project.key) ?? []);
+  const projectDragRef = useRef(projectDrag);
+  projectDragRef.current = projectDrag;
+  const projectDragLayoutRef = useRef(projectDragLayout);
+  projectDragLayoutRef.current = projectDragLayout;
+  const projectOrderRef = useRef(projectOrder);
+  projectOrderRef.current = projectOrder;
+  const projectDragHandlers = useMemo(
+    () => ({
+      onStart: (key: string, top: number) => {
+        const order = visibleProjectKeysRef.current;
+        const from = order.indexOf(key);
+        if (from < 0) return;
+        setProjectDrag({ key, order, from, startTop: top, liftedTop: null, translation: 0 });
+      },
+      onLifted: (top: number) =>
+        setProjectDrag((current) => (current === null ? null : { ...current, liftedTop: top })),
+      onMove: (translation: number) =>
+        setProjectDrag((current) => (current === null ? null : { ...current, translation })),
+      onEnd: (cancelled: boolean) => {
+        // Saves run outside the state updater: they update other components.
+        const layout = projectDragLayoutRef.current;
+        const current = projectDragRef.current;
+        setProjectDrag(null);
+        if (
+          current !== null &&
+          !cancelled &&
+          layout !== null &&
+          layout.order.some((key, index) => key !== current.order[index])
+        ) {
+          savePreferences({
+            threadListProjectOrder: mergeArrangedKeys(
+              projectOrderRef.current ?? [],
+              current.order,
+              layout.order,
+            ),
+          });
+        }
+      },
+    }),
+    [savePreferences],
+  );
   useEffect(() => {
-    if (swipeEnabled) activateVisibleRows(threadListV2Items);
-  }, [activateVisibleRows, swipeEnabled, threadListV2Items]);
+    moveRowRef.current = (thread, direction) => {
+      const key = `v2-thread:${thread.environmentId}:${thread.id}`;
+      const set = homeSections?.siblings.get(key);
+      if (set === undefined || !set.id.startsWith("rows:")) return false;
+      const next = moveKey(set.keys, key, direction);
+      if (next !== null) {
+        savePreferences({ threadListRowOrder: mergeArrangedKeys(rowOrder ?? [], set.keys, next) });
+      }
+      return true;
+    };
+  }, [homeSections, rowOrder, savePreferences]);
 
+  const reorderGroupMember = useAtomCommand(threadEnvironment.reorderGroup, {
+    reportFailure: false,
+  });
+  const reorderChats = useCallback(
+    async (
+      members: ReadonlyArray<EnvironmentThreadShell>,
+      order: ReadonlyArray<string>,
+      movedId: string,
+    ) => {
+      const assignments = planGroupMemberReorder({
+        orderedIds: order,
+        keysById: new Map(
+          members.map((thread) => [
+            scopedThreadKey(thread.environmentId, thread.id),
+            thread.groupOrderKey,
+          ]),
+        ),
+        movedId,
+      });
+      const byKey = new Map(
+        members.map((thread) => [scopedThreadKey(thread.environmentId, thread.id), thread]),
+      );
+      // Writes run bottom-up (see planGroupMemberReorder); stop on the first failure.
+      for (const assignment of assignments) {
+        const thread = byKey.get(assignment.id);
+        if (thread === undefined) continue;
+        const result = await reorderGroupMember({
+          environmentId: thread.environmentId,
+          input: { threadId: thread.id, orderKey: assignment.orderKey },
+        });
+        if (result._tag === "Failure") {
+          Alert.alert(
+            "Could not reorder chats",
+            "Update the T3 Code server for this environment to arrange a group's chats.",
+          );
+          return;
+        }
+      }
+    },
+    [reorderGroupMember],
+  );
+  const threadByItemKey = useMemo(() => {
+    const map = new Map<string, EnvironmentThreadShell>();
+    for (const item of homeListItems) {
+      if (item.type === "v2-thread") map.set(item.key, item.item.thread);
+    }
+    return map;
+  }, [homeListItems]);
+  const arrangeRefs = useRef({ rowDrag, rowDragLayout, rowOrder, threadByItemKey, homeSections });
+  arrangeRefs.current = { rowDrag, rowDragLayout, rowOrder, threadByItemKey, homeSections };
+  const arrangeHandlers = useMemo(
+    () => ({
+      onHeight: (key: string, height: number) => rowHeightsRef.current.set(key, height),
+      onStart: (key: string) => {
+        const siblings = arrangeRefs.current.homeSections?.siblings.get(key);
+        if (siblings === undefined) return;
+        setRowDrag({ key, siblings: siblings.id, keys: siblings.keys, translation: 0 });
+      },
+      onMove: (translation: number) =>
+        setRowDrag((current) => (current === null ? null : { ...current, translation })),
+      onEnd: (cancelled: boolean) => {
+        const {
+          rowDragLayout: layout,
+          rowOrder: storedRowOrder,
+          threadByItemKey: threads,
+        } = arrangeRefs.current;
+        const current = arrangeRefs.current.rowDrag;
+        setRowDrag(null);
+        // Saves and commands run outside the state updater: they update other components.
+        (() => {
+          if (current === null || cancelled || layout === null) return;
+          const { order, target } = layout;
+          if (!order.some((key, index) => key !== current.keys[index])) return;
+          if (current.siblings.startsWith("rows:")) {
+            savePreferences({
+              threadListRowOrder: mergeArrangedKeys(storedRowOrder ?? [], current.keys, order),
+            });
+            return;
+          }
+          const members = order.flatMap((key) => {
+            const thread = threads.get(key);
+            return thread ? [thread] : [];
+          });
+          const scoped = members.map((thread) => scopedThreadKey(thread.environmentId, thread.id));
+          const moved = threads.get(current.key);
+          if (moved === undefined || members.length !== order.length) return;
+          if (current.siblings.startsWith("chats:")) {
+            void reorderChats(members, scoped, scopedThreadKey(moved.environmentId, moved.id));
+            return;
+          }
+          // Pinned or a project's threads: place it next to its new neighbour.
+          const neighbor = target < members.length - 1 ? members[target + 1] : members[target - 1];
+          if (neighbor !== undefined) {
+            void props.onMoveThread(moved, {
+              targetId: scopedThreadKey(neighbor.environmentId, neighbor.id),
+              placement: target < members.length - 1 ? "before" : "after",
+            });
+          }
+        })();
+      },
+    }),
+    [props.onMoveThread, reorderChats, savePreferences],
+  );
+  const enterArrangeMode = useCallback(() => setArrangeMode(true), []);
+  const exitArrangeMode = useCallback(() => {
+    setRowDrag(null);
+    setArrangeMode(false);
+  }, []);
+  // The thread menu's Arrange threads opens this mode while the list is grouped.
+  useEffect(() => {
+    appAtomRegistry.set(homeArrangesInPlaceAtom, sectionedByProject);
+    return () => appAtomRegistry.set(homeArrangesInPlaceAtom, false);
+  }, [sectionedByProject]);
+  const arrangeRequested = useAtomValue(threadArrangementOpenAtom);
+  useEffect(() => {
+    if (!arrangeRequested || !sectionedByProject) return;
+    appAtomRegistry.set(threadArrangementOpenAtom, false);
+    setArrangeMode(true);
+  }, [arrangeRequested, sectionedByProject]);
+  useEffect(() => {
+    if (!sectionedByProject) exitArrangeMode();
+  }, [sectionedByProject, exitArrangeMode]);
+  // Android back leaves Arrange mode, like Done.
+  useEffect(() => {
+    if (!arrangeMode || Platform.OS !== "android") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      exitArrangeMode();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [arrangeMode, exitArrangeMode]);
+
+  const canArrangeProjects = (homeSections?.projects.length ?? 0) > 1;
+  const shortcutItems = useMemo(
+    () => homeListItems.filter(isThreadListV2ListItem),
+    [homeListItems],
+  );
+  // Chips list projects with unsettled work, plus the selected one so it can be cleared.
+  const chipProjects = useMemo(() => {
+    const live = new Set<string>();
+    for (const thread of props.threads) {
+      if (
+        thread.archivedAt !== null ||
+        thread.settledOverride === "settled" ||
+        thread.lineage.relationshipToParent === "subagent"
+      )
+        continue;
+      const scopeKey = projectScopeByProjectKey.get(
+        scopedProjectKey(thread.environmentId, thread.projectId),
+      )?.key;
+      if (scopeKey !== undefined) live.add(scopeKey);
+    }
+    return projectScopes
+      .filter((scope) => live.has(scope.key) || scope.key === props.selectedProjectKey)
+      .map((scope) => ({ key: scope.key, label: scope.title }));
+  }, [props.threads, props.selectedProjectKey, projectScopes, projectScopeByProjectKey]);
+  // A chip dot says a project has a thread waiting on the user, or else one working.
+  const projectIndicators = useMemo(() => {
+    const map = new Map<string, ProjectChipIndicator>();
+    for (const thread of props.threads) {
+      if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
+        continue;
+      const scopeKey = projectScopeByProjectKey.get(
+        scopedProjectKey(thread.environmentId, thread.projectId),
+      )?.key;
+      if (scopeKey === undefined || map.get(scopeKey) === "attention") continue;
+      const status = resolveThreadListV2Status(thread);
+      if (status === "approval" || status === "input") map.set(scopeKey, "attention");
+      else if (status === "working") map.set(scopeKey, "working");
+    }
+    return map;
+  }, [props.threads, projectScopeByProjectKey]);
+
+  useThreadJumpShortcuts(shortcutItems, props.onSelectThread);
+  useEffect(() => {
+    if (swipeEnabled) activateVisibleRows(homeListItems);
+  }, [activateVisibleRows, swipeEnabled, homeListItems]);
+
+  const withArrangeHandle = useCallback(
+    (
+      arrange: ArrangeStamp | undefined,
+      key: string,
+      label: string,
+      row: ReactNode,
+      interactive = false,
+    ) =>
+      arrange === undefined ? (
+        row
+      ) : (
+        <HomeArrangeRow
+          itemKey={key}
+          label={label}
+          handlers={arrangeHandlers}
+          interactive={interactive}
+          {...(arrange.liftOffset === undefined ? {} : { liftOffset: arrange.liftOffset })}
+        >
+          {row}
+        </HomeArrangeRow>
+      ),
+    [arrangeHandlers],
+  );
   const renderV2Item = useCallback(
-    ({ item }: { readonly item: ThreadListV2ListItem }) => {
+    ({ item }: { readonly item: ListItem }) => {
+      if (item.type === "home-section") {
+        const divider = (
+          <ThreadListV2SectionDivider
+            label={item.label}
+            tone={item.tone}
+            pane={primaryColumn ? "sidebar" : "screen"}
+          />
+        );
+        if (item.projectKey === undefined) return divider;
+        const scope = projectScopeByKey.get(item.projectKey);
+        return (
+          <HomeProjectHeader
+            projectKey={item.projectKey}
+            label={item.label}
+            project={scope?.representative ?? null}
+            collapsed={item.collapsed === true}
+            count={item.count ?? 0}
+            pane={primaryColumn ? "sidebar" : "screen"}
+            onToggle={toggleProject}
+            onHeight={setProjectHeaderHeight}
+            {...(item.arrange ? { drag: projectDragHandlers } : {})}
+            {...(item.arrange?.liftOffset === undefined
+              ? {}
+              : { liftOffset: item.arrange.liftOffset })}
+          />
+        );
+      }
+      if (item.type === "home-group") {
+        const groupRow = (
+          <HomeGroupRow
+            groupKey={item.key.slice("home-group:".length)}
+            title={item.title}
+            threads={item.threads}
+            workingCount={item.workingCount}
+            expanded={item.expanded}
+            showTrailingDivider={item.showTrailingDivider}
+            pane={primaryColumn ? "sidebar" : "screen"}
+            onToggle={toggleGroup}
+            onArrange={enterArrangeMode}
+          />
+        );
+        return withArrangeHandle(item.arrange, item.key, item.title, groupRow, true);
+      }
       if (item.type === "v2-pending") {
         const pendingScopeKey = scopedProjectKey(
           item.pendingTask.environmentId,
@@ -769,7 +1328,7 @@ export function HomeScreen(props: HomeScreenProps) {
         );
       }
       const thread = item.item.thread;
-      return (
+      const row = (
         <ThreadListV2Row
           pane={primaryColumn ? "sidebar" : "screen"}
           selected={scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey}
@@ -790,6 +1349,7 @@ export function HomeScreen(props: HomeScreenProps) {
           projectTitle={v2ProjectTitleByProjectKey.get(
             scopedProjectKey(thread.environmentId, thread.projectId),
           )}
+          hideProject={"underProject" in item}
           providerInstance={resolveProviderInstance(thread)}
           providers={providersByEnvironmentId.get(thread.environmentId)}
           environmentLabel={
@@ -836,8 +1396,21 @@ export function HomeScreen(props: HomeScreenProps) {
           activationKey={item.key}
         />
       );
+      // Chats of an expanded group sit under its row, one step in.
+      const handled = withArrangeHandle(item.arrange, item.key, thread.title, row);
+      return "groupMember" in item ? <View className="pl-4">{handled}</View> : handled;
     },
     [
+      withArrangeHandle,
+      toggleGroup,
+      toggleProject,
+      projectScopeByKey,
+      enterArrangeMode,
+      canArrangeProjects,
+      arrangeMode,
+      projectDrag,
+      projectDragLayout,
+      projectDragHandlers,
       handleDeleteThread,
       activeReorderEnvironmentIds,
       handleMoveThread,
@@ -882,7 +1455,14 @@ export function HomeScreen(props: HomeScreenProps) {
       workingShelfEnabled,
     ],
   );
-  const v2KeyExtractor = useCallback((item: ThreadListV2ListItem) => item.key, []);
+  const v2KeyExtractor = useCallback((item: ListItem) => item.key, []);
+  const homeItemsAreEqual = useCallback(
+    (previous: ListItem, item: ListItem) =>
+      previous.arrange?.handle === item.arrange?.handle &&
+      previous.arrange?.liftOffset === item.arrange?.liftOffset &&
+      homeListItemsAreEqual(previous, item, threadListV2ListItemsAreEqual),
+    [],
+  );
 
   // FlatList/LegendList treat a changed extraData identity as "re-render every
   // visible row", so an inline object literal would invalidate all rows on
@@ -980,19 +1560,37 @@ export function HomeScreen(props: HomeScreenProps) {
 
   const listHeader = Platform.OS === "ios" ? undefined : <HomeTopContentSpacer />;
 
+  const editButton = sectionedByProject ? (
+    <ListFilterChip
+      label={arrangeMode ? "Done" : "Edit"}
+      accessibilityLabel={arrangeMode ? "Done arranging" : "Arrange projects, groups and threads"}
+      active={arrangeMode}
+      onPress={arrangeMode ? exitArrangeMode : enterArrangeMode}
+    />
+  ) : null;
   const v2ListHeader = (
     <>
       {listHeader}
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           environments={props.environments}
-          projects={projectScopes.map((scope) => ({ key: scope.key, label: scope.title }))}
+          projects={chipProjects}
           selectedEnvironmentId={props.selectedEnvironmentId}
           selectedProjectKey={props.selectedProjectKey}
           onEnvironmentChange={props.onEnvironmentChange}
           onProjectChange={props.onProjectChange}
+          indicatorByProjectKey={projectIndicators}
+          trailing={editButton}
         />
-      ) : null}
+      ) : (
+        <ProjectFilterChips
+          projects={chipProjects}
+          selectedProjectKey={props.selectedProjectKey}
+          onProjectChange={props.onProjectChange}
+          indicatorByProjectKey={projectIndicators}
+          trailing={editButton}
+        />
+      )}
     </>
   );
 
@@ -1025,7 +1623,7 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     );
 
-  if (Platform.OS === "android" && threadListV2Items.length === 0) {
+  if (Platform.OS === "android" && homeListItems.length === 0) {
     return (
       <View className="flex-1 bg-header">
         <View
@@ -1054,19 +1652,21 @@ export function HomeScreen(props: HomeScreenProps) {
           <GestureDetector gesture={homeScrollGesture}>
             <LegendList
               ref={listRef}
-              onLoad={() => activateVisibleRows(threadListV2Items)}
+              onLoad={() => activateVisibleRows(homeListItems)}
               onTouchStart={(event) => trackListTouches(event, true)}
               onTouchEnd={(event) => trackListTouches(event, false)}
               onTouchCancel={(event) => trackListTouches(event, false)}
               renderScrollComponent={Platform.OS === "ios" ? renderHomeScrollView : undefined}
-              data={threadListV2Items}
+              scrollEnabled={projectDrag === null && rowDrag === null}
+              data={homeListItems}
               renderItem={renderV2Item}
               keyExtractor={v2KeyExtractor}
-              getItemType={(item) => item.type}
-              itemsAreEqual={threadListV2ListItemsAreEqual}
+              getItemType={(item) => ("groupMember" in item ? "v2-thread-member" : item.type)}
+              itemsAreEqual={homeItemsAreEqual}
               estimatedItemSize={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
               drawDistance={THREAD_LIST_V2_DRAW_DISTANCE}
-              recycleItems
+              // Edit mode inserts and wraps rows; reused cells kept stale content there.
+              recycleItems={!arrangeMode}
               extraData={v2ExtraData}
               ListHeaderComponent={v2ListHeader}
               ListFooterComponent={

@@ -7,6 +7,7 @@ import {
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/threads";
+import { createEnvironmentThreadGroupAtoms } from "@t3tools/client-runtime/state/thread-groups";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -24,6 +25,11 @@ export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,
 );
 export const environmentThreadShells = createEnvironmentThreadShellAtoms({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  snapshotAtom: threadEnvironment.snapshotAtom,
+});
+
+export const environmentThreadGroups = createEnvironmentThreadGroupAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: threadEnvironment.snapshotAtom,
 });

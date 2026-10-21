@@ -19,6 +19,8 @@ export function useThreadListV2ShelfPreferences() {
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
   // Working section beta: off until the preference loads and is enabled.
   const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled === true;
+  // Project sections are the default; only an explicit false turns them off.
+  const byProject = !loaded || preferencesResult.value.threadListByProject !== false;
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
   const snoozedShelfExpandedRef = useRef(snoozedShelfExpanded);
@@ -53,6 +55,7 @@ export function useThreadListV2ShelfPreferences() {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    byProject,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,

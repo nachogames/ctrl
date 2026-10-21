@@ -1,7 +1,71 @@
-import { Pressable, ScrollView } from "react-native";
+import type { ReactNode } from "react";
+import { Pressable, ScrollView, View } from "react-native";
 import { SymbolView } from "../../components/AppSymbol";
-import { ListFilterMenu } from "../workspace/ListFilterMenu";
+import { ListFilterChip, ListFilterMenu } from "../workspace/ListFilterMenu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
+
+export type ProjectChipIndicator = "attention" | "working";
+
+type ProjectChipProps = Pick<
+  HomeHeaderProps,
+  "projects" | "selectedProjectKey" | "onProjectChange"
+> & {
+  readonly indicatorByProjectKey?: ReadonlyMap<string, ProjectChipIndicator>;
+  /** Pinned to the right of the scrolling chips, such as the Edit button. */
+  readonly trailing?: ReactNode;
+};
+
+function ProjectChips(props: ProjectChipProps) {
+  return (
+    <>
+      <ListFilterChip
+        label="All"
+        accessibilityLabel="Show threads from every project"
+        active={props.selectedProjectKey === null}
+        onPress={() => props.onProjectChange(null)}
+      />
+      {props.projects.map((project) => (
+        <ListFilterChip
+          key={project.key}
+          label={project.label}
+          active={project.key === props.selectedProjectKey}
+          indicator={props.indicatorByProjectKey?.get(project.key) ?? null}
+          onPress={() =>
+            props.onProjectChange(project.key === props.selectedProjectKey ? null : project.key)
+          }
+        />
+      ))}
+    </>
+  );
+}
+
+const ROW_STYLE = { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 } as const;
+
+function ChipRow(props: { readonly trailing?: ReactNode; readonly children: ReactNode }) {
+  return (
+    <View className="flex-row items-start">
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        className="flex-1"
+        contentContainerStyle={ROW_STYLE}
+      >
+        {props.children}
+      </ScrollView>
+      {props.trailing ? <View className="bg-screen pl-2 pr-4 pt-0.5">{props.trailing}</View> : null}
+    </View>
+  );
+}
+
+/** Project chips alone, for lists whose environment filter lives elsewhere. */
+export function ProjectFilterChips(props: ProjectChipProps) {
+  if (props.projects.length < 2 && !props.trailing) return null;
+  return (
+    <ChipRow trailing={props.trailing}>
+      {props.projects.length > 1 ? <ProjectChips {...props} /> : null}
+    </ChipRow>
+  );
+}
 
 export function ThreadListFilters(
   props: Pick<
@@ -12,20 +76,14 @@ export function ThreadListFilters(
     | "selectedProjectKey"
     | "onEnvironmentChange"
     | "onProjectChange"
-  >,
+  > &
+    Pick<ProjectChipProps, "indicatorByProjectKey" | "trailing">,
 ) {
   const selectedEnvironment = props.environments.find(
     (environment) => environment.environmentId === props.selectedEnvironmentId,
   );
-  const selectedProject = props.projects.find(
-    (project) => project.key === props.selectedProjectKey,
-  );
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 }}
-    >
+    <ChipRow trailing={props.trailing}>
       <ListFilterMenu
         label={selectedEnvironment?.label ?? "All environments"}
         accessibilityLabel="Filter threads by environment"
@@ -55,32 +113,7 @@ export function ThreadListFilters(
           }
         }}
       />
-      <ListFilterMenu
-        label={selectedProject?.label ?? "All projects"}
-        accessibilityLabel="Filter threads by project"
-        active={selectedProject !== undefined}
-        actions={[
-          {
-            id: "all",
-            title: "All projects",
-            state: props.selectedProjectKey === null ? "on" : "off",
-          },
-          ...props.projects.map((project) => ({
-            id: JSON.stringify(project.key),
-            title: project.label,
-            state: project.key === props.selectedProjectKey ? ("on" as const) : ("off" as const),
-          })),
-        ]}
-        onSelect={(id) => {
-          if (id === "all") props.onProjectChange(null);
-          else {
-            const project = props.projects.find(
-              (candidate) => JSON.stringify(candidate.key) === id,
-            );
-            if (project) props.onProjectChange(project.key);
-          }
-        }}
-      />
+      {props.projects.length > 1 ? <ProjectChips {...props} /> : null}
       {props.selectedEnvironmentId !== null || props.selectedProjectKey !== null ? (
         <Pressable
           accessibilityRole="button"
@@ -94,6 +127,6 @@ export function ThreadListFilters(
           <SymbolView name="xmark.circle.fill" size={18} tintColorClassName="accent-icon-muted" />
         </Pressable>
       ) : null}
-    </ScrollView>
+    </ChipRow>
   );
 }

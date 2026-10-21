@@ -92,6 +92,14 @@ export interface Preferences {
   readonly planModeEnabled?: boolean;
   /** Device-local counterpart of web's `sidebarWorkingShelfEnabled` beta. */
   readonly workingShelfEnabled?: boolean;
+  /** Home list sections by project with chat groups stacked. On unless set to false. */
+  readonly threadListByProject?: boolean;
+  /** Project scope keys in the order the user arranged them; unlisted projects follow. */
+  readonly threadListProjectOrder?: ReadonlyArray<string>;
+  /** Home list row keys (chat groups and threads) in arranged order inside their projects. */
+  readonly threadListRowOrder?: ReadonlyArray<string>;
+  /** Project scope keys whose Home section is folded to its heading. */
+  readonly threadListCollapsedProjects?: ReadonlyArray<string>;
   /** @deprecated Retained to migrate favorites to the connected environment. */
   readonly modelFavorites?: ReadonlyArray<{
     readonly provider: ProviderInstanceId;
@@ -169,6 +177,10 @@ export function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingMode?: SidebarProjectGroupingMode;
     planModeEnabled?: boolean;
     workingShelfEnabled?: boolean;
+    threadListByProject?: boolean;
+    threadListProjectOrder?: ReadonlyArray<string>;
+    threadListRowOrder?: ReadonlyArray<string>;
+    threadListCollapsedProjects?: ReadonlyArray<string>;
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
@@ -277,6 +289,19 @@ export function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;
+  }
+  if (typeof parsed.threadListByProject === "boolean") {
+    preferences.threadListByProject = parsed.threadListByProject;
+  }
+  for (const key of [
+    "threadListProjectOrder",
+    "threadListRowOrder",
+    "threadListCollapsedProjects",
+  ] as const) {
+    const value: unknown = parsed[key];
+    if (Array.isArray(value)) {
+      preferences[key] = value.filter((entry): entry is string => typeof entry === "string");
+    }
   }
   if (Array.isArray(parsed.modelFavorites)) {
     preferences.modelFavorites = parsed.modelFavorites.filter(
