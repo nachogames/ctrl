@@ -1,10 +1,14 @@
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/presentation";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 import { useSyncExternalStore } from "react";
 
+import { environmentPresentations } from "../state/presentation";
+import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { speechEnvironment } from "../state/speech";
 import { replySpeaker } from "./replySpeaker";
 import { createAckRotation, needsAck } from "./voiceAck";
+import { frontNotSetUp, notSetUpNotice } from "./voiceFrontSetup";
 
 /** How long the front's words stay under the composer after it finishes. */
 const CAPTION_LINGER_MS = 8_000;
@@ -39,6 +43,24 @@ class FrontCaption {
 const caption = new FrontCaption();
 let turns = 0;
 const nextAck = createAckRotation();
+/** Other machines whose missing quick voice the user already heard about this session. */
+const toldNotSetUp = new Set<EnvironmentId>();
+
+/**
+ * The notice for a thread on another machine whose quick voice is not set up,
+ * the first time only. This machine's own setup is the user's choice, so it
+ * stays quiet. The turn still goes to the agent, whose reply is read.
+ */
+function takeNotSetUpNotice(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {
+  if (toldNotSetUp.has(environmentId)) return null;
+  // With no local server (the hosted web app), every environment is another machine.
+  if (registry.get(primaryEnvironmentIdAtom) === environmentId) return null;
+  toldNotSetUp.add(environmentId);
+  const presentation = registry.get(environmentPresentations.presentationAtom(environmentId));
+  return notSetUpNotice(
+    presentation === null ? "that machine" : environmentDisplayLabel(presentation),
+  );
+}
 
 /** What the front voice is saying, or "" when it is quiet. */
 export function useFrontCaption() {
@@ -51,7 +73,8 @@ export function useFrontCaption() {
  * local voice, or Gemini's own audio as it arrives. The agent's reply
  * waits until the front decides; if the front fully answered, that reply is
  * not read. Any failure (front voice off, LM Studio down) just lets the
- * agent's reply be read as usual.
+ * agent's reply be read as usual; on another machine with no quick voice set
+ * up, the user is told so once.
  *
  * `endOfSpeechAt` is the `performance.now()` of the end of the user's turn,
  * for the latency log.
@@ -113,7 +136,22 @@ export function askVoiceFront(input: {
     (result) => {
       if (settled) return;
       if (AsyncResult.isFailure(result)) {
-        caption.set("");
+        const notice = frontNotSetUp(result.cause)
+          ? takeNotSetUpNotice(input.registry, input.environmentId)
+          : null;
+        caption.set(notice ?? "", notice === null ? undefined : CAPTION_LINGER_MS);
+        if (notice !== null) {
+          // Said in place of the acknowledgement, before the agent's reply.
+          spoken = notice;
+          replySpeaker.feed({
+            registry: input.registry,
+            environmentId: input.environmentId,
+            messageId: `voice-front-setup:${turnId}`,
+            text: notice,
+            streaming: false,
+            front: true,
+          });
+        }
         settle(false);
         return;
       }
