@@ -47,6 +47,7 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
+import { markCursorFolderLoaded } from "./CursorMcpServers.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "./transportFailure.ts";
@@ -2154,6 +2155,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           if (existing !== null) {
             yield* existing.session.close.pipe(Effect.ignore);
             yield* Ref.set(liveAgent, null);
+          }
+          if (openInput.runtimePolicy.cwd !== null) {
+            markCursorFolderLoaded(openInput.runtimePolicy.cwd);
           }
           const sdkSession = yield* runner
             .open({

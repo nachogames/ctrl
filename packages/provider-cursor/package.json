@@ -31,6 +31,10 @@
       "types": "./src/server/CursorAccountReader.ts",
       "import": "./src/server/CursorAccountReader.ts"
     },
+    "./server/CursorMcpServers": {
+      "types": "./src/server/CursorMcpServers.ts",
+      "import": "./src/server/CursorMcpServers.ts"
+    },
     "./server/CursorKeychain": {
       "types": "./src/server/CursorKeychain.ts",
       "import": "./src/server/CursorKeychain.ts"
