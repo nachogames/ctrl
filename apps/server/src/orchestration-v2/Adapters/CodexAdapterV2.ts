@@ -66,6 +66,7 @@ import type {
   ProviderThreadId,
   ProviderTurnId,
   ProviderInstanceId,
+  ProviderDisabledInventory,
   RuntimeMode,
   RuntimeRequestId,
   ThreadId,
@@ -114,6 +115,7 @@ import {
 } from "../../provider/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
+import { codexDisabledInventoryArgs } from "../../provider/Drivers/CodexInventory.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -1270,6 +1272,7 @@ export interface CodexAppServerClientFactoryShape {
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
+    readonly disabledInventory?: ProviderDisabledInventory;
   }) => Effect.Effect<
     CodexClient.CodexAppServerClient["Service"],
     ProviderAdapter.ProviderAdapterOpenSessionError,
@@ -1516,9 +1519,12 @@ export const layerAppServerClientFactory: Layer.Layer<
           };
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
-            args: codexAppServerArgs(
-              resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
-            ),
+            args: [
+              ...codexAppServerArgs(
+                resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+              ),
+              ...codexDisabledInventoryArgs(input.disabledInventory ?? {}),
+            ],
             env: environment,
             threadId: input.threadId,
           }).pipe(Effect.provideService(AgentScope, agentScope));
@@ -1565,7 +1571,13 @@ export type CodexAdapterV2DriverEnv =
   | ServerConfig;
 
 export const createCodexAdapterV2 = (
-  { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
+  {
+    instanceId,
+    environment,
+    enabled,
+    disabledInventory,
+    config,
+  }: ProviderAdapterDriverCreateInput<CodexSettings>,
   hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime"> = {},
 ) =>
   Effect.gen(function* () {
@@ -1601,6 +1613,7 @@ export const createCodexAdapterV2 = (
       instanceId,
       settings,
       environment: yield* mergeProviderInstanceEnvironment(environment, hostEnvironment),
+      ...(disabledInventory === undefined ? {} : { disabledInventory }),
       clientFactory,
       crypto,
       fileSystem,
@@ -1656,6 +1669,7 @@ export interface CodexAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: CodexSettings;
   readonly environment: NodeJS.ProcessEnv;
+  readonly disabledInventory?: ProviderDisabledInventory;
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
@@ -1711,6 +1725,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           runtimePolicy: input.runtimePolicy,
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
           environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+          ...(adapterOptions.disabledInventory === undefined
+            ? {}
+            : { disabledInventory: adapterOptions.disabledInventory }),
         });
         const additionalContextByThread = yield* Ref.make(
           new Map<

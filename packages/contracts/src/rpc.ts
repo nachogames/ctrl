@@ -26,6 +26,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderInventory, ProviderReadInventoryInput } from "./providerInventory.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -355,6 +356,14 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import {
+  RemoteMcpAddInput,
+  RemoteMcpAuthorizeInput,
+  RemoteMcpAuthorizeResult,
+  RemoteMcpError,
+  RemoteMcpServerList,
+  RemoteMcpServerRef,
+} from "./remoteMcp.ts";
+import {
   ReviewItemEditReplyInput,
   ReviewItemResult,
   ReviewItemSetViewedInput,
@@ -435,6 +444,7 @@ export const WS_METHODS = {
   providerUploadFeedback: "provider.uploadFeedback",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
+  providerReadInventory: "provider.readInventory",
   providerAuthComplete: "provider.auth.complete",
   chatGptReconnectProfile: "provider.chatgpt.reconnect-profile",
   chatGptImportProfile: "provider.chatgpt.import-profile",
@@ -536,6 +546,11 @@ export const WS_METHODS = {
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
 
+  remoteMcpSubscribe: "remoteMcp.subscribe",
+  remoteMcpAdd: "remoteMcp.add",
+  remoteMcpAuthorize: "remoteMcp.authorize",
+  remoteMcpReconnect: "remoteMcp.reconnect",
+  remoteMcpRemove: "remoteMcp.remove",
   scheduledTasksList: "scheduledTasks.list",
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -666,6 +681,12 @@ const WsProviderConsumeResetCreditRpc = Rpc.make(WS_METHODS.providerConsumeReset
   payload: ProviderConsumeResetCreditInput,
   success: ProviderConsumeResetCreditResult,
   error: Schema.Union([ProviderSetupError, UsageLimitSourceError, EnvironmentAuthorizationError]),
+});
+
+const WsProviderReadInventoryRpc = Rpc.make(WS_METHODS.providerReadInventory, {
+  payload: ProviderReadInventoryInput,
+  success: ProviderInventory,
+  error: ProviderSetupRpcError,
 });
 
 const WsProviderAuthStartRpc = Rpc.make(WS_METHODS.providerAuthStart, {
@@ -1830,6 +1851,32 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const RemoteMcpRpcError = Schema.Union([RemoteMcpError, EnvironmentAuthorizationError]);
+
+const WsRemoteMcpSubscribeRpc = Rpc.make(WS_METHODS.remoteMcpSubscribe, {
+  payload: Schema.Struct({}),
+  success: RemoteMcpServerList,
+  error: RemoteMcpRpcError,
+  stream: true,
+});
+const WsRemoteMcpAddRpc = Rpc.make(WS_METHODS.remoteMcpAdd, {
+  payload: RemoteMcpAddInput,
+  error: RemoteMcpRpcError,
+});
+const WsRemoteMcpAuthorizeRpc = Rpc.make(WS_METHODS.remoteMcpAuthorize, {
+  payload: RemoteMcpAuthorizeInput,
+  success: RemoteMcpAuthorizeResult,
+  error: RemoteMcpRpcError,
+});
+const WsRemoteMcpReconnectRpc = Rpc.make(WS_METHODS.remoteMcpReconnect, {
+  payload: RemoteMcpServerRef,
+  error: RemoteMcpRpcError,
+});
+const WsRemoteMcpRemoveRpc = Rpc.make(WS_METHODS.remoteMcpRemove, {
+  payload: RemoteMcpServerRef,
+  error: RemoteMcpRpcError,
+});
+
 const WsScheduledTasksListRpc = Rpc.make(WS_METHODS.scheduledTasksList, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -1995,7 +2042,7 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
 
 /**
  * Checks the connection's scopes against the scope each RPC declares, before
- * the handler runs. Every RPC in both `WsBaseRpcGroup` and `WsReviewSessionsRpcGroup`
+ * the handler runs. Every RPC in `WsBaseRpcGroup`, `WsReviewSessionsRpcGroup` and `WsCtrlRpcGroup`
  * carries it, so a handler cannot be added without authorization. Each group attaches it
  * itself, which TypeScript cannot check, so `rpc.test.ts` reads it off every RPC in the
  * merged group; a new group must repeat `.middleware(RpcScopeAuthorization)`.
@@ -2017,6 +2064,24 @@ export const WsReviewSessionsRpcGroup = RpcGroup.make(
   WsReviewSessionsRequestRpc,
   WsReviewSessionsRunLocalReviewRpc,
   WsReviewSessionsDiscussInSideChatRpc,
+).middleware(RpcScopeAuthorization);
+
+/**
+ * RPCs Ctrl adds on top of T3 Code, kept out of `WsBaseRpcGroup` so it stays the
+ * size upstream typechecks: that group's handler layer sits at TypeScript's
+ * instantiation-depth limit, and even small additions push it over.
+ */
+export const WsCtrlRpcGroup = RpcGroup.make(
+  WsPushRegisterDeviceRpc,
+  WsPushUnregisterDeviceRpc,
+  WsThreadGroupsMutateRpc,
+  WsThreadGroupsSubscribeResourcesRpc,
+  WsProviderReadInventoryRpc,
+  WsRemoteMcpSubscribeRpc,
+  WsRemoteMcpAddRpc,
+  WsRemoteMcpAuthorizeRpc,
+  WsRemoteMcpReconnectRpc,
+  WsRemoteMcpRemoveRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Everything but the review RPCs, so the server builds its handlers apart; clients use `WsRpcGroup`. */
@@ -2083,8 +2148,6 @@ export const WsBaseRpcGroup = RpcGroup.make(
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
   WsServerReportClientActivityRpc,
-  WsPushRegisterDeviceRpc,
-  WsPushUnregisterDeviceRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,
   WsCloudGetRelayClientStatusRpc,
@@ -2136,8 +2199,6 @@ export const WsBaseRpcGroup = RpcGroup.make(
   WsProjectsCreateNewRpc,
   WsProjectsWriteFileRpc,
   WsProjectsMutateRpc,
-  WsThreadGroupsMutateRpc,
-  WsThreadGroupsSubscribeResourcesRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsFilesystemGetMetadataRpc,
@@ -2222,4 +2283,4 @@ export const WsBaseRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeCommandOutputRpc,
 ).middleware(RpcScopeAuthorization);
 
-export const WsRpcGroup = WsBaseRpcGroup.merge(WsReviewSessionsRpcGroup);
+export const WsRpcGroup = WsBaseRpcGroup.merge(WsReviewSessionsRpcGroup, WsCtrlRpcGroup);

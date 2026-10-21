@@ -27,6 +27,7 @@ import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as RemoteMcpServers from "../remoteMcp/RemoteMcpServers.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import {
   type AgentThread,
@@ -977,6 +978,90 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
+const decodeRemoteTool = Schema.decodeUnknownEffect(McpSchema.Tool);
+const decodeRemoteResult = Schema.decodeUnknownEffect(McpSchema.CallToolResult);
+
+const remoteToolFailure = (text: string) =>
+  new McpSchema.CallToolResult({ isError: true, content: [{ type: "text", text }] });
+
+/**
+ * Tools from the remote MCP servers an admin connected, forwarded under the
+ * server's own credential. Only agents T3 Code launched can call them (outside
+ * clients may see them listed, but calls are refused), and they skip analytics
+ * because their names belong to someone else's server.
+ */
+const registerRemoteTools = Effect.fn("McpHttpServer.registerRemoteTools")(function* () {
+  const server = yield* McpServer.McpServer;
+  const remote = yield* RemoteMcpServers.RemoteMcpServers;
+  // McpServer cannot remove a tool, so a tool whose server went away stays
+  // registered and `isVisible` hides it until it returns.
+  const registered = new Map<string, string>();
+  const register = (tool: RemoteMcpServers.ProxiedTool) =>
+    Effect.gen(function* () {
+      const fingerprint = encodeJsonText(tool);
+      if (registered.get(tool.name) === fingerprint) return;
+      if (
+        !registered.has(tool.name) &&
+        server.tools.some((entry) => entry.tool.name === tool.name)
+      ) {
+        yield* Effect.logWarning("skipped a remote MCP tool that shadows a built-in tool", {
+          serverId: tool.serverId,
+        });
+        return;
+      }
+      const decoded = yield* decodeRemoteTool({
+        name: tool.name,
+        ...(tool.title === undefined ? {} : { title: tool.title }),
+        ...(tool.description === undefined ? {} : { description: tool.description }),
+        inputSchema: tool.inputSchema,
+        ...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
+      }).pipe(Effect.option);
+      if (Option.isNone(decoded)) {
+        yield* Effect.logWarning("skipped a remote MCP tool with an unusable definition", {
+          serverId: tool.serverId,
+        });
+        return;
+      }
+      registered.set(tool.name, fingerprint);
+      yield* server.addTool({
+        tool: decoded.value,
+        annotations: Context.make(McpSchema.EnabledWhen, () => remote.isVisible(tool.name)),
+        handle: (payload) =>
+          Effect.withFiber((fiber) => {
+            const invocation = Context.getOption(
+              fiber.context,
+              McpInvocationContext.McpInvocationContext,
+            );
+            if (Option.isNone(invocation) || invocation.value.thread === undefined) {
+              return Effect.succeed(
+                remoteToolFailure("Remote MCP tools are only available to agents in T3 Code."),
+              );
+            }
+            return remote.callTool(tool.name, payload as Record<string, unknown> | undefined).pipe(
+              Effect.flatMap((result) => decodeRemoteResult(result)),
+              Effect.catch((error) =>
+                Effect.succeed(
+                  remoteToolFailure(
+                    error._tag === "RemoteMcpError"
+                      ? error.message
+                      : "The remote MCP server returned a result T3 Code could not read.",
+                  ),
+                ),
+              ),
+            );
+          }),
+      });
+    });
+  const sync = Effect.forEach(remote.tools(), register, { discard: true });
+  yield* sync;
+  yield* remote.toolChanges.pipe(
+    Stream.runForEach(() => sync),
+    Effect.forkScoped,
+  );
+});
+
+export const layerRemoteMcpTools = Layer.effectDiscard(registerRemoteTools());
+
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
   imageToolRegistration(registerHtmlPreview(), HtmlHandlers.layerPreview),
@@ -1072,4 +1157,5 @@ export const layer = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerRemoteMcpTools,
 ).pipe(Layer.provideMerge(layerMcpTransport));

@@ -100,6 +100,7 @@ import {
   type PullRequestRef,
   WS_METHODS,
   WsBaseRpcGroup,
+  WsCtrlRpcGroup,
   WsReviewSessionsRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -189,6 +190,7 @@ import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as RemoteMcpServers from "./remoteMcp/RemoteMcpServers.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -557,6 +559,7 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 const ServerWsBaseRpcGroup = WsBaseRpcGroup.middleware(RpcInstrumentation);
 const ServerReviewSessionsRpcGroup = WsReviewSessionsRpcGroup.middleware(RpcInstrumentation);
+const ServerCtrlRpcGroup = WsCtrlRpcGroup.middleware(RpcInstrumentation);
 // Replaying each intervening event costs a shell refetch; past this gap a
 // single O(active-threads) snapshot is cheaper and bounded.
 const SHELL_RESUME_MAX_GAP = 1_000;
@@ -1213,6 +1216,56 @@ const layerReviewSessionsRpc = ServerReviewSessionsRpcGroup.toLayer(
   }),
 );
 
+// Takes the service rather than requiring it: one more requirement on the
+// per-connection layer below tips TypeScript into "excessively deep".
+/** Ctrl's own RPCs; see `WsCtrlRpcGroup` for why they are a separate group. */
+const layerCtrlRpc = ServerCtrlRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const remoteMcp = yield* RemoteMcpServers.RemoteMcpServers;
+    const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+    const directPush = yield* DirectPush.DirectPush;
+    const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+    const threadGroupService = yield* ThreadGroupService.ThreadGroupService;
+    const groupResources = yield* GroupResourceScanner.GroupResourceScanner;
+    return ServerCtrlRpcGroup.of({
+      [WS_METHODS.pushRegisterDevice]: (input) => directPush.registerDevice(input),
+      [WS_METHODS.pushUnregisterDevice]: (input) => directPush.unregisterDevice(input.deviceId),
+      [WS_METHODS.threadGroupsMutate]: (mutation) =>
+        startup
+          .enqueueCommand(ThreadGroupService.mutateThreadGroup(threadGroupService, mutation))
+          .pipe(
+            Effect.mapError((cause) => {
+              if (cause._tag === "ServerRuntimeStartupError") {
+                return new ThreadGroupMutationError({
+                  commandId: mutation.commandId,
+                  message: "Failed to change the thread group.",
+                  cause,
+                });
+              }
+              const reason = ThreadGroupService.threadGroupMutationFailureReason(cause);
+              return new ThreadGroupMutationError({
+                commandId: mutation.commandId,
+                message: ThreadGroupService.threadGroupMutationErrorMessage(mutation, cause),
+                ...(reason === undefined ? {} : { reason }),
+                cause,
+              });
+            }),
+          ),
+      [WS_METHODS.threadGroupsSubscribeResources]: (input) =>
+        groupResources.changes(input).pipe(Stream.map((resources) => ({ resources }))),
+      [WS_METHODS.providerReadInventory]: (input) =>
+        Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+          Effect.andThen(providerRegistry.readInventory(input.instanceId)),
+        ),
+      [WS_METHODS.remoteMcpSubscribe]: (_input) => remoteMcp.subscribe,
+      [WS_METHODS.remoteMcpAdd]: (input) => remoteMcp.add(input),
+      [WS_METHODS.remoteMcpAuthorize]: (input) => remoteMcp.authorize(input),
+      [WS_METHODS.remoteMcpReconnect]: (input) => remoteMcp.reconnect(input),
+      [WS_METHODS.remoteMcpRemove]: (input) => remoteMcp.remove(input),
+    });
+  }),
+);
+
 const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -1301,7 +1354,6 @@ const layerWsRpc = (
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
-      const groupResources = yield* GroupResourceScanner.GroupResourceScanner;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const providerLatestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
@@ -1323,7 +1375,6 @@ const layerWsRpc = (
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
-      const directPush = yield* DirectPush.DirectPush;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
       yield* Effect.addFinalizer(() =>
         Ref.get(rpcClientIds).pipe(
@@ -2487,8 +2538,6 @@ const layerWsRpc = (
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
-        [WS_METHODS.pushRegisterDevice]: (input) => directPush.registerDevice(input),
-        [WS_METHODS.pushUnregisterDevice]: (input) => directPush.unregisterDevice(input.deviceId),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
           Ref.update(rpcClientIds, (clientIds) => {
             const next = new Set(clientIds);
@@ -2753,29 +2802,6 @@ const layerWsRpc = (
                 }),
             ),
           ),
-        [WS_METHODS.threadGroupsMutate]: (mutation) =>
-          startup
-            .enqueueCommand(ThreadGroupService.mutateThreadGroup(threadGroupService, mutation))
-            .pipe(
-              Effect.mapError((cause) => {
-                if (cause._tag === "ServerRuntimeStartupError") {
-                  return new ThreadGroupMutationError({
-                    commandId: mutation.commandId,
-                    message: "Failed to change the thread group.",
-                    cause,
-                  });
-                }
-                const reason = ThreadGroupService.threadGroupMutationFailureReason(cause);
-                return new ThreadGroupMutationError({
-                  commandId: mutation.commandId,
-                  message: ThreadGroupService.threadGroupMutationErrorMessage(mutation, cause),
-                  ...(reason === undefined ? {} : { reason }),
-                  cause,
-                });
-              }),
-            ),
-        [WS_METHODS.threadGroupsSubscribeResources]: (input) =>
-          groupResources.changes(input).pipe(Stream.map((resources) => ({ resources }))),
         [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
         [WS_METHODS.filesystemGetMetadata]: (input) => workspaceFileSystem.getMetadata(input),
         [WS_METHODS.filesystemBrowse]: (input) =>
@@ -3247,6 +3273,7 @@ export const layer = Layer.unwrap(
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const reviewSessions = yield* ReviewSessionService.ReviewSessionService;
     const reviewHost = yield* ReviewHostService.ReviewHostService;
+    const remoteMcp = yield* RemoteMcpServers.RemoteMcpServers;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3320,7 +3347,7 @@ export const layer = Layer.unwrap(
                 previewAutomationBroker,
                 serverBrowser,
               ),
-              layerReviewSessionsRpc,
+              Layer.merge(layerReviewSessionsRpc, layerCtrlRpc),
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees
@@ -3345,6 +3372,7 @@ export const layer = Layer.unwrap(
                 Layer.mergeAll(
                   Layer.succeed(ReviewSessionService.ReviewSessionService, reviewSessions),
                   Layer.succeed(ReviewHostService.ReviewHostService, reviewHost),
+                  Layer.succeed(RemoteMcpServers.RemoteMcpServers, remoteMcp),
                 ),
               ),
               Layer.provide(

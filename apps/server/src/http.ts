@@ -4,6 +4,7 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
+import { REMOTE_MCP_OAUTH_CALLBACK_PATH } from "@t3tools/contracts/remoteMcp";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
@@ -387,7 +388,11 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
   ),
 );
 
-const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);
+// The remote MCP sign-in callback carries an authorization code in its query.
+const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([
+  OTLP_TRACES_PROXY_PATH,
+  REMOTE_MCP_OAUTH_CALLBACK_PATH,
+]);
 
 // TracerDisabledWhen is one predicate for the whole server, and
 // HttpRouter.serve builds its routes privately, so it is provided to the served

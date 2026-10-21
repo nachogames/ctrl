@@ -131,6 +131,7 @@ const buildEntry = <R>(input: {
         accentColor: entry.accentColor,
         environment: entry.environment ?? [],
         enabled: resolveEntryEnabled(entry, typedConfig),
+        disabledInventory: entry.disabledInventory ?? {},
         config: typedConfig,
       })
       .pipe(Effect.provideService(Scope.Scope, childScope), Effect.result);

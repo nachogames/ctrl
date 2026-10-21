@@ -18,6 +18,10 @@
     "./relay": {
       "types": "./src/relay.ts",
       "import": "./src/relay.ts"
+    },
+    "./remoteMcp": {
+      "types": "./src/remoteMcp.ts",
+      "import": "./src/remoteMcp.ts"
     }
   },
   "scripts": {
