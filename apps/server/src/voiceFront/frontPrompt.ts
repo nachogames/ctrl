@@ -1,4 +1,10 @@
-import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ThreadShell,
+  type OrchestratorMcpThreadListItem,
+  type OrchestratorMcpThreadNeeds,
+  type OrchestratorMcpThreadStatus,
+  threadNeeds,
+} from "@t3tools/contracts";
 
 import { TOOL_HAND_OFF } from "./geminiProtocol.ts";
 
@@ -13,6 +19,8 @@ export interface ThreadLine {
   readonly state: string;
   readonly ago: string;
   readonly last: string | null;
+  /** The other machine the thread is on; absent for this machine. */
+  readonly machine?: string;
 }
 
 export interface FrontContext {
@@ -20,6 +28,10 @@ export interface FrontContext {
   readonly kind: "shift" | "thread";
   readonly title: string;
   readonly threads: ReadonlyArray<ThreadLine>;
+  /** Other machines whose threads are listed. */
+  readonly machines?: ReadonlyArray<string>;
+  /** Other machines that did not answer in time, so their threads are missing. */
+  readonly unreachable?: ReadonlyArray<string>;
   readonly messages: ReadonlyArray<{ readonly role: "user" | "assistant"; readonly text: string }>;
 }
 
@@ -37,24 +49,27 @@ export function ago(fromMs: number, nowMs: number): string {
   return `${Math.round(hours / 24)} d ago`;
 }
 
-/** What a thread is doing, in the words the front speaks. */
-export function threadState(shell: OrchestrationV2ThreadShell): string {
-  if (shell.pendingRuntimeRequest)
-    return shell.pendingRuntimeRequest.kind.includes("approval")
-      ? "needs you: waiting for an approval"
-      : "needs you: asked a question";
-  if (shell.hasActionableProposedPlan) return "needs you: a plan is ready to review";
-  switch (shell.activityRunStatus) {
+const NEEDS_WORDS: Record<OrchestratorMcpThreadNeeds, string> = {
+  approval: "needs you: waiting for an approval",
+  question: "needs you: asked a question",
+  plan: "needs you: a plan is ready to review",
+};
+
+function stateWords(
+  needs: OrchestratorMcpThreadNeeds | null,
+  status: OrchestratorMcpThreadStatus,
+  lastError: string | null,
+): string {
+  if (needs !== null) return NEEDS_WORDS[needs];
+  switch (status) {
     case "preparing":
     case "starting":
     case "running":
       return "working";
     case "waiting":
       return "waiting on background work";
-  }
-  switch (shell.status) {
     case "failed":
-      return shell.lastError ? `failed: ${snippet(shell.lastError, 80)}` : "failed";
+      return lastError ? `failed: ${snippet(lastError, 80)}` : "failed";
     case "interrupted":
     case "cancelled":
       return "stopped";
@@ -63,6 +78,21 @@ export function threadState(shell: OrchestrationV2ThreadShell): string {
     default:
       return "done";
   }
+}
+
+/** What a thread is doing, in the words the front speaks. */
+export function threadState(shell: OrchestrationV2ThreadShell): string {
+  const activity = shell.activityRunStatus;
+  const active =
+    activity === "preparing" ||
+    activity === "starting" ||
+    activity === "running" ||
+    activity === "waiting";
+  return stateWords(
+    threadNeeds(shell),
+    active ? activity : shell.status,
+    shell.status === "failed" ? (shell.lastError ?? null) : null,
+  );
 }
 
 export function threadLine(
@@ -76,6 +106,22 @@ export function threadLine(
     state: threadState(shell),
     ago: ago(updatedAtMs, nowMs),
     last: last && last.role === "assistant" && last.text.trim() ? snippet(last.text) : null,
+  };
+}
+
+/** A thread on another machine, from that machine's thread list. It carries no last reply. */
+export function remoteThreadLine(
+  item: OrchestratorMcpThreadListItem,
+  machine: string,
+  updatedAtMs: number,
+  nowMs: number,
+): ThreadLine {
+  return {
+    title: snippet(item.title || "Untitled", 80),
+    state: stateWords(item.needs ?? null, item.status, null),
+    ago: ago(updatedAtMs, nowMs),
+    last: null,
+    machine,
   };
 }
 
@@ -94,7 +140,11 @@ function sharedRules(kind: FrontContext["kind"]): string {
 Rules:
 - Reply in one or two short spoken sentences. Plain words only: no markdown, lists, code, emoji, or links.
 - Only state facts that are in the context. Never invent threads, states, numbers, or results.
-- You cannot do anything yourself, so never offer to. ${worker} does the work and reads the same message.`;
+- You cannot do anything yourself, so never offer to. ${worker} does the work and reads the same message.${
+    kind === "shift"
+      ? "\n- Threads can be on different machines. Say which machine when it helps, and if a machine could not be reached, say so rather than guess about its threads."
+      : ""
+  }`;
 }
 
 /** The instructions for one kind of thread. Exported for tests. */
@@ -119,18 +169,37 @@ export function geminiInstructions(kind: FrontContext["kind"]): string {
 - If the user starts talking, stop and listen.`;
 }
 
+/** "A", "A and B", "A, B and C". */
+const spokenList = (items: ReadonlyArray<string>) =>
+  items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+
 export function contextText(context: FrontContext): string {
   const lines: string[] = [];
   if (context.kind === "shift") {
     lines.push(
       "This is Shift's thread. Shift is the agent that manages the user's other threads, and it gets this message too.",
     );
-    lines.push(context.threads.length > 0 ? "Threads, newest first:" : "There are no threads.");
+    const machines = context.machines ?? [];
+    const labeled = machines.length > 0;
+    lines.push(
+      context.threads.length === 0
+        ? labeled
+          ? `There are no threads on this machine or on ${spokenList(machines)}.`
+          : "There are no threads."
+        : labeled
+          ? `Threads on this machine and on ${spokenList(machines)}, newest first:`
+          : "Threads, newest first:",
+    );
     for (const thread of context.threads)
       lines.push(
-        `- "${thread.title}": ${thread.state}, updated ${thread.ago}${
-          thread.last ? `. Last reply: "${thread.last}"` : ""
-        }`,
+        `- "${thread.title}"${labeled ? ` on ${thread.machine ?? "this machine"}` : ""}: ${
+          thread.state
+        }, updated ${thread.ago}${thread.last ? `. Last reply: "${thread.last}"` : ""}`,
+      );
+    const unreachable = context.unreachable ?? [];
+    if (unreachable.length > 0)
+      lines.push(
+        `Could not reach ${spokenList(unreachable)} just now, so threads there are not listed.`,
       );
   } else {
     lines.push(

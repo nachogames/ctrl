@@ -12,11 +12,11 @@ import * as HomeService from "./HomeService.ts";
 /** Home and fleet services, and Shift's front voice, shared by the WebSocket and MCP transports. */
 export const HomeLayer = Layer.mergeAll(
   HomeService.layer,
-  FleetBroker.layer,
   FleetService.layer.pipe(Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry)),
   VoiceFront.layer.pipe(
     Layer.provide(GeminiLive.layer),
+    // Shift's front voice lists other machines' threads through the same broker.
     Layer.provide(VoiceFrontContext.layer),
     Layer.provide(ProcessRunner.layer),
   ),
-);
+).pipe(Layer.provideMerge(FleetBroker.layer));

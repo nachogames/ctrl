@@ -35,6 +35,7 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
+  type OrchestrationV2ThreadShell,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import {
@@ -336,6 +337,21 @@ export const OrchestratorMcpThreadPullRequest = Schema.Struct({
 });
 export type OrchestratorMcpThreadPullRequest = typeof OrchestratorMcpThreadPullRequest.Type;
 
+/** What a thread waits on the user for. */
+export const OrchestratorMcpThreadNeeds = Schema.Literals(["approval", "question", "plan"]);
+export type OrchestratorMcpThreadNeeds = typeof OrchestratorMcpThreadNeeds.Type;
+
+export const threadNeeds = (
+  shell: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest" | "hasActionableProposedPlan">,
+): OrchestratorMcpThreadNeeds | null =>
+  shell.pendingRuntimeRequest
+    ? shell.pendingRuntimeRequest.kind.includes("approval")
+      ? "approval"
+      : "question"
+    : shell.hasActionableProposedPlan
+      ? "plan"
+      : null;
+
 export const OrchestratorMcpThreadListItem = Schema.Struct({
   threadId: ThreadId,
   /** Paste this whenever you mention the thread, so the user can click to open it. */
@@ -357,6 +373,8 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  /** Missing on older servers. */
+  needs: Schema.optional(Schema.NullOr(OrchestratorMcpThreadNeeds)),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   itemCount: NonNegativeInt,
