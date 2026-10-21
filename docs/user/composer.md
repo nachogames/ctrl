@@ -254,6 +254,10 @@ on it, and its words show under the composer. When it fully answers, the agent's
 read aloud. Ctrl starts LM Studio's server when it is not running, uses only the model you name
 (up to 6 GB), and LM Studio unloads it after 10 idle minutes.
 
+The front voice runs on the machine that owns the thread, with that machine's settings and model.
+In a thread on another machine where it isn't set up, Ctrl tells you once and the agent's reply is
+read as usual.
+
 #### Gemini front voice
 
 To talk with Gemini Live instead, set **Front voice engine** to **Gemini Live** and paste an API

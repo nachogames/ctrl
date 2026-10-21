@@ -50,6 +50,9 @@ Shift reaches your other machines through the desktop app's own connections.
 Keep the app running: on macOS, closing the window keeps Shift connected until
 you quit. When the app is not running, Shift can only act on this machine.
 
+In voice mode, Shift's quick voice answers about threads on every connected machine while the
+desktop app runs. A machine that is offline or slow to answer is left out, and the voice says so.
+
 ## Instructions and fresh starts
 
 **Settings → Shift → Instructions** opens Shift's `AGENTS.md`. Add standing
