@@ -11,7 +11,7 @@ import {
   type VoiceRecorder,
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
-import type { DictationSessionId, EnvironmentId } from "@t3tools/contracts";
+import type { DictationSessionId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Base64 from "effect/encoding/Base64";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -96,6 +96,8 @@ export function createStreamingDictation(input: {
   readonly showPartial: (text: string) => void;
   /** Read when a session starts: ask the environment to hear the end of the turn. */
   readonly handsFree: () => boolean;
+  /** Read when a hands-free session starts: the thread a live voice front (Gemini) hears it for. */
+  readonly voiceThreadId: () => ThreadId | null;
   /** Hands-free only: the user started speaking. */
   readonly onSpeechStart: () => void;
   /** Hands-free only: a spoken reply is playing now, so its echo may reach the microphone. */
@@ -186,6 +188,8 @@ export function createStreamingDictation(input: {
 
   /** Asks the environment for a session; frames captured meanwhile queue on it. */
   const begin = (environmentId: EnvironmentId): DictationSession => {
+    const handsFree = input.handsFree();
+    const voiceThreadId = handsFree ? input.voiceThreadId() : null;
     const pending: ArrayBuffer[] = [];
     let loseChunk: (message: string) => void = () => undefined;
     const lost = new Promise<string>((resolve) => {
@@ -205,7 +209,7 @@ export function createStreamingDictation(input: {
       open: true,
       ready: run(dictationEnvironment.start, {
         environmentId,
-        input: { handsFree: input.handsFree() },
+        input: { handsFree, ...(voiceThreadId === null ? {} : { voiceThreadId }) },
       }).then((started) => {
         if (started._tag === "Failure") return failureMessage(started);
         const { sessionId } = started.value;

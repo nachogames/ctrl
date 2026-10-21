@@ -11,6 +11,8 @@ describe("needsAck", () => {
   it("stays quiet when the front already said something", () => {
     expect(needsAck({ answered: false, spoken: "On it, Shift is checking." })).toBe(false);
     expect(needsAck({ answered: true, spoken: "Two threads are running." })).toBe(false);
+    // Gemini speaks in audio, with no text.
+    expect(needsAck({ answered: false, spoken: "", heardAudio: true })).toBe(false);
   });
 });
 

@@ -772,6 +772,30 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["lm studio server port url localhost 1234 voice front"],
   },
   {
+    id: "voice-front-engine",
+    title: "Front voice engine",
+    to: "/settings/integrations",
+    searchTerms: ["gemini live google duplex voice front engine local"],
+  },
+  {
+    id: "voice-front-gemini-key",
+    title: "Gemini API key",
+    to: "/settings/integrations",
+    searchTerms: ["gemini google ai studio api key voice front live"],
+  },
+  {
+    id: "voice-front-gemini-model",
+    title: "Gemini model",
+    to: "/settings/integrations",
+    searchTerms: ["gemini live model flash 3.1 3.8 voice front"],
+  },
+  {
+    id: "voice-front-gemini-cap",
+    title: "Gemini monthly limit",
+    to: "/settings/integrations",
+    searchTerms: ["gemini spend cost cap budget limit dollars month voice front"],
+  },
+  {
     id: "browser-profiles",
     title: "Browser profiles",
     to: "/settings/integrations",

@@ -47,7 +47,8 @@ export function useFrontCaption() {
 
 /**
  * Asks the environment's front voice for a quick spoken reply to a voice turn
- * that was just sent, and reads it aloud as it streams in. The agent's reply
+ * that was just sent, and reads it aloud as it streams in: text through the
+ * local voice, or Gemini's own audio as it arrives. The agent's reply
  * waits until the front decides; if the front fully answered, that reply is
  * not read. Any failure (front voice off, LM Studio down) just lets the
  * agent's reply be read as usual.
@@ -82,6 +83,8 @@ export function askVoiceFront(input: {
   let unsubscribe: (() => void) | null = null;
   /** Everything the front has said this turn. */
   let spoken = "";
+  /** The front spoke in audio of its own (Gemini). */
+  let heardAudio = false;
   const timeout = setTimeout(() => {
     if (!settled) settle(false);
   }, FRONT_DECISION_TIMEOUT_MS);
@@ -89,8 +92,10 @@ export function askVoiceFront(input: {
   const settle = (answered: boolean) => {
     settled = true;
     clearTimeout(timeout);
+    // An audio stream that ended without saying so must not keep playback open.
+    if (heardAudio) replySpeaker.feedAudio({ messageId, chunks: [], done: true });
     // The agent takes the turn and nothing was said yet: say so before it starts working.
-    if (needsAck({ answered, spoken }))
+    if (needsAck({ answered, spoken, heardAudio }))
       replySpeaker.feed({
         registry: input.registry,
         environmentId: input.environmentId,
@@ -114,6 +119,17 @@ export function askVoiceFront(input: {
       }
       if (!AsyncResult.isSuccess(result)) return;
       const reply = result.value;
+      if (reply.interrupted) {
+        // The user talked over Gemini: silence it now.
+        replySpeaker.stop();
+        caption.set("");
+        settle(false);
+        return;
+      }
+      if (reply.audio && reply.audio.length > 0) {
+        heardAudio = true;
+        replySpeaker.feedAudio({ messageId, chunks: reply.audio, done: reply.done });
+      }
       caption.set(reply.text, reply.done ? CAPTION_LINGER_MS : undefined);
       if (reply.text) {
         spoken = reply.text;
@@ -129,7 +145,7 @@ export function askVoiceFront(input: {
       if (reply.done) {
         if (reply.firstTokenMs !== null)
           console.info(`[voice] front first token: ${Math.round(reply.firstTokenMs)} ms`);
-        settle(reply.answered && reply.text.length > 0);
+        settle(reply.answered && (reply.text.length > 0 || heardAudio));
       }
     },
     { immediate: true },

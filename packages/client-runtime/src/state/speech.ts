@@ -1,4 +1,5 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { mergeVoiceFrontReplies, WS_METHODS } from "@t3tools/contracts";
+import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -48,13 +49,28 @@ export function createSpeechEnvironmentAtoms<R, E>(
       label: "environment-data:voice-front:status",
       tag: WS_METHODS.voiceFrontStatus,
     }),
-    /** The front voice's reply to one voice turn; each value carries the whole reply so far. */
+    /**
+     * The front voice's reply to one voice turn. The atom keeps only the last
+     * value of each batch it receives, so a batch is merged into one value
+     * first, keeping every audio chunk.
+     */
     frontReply: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:voice-front:reply",
       tag: WS_METHODS.voiceFrontRespond,
       completeWhen: (reply) => reply.done,
       idleTtlMs: 0,
       sensitiveInput: true,
+      transform: Stream.mapArray((replies) => [replies.reduce(mergeVoiceFrontReplies)]),
+    }),
+    /** Hands-free voice ended in a thread; closes its Gemini session. */
+    frontEnd: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice-front:end",
+      tag: WS_METHODS.voiceFrontEnd,
+    }),
+    /** Stores or removes the environment's Gemini API key. */
+    setGeminiKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice-front:set-gemini-key",
+      tag: WS_METHODS.voiceFrontSetGeminiKey,
     }),
   };
 }

@@ -58,7 +58,11 @@ import {
   VOICE_FRONT_MAX_TRANSCRIPT_LENGTH,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  runAtomCommand,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import {
   isPasteAsTextShortcut,
@@ -306,7 +310,7 @@ import { CONVERSATION_LISTEN_TIMEOUT_MS, VoiceConversation } from "../../speech/
 import { askVoiceFront, useFrontCaption } from "../../speech/voiceFront";
 import { NO_SPEECH_DETECTED_MESSAGE } from "@t3tools/client-runtime/voice-input";
 import { useDictationEnvironmentId } from "../../state/dictation";
-import { useSpeechState } from "../../state/speech";
+import { speechEnvironment, useSpeechState } from "../../state/speech";
 import { useComposerDictation } from "../../dictation/useComposerDictation";
 import { useDictationHoldShortcut } from "../../dictation/useDictationHoldShortcut";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
@@ -2360,8 +2364,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const conversationHeardSpeechRef = useRef(false);
   // These callbacks run after recording, once the handlers declared below exist.
   const dictationInsertedRangeRef = useRef<{ start: number; end: number } | null>(null);
+  /** Closes this thread's live voice session (Gemini) on the environment, if it has one. */
+  const endVoiceSession = useStableCallback(() => {
+    if (activeThreadId === null) return;
+    void runAtomCommand(
+      atomRegistry,
+      speechEnvironment.frontEnd,
+      { environmentId, input: { threadId: activeThreadId } },
+      { reportFailure: false },
+    );
+  });
   const dictation = useComposerDictation({
     handsFree: () => conversation.active,
+    voiceThreadId: () => (conversation.active ? activeThreadId : null),
     onSpeechStart: () => {
       conversationHeardSpeechRef.current = true;
       // Barge-in: speaking over a reply that is being read stops it.
@@ -2602,6 +2617,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     threadRunning,
     voiceMode,
   ]);
+  // However the conversation ends, its live voice session on the environment closes with it.
+  const conversationActive = conversationState.active;
+  const wasConversationActive = useRef(false);
+  useEffect(() => {
+    if (wasConversationActive.current && !conversationActive) endVoiceSession();
+    wasConversationActive.current = conversationActive;
+  }, [conversationActive, endVoiceSession]);
   // Listening that hears nothing for a minute closes the microphone until the next reply.
   useEffect(() => {
     if (dictationPhase === "preparing") conversationHeardSpeechRef.current = false;

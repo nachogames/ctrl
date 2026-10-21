@@ -5,7 +5,7 @@ import {
   voiceInputBlocksSubmission,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 import { useNavigate } from "@tanstack/react-router";
 import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -42,6 +42,7 @@ function createComposerDictationController(input: {
     rewriteTranscript: (text) => latest.current.rewriteTranscript(text),
     showPartial: (text) => latest.current.showLiveText(text),
     handsFree: () => latest.current.handsFree?.() ?? false,
+    voiceThreadId: () => latest.current.voiceThreadId?.() ?? null,
     onSpeechStart: () => latest.current.onSpeechStart?.(),
     playback: () => latest.current.playback?.() ?? false,
     onEndOfTurn: (at) => latest.current.onEndOfTurn?.(at),
@@ -97,6 +98,8 @@ export function useComposerDictation(input: {
   readonly showLiveText: (text: string) => void;
   /** Read as each dictation starts: let the environment end the turn when the user stops. */
   readonly handsFree?: () => boolean;
+  /** Hands-free: the thread this turn talks to, so a live voice front can hear it as it is spoken. */
+  readonly voiceThreadId?: () => ThreadId | null;
   /** Hands-free: the user started speaking. */
   readonly onSpeechStart?: () => void;
   /** Hands-free: a spoken reply is playing, so speech must be clearer to count as the user's. */

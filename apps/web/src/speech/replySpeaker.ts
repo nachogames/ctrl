@@ -1,6 +1,6 @@
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { spokenOpening } from "@t3tools/client-runtime/spoken-opening";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { GEMINI_LIVE_OUTPUT_SAMPLE_RATE, type EnvironmentId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 
 import { speechEnvironment } from "../state/speech";
@@ -25,6 +25,18 @@ export function decodeBase64(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+/** Lead time for a fresh audio stream, so network jitter between its chunks does not click. */
+const STREAM_LEAD_SECONDS = 0.12;
+
+/** 16-bit little-endian PCM as samples for an AudioBuffer. */
+export function decodePcm16(base64: string): Float32Array<ArrayBuffer> {
+  const view = new DataView(decodeBase64(base64));
+  const samples = new Float32Array(Math.floor(view.byteLength / 2));
+  for (let index = 0; index < samples.length; index++)
+    samples[index] = view.getInt16(index * 2, true) / 32768;
+  return samples;
+}
+
 /**
  * Reads the openings of agent replies aloud, one sentence at a time. Each
  * sentence is synthesized by the environment while the previous one plays,
@@ -46,6 +58,8 @@ class ReplySpeaker {
   #front: FrontMode = "idle";
   /** Resolved with `performance.now()` when a message's first sentence starts playing. */
   #firstAudio = new Map<string, (at: number) => void>();
+  /** Audio streams still sending chunks; speech counts as going on between them. */
+  #openStreams = new Set<string>();
 
   readonly subscribe = (listener: () => void) => {
     this.#listeners.add(listener);
@@ -154,6 +168,58 @@ class ReplySpeaker {
     }
   }
 
+  /**
+   * Plays the front voice's own audio (Gemini's 24 kHz PCM) as its chunks
+   * arrive, after anything already playing. `done` ends the stream; a stream
+   * `stop` silenced ignores the rest of its chunks.
+   */
+  feedAudio(input: {
+    readonly messageId: string;
+    readonly chunks: ReadonlyArray<string>;
+    readonly done: boolean;
+  }) {
+    let entry = this.#messages.get(input.messageId);
+    if (!entry) {
+      entry = { queued: 0, done: false };
+      this.#messages.set(input.messageId, entry);
+    }
+    if (entry.done) return;
+    if (input.done) {
+      entry.done = true;
+      this.#openStreams.delete(input.messageId);
+    } else this.#openStreams.add(input.messageId);
+    const context = input.chunks.length > 0 ? this.#audio() : null;
+    for (const chunk of input.chunks) {
+      if (!context) break;
+      const samples = decodePcm16(chunk);
+      if (samples.length === 0) continue;
+      const buffer = context.createBuffer(1, samples.length, GEMINI_LIVE_OUTPUT_SAMPLE_RATE);
+      buffer.copyToChannel(samples, 0);
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(context.destination);
+      const start =
+        this.#playheadEnd > context.currentTime
+          ? this.#playheadEnd
+          : context.currentTime + STREAM_LEAD_SECONDS;
+      this.#playheadEnd = start + buffer.duration;
+      const firstAudio = this.#firstAudio.get(input.messageId);
+      if (firstAudio) {
+        this.#firstAudio.delete(input.messageId);
+        firstAudio(performance.now() + (start - context.currentTime) * 1000);
+      }
+      source.onended = () => {
+        this.#sources.delete(source);
+        this.#settle();
+      };
+      this.#sources.add(source);
+      source.start(start);
+      entry.queued += 1;
+    }
+    if (this.#sources.size > 0 || this.#openStreams.size > 0) this.#setSpeaking(true);
+    this.#settle();
+  }
+
   /** Silences playback now and drops the rest of every message being read. */
   stop() {
     this.#generation++;
@@ -166,6 +232,7 @@ class ReplySpeaker {
     this.#sources.clear();
     this.#playheadEnd = 0;
     this.#firstAudio.clear();
+    this.#openStreams.clear();
     this.#setSpeaking(false);
   }
 
@@ -220,7 +287,12 @@ class ReplySpeaker {
   }
 
   #settle() {
-    if (!this.#pumping && this.#queue.length === 0 && this.#sources.size === 0) {
+    if (
+      !this.#pumping &&
+      this.#queue.length === 0 &&
+      this.#sources.size === 0 &&
+      this.#openStreams.size === 0
+    ) {
       this.#setSpeaking(false);
     }
   }
