@@ -43,6 +43,7 @@ function createComposerDictationController(input: {
     showPartial: (text) => latest.current.showLiveText(text),
     handsFree: () => latest.current.handsFree?.() ?? false,
     onSpeechStart: () => latest.current.onSpeechStart?.(),
+    playback: () => latest.current.playback?.() ?? false,
     onEndOfTurn: (at) => latest.current.onEndOfTurn?.(at),
     finishedAtLimit: (uri) =>
       void controller?.handleRecorderStatus({
@@ -98,6 +99,8 @@ export function useComposerDictation(input: {
   readonly handsFree?: () => boolean;
   /** Hands-free: the user started speaking. */
   readonly onSpeechStart?: () => void;
+  /** Hands-free: a spoken reply is playing, so speech must be clearer to count as the user's. */
+  readonly playback?: () => boolean;
   /** Hands-free: the user stopped long enough that the turn is over, at `performance.now()` `at`. */
   readonly onEndOfTurn?: (at: number) => void;
   /** Errors not worth a toast, such as a hands-free turn with no words in it. */

@@ -98,6 +98,8 @@ export function createStreamingDictation(input: {
   readonly handsFree: () => boolean;
   /** Hands-free only: the user started speaking. */
   readonly onSpeechStart: () => void;
+  /** Hands-free only: a spoken reply is playing now, so its echo may reach the microphone. */
+  readonly playback: () => boolean;
   /** Hands-free only: the user stopped speaking long enough to end the turn, heard at `at` (`performance.now()`). */
   readonly onEndOfTurn: (at: number) => void;
 }): {
@@ -145,7 +147,13 @@ export function createStreamingDictation(input: {
     target.chunks += 1;
     void run(dictationEnvironment.append, {
       environmentId: target.environmentId,
-      input: { sessionId, seq, pcm: Base64.encode(new Uint8Array(frame)) },
+      input: {
+        sessionId,
+        seq,
+        pcm: Base64.encode(new Uint8Array(frame)),
+        // Only hands-free sessions read it; the environment ignores it otherwise.
+        ...(input.playback() ? { playback: true } : {}),
+      },
     }).then((result) => {
       if (!target.open) return;
       if (result._tag !== "Failure") {

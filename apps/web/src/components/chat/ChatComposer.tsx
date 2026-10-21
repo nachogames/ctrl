@@ -2367,6 +2367,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // Barge-in: speaking over a reply that is being read stops it.
       if (conversation.active) replySpeaker.stop();
     },
+    playback: () => conversation.active && replySpeaker.isSpeaking(),
     onEndOfTurn: (at) => {
       if (!conversation.active) return;
       endOfTurnAtRef.current = at;
