@@ -254,6 +254,25 @@ on it, and its words show under the composer. When it fully answers, the agent's
 read aloud. Ctrl starts LM Studio's server when it is not running, uses only the model you name
 (up to 6 GB), and LM Studio unloads it after 10 idle minutes.
 
+#### Gemini front voice
+
+To talk with Gemini Live instead, set **Front voice engine** to **Gemini Live** and paste an API
+key from [Google AI Studio](https://aistudio.google.com/apikey) into **Gemini API key**. The key
+stays on the machine running Ctrl and is never shown again; settings only say whether one is set.
+Gemini then hears each turn as you speak and answers in its own voice, so replies start sooner.
+It hands work to Shift (or the thread's agent) the same way the local voice does, and Shift's
+reply is still read aloud. Voice mode on the phone app isn't available yet.
+
+Ctrl sends Gemini only your speech, not the silence around it, and closes the session when the
+conversation ends. It meters what Gemini reports using and shows this month's cost next to the
+key. When the cost reaches **Gemini monthly limit** ($10 unless you change it), or Gemini has no
+key or stops answering, the local voice answers instead and tells you why once. Keep the LM Studio
+model downloaded for that fallback. The meter follows Google's published prices, so check your
+Google bill for the exact amount.
+
+A free-tier key also works, but Google may use free-tier audio to improve its products. Use a key
+from a paid project to keep it out.
+
 ## Queued messages
 
 On web and desktop, the composer shows **Interrupt** while the agent is working and the draft is
