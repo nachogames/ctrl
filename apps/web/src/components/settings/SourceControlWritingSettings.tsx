@@ -96,6 +96,8 @@ export function SourceControlWritingSettingsSection() {
   const mixedReviewGuideModel = useScopedSettingsMixed(["reviewGuideModelSelection"]);
   const mixedReviewGuideInstructions = useScopedSettingsMixed(["reviewGuideInstructions"]);
   const reviewGuideInstructionsEdited = useRef(false);
+  const mixedReviewInstructions = useScopedSettingsMixed(["reviewInstructions"]);
+  const reviewInstructionsEdited = useRef(false);
   const scopeKey = targets.map((target) => `${target.environmentId}:${target.projectId}`).join(",");
   const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
   const [editingAllInstructions, setEditingAllInstructions] = useState(false);
@@ -436,6 +438,47 @@ export function SourceControlWritingSettingsSection() {
           )
         }
       />
+
+      <SettingsRow
+        serverScoped
+        settingKeys={["reviewInstructions"]}
+        {...searchableSetting("review-instructions")}
+        description="Your rules for pull request reviews, such as how triage replies read. They're added to every review and win over its default steps. Agents can edit them when you ask."
+        resetAction={
+          mixedReviewInstructions || settings.reviewInstructions !== "" ? (
+            <SettingResetButton
+              label="review rules"
+              onClick={() => updateSettings({ reviewInstructions: "" })}
+            />
+          ) : null
+        }
+      >
+        <div className="mt-3 max-w-2xl pb-3.5">
+          <Textarea
+            key={`${scopeKey}:${mixedReviewInstructions}:${settings.reviewInstructions}`}
+            aria-label="Review rules"
+            onChange={() => {
+              reviewInstructionsEdited.current = true;
+            }}
+            rows={4}
+            defaultValue={mixedReviewInstructions ? "" : settings.reviewInstructions}
+            placeholder={
+              mixedReviewInstructions
+                ? "Mixed. Enter rules to apply to all selected targets."
+                : "Always run a local review before triage. Decline style-only nits unless they hide a bug."
+            }
+            onBlur={(event) => {
+              const value = event.target.value.trim();
+              if (
+                reviewInstructionsEdited.current &&
+                (mixedReviewInstructions || value !== settings.reviewInstructions)
+              )
+                updateSettings({ reviewInstructions: value });
+              reviewInstructionsEdited.current = false;
+            }}
+          />
+        </div>
+      </SettingsRow>
 
       <SettingsRow
         serverScoped

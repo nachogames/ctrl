@@ -4,12 +4,14 @@ import {
   type ReviewSessionError,
 } from "@t3tools/contracts";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { reviewBrief } from "../../../reviewSessions/reviewBrief.ts";
 import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
+import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller } from "../../threadAccess.ts";
@@ -129,10 +131,26 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           headSha: input.headSha ?? null,
         })
         .pipe(Effect.catch(reviewFailure));
+      // Unreadable settings still open the review; the brief just lacks the user's rules.
+      const userRules = yield* Settings.ServerSettingsService.pipe(
+        Effect.flatMap((service) => service.getSettings),
+        Effect.map((settings) => {
+          const resolved = resolveProjectSettings(settings, result.snapshot.session.projectId);
+          return {
+            text: resolved.settings.reviewInstructions,
+            fromProject: resolved.sources.reviewInstructions === "project",
+          };
+        }),
+        Effect.catch((cause) =>
+          Effect.logWarning("review rules unavailable", { cause }).pipe(
+            Effect.as({ text: "", fromProject: false }),
+          ),
+        ),
+      );
       return {
         ...result.snapshot,
         created: result.created,
-        brief: reviewBrief(result.snapshot.session),
+        brief: reviewBrief(result.snapshot.session, userRules),
       };
     }),
   ),

@@ -7,6 +7,7 @@ import * as Stream from "effect/Stream";
 import { Tool } from "effect/ai";
 
 import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
+import * as Settings from "../../../serverSettings.ts";
 import {
   chatShell,
   groupId,
@@ -52,6 +53,7 @@ const harnessed = Effect.gen(function* () {
     Effect.gen(function* () {
       const dependencies = Layer.mergeAll(
         Layer.succeedContext(services),
+        Settings.layerTest({ reviewInstructions: "Lead with the riskiest point." }),
         Layer.succeed(McpInvocationContext.McpInvocationContext, {
           environmentId: EnvironmentId.make("environment"),
           requestNamespace: "session",
@@ -117,7 +119,7 @@ it.effect("opens the review from a grouped chat with its brief, and refuses an u
           session: { groupId, reviewThreadId, round: 1, pullRequest: { number: 23 } },
           rounds: [{ round: 1, state: "collecting" }],
           items: [],
-          brief: expect.stringContaining("review_items_decide"),
+          brief: expect.stringMatching(/review_items_decide[\s\S]*Lead with the riskiest point\./),
         },
       );
       expect(

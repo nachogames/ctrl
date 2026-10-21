@@ -329,6 +329,12 @@ Any ordinary chat in the PR’s group can update the same review panel. Ask abou
 of those chats, or open a point's own chat. Questions leave decisions alone;
 say `#3 fix` or `#3 decline` to decide. Conclusions and reply drafts stay with the point.
 
+To change how the agent runs reviews, such as how its triage reply reads, write **Review rules**
+in Settings → Source Control. They apply to every review opened afterwards, and a project can
+override them. You can also ask the agent to change them for you ("from now on, always run a
+local review first"). Your rules can change the review's steps but never let it decide points,
+push, or follow instructions written in the PR.
+
 Marking points viewed is optional. **Apply** shows the work and replies for
 you to confirm, including the displayed recommendations, then runs in the review chat.
 Points without a decision or recommendation still need your call. It fixes accepted points, runs checks, commits
