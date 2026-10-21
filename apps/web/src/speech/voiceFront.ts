@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 
 import { speechEnvironment } from "../state/speech";
 import { replySpeaker } from "./replySpeaker";
+import { createAckRotation, needsAck } from "./voiceAck";
 
 /** How long the front's words stay under the composer after it finishes. */
 const CAPTION_LINGER_MS = 8_000;
@@ -37,6 +38,7 @@ class FrontCaption {
 
 const caption = new FrontCaption();
 let turns = 0;
+const nextAck = createAckRotation();
 
 /** What the front voice is saying, or "" when it is quiet. */
 export function useFrontCaption() {
@@ -78,12 +80,25 @@ export function askVoiceFront(input: {
   });
   let settled = false;
   let unsubscribe: (() => void) | null = null;
+  /** Everything the front has said this turn. */
+  let spoken = "";
   const timeout = setTimeout(() => {
     if (!settled) settle(false);
   }, FRONT_DECISION_TIMEOUT_MS);
+  /** `answered`: the front fully answered, so the agent's reply stays quiet this turn. */
   const settle = (answered: boolean) => {
     settled = true;
     clearTimeout(timeout);
+    // The agent takes the turn and nothing was said yet: say so before it starts working.
+    if (needsAck({ answered, spoken }))
+      replySpeaker.feed({
+        registry: input.registry,
+        environmentId: input.environmentId,
+        messageId: `voice-ack:${turnId}`,
+        text: nextAck(),
+        streaming: false,
+        front: true,
+      });
     replySpeaker.releaseFront(answered);
     // Unsubscribing inside the callback would end the stream it is delivering.
     queueMicrotask(() => unsubscribe?.());
@@ -101,6 +116,7 @@ export function askVoiceFront(input: {
       const reply = result.value;
       caption.set(reply.text, reply.done ? CAPTION_LINGER_MS : undefined);
       if (reply.text) {
+        spoken = reply.text;
         replySpeaker.feed({
           registry: input.registry,
           environmentId: input.environmentId,
