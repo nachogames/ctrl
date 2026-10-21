@@ -1,4 +1,4 @@
-import { useMemo, useRef, type ReactNode } from "react";
+import { useEffectEvent, useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
@@ -27,19 +27,20 @@ export function HomeArrangeRow(props: {
   readonly interactive?: boolean;
   readonly children: ReactNode;
 }) {
-  const latest = useRef(props);
-  latest.current = props;
   const lifted = props.liftOffset !== undefined;
-  const gesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .minDistance(0)
-        .shouldCancelWhenOutside(false)
-        .runOnJS(true)
-        .onStart(() => latest.current.handlers.onStart(latest.current.itemKey))
-        .onUpdate((event) => latest.current.handlers.onMove(event.translationY))
-        .onFinalize((_event, success) => latest.current.handlers.onEnd(!success)),
-    [],
+  // Gesture callbacks fire outside render, so effect events give them the
+  // latest props while the gesture object itself stays stable.
+  const onStart = useEffectEvent(() => props.handlers.onStart(props.itemKey));
+  const onMove = useEffectEvent((translation: number) => props.handlers.onMove(translation));
+  const onEnd = useEffectEvent((cancelled: boolean) => props.handlers.onEnd(cancelled));
+  const [gesture] = useState(() =>
+    Gesture.Pan()
+      .minDistance(0)
+      .shouldCancelWhenOutside(false)
+      .runOnJS(true)
+      .onStart(() => onStart())
+      .onUpdate((event) => onMove(event.translationY))
+      .onFinalize((_event, success) => onEnd(!success)),
   );
   return (
     <View

@@ -1,5 +1,5 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { memo, useLayoutEffect, useMemo, useRef } from "react";
+import { memo, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { Pressable, View, type ViewInstance } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
@@ -38,34 +38,34 @@ export const HomeProjectHeader = memo(function HomeProjectHeader(props: {
 }) {
   const sidebarPane = props.pane === "sidebar";
   const view = useRef<ViewInstance>(null);
-  const latest = useRef(props);
-  latest.current = props;
   const lifted = props.liftOffset !== undefined;
+  // Gesture and measure callbacks fire outside render, so effect events give
+  // them the latest props while the gesture object itself stays stable.
+  const onLifted = useEffectEvent((top: number) => props.drag?.onLifted(top));
+  const onStart = useEffectEvent(() =>
+    view.current?.measureInWindow((_x, y) => props.drag?.onStart(props.projectKey, y)),
+  );
+  const onMove = useEffectEvent((translation: number) => props.drag?.onMove(translation));
+  const onEnd = useEffectEvent((cancelled: boolean) => props.drag?.onEnd(cancelled));
 
   // After the drag folds the list, tell the parent where this header moved to
   // so it can keep it under the finger.
   const wasLifted = useRef(false);
   useLayoutEffect(() => {
     if (lifted && !wasLifted.current) {
-      view.current?.measureInWindow((_x, y) => latest.current.drag?.onLifted(y));
+      view.current?.measureInWindow((_x, y) => onLifted(y));
     }
     wasLifted.current = lifted;
   }, [lifted]);
 
-  const handleGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .minDistance(0)
-        .shouldCancelWhenOutside(false)
-        .runOnJS(true)
-        .onStart(() =>
-          view.current?.measureInWindow((_x, y) =>
-            latest.current.drag?.onStart(latest.current.projectKey, y),
-          ),
-        )
-        .onUpdate((event) => latest.current.drag?.onMove(event.translationY))
-        .onFinalize((_event, success) => latest.current.drag?.onEnd(!success)),
-    [],
+  const [handleGesture] = useState(() =>
+    Gesture.Pan()
+      .minDistance(0)
+      .shouldCancelWhenOutside(false)
+      .runOnJS(true)
+      .onStart(() => onStart())
+      .onUpdate((event) => onMove(event.translationY))
+      .onFinalize((_event, success) => onEnd(!success)),
   );
 
   return (

@@ -120,6 +120,7 @@ interface ArrangeStamp {
   readonly liftOffset?: number;
 }
 type ListItem = HomeListItem & { readonly arrange?: ArrangeStamp };
+const NO_ARRANGE: Partial<ArrangeStamp> = {};
 
 interface HomeScreenProps {
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -660,11 +661,16 @@ export function HomeScreen(props: HomeScreenProps) {
       ? (preferencesResult.value.threadListCollapsedProjects ?? [])
       : [],
   );
-  const toggleProject = (projectKey: string) => {
-    const next = new Set(collapsedProjectKeys);
-    if (!next.delete(projectKey)) next.add(projectKey);
-    savePreferences({ threadListCollapsedProjects: [...next] });
-  };
+  // Builds from the stored list, not this render's: the list keeps unchanged
+  // headers (and their callbacks) from earlier renders.
+  const toggleProject = (projectKey: string) =>
+    savePreferences({
+      transform: (current) => {
+        const next = new Set(current.threadListCollapsedProjects ?? []);
+        if (!next.delete(projectKey)) next.add(projectKey);
+        return { threadListCollapsedProjects: [...next] };
+      },
+    });
 
   // Edit mode: drag handles on projects, groups, chats and threads, each moving
   // among its siblings. Dragging a project folds every project until release.
@@ -1191,10 +1197,15 @@ export function HomeScreen(props: HomeScreenProps) {
     return "groupMember" in item ? <View className="pl-4">{handled}</View> : handled;
   };
   const v2KeyExtractor = (item: ListItem) => item.key;
-  const homeItemsAreEqual = (previous: ListItem, item: ListItem) =>
-    previous.arrange?.handle === item.arrange?.handle &&
-    previous.arrange?.liftOffset === item.arrange?.liftOffset &&
-    homeListItemsAreEqual(previous, item, threadListV2ListItemsAreEqual);
+  const homeItemsAreEqual = (previous: ListItem, item: ListItem) => {
+    const before = previous.arrange ?? NO_ARRANGE;
+    const after = item.arrange ?? NO_ARRANGE;
+    return (
+      before.handle === after.handle &&
+      before.liftOffset === after.liftOffset &&
+      homeListItemsAreEqual(previous, item, threadListV2ListItemsAreEqual)
+    );
+  };
 
   // FlatList/LegendList treat a changed extraData identity as "re-render every
   // visible row", so an inline object literal would invalidate all rows on
