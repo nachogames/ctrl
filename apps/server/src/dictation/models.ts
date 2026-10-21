@@ -360,3 +360,37 @@ export const vadModel = {
     url: "https://huggingface.co/csukuangfj/vad/resolve/fba88cd2e921609e7675c3aaf51e0b9b295da4bc/silero_vad.onnx",
   },
 };
+
+/**
+ * Smart Turn v3.2 (Pipecat, BSD-2-Clause) for hands-free voice: from the
+ * last 8 s of audio it judges whether the user finished their turn or only
+ * paused. sherpa-onnx cannot run an arbitrary ONNX graph, so it runs on
+ * onnxruntime-web's single-threaded WebAssembly build (MIT), fetched as two
+ * pinned files rather than the 113 MB native onnxruntime-node package.
+ */
+export const turnModel = {
+  directory: "smart-turn-v3.2",
+  model: "smart-turn-v3.2-cpu.onnx",
+  ortModule: "ort.wasm.bundle.min.mjs",
+  wasm: "ort-wasm-simd-threaded.wasm",
+  files: [
+    {
+      name: "smart-turn-v3.2-cpu.onnx",
+      bytes: 8679182,
+      sha256: "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f",
+      url: "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/f766f81d3cfdf7737ac64aad813d91bbfd56bf93/smart-turn-v3.2-cpu.onnx",
+    },
+    {
+      name: "ort.wasm.bundle.min.mjs",
+      bytes: 73054,
+      sha256: "11e64bd8ffe11bd1a2a2f0d6275fdfbbba7262f0b76b99b53d228a8a22ef3d90",
+      url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.wasm.bundle.min.mjs",
+    },
+    {
+      name: "ort-wasm-simd-threaded.wasm",
+      bytes: 14239897,
+      sha256: "3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2",
+      url: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort-wasm-simd-threaded.wasm",
+    },
+  ],
+};

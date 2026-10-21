@@ -10,7 +10,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import * as DictationArtifacts from "./DictationArtifacts.ts";
-import { runtimeFor, speechModel, vadModel } from "./models.ts";
+import { runtimeFor, speechModel, turnModel, vadModel } from "./models.ts";
 
 const layer = (http: HttpClient.HttpClient) =>
   DictationArtifacts.layer.pipe(
@@ -202,4 +202,54 @@ it.effect("removing the voice keeps the shared runtime", () =>
     assert.strictEqual(yield* fs.exists(`${service.speechPaths.model}.tmp`), false);
     assert.strictEqual(yield* fs.exists(service.speechPaths.runtime), true);
   }).pipe(Effect.provide(layer(HttpClient.make(() => Effect.never))), Effect.scoped),
+);
+
+it("pins every Smart Turn file the classifier loads", () => {
+  const names = turnModel.files.map((file) => file.name);
+  assert.sameMembers(names, [turnModel.model, turnModel.ortModule, turnModel.wasm]);
+  for (const file of turnModel.files) {
+    assert.match(file.sha256, /^[0-9a-f]{64}$/);
+    assert.isAbove(file.bytes, 0);
+    // Pinned to a revision or an exact version, never a moving tag.
+    assert.match(
+      file.url,
+      /^https:\/\/(huggingface\.co\/pipecat-ai\/smart-turn-v3\/resolve\/[0-9a-f]{40}|cdn\.jsdelivr\.net\/npm\/onnxruntime-web@\d+\.\d+\.\d+\/dist)\//,
+    );
+    assert.isTrue(file.url.endsWith(`/${file.name}`));
+  }
+});
+
+const turnRequests: string[] = [];
+
+it.effect("a failed turn model download leaves the runtime installed", () =>
+  Effect.gen(function* () {
+    const service = yield* DictationArtifacts.DictationArtifacts;
+    yield* installRuntimeFiles;
+    turnRequests.length = 0;
+    const reported: string[] = [];
+    // The voice model itself still fails; the runtime step before it must not.
+    yield* service
+      .installSpeech((artifact, state) =>
+        Effect.sync(() => {
+          reported.push(`${artifact}:${state._tag}`);
+        }),
+      )
+      .pipe(Effect.flip);
+    assert.include(turnRequests, turnModel.files[0]!.url);
+    assert.strictEqual(reported[0], "runtime:installed");
+    assert.isFalse(yield* service.turnInstalled);
+    assert.strictEqual((yield* service.inspectSpeech).runtime._tag, "installed");
+  }).pipe(
+    Effect.provide(
+      layer(
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            turnRequests.push(request.url);
+            return HttpClientResponse.fromWeb(request, new Response("corrupt"));
+          }),
+        ),
+      ),
+    ),
+    Effect.scoped,
+  ),
 );

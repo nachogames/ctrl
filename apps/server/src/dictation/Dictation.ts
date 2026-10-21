@@ -35,8 +35,16 @@ import * as AppleSpeech from "./AppleSpeech.ts";
 import * as DictationArtifacts from "./DictationArtifacts.ts";
 import * as DictationRecognizer from "./DictationRecognizer.ts";
 import * as DictationVocabulary from "./DictationVocabulary.ts";
+import * as SmartTurn from "./SmartTurn.ts";
 import * as VoiceActivity from "./VoiceActivity.ts";
-import { createTurnDetector, type TurnDetector } from "./endOfTurn.ts";
+import {
+  TURN_COMPLETE_PROBABILITY,
+  createBargeInGate,
+  createTurnDetector,
+  type BargeInGate,
+  type TurnDetector,
+} from "./endOfTurn.ts";
+import { createRecentAudio, type RecentAudio } from "./smartTurnFeatures.ts";
 import { concatenate, decodePcm, findSplit, joinTexts, takeOrderedChunks } from "./audio.ts";
 import { models, resolveLanguage } from "./models.ts";
 
@@ -117,6 +125,13 @@ interface Session {
   /** Hands-free sessions only: hears speech, and decides when the turn ends. */
   vad: VoiceActivity.VoiceActivityDetector | null;
   turn: TurnDetector | null;
+  /** Hands-free only: keeps a reply's echo from counting as the user talking over it. */
+  gate: BargeInGate | null;
+  /** Hands-free with Smart Turn only: the turn's last 8 s, and the classifier that judges them. */
+  recent: RecentAudio | null;
+  classifier: SmartTurn.TurnClassifier | null;
+  /** The pause the turn detector asked about during the last `listen`, not yet sent to the classifier. */
+  pendingCheck: number | null;
   /** Samples the detector has heard, its clock. */
   heardSamples: number;
 }
@@ -152,6 +167,7 @@ const make = Effect.gen(function* () {
   const apple = yield* AppleSpeech.AppleSpeech;
   const vocabulary = yield* DictationVocabulary.DictationVocabulary;
   const voiceActivity = yield* VoiceActivity.VoiceActivity;
+  const smartTurn = yield* SmartTurn.SmartTurn;
   const settingsChanges = yield* settings.subscribeChanges;
   const readSettings = settings.getSettings.pipe(
     Effect.mapError(
@@ -619,6 +635,7 @@ const make = Effect.gen(function* () {
       ? yield* apple.open({ language: current.settings.language, words: yield* vocabulary.words })
       : null;
     const vad = input.handsFree ? yield* voiceActivity.open : null;
+    const classifier = vad ? yield* smartTurn.open : null;
     const session: Session = {
       id,
       model,
@@ -645,9 +662,23 @@ const make = Effect.gen(function* () {
       lastUse: yield* Clock.currentTimeMillis,
       error: null,
       vad,
-      turn: vad ? createTurnDetector() : null,
+      turn: null,
+      gate: vad ? createBargeInGate() : null,
+      recent: classifier ? createRecentAudio() : null,
+      classifier,
+      pendingCheck: null,
       heardSamples: 0,
     };
+    if (vad)
+      session.turn = createTurnDetector(
+        classifier
+          ? {
+              check: (pause) => {
+                session.pendingCheck = pause;
+              },
+            }
+          : undefined,
+      );
     sessions.set(id, session);
     return { sessionId: id, handsFree: vad !== null };
   }, lifecycle.withPermit);
@@ -720,17 +751,44 @@ const make = Effect.gen(function* () {
       Effect.forkIn(scope),
     );
   });
-  /** Feeds ordered audio to a hands-free session's detector. */
-  const listen = (session: Session, chunks: ReadonlyArray<Float32Array>) => {
-    const { vad, turn } = session;
-    if (!vad || !turn) return;
+  /** Feeds ordered audio to a hands-free session's detector. `playback`: a reply was playing. */
+  const listen = (session: Session, chunks: ReadonlyArray<Float32Array>, playback: boolean) => {
+    const { vad, turn, gate } = session;
+    if (!vad || !turn || !gate) return;
     for (const chunk of chunks) {
       if (turn.state.endOfTurn) return;
-      const detected = vad.accept(chunk);
+      const frame = vad.accept(chunk);
+      session.recent?.push(chunk);
       session.heardSamples += chunk.length;
-      turn.push(detected, (session.heardSamples / DICTATION_SAMPLE_RATE) * 1000);
+      const atMs = (session.heardSamples / DICTATION_SAMPLE_RATE) * 1000;
+      turn.push(gate.accept(frame, playback, atMs), atMs);
     }
   };
+  /**
+   * Asks Smart Turn about the pause the detector just reported, off the
+   * request path; the verdict shows up in a later append's `endOfTurn`.
+   */
+  const checkTurn = Effect.fnUntraced(function* (session: Session) {
+    const pause = session.pendingCheck;
+    const { classifier, recent, turn } = session;
+    session.pendingCheck = null;
+    if (pause === null || !classifier || !recent || !turn) return;
+    const audio = recent.snapshot();
+    yield* Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis;
+      const probability = yield* classifier.probability(audio);
+      if (session.closed || probability === null) return;
+      const finished = probability >= TURN_COMPLETE_PROBABILITY;
+      turn.verdict(pause, finished);
+      yield* Effect.logDebug("Smart Turn verdict.").pipe(
+        Effect.annotateLogs({
+          probability: Math.round(probability * 1000) / 1000,
+          finished,
+          ms: (yield* Clock.currentTimeMillis) - startedAt,
+        }),
+      );
+    }).pipe(Effect.forkIn(scope));
+  });
   /** Live text so far (Apple's streams per word, Parakeet's per decoded phrase), and the turn. */
   const live = (session: Session) =>
     Effect.map(
@@ -789,7 +847,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const ordered = takeOrderedChunks(session.chunks, session.next);
           session.next = ordered.next;
-          listen(session, ordered.ordered);
+          listen(session, ordered.ordered, input.playback === true);
           for (const chunk of ordered.ordered)
             yield* transcription.write(AppleSpeech.encodePcm16(chunk));
         }),
@@ -797,7 +855,7 @@ const make = Effect.gen(function* () {
     } else {
       const ordered = takeOrderedChunks(session.chunks, session.next);
       session.next = ordered.next;
-      listen(session, ordered.ordered);
+      listen(session, ordered.ordered, input.playback === true);
       session.pending.push(...ordered.ordered);
       session.pendingSamples += ordered.ordered.reduce((n, chunk) => n + chunk.length, 0);
     }
@@ -805,6 +863,7 @@ const make = Effect.gen(function* () {
     session.changed = yield* Deferred.make<void>();
     yield* Deferred.succeed(changed, undefined);
     if (!transcription) yield* pump(session);
+    yield* checkTurn(session);
     return yield* live(session);
   });
   const finish = Effect.fnUntraced(function* (input: DictationFinishInput) {

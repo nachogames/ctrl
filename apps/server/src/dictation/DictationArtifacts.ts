@@ -17,7 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
-import { models, runtimeFor, speechModel, vadModel } from "./models.ts";
+import { models, runtimeFor, speechModel, turnModel, vadModel } from "./models.ts";
 import { createIntegrityHash } from "./integrity.ts";
 import { readTar } from "./tar.ts";
 
@@ -57,6 +57,10 @@ export class DictationArtifacts extends Context.Service<
     readonly removeSpeech: Effect.Effect<void, DictationError>;
     /** Silero VAD, installed as part of the runtime. */
     readonly vadPaths: { runtime: string; model: string };
+    /** Smart Turn and the WebAssembly runtime it runs on; optional, so hands-free works without it. */
+    readonly turnPaths: { model: string; ortModule: string; wasm: string };
+    readonly turnInstalled: Effect.Effect<boolean, DictationError>;
+    readonly installTurn: Effect.Effect<void, DictationError>;
   }
 >()("t3/dictation/DictationArtifacts") {}
 
@@ -82,6 +86,12 @@ const make = Effect.gen(function* () {
   };
   const vadDirectory = path.join(root, "vad", vadModel.directory);
   const vadPaths = { runtime: runtimePath, model: path.join(vadDirectory, vadModel.file.name) };
+  const turnDirectory = path.join(root, "turn", turnModel.directory);
+  const turnPaths = {
+    model: path.join(turnDirectory, turnModel.model),
+    ortModule: path.join(turnDirectory, turnModel.ortModule),
+    wasm: path.join(turnDirectory, turnModel.wasm),
+  };
   const io = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
     operation.pipe(
       Effect.mapError(
@@ -264,10 +274,15 @@ const make = Effect.gen(function* () {
   const installRuntime = Effect.fnUntraced(function* (noun: Noun, progress: ProgressReport) {
     if (!runtime) return yield* unsupported(noun);
     const current = yield* inspectRuntime;
-    if (current._tag === "installed") return yield* progress(current);
+    if (current._tag === "installed") {
+      // Runtimes installed before Smart Turn pick it up on their next install.
+      yield* installTurnFiles(noun);
+      return yield* progress(current);
+    }
     // Runtimes installed before hands-free voice only lack the small VAD model.
     if ((yield* inspectNative)._tag === "installed") {
       yield* installFiles(noun, vadDirectory, [vadModel.file], () => Effect.void);
+      yield* installTurnFiles(noun);
       return yield* progress(yield* inspectRuntime);
     }
     const report = throttled(progress);
@@ -317,8 +332,26 @@ const make = Effect.gen(function* () {
       }),
     );
     yield* installFiles(noun, vadDirectory, [vadModel.file], () => Effect.void);
+    yield* installTurnFiles(noun);
     yield* progress(yield* inspectRuntime);
   });
+
+  /** Smart Turn is an upgrade, not a requirement: a failed download leaves fixed-silence turns. */
+  const installTurnFiles = (noun: Noun) =>
+    installFiles(noun, turnDirectory, turnModel.files, () => Effect.void).pipe(
+      Effect.catchTags({
+        DictationError: (error) =>
+          Effect.logWarning("Could not install the turn model.").pipe(
+            Effect.annotateLogs({ cause: error.message }),
+          ),
+      }),
+    );
+  const turnInstalled = inspectFiles(turnDirectory, turnModel.files).pipe(
+    Effect.map((state) => state._tag === "installed"),
+  );
+  const installTurn = Effect.suspend(() =>
+    installFiles("voice", turnDirectory, turnModel.files, () => Effect.void),
+  ).pipe(Effect.scoped, mutations.withPermit);
 
   /** Downloads pinned files into `destination` atomically. Names may contain subdirectories. */
   const installFiles = Effect.fnUntraced(function* (
@@ -396,6 +429,9 @@ const make = Effect.gen(function* () {
     installSpeech,
     removeSpeech,
     vadPaths,
+    turnPaths,
+    turnInstalled,
+    installTurn,
   });
 });
 

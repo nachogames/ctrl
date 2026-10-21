@@ -174,6 +174,12 @@ export const DictationAppendInput = Schema.Struct({
   seq: NonNegativeInt,
   /** Base64 of little-endian int16 mono PCM at `DICTATION_SAMPLE_RATE`. */
   pcm: Schema.String,
+  /**
+   * Hands-free sessions: a spoken reply was playing on this client while the
+   * chunk was recorded, so its echo may reach the microphone. Speech must then
+   * be clearer and longer before it counts as the user talking over the reply.
+   */
+  playback: Schema.optionalKey(Schema.Boolean),
 });
 export type DictationAppendInput = typeof DictationAppendInput.Type;
 

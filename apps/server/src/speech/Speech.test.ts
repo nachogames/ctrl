@@ -41,6 +41,9 @@ const testLayer = (
           remove: () => Effect.void,
           speechPaths: { runtime: "/unused", model: "/unused" },
           vadPaths: { runtime: "/unused", model: "/unused" },
+          turnPaths: { model: "/unused", ortModule: "/unused", wasm: "/unused" },
+          turnInstalled: Effect.succeed(false),
+          installTurn: Effect.void,
           inspectSpeech: Effect.sync(() => ({ runtime, model })),
           installSpeech: (progress) =>
             Effect.gen(function* () {

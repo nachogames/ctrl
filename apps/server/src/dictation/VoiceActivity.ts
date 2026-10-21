@@ -6,7 +6,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as DictationArtifacts from "./DictationArtifacts.ts";
-import { VAD_MIN_SILENCE_MS } from "./endOfTurn.ts";
+import {
+  BARGE_IN_VAD_THRESHOLD,
+  VAD_MIN_SILENCE_MS,
+  type VoiceActivityFrame,
+} from "./endOfTurn.ts";
 
 interface VadConfig {
   sileroVad: {
@@ -33,8 +37,8 @@ interface NativeAddon {
 
 /** One session's detector. Calls are synchronous and take well under a millisecond per frame. */
 export interface VoiceActivityDetector {
-  /** Feeds 16 kHz mono samples in recording order; true while speech is detected. */
-  readonly accept: (samples: Float32Array) => boolean;
+  /** Feeds 16 kHz mono samples in recording order; reports whether speech is heard, and how clearly. */
+  readonly accept: (samples: Float32Array) => VoiceActivityFrame;
   /** Drop the N-API external handle; its native finalizer owns freeing the model. */
   readonly release: () => void;
 }
@@ -63,36 +67,48 @@ const make = Effect.gen(function* () {
         const addon = NodeModule.createRequire(import.meta.url)(
           path.join(runtime, "sherpa-onnx.node"),
         ) as NativeAddon;
-        let handle: unknown = addon.createVoiceActivityDetector(
-          {
-            sileroVad: {
-              model,
-              threshold: 0.5,
-              minSpeechDuration: 0.25,
-              minSilenceDuration: VAD_MIN_SILENCE_MS / 1000,
-              // Long turns stay one segment; the turn detector decides when they end.
-              maxSpeechDuration: 60,
-              windowSize: 512,
+        const create = (threshold: number): unknown =>
+          addon.createVoiceActivityDetector(
+            {
+              sileroVad: {
+                model,
+                threshold,
+                minSpeechDuration: 0.25,
+                minSilenceDuration: VAD_MIN_SILENCE_MS / 1000,
+                // Long turns stay one segment; the turn detector decides when they end.
+                maxSpeechDuration: 60,
+                windowSize: 512,
+              },
+              sampleRate: DICTATION_SAMPLE_RATE,
+              numThreads: 1,
+              provider: "cpu",
+              debug: 0,
             },
-            sampleRate: DICTATION_SAMPLE_RATE,
-            numThreads: 1,
-            provider: "cpu",
-            debug: 0,
-          },
-          // Seconds of speech the detector buffers; segments are popped as they finish.
-          30,
-        );
+            // Seconds of speech the detector buffers; segments are popped as they finish.
+            30,
+          );
+        // A second, stricter detector tells the user's voice from a reply's echo during playback.
+        let handles: { normal: unknown; confident: unknown } | null = {
+          normal: create(0.5),
+          confident: create(BARGE_IN_VAD_THRESHOLD),
+        };
+        const feed = (handle: unknown, samples: Float32Array) => {
+          addon.voiceActivityDetectorAcceptWaveform(handle, samples);
+          // Only the detected flag is used; drop finished segments so the buffer never fills.
+          while (!addon.voiceActivityDetectorIsEmpty(handle))
+            addon.voiceActivityDetectorPop(handle);
+          return addon.voiceActivityDetectorIsDetected(handle);
+        };
         return {
           accept: (samples) => {
-            if (handle === null) return false;
-            addon.voiceActivityDetectorAcceptWaveform(handle, samples);
-            // Only the detected flag is used; drop finished segments so the buffer never fills.
-            while (!addon.voiceActivityDetectorIsEmpty(handle))
-              addon.voiceActivityDetectorPop(handle);
-            return addon.voiceActivityDetectorIsDetected(handle);
+            if (handles === null) return { detected: false, confident: false };
+            return {
+              detected: feed(handles.normal, samples),
+              confident: feed(handles.confident, samples),
+            };
           },
           release: () => {
-            handle = null;
+            handles = null;
           },
         };
       },

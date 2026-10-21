@@ -19,6 +19,7 @@ import * as DictationArtifacts from "./DictationArtifacts.ts";
 import * as DictationRecognizer from "./DictationRecognizer.ts";
 import * as AppleSpeech from "./AppleSpeech.ts";
 import * as DictationVocabulary from "./DictationVocabulary.ts";
+import * as SmartTurn from "./SmartTurn.ts";
 import * as VoiceActivity from "./VoiceActivity.ts";
 import { models } from "./models.ts";
 
@@ -62,6 +63,7 @@ it.live.skipIf(!fixture)(
       const layer = Dictation.layer.pipe(
         Layer.provide(AppleSpeech.layerUnavailable),
         Layer.provide(VoiceActivity.layerUnavailable),
+        Layer.provide(SmartTurn.layerUnavailable),
         Layer.provide(DictationVocabulary.layerEmpty),
         Layer.provide(DictationRecognizer.layer.pipe(Layer.provide(artifactsLayer))),
         Layer.provideMerge(artifactsLayer),

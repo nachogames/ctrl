@@ -20,8 +20,9 @@ import * as DictationArtifacts from "./DictationArtifacts.ts";
 import * as DictationRecognizer from "./DictationRecognizer.ts";
 import * as AppleSpeech from "./AppleSpeech.ts";
 import * as DictationVocabulary from "./DictationVocabulary.ts";
+import * as SmartTurn from "./SmartTurn.ts";
 import * as VoiceActivity from "./VoiceActivity.ts";
-import { END_OF_TURN_SILENCE_MS, VAD_REPORT_LAG_MS } from "./endOfTurn.ts";
+import { END_OF_TURN_SILENCE_MS, TURN_MAX_SILENCE_MS, VAD_REPORT_LAG_MS } from "./endOfTurn.ts";
 
 const testLayer = (
   options: {
@@ -38,9 +39,15 @@ const testLayer = (
     localEngine?: "apple" | "parakeet";
     words?: ReadonlyArray<string>;
     vad?: VoiceActivity.VoiceActivity["Service"];
+    smartTurn?: SmartTurn.SmartTurn["Service"];
   } = {},
 ) =>
   Dictation.layer.pipe(
+    Layer.provide(
+      options.smartTurn
+        ? Layer.succeed(SmartTurn.SmartTurn, options.smartTurn)
+        : SmartTurn.layerUnavailable,
+    ),
     Layer.provide(
       options.vad
         ? Layer.succeed(VoiceActivity.VoiceActivity, options.vad)
@@ -107,6 +114,9 @@ const testLayer = (
           installSpeech: () => Effect.void,
           removeSpeech: Effect.void,
           vadPaths: { runtime: "/unused", model: "/unused" },
+          turnPaths: { model: "/unused", ortModule: "/unused", wasm: "/unused" },
+          turnInstalled: Effect.succeed(false),
+          installTurn: Effect.void,
         } satisfies DictationArtifacts.DictationArtifacts["Service"];
       }),
     ),
@@ -1113,7 +1123,11 @@ const released = { count: 0 };
 /** Hears speech in any frame louder than silence. */
 const loudnessVad = (released: { count: number }): VoiceActivity.VoiceActivity["Service"] => ({
   open: Effect.succeed({
-    accept: (samples) => samples.some((sample) => Math.abs(sample) > 0.05),
+    accept: (samples) => {
+      const detected = samples.some((sample) => Math.abs(sample) > 0.05);
+      // Loud frames are clear speech; quieter ones only pass the normal threshold, like echo.
+      return { detected, confident: samples.some((sample) => Math.abs(sample) > 0.2) };
+    },
     release: () => {
       released.count += 1;
     },
@@ -1173,4 +1187,109 @@ it.effect("asking for hands-free where no detector is installed starts a manual 
     const service = yield* Dictation.Dictation;
     assert.strictEqual((yield* service.start({ handsFree: true })).handsFree, false);
   }).pipe(Effect.provide(testLayer({ apple: fakeApple({}) })), Effect.scoped),
+);
+
+const heard: number[] = [];
+
+/** A Smart Turn stand-in that always gives `probability`, and records how much audio it was shown. */
+const fakeSmartTurn = (
+  probability: number,
+  heard: number[] = [],
+): SmartTurn.SmartTurn["Service"] => ({
+  open: Effect.succeed({
+    probability: (audio) =>
+      Effect.sync(() => {
+        heard.push(audio.length);
+        return probability;
+      }),
+  }),
+});
+
+/** Appends 100 ms silent chunks until the turn ends; returns how many it took, or null. */
+const silenceUntilEnd = Effect.fnUntraced(function* (
+  append: (seconds: number, value: number) => Effect.Effect<{ endOfTurn: boolean }, DictationError>,
+  limit: number,
+) {
+  for (let index = 1; index <= limit; index++) {
+    const result = yield* append(0.1, 0);
+    if (result.endOfTurn) return index;
+    // Let the forked verdict land before the next chunk, as network time would.
+    yield* Effect.yieldNow;
+  }
+  return null;
+});
+
+it.effect("Smart Turn ends a finished turn before the fixed silence window", () =>
+  Effect.gen(function* () {
+    const service = yield* Dictation.Dictation;
+    const { sessionId } = yield* service.start({ handsFree: true });
+    let seq = 0;
+    const append = (seconds: number, value: number) =>
+      service.append({ sessionId, seq: seq++, pcm: pcm(seconds, value) });
+    yield* append(1, 0.3);
+    const chunks = yield* silenceUntilEnd(append, 30);
+    assert.isNotNull(chunks);
+    // Fixed silence would need END_OF_TURN_SILENCE_MS minus the detector's lag.
+    assert.isBelow(chunks! * 100, END_OF_TURN_SILENCE_MS - VAD_REPORT_LAG_MS);
+    // The model saw the turn so far, speech included.
+    assert.isAtLeast(heard[0]!, 16000);
+    yield* service.cancel({ sessionId });
+  }).pipe(
+    Effect.provide(
+      testLayer({
+        apple: fakeApple({}),
+        vad: loudnessVad({ count: 0 }),
+        smartTurn: fakeSmartTurn(0.9, heard),
+      }),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect("Smart Turn holds a mid-thought pause open until the longer cap", () =>
+  Effect.gen(function* () {
+    const service = yield* Dictation.Dictation;
+    const { sessionId } = yield* service.start({ handsFree: true });
+    let seq = 0;
+    const append = (seconds: number, value: number) =>
+      service.append({ sessionId, seq: seq++, pcm: pcm(seconds, value) });
+    yield* append(1, 0.3);
+    const chunks = yield* silenceUntilEnd(append, 40);
+    assert.isNotNull(chunks);
+    assert.isAbove(chunks! * 100, END_OF_TURN_SILENCE_MS);
+    assert.isAtMost(chunks! * 100, TURN_MAX_SILENCE_MS);
+    yield* service.cancel({ sessionId });
+  }).pipe(
+    Effect.provide(
+      testLayer({
+        apple: fakeApple({}),
+        vad: loudnessVad({ count: 0 }),
+        smartTurn: fakeSmartTurn(0.1),
+      }),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect("while a reply plays, only clear and sustained speech counts as talking over it", () =>
+  Effect.gen(function* () {
+    const service = yield* Dictation.Dictation;
+    const { sessionId } = yield* service.start({ handsFree: true });
+    let seq = 0;
+    const append = (value: number, playback: boolean) =>
+      service.append({ sessionId, seq: seq++, pcm: pcm(0.1, value), playback });
+    // Echo-level audio through a whole reply never starts the turn.
+    for (let index = 0; index < 30; index++) assert.isFalse((yield* append(0.1, true)).speaking);
+    // A short clear burst does not either.
+    assert.isFalse((yield* append(0.3, true)).speaking);
+    assert.isFalse((yield* append(0, true)).speaking);
+    // Clear speech that lasts does.
+    const heard: boolean[] = [];
+    for (let index = 0; index < 4; index++) heard.push((yield* append(0.3, true)).speaking);
+    assert.deepStrictEqual(heard, [false, false, true, true]);
+    yield* service.cancel({ sessionId });
+  }).pipe(
+    Effect.provide(testLayer({ apple: fakeApple({}), vad: loudnessVad({ count: 0 }) })),
+    Effect.scoped,
+  ),
 );
