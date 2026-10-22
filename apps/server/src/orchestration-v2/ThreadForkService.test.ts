@@ -139,19 +139,6 @@ const planForkOfThread = (sourceThread: OrchestrationV2AppThread) => {
   return planFork(sourceRun, makeSourceProjection(sourceRun, sourceThread));
 };
 
-it("treats usage-limited and other provider-finished runs as forkable", () => {
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("completed"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("waiting"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("failed"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("interrupted"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("cancelled"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("running"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("starting"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("queued"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("preparing"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("rolled_back"));
-});
-
 it.effect("keeps a fork awake when its source thread is snoozed", () =>
   Effect.gen(function* () {
     const sourceThread = makeSourceThread();
@@ -173,60 +160,6 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
       relationshipToParent: "fork",
       rootThreadId: sourceThreadId,
     });
-    assert.deepEqual(result.targetThread.forkedFrom, {
-      type: "run",
-      threadId: sourceThreadId,
-      runId: sourceRunId,
-    });
-  }),
-);
-
-it.effect("joins the source's group without copying its handoff links", () =>
-  Effect.gen(function* () {
-    const groupId = ThreadGroupId.make("group:fork-source");
-    const result = yield* planForkOfThread({
-      ...makeSourceThread(),
-      groupId,
-      handedOffFrom: ThreadId.make("thread:fork-source-predecessor"),
-      handedOffTo: ThreadId.make("thread:fork-source-successor"),
-    });
-    assert.equal(result.targetThread.groupId, groupId);
-    assert.isNull(result.targetThread.handedOffFrom);
-    assert.isNull(result.targetThread.handedOffTo);
-    // The plan is only a thread and a transfer, so a fork can't write group events.
-    assert.sameMembers(Object.keys(result), ["targetThread", "transfer"]);
-  }),
-);
-
-it.effect("drops the source's group order key so the fork lands on top", () =>
-  Effect.gen(function* () {
-    const result = yield* planForkOfThread({
-      ...makeSourceThread(),
-      groupId: ThreadGroupId.make("group:fork-source"),
-      groupOrderKey: "a0",
-    });
-    // A keyless chat sorts first, so the fork shows as the group's newest chat.
-    assert.isNull(result.targetThread.groupOrderKey ?? null);
-  }),
-);
-
-it.effect("leaves a fork of an ungrouped chat ungrouped and creates no group", () =>
-  Effect.gen(function* () {
-    const result = yield* planForkOfThread({
-      ...makeSourceThread(),
-      groupId: null,
-      handedOffFrom: ThreadId.make("thread:fork-source-predecessor"),
-    });
-    assert.isNull(result.targetThread.groupId ?? null);
-    assert.isNull(result.targetThread.handedOffFrom);
-    assert.isNull(result.targetThread.handedOffTo);
-    assert.sameMembers(Object.keys(result), ["targetThread", "transfer"]);
-  }),
-);
-
-it.effect("forks from a usage-limited failed run", () =>
-  Effect.gen(function* () {
-    const result = yield* planFork(makeSourceRun("failed"));
     assert.deepEqual(result.targetThread.forkedFrom, {
       type: "run",
       threadId: sourceThreadId,
@@ -303,6 +236,49 @@ it.effect("preserves pull request context without inheriting any watches", () =>
     assert.deepEqual(sourceProjection.thread.pullRequests, watchedLinks);
     assert.deepEqual(sourceProjection.thread.pullRequests[0]?.watch, watch);
     assert.deepEqual(sourceProjection.thread.pullRequests[1]?.watch, watch);
+  }),
+);
+
+it.effect("joins the source's group without copying its handoff links", () =>
+  Effect.gen(function* () {
+    const groupId = ThreadGroupId.make("group:fork-source");
+    const result = yield* planForkOfThread({
+      ...makeSourceThread(),
+      groupId,
+      handedOffFrom: ThreadId.make("thread:fork-source-predecessor"),
+      handedOffTo: ThreadId.make("thread:fork-source-successor"),
+    });
+    assert.equal(result.targetThread.groupId, groupId);
+    assert.isNull(result.targetThread.handedOffFrom);
+    assert.isNull(result.targetThread.handedOffTo);
+    // The plan is only a thread and a transfer, so a fork can't write group events.
+    assert.sameMembers(Object.keys(result), ["targetThread", "transfer"]);
+  }),
+);
+
+it.effect("drops the source's group order key so the fork lands on top", () =>
+  Effect.gen(function* () {
+    const result = yield* planForkOfThread({
+      ...makeSourceThread(),
+      groupId: ThreadGroupId.make("group:fork-source"),
+      groupOrderKey: "a0",
+    });
+    // A keyless chat sorts first, so the fork shows as the group's newest chat.
+    assert.isNull(result.targetThread.groupOrderKey ?? null);
+  }),
+);
+
+it.effect("leaves a fork of an ungrouped chat ungrouped and creates no group", () =>
+  Effect.gen(function* () {
+    const result = yield* planForkOfThread({
+      ...makeSourceThread(),
+      groupId: null,
+      handedOffFrom: ThreadId.make("thread:fork-source-predecessor"),
+    });
+    assert.isNull(result.targetThread.groupId ?? null);
+    assert.isNull(result.targetThread.handedOffFrom);
+    assert.isNull(result.targetThread.handedOffTo);
+    assert.sameMembers(Object.keys(result), ["targetThread", "transfer"]);
   }),
 );
 

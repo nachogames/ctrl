@@ -7,7 +7,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import CtrlMigration0001 from "./CtrlMigrations/001_ThreadGroups.ts";
 import CtrlMigration0002 from "./CtrlMigrations/002_ThreadGroupLinks.ts";
 import { CTRL_MIGRATIONS_TABLE, ctrlMigrationEntries } from "./CtrlMigrations.ts";
-import { migrationEntries, runMigrations } from "./Migrations.ts";
+import { migrationManifest, runMigrations } from "./Migrations.ts";
 
 const ledger = (table: string) =>
   Effect.gen(function* () {
@@ -18,7 +18,7 @@ const ledger = (table: string) =>
     return rows.map((row) => [row.migration_id, row.name] as const);
   });
 
-const upstreamManifest = migrationEntries.map(([id, name]) => [id, name] as const);
+const upstreamManifest = migrationManifest;
 const ctrlManifest = ctrlMigrationEntries.map(([id, name]) => [id, name] as const);
 
 it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(

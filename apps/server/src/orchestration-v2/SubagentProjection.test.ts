@@ -79,6 +79,31 @@ function makeParentThread(): OrchestrationV2AppThread {
   };
 }
 
+it("does not put a subagent child in its parent's group or handoff chain", () => {
+  const parentThread: OrchestrationV2AppThread = {
+    ...makeParentThread(),
+    groupId: ThreadGroupId.make("group:subagent-parent"),
+    handedOffFrom: ThreadId.make("thread:subagent-parent-predecessor"),
+    handedOffTo: ThreadId.make("thread:subagent-parent-successor"),
+  };
+  const childThread = makeSubagentChildThread({
+    parentThread,
+    childThreadId,
+    parentNodeId: NodeId.make("node:subagent-parent"),
+    activeProviderThreadId: null,
+    providerInstanceId: childProviderInstanceId,
+    modelSelection: childModelSelection,
+    title: "Ungrouped child",
+    now: childCreatedAt,
+    createdBy: "agent",
+    creationSource: "provider",
+  });
+
+  assert.isNull(childThread.groupId ?? null);
+  assert.isNull(childThread.handedOffFrom ?? null);
+  assert.isNull(childThread.handedOffTo ?? null);
+});
+
 it("keeps a subagent child awake when its parent thread is snoozed", () => {
   const parentThread = makeParentThread();
   const childProviderThreadId = ProviderThreadId.make("provider-thread:subagent-awake-child");
@@ -116,55 +141,6 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
     type: "node",
     nodeId: parentNodeId,
   });
-});
-
-it("does not put a subagent child in its parent's group or handoff chain", () => {
-  const parentThread: OrchestrationV2AppThread = {
-    ...makeParentThread(),
-    groupId: ThreadGroupId.make("group:subagent-parent"),
-    handedOffFrom: ThreadId.make("thread:subagent-parent-predecessor"),
-    handedOffTo: ThreadId.make("thread:subagent-parent-successor"),
-  };
-  const childThread = makeSubagentChildThread({
-    parentThread,
-    childThreadId,
-    parentNodeId: NodeId.make("node:subagent-parent"),
-    activeProviderThreadId: null,
-    providerInstanceId: childProviderInstanceId,
-    modelSelection: childModelSelection,
-    title: "Ungrouped child",
-    now: childCreatedAt,
-    createdBy: "agent",
-    creationSource: "provider",
-  });
-
-  assert.isNull(childThread.groupId ?? null);
-  assert.isNull(childThread.handedOffFrom ?? null);
-  assert.isNull(childThread.handedOffTo ?? null);
-});
-
-it("attributes native subagent prompts to their parent thread", () => {
-  for (const role of ["user", "assistant"] as const) {
-    const artifacts = makeSubagentConversationArtifacts({
-      messageId: MessageId.make(`native-${role}`),
-      turnItemId: TurnItemId.make(`native-${role}`),
-      threadId: childThreadId,
-      senderThreadId: parentThreadId,
-      rootNodeId: NodeId.make("child-root"),
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      role,
-      text: role === "user" ? "Review the changes" : "Review complete",
-      ordinal: 100,
-      now: childCreatedAt,
-    });
-    assert.equal(artifacts.message.threadId, childThreadId);
-    assert.equal(artifacts.message.senderThreadId, role === "user" ? parentThreadId : undefined);
-    if (artifacts.turnItem.type === "user_message") {
-      assert.equal(artifacts.turnItem.senderThreadId, parentThreadId);
-    }
-  }
 });
 
 function taskFixture() {
@@ -347,43 +323,6 @@ it("exposes the provider failure rather than a progress message from the failed 
   assert.equal(result.text, failure.message);
   assert.equal(result.turnItemId, artifacts.turnItem.id);
   assert.isNull(result.messageId);
-});
-
-it("reports the last assistant message when the provider finalizes them together", () => {
-  const { projection, run } = taskFixture();
-  // OpenCode stamps every assistant message of a turn with the turn's end time.
-  const finalizedAt = DateTime.makeUnsafe("2026-07-24T10:05:00.000Z");
-  const message = (id: string, text: string, ordinal: number, createdAt: string) => {
-    const artifacts = makeSubagentConversationArtifacts({
-      messageId: MessageId.make(id),
-      turnItemId: TurnItemId.make(id),
-      threadId: parentThreadId,
-      rootNodeId: NodeId.make("root"),
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      role: "assistant",
-      text,
-      ordinal,
-      now: DateTime.makeUnsafe(createdAt),
-    });
-    return {
-      message: { ...artifacts.message, runId: run.id, updatedAt: finalizedAt },
-      turnItem: { ...artifacts.turnItem, runId: run.id },
-    };
-  };
-  const progress = message("progress", "Starting step 0.", 1, "2026-07-24T10:00:00.000Z");
-  const report = message("report", "All steps passed.", 2, "2026-07-24T10:04:00.000Z");
-  const result = subagentResultForRun(
-    {
-      ...projection,
-      messages: [progress.message, report.message],
-      turnItems: [progress.turnItem, report.turnItem],
-    },
-    run,
-  );
-  assert.equal(result.text, "All steps passed.");
-  assert.equal(result.messageId, report.message.id);
 });
 
 it("orders a task's assistant messages by turn item, not by timestamps", () => {

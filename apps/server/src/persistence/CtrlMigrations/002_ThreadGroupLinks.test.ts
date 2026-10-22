@@ -5,9 +5,9 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { runCtrlMigrations } from "../CtrlMigrations.ts";
-import { migrationEntries, runMigrations } from "../Migrations.ts";
+import { migrationManifest, runMigrations } from "../Migrations.ts";
 
-const upstreamLatest = migrationEntries[migrationEntries.length - 1]![0];
+const upstreamLatest = migrationManifest[migrationManifest.length - 1]![0];
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 

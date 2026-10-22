@@ -45,9 +45,11 @@ export interface ProjectThreadAwarenessV2Input {
     | "activityRunStatus"
     | "id"
     | "lineage"
+    | "latestRunStopRequested"
     | "modelSelection"
     | "pendingBackgroundTasks"
     | "pendingRuntimeRequest"
+    | "settledOverride"
     | "status"
     | "title"
     | "updatedAt"
@@ -57,9 +59,22 @@ export interface ProjectThreadAwarenessV2Input {
 export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
-  if (input.thread.lineage.relationshipToParent === "subagent") return null;
-  const phase = resolveThreadAwarenessPhaseV2(input.thread);
-  return phase === null ? null : threadAwarenessInPhaseV2({ ...input, phase });
+  const { thread } = input;
+  if (thread.lineage.relationshipToParent === "subagent") return null;
+  const phase = resolveThreadAwarenessPhaseV2(thread);
+  if (phase === null) {
+    return null;
+  }
+  if (phase === "completed" && thread.latestRunStopRequested === true) return null;
+  // Resolve the phase first so live or waiting work stays visible after settlement.
+  if (
+    thread.settledOverride === "settled" &&
+    (phase === "completed" || phase === "failed") &&
+    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+  ) {
+    return null;
+  }
+  return threadAwarenessInPhaseV2({ ...input, phase });
 }
 
 /**
@@ -101,13 +116,20 @@ export function threadAwarenessInPhaseV2(
  * through their parent.
  */
 export function threadQuestionPhaseV2(
-  thread: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest">,
+  thread: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest"> &
+    Partial<Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "status">>,
 ): Extract<AgentAwarenessPhase, "waiting_for_input" | "waiting_for_approval"> | null {
-  if (thread.pendingRuntimeRequest?.kind === "user_input") {
+  const runStatus = thread.activityRunStatus ?? thread.status;
+  if (
+    thread.pendingRuntimeRequest?.kind === "user_input" &&
+    (thread.pendingRuntimeRequest.blocking !== false ||
+      !(runStatus === "preparing" || runStatus === "starting" || runStatus === "running"))
+  ) {
     return "waiting_for_input";
   }
   if (
     thread.pendingRuntimeRequest !== null &&
+    thread.pendingRuntimeRequest.kind !== "user_input" &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
   ) {
     return "waiting_for_approval";
