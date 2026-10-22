@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
+  AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -66,6 +67,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.cursorMcpSignIn]: AuthProvidersManageScope,
   [WS_METHODS.cursorMcpSaveServer]: AuthProvidersManageScope,
   [WS_METHODS.cursorMcpRemoveServer]: AuthProvidersManageScope,
+  // Restarting interrupts every running turn, like a server update.
+  [WS_METHODS.cursorMcpRestartServer]: AuthEnvironmentMaintainScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

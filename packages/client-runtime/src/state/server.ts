@@ -1310,7 +1310,7 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) =>
-          `${environmentId}:${input.threadId ?? ""}:${input.projectId ?? ""}`,
+          `${environmentId}:${input.threadId ?? ""}:${input.projectId ?? ""}:${input.providerInstanceId ?? ""}`,
       },
     }),
     cursorMcpSignIn: createEnvironmentRpcCommand(runtime, {
@@ -1330,6 +1330,11 @@ export function createServerEnvironmentAtoms<R, E>(
     cursorMcpRemoveServer: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:cursor-mcp:remove-server",
       tag: WS_METHODS.cursorMcpRemoveServer,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    cursorMcpRestartServer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cursor-mcp:restart-server",
+      tag: WS_METHODS.cursorMcpRestartServer,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
     logoutAcpRegistry: createEnvironmentRpcCommand(runtime, {

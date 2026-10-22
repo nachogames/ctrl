@@ -48,7 +48,7 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
-import { markCursorFolderLoaded } from "./CursorMcpServers.ts";
+import { markCursorFolderLoaded, shareCursorMcpSignIns } from "./CursorMcpServers.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "./transportFailure.ts";
@@ -2166,6 +2166,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* Ref.set(liveAgent, null);
           }
           if (openInput.runtimePolicy.cwd !== null) {
+            if (adapterOptions.settings.shareMcpSignIns) {
+              yield* shareCursorMcpSignIns(openInput.runtimePolicy.cwd).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.catch((cause) =>
+                  Effect.logWarning("Could not share Cursor MCP sign-ins with this folder.", {
+                    cause,
+                  }),
+                ),
+              );
+            }
             markCursorFolderLoaded(openInput.runtimePolicy.cwd);
           }
           const options = makeCursorAgentOptions({

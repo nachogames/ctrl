@@ -16,6 +16,7 @@ import type {
   AssistantCitation,
   ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
+  CursorMcpFolderInput,
   EnvironmentId,
   ModelSelection,
   ProjectId,
@@ -481,6 +482,9 @@ export interface ChatComposerProps {
   onPageScrollRelease: () => void;
 
   queuedRunsControl?: ReactNode;
+  /** The folder a Cursor thread's agent runs in, for its MCP control; null otherwise. */
+  cursorMcpFolder: CursorMcpFolderInput | null;
+  firstTurn: boolean;
   editingQueuedAttachments: ReadonlyArray<{
     readonly attachment: ContractChatAttachment;
     readonly url: string | null;
@@ -2547,6 +2551,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerControls = (
     <ComposerControlsBar
       environmentId={environmentId}
+      cursorMcpFolder={props.cursorMcpFolder}
+      firstTurn={props.firstTurn}
       routeKind={routeKind}
       routeThreadRef={routeThreadRef}
       draftId={draftId}

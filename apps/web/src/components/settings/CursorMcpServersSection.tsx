@@ -16,7 +16,7 @@ import { useEffect, useEffectEvent, useState } from "react";
 import { APP_BASE_NAME } from "../../branding";
 
 import { ensureLocalApi } from "../../localApi";
-import { relaunchDesktopApp, useCanRelaunchDesktopEnvironment } from "../../lib/desktopRelaunch";
+import { useRestartServerForCursorMcp } from "../chat/ComposerCursorMcpControl";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -86,7 +86,7 @@ function describeTransport(transport: CursorMcpServerTransport | null): string |
 }
 
 function StatusBadge({ server }: { readonly server: CursorMcpServer }) {
-  if (server.needsRelaunch) return <Badge variant="warning">Relaunch needed</Badge>;
+  if (server.needsRelaunch) return <Badge variant="warning">Restart needed</Badge>;
   switch (server.status) {
     case "ready":
       return <Badge variant="success">Ready</Badge>;
@@ -117,7 +117,7 @@ export function CursorMcpServersSection(props: {
   const canRead = useEnvironmentScope(props.environmentId, AuthOrchestrationReadScope);
   const canManage =
     useEnvironmentScope(props.environmentId, AuthProvidersManageScope) && !props.readOnly;
-  const canRelaunch = useCanRelaunchDesktopEnvironment(props.environmentId);
+  const restart = useRestartServerForCursorMcp(props.environmentId);
   const [projectId, setProjectId] = useState<ProjectId | null>(props.projects[0]?.id ?? null);
   const [checked, setStatus] = useState<{
     readonly key: string;
@@ -282,14 +282,15 @@ export function CursorMcpServersSection(props: {
               Cursor threads read new sign-ins for an already-open folder only after {APP_BASE_NAME}{" "}
               restarts.
             </span>
-            {canRelaunch ? (
+            {status?.canRestartServer && restart.canMaintain ? (
               <Button
                 type="button"
                 size="xs"
                 variant="outline"
-                onClick={() => void relaunchDesktopApp()}
+                disabled={restart.restarting}
+                onClick={() => void restart.restart()}
               >
-                Relaunch {APP_BASE_NAME}
+                {restart.restarting ? "Restarting…" : `Restart ${APP_BASE_NAME}`}
               </Button>
             ) : null}
           </div>

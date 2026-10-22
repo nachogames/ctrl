@@ -104,6 +104,8 @@ import {
   type CursorMcpFolderInput,
 } from "@t3tools/contracts";
 import * as CursorMcpServers from "@t3tools/provider-cursor/server/CursorMcpServers";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import {
   HttpRouter,
   HttpServerRequest,
@@ -114,6 +116,7 @@ import { RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
+import { SERVICE_LAUNCHER_CONTEXT_ENV } from "./cloud/serviceProtocol.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as HostBattery from "./environment/HostBattery.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -1297,6 +1300,7 @@ const layerCtrlRpc = ServerCtrlRpcGroup.toLayer(
 const layerCursorMcpRpc = ServerCursorMcpRpcGroup.toLayer(
   Effect.gen(function* () {
     const cursorMcp = yield* CursorMcpServers.CursorMcpServers;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const projectService = yield* ProjectService.ProjectService;
     // The folder a Cursor agent runs in: the thread's worktree, else its project's root.
@@ -1305,27 +1309,87 @@ const layerCursorMcpRpc = ServerCursorMcpRpcGroup.toLayer(
         reason: "folder_not_found",
         ...(cause === undefined ? {} : { cause }),
       });
-    const folder = Effect.fn("ws.cursorMcp.folder")(function* (input: CursorMcpFolderInput) {
-      let projectId = input.projectId;
+    // The Cursor instance a thread runs on decides whether its folder borrows sign-ins.
+    const sharesSignIns = (instanceId: ProviderInstanceId) =>
+      serverSettings.getSettings.pipe(
+        Effect.map((settings) =>
+          CursorMcpServers.cursorSharesMcpSignIns(settings.providerInstances[instanceId]?.config),
+        ),
+        Effect.orElseSucceed(() => false),
+      );
+    const folderFor = Effect.fn("ws.cursorMcp.folder")(function* (input: CursorMcpFolderInput) {
+      const projectId = input.projectId;
       if (input.threadId !== undefined) {
         const shell = yield* threadManagement
           .getThreadShell(input.threadId)
           .pipe(Effect.mapError(folderNotFound));
         if (shell === null) return yield* folderNotFound();
-        if (shell.worktreePath !== null) return shell.worktreePath;
-        projectId = shell.projectId;
+        const shareSignIns = yield* sharesSignIns(shell.providerInstanceId);
+        if (shell.worktreePath !== null) return { path: shell.worktreePath, shareSignIns };
+        const project = yield* projectService
+          .getById(shell.projectId)
+          .pipe(Effect.mapError(folderNotFound));
+        if (Option.isNone(project)) return yield* folderNotFound();
+        return { path: project.value.workspaceRoot, shareSignIns };
       }
       if (projectId === undefined) return null;
       const project = yield* projectService
         .getById(projectId)
         .pipe(Effect.mapError(folderNotFound));
       if (Option.isNone(project)) return yield* folderNotFound();
-      return project.value.workspaceRoot;
+      return {
+        path: project.value.workspaceRoot,
+        shareSignIns:
+          input.providerInstanceId !== undefined &&
+          (yield* sharesSignIns(input.providerInstanceId)),
+      };
     });
+    // The desktop app and the background service start the server again after it exits.
+    const config = yield* ServerConfig.ServerConfig;
+    const environment = yield* HostProcess.Environment;
+    const canRestartServer =
+      config.mode === "desktop" || environment[SERVICE_LAUNCHER_CONTEXT_ENV] !== undefined;
+    // Adds what the server knows beyond Cursor: whether it can restart, and site icons.
+    const withRestart = (status: CursorMcpServers.CursorMcpFolderStatus) =>
+      Effect.forEach(
+        status.servers,
+        (server) =>
+          server.transport?._tag === "url"
+            ? CursorMcpServers.cursorMcpServerIconUrl(server.transport.url).pipe(
+                Effect.map((iconUrl) => (iconUrl === null ? server : { ...server, iconUrl })),
+              )
+            : Effect.succeed(server),
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.map((servers) => ({ ...status, servers, canRestartServer })),
+        Effect.provide(FetchHttpClient.layer),
+      );
     return ServerCursorMcpRpcGroup.of({
-      [WS_METHODS.cursorMcpStatus]: (input) => folder(input).pipe(Effect.flatMap(cursorMcp.status)),
+      [WS_METHODS.cursorMcpStatus]: (input) =>
+        folderFor(input).pipe(
+          Effect.flatMap((folder) =>
+            cursorMcp.status(folder?.path ?? null, { shareSignIns: folder?.shareSignIns === true }),
+          ),
+          Effect.flatMap(withRestart),
+        ),
       [WS_METHODS.cursorMcpSignIn]: (input) =>
-        folder(input).pipe(Effect.flatMap((path) => cursorMcp.signIn(path, input.name))),
+        folderFor(input).pipe(
+          Effect.flatMap((folder) => cursorMcp.signIn(folder?.path ?? null, input.name)),
+          Effect.flatMap(withRestart),
+        ),
+      [WS_METHODS.cursorMcpRestartServer]: () =>
+        canRestartServer
+          ? Effect.logInfo("Restarting the server at a client's request.").pipe(
+              // Exit after the reply reaches the client, through the usual SIGTERM shutdown.
+              Effect.andThen(
+                Effect.sleep("250 millis").pipe(
+                  Effect.andThen(Effect.sync(() => process.kill(process.pid, "SIGTERM"))),
+                  Effect.forkDetach,
+                ),
+              ),
+              Effect.asVoid,
+            )
+          : Effect.fail(new CursorMcpOperationError({ reason: "restart_unsupported" })),
       [WS_METHODS.cursorMcpSaveServer]: (input) => cursorMcp.saveServer(input),
       [WS_METHODS.cursorMcpRemoveServer]: (input) => cursorMcp.removeServer(input.name),
     });

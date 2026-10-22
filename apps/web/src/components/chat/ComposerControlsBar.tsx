@@ -4,6 +4,11 @@ import type { ProviderInstanceEntry } from "../../providerInstances";
 import { type AppModelOption } from "../../modelSelection";
 import { CircleAlertIcon } from "lucide-react";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import {
+  ComposerCursorMcpControl,
+  CursorMcpMenuContent,
+  useCursorMcpStatus,
+} from "./ComposerCursorMcpControl";
 import { ComposerControl, ComposerControlSeparator } from "./ComposerControl";
 import {
   ComposerFooterModeControls,
@@ -11,6 +16,7 @@ import {
   type RuntimeModeOption,
 } from "./ComposerFooterControls";
 import {
+  type CursorMcpFolderInput,
   type EnvironmentId,
   type ModelSelection,
   type ProviderDriverKind,
@@ -32,6 +38,8 @@ import type { useComposerProviderModel } from "./useComposerProviderModel";
  */
 export function ComposerControlsBar(props: {
   environmentId: EnvironmentId;
+  cursorMcpFolder: CursorMcpFolderInput | null;
+  firstTurn: boolean;
   routeKind: ChatComposerProps["routeKind"];
   routeThreadRef: ChatComposerProps["routeThreadRef"];
   draftId: ChatComposerProps["draftId"];
@@ -128,6 +136,13 @@ export function ComposerControlsBar(props: {
     modelPickerIconClassName,
     getModelDisabledReason,
   } = props;
+  const cursorMcp = useCursorMcpStatus({
+    environmentId,
+    folder: props.cursorMcpFolder,
+    firstTurn: props.firstTurn,
+  });
+  // Blocks after "mode", which overflow before it does.
+  const trailingBlockCount = cursorMcp ? 1 : 0;
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
@@ -159,7 +174,7 @@ export function ComposerControlsBar(props: {
   const restingProviderTraitsPicker = renderProviderTraitsPicker({
     ...providerTraitsPickerInput,
     size: composerControlsCollapsed ? "xs" : "sm",
-    hidden: composerControlsHidden || restingHiddenBlockCount > 1,
+    hidden: composerControlsHidden || restingHiddenBlockCount > 1 + trailingBlockCount,
   });
   const restingBlockDefs = [
     ...(providerTraitsPicker
@@ -184,12 +199,26 @@ export function ComposerControlsBar(props: {
           runtimeMode={compatibleRuntimeMode}
           runtimeModeOptions={compatibleRuntimeModeOptions}
           size={composerControlsCollapsed ? "xs" : "sm"}
-          hidden={composerControlsHidden || restingHiddenBlockCount > 0}
+          hidden={composerControlsHidden || restingHiddenBlockCount > trailingBlockCount}
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
         />
       ),
     },
+    ...(cursorMcp
+      ? [
+          {
+            id: "mcp",
+            content: (
+              <ComposerCursorMcpControl
+                mcp={cursorMcp}
+                size={composerControlsCollapsed ? "xs" : "sm"}
+                hidden={composerControlsHidden || restingHiddenBlockCount > 0}
+              />
+            ),
+          },
+        ]
+      : []),
   ];
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
@@ -319,6 +348,11 @@ export function ComposerControlsBar(props: {
             showInteractionModeToggle={planModeUiEnabled && hiddenRestingBlockIds.includes("mode")}
             traitsMenuContent={
               hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
+            }
+            extraMenuContent={
+              cursorMcp && hiddenRestingBlockIds.includes("mcp") ? (
+                <CursorMcpMenuContent mcp={cursorMcp} />
+              ) : undefined
             }
             onToggleInteractionMode={toggleInteractionMode}
             onRuntimeModeChange={handleRuntimeModeChange}

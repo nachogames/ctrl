@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 // Ctrl: Cursor's MCP servers, managed through Cursor's own config file and CLI.
 
@@ -36,6 +37,8 @@ export const CursorMcpServer = Schema.Struct({
   statusDetail: Schema.NullOr(CursorMcpText),
   /** Signed in on disk, but this server process loaded the folder while it was signed out. */
   needsRelaunch: Schema.Boolean,
+  /** An icon the server's site declares, for URL servers that have one. */
+  iconUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2_048))),
 });
 export type CursorMcpServer = typeof CursorMcpServer.Type;
 
@@ -43,6 +46,8 @@ export type CursorMcpServer = typeof CursorMcpServer.Type;
 export const CursorMcpFolderInput = Schema.Struct({
   threadId: Schema.optionalKey(ThreadId),
   projectId: Schema.optionalKey(ProjectId),
+  /** For a project: the Cursor instance whose settings apply, as a draft has no thread yet. */
+  providerInstanceId: Schema.optionalKey(ProviderInstanceId),
 });
 export type CursorMcpFolderInput = typeof CursorMcpFolderInput.Type;
 
@@ -53,6 +58,8 @@ export const CursorMcpStatusResult = Schema.Struct({
   /** This server process has already opened a Cursor agent in the folder. */
   folderLoaded: Schema.Boolean,
   servers: Schema.Array(CursorMcpServer).check(Schema.isMaxLength(256)),
+  /** Something supervises this server and starts it again after it exits: the desktop app or the background service. */
+  canRestartServer: Schema.Boolean,
   /** Set when `~/.cursor/mcp.json` exists but cannot be read as JSON. */
   userConfigError: Schema.NullOr(CursorMcpText),
 });
@@ -85,6 +92,7 @@ export const CursorMcpOperationErrorReason = Schema.Literals([
   "folder_not_found",
   "sign_in_failed",
   "command_failed",
+  "restart_unsupported",
 ]);
 export type CursorMcpOperationErrorReason = typeof CursorMcpOperationErrorReason.Type;
 
@@ -111,6 +119,8 @@ export class CursorMcpOperationError extends Schema.TaggedError<CursorMcpOperati
         return "Cursor did not finish signing in to that MCP server.";
       case "command_failed":
         return "Cursor's command-line tool failed.";
+      case "restart_unsupported":
+        return "Nothing would start this server again, so restart it on the machine running it.";
     }
   }
 }

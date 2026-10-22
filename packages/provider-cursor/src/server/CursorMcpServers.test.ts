@@ -272,10 +272,168 @@ describePosix("CursorMcpServers", () => {
     ));
 });
 
+// Three folders Cursor knows, under a fake home with one user-level server.
+const setupFolders = Effect.fn("setupCursorFolders")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const makeDirectory = (prefix: string) =>
+    fileSystem
+      .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix })
+      .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+  const home = yield* makeDirectory("cursor-share-home-");
+  const first = yield* makeDirectory("cursor-share-first-");
+  const second = yield* makeDirectory("cursor-share-second-");
+  const target = yield* makeDirectory("cursor-share-target-");
+  const writeJson = (file: string, value: unknown) =>
+    fileSystem
+      .makeDirectory(path.dirname(file), { recursive: true })
+      .pipe(Effect.andThen(fileSystem.writeFileString(file, JSON.stringify(value))));
+  yield* writeJson(path.join(home, ".cursor", "mcp.json"), {
+    mcpServers: {
+      ember: { url: "https://ember.example/mcp" },
+      linear: { url: "https://l.example" },
+    },
+  });
+  const authFile = (folder: string) =>
+    path.join(
+      home,
+      ".cursor",
+      "projects",
+      folder
+        .replace(/[^a-zA-Z0-9]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, ""),
+      "mcp-auth.json",
+    );
+  const writeAuth = Effect.fn("writeAuth")(function* (folder: string, value: unknown, at: number) {
+    yield* writeJson(authFile(folder), value);
+    yield* fileSystem.utimes(authFile(folder), at, at);
+  });
+  const readAuth = (folder: string) =>
+    fileSystem.readFileString(authFile(folder)).pipe(Effect.map((text) => JSON.parse(text)));
+  const share = (folder: string) =>
+    CursorMcpServers.shareCursorMcpSignIns(folder).pipe(
+      Effect.provideService(HostProcess.HomeDirectory, home),
+      Effect.provideService(HostProcess.Environment, { HOME: home }),
+    );
+  return {
+    first,
+    second,
+    target,
+    authFile,
+    writeAuth,
+    readAuth,
+    share,
+    writeJson,
+    fileSystem,
+    path,
+  };
+});
+
+const signIn = (token: string) => ({
+  tokens: { access_token: token, refresh_token: `${token}-refresh` },
+  clientInfo: { client_id: "ctrl" },
+});
+
+describePosix("shareCursorMcpSignIns", () => {
+  afterEach(() => CursorMcpServers.resetCursorMcpFolderCacheForTest());
+
+  it("gives a folder the newest sign-in for each user-level server from any folder", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupFolders();
+        yield* test.writeAuth(
+          test.first,
+          { ember: signIn("old"), linear: { access_token: "legacy" }, local: signIn("local") },
+          1_000,
+        );
+        yield* test.writeAuth(test.second, { ember: signIn("new") }, 3_000);
+        yield* test.writeAuth(test.target, { own: signIn("own") }, 2_000);
+
+        yield* test.share(test.target);
+
+        expect(yield* test.readAuth(test.target)).toEqual({
+          own: signIn("own"),
+          ember: signIn("new"),
+          linear: { tokens: { access_token: "legacy" } },
+        });
+        const info = yield* test.fileSystem.stat(test.authFile(test.target));
+        expect(info.mode & 0o777).toBe(0o600);
+        // Data flows into the folder being opened, never back out.
+        expect(yield* test.readAuth(test.first)).toEqual({
+          ember: signIn("old"),
+          linear: { access_token: "legacy" },
+          local: signIn("local"),
+        });
+      }),
+    ));
+
+  it("keeps a folder's own sign-in when it is the newest", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupFolders();
+        yield* test.writeAuth(test.first, { ember: signIn("first") }, 1_000);
+        yield* test.writeAuth(test.target, { ember: signIn("target") }, 2_000);
+
+        yield* test.share(test.target);
+
+        expect(yield* test.readAuth(test.target)).toEqual({ ember: signIn("target") });
+      }),
+    ));
+
+  it("skips a server the folder's own config defines, so a project cannot take its tokens", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupFolders();
+        yield* test.writeAuth(
+          test.first,
+          { ember: signIn("ember"), linear: signIn("linear") },
+          1_000,
+        );
+        yield* test.writeJson(test.path.join(test.target, ".cursor", "mcp.json"), {
+          mcpServers: { ember: { url: "https://elsewhere.example/mcp" } },
+        });
+
+        yield* test.share(test.target);
+
+        expect(yield* test.readAuth(test.target)).toEqual({ linear: signIn("linear") });
+      }),
+    ));
+
+  it("leaves a folder Cursor already loaded alone, since Cursor would not read the change", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupFolders();
+        yield* test.writeAuth(test.first, { ember: signIn("first") }, 1_000);
+        CursorMcpServers.markCursorFolderLoaded(test.target);
+
+        yield* test.share(test.target);
+
+        expect(yield* test.fileSystem.exists(test.authFile(test.target))).toBe(false);
+      }),
+    ));
+});
+
 describe("parseCursorMcpList", () => {
   it("keeps names with spaces and ignores lines that are not entries", () => {
     expect(
       CursorMcpServers.parseCursorMcpList("Loading…\nAsk 24G: requires_authentication\n\n"),
     ).toEqual([{ name: "Ask 24G", status: "needs_sign_in", detail: "requires_authentication" }]);
+  });
+});
+
+describe("declaredIconUrl", () => {
+  it("takes the first https icon a page declares and resolves it against the page", () => {
+    const html = `<link rel="stylesheet" href="/a.css"><link rel="apple-touch-icon" href="/t.png">
+      <link rel="alternate icon" type="image/png" href="/favicon.png"><link rel="icon" href="/x.svg">`;
+    expect(CursorMcpServers.declaredIconUrl(html, "https://linear.app/")).toBe(
+      "https://linear.app/favicon.png",
+    );
+    expect(
+      CursorMcpServers.declaredIconUrl(
+        '<link rel="icon" href="http://x.test/i.png">',
+        "https://x.test/",
+      ),
+    ).toBeNull();
   });
 });

@@ -167,7 +167,6 @@ interface ComposerSendInput {
   readonly draftId: DraftId | null;
   readonly draftThread: DraftSessionState | null;
   /** Cursor's MCP servers still need a sign-in the user has not skipped. */
-  readonly cursorMcpSignInBlocksSend: boolean;
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly activeThreadKey: string | null;
   readonly activeThreadBranch: string | null;
@@ -258,7 +257,6 @@ export function useComposerSend(input: ComposerSendInput) {
     currentRouteThreadKeyRef,
     draftId,
     draftThread,
-    cursorMcpSignInBlocksSend,
     activeThread,
     activeThreadKey,
     activeThreadBranch,
@@ -479,14 +477,6 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (!sendCtx?.providerAvailable) {
       notifyDirectAnnotationAttached();
-      return;
-    }
-    if (cursorMcpSignInBlocksSend) {
-      toastManager.add({
-        type: "info",
-        title: "Sign in to Cursor's MCP servers first",
-        description: "Or choose Continue anyway above the composer.",
-      });
       return;
     }
     const multipleModelSelections = sendCtx.multipleModelSelections;
