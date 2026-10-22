@@ -101,9 +101,13 @@ import {
   WS_METHODS,
   WsBaseRpcGroup,
   WsCtrlRpcGroup,
+  WsCursorMcpRpcGroup,
   WsReviewSessionsRpcGroup,
   WsRpcGroup,
+  CursorMcpOperationError,
+  type CursorMcpFolderInput,
 } from "@t3tools/contracts";
+import * as CursorMcpServers from "@t3tools/provider-cursor/server/CursorMcpServers";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import {
   HttpRouter,
@@ -560,6 +564,7 @@ const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 const ServerWsBaseRpcGroup = WsBaseRpcGroup.middleware(RpcInstrumentation);
 const ServerReviewSessionsRpcGroup = WsReviewSessionsRpcGroup.middleware(RpcInstrumentation);
 const ServerCtrlRpcGroup = WsCtrlRpcGroup.middleware(RpcInstrumentation);
+const ServerCursorMcpRpcGroup = WsCursorMcpRpcGroup.middleware(RpcInstrumentation);
 // Replaying each intervening event costs a shell refetch; past this gap a
 // single O(active-threads) snapshot is cheaper and bounded.
 const SHELL_RESUME_MAX_GAP = 1_000;
@@ -1262,6 +1267,44 @@ const layerCtrlRpc = ServerCtrlRpcGroup.toLayer(
       [WS_METHODS.remoteMcpAuthorize]: (input) => remoteMcp.authorize(input),
       [WS_METHODS.remoteMcpReconnect]: (input) => remoteMcp.reconnect(input),
       [WS_METHODS.remoteMcpRemove]: (input) => remoteMcp.remove(input),
+    });
+  }),
+);
+
+const layerCursorMcpRpc = ServerCursorMcpRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const cursorMcp = yield* CursorMcpServers.CursorMcpServers;
+    const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+    const projectService = yield* ProjectService.ProjectService;
+    // The folder a Cursor agent runs in: the thread's worktree, else its project's root.
+    const folderNotFound = (cause?: unknown) =>
+      new CursorMcpOperationError({
+        reason: "folder_not_found",
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const folder = Effect.fn("ws.cursorMcp.folder")(function* (input: CursorMcpFolderInput) {
+      let projectId = input.projectId;
+      if (input.threadId !== undefined) {
+        const shell = yield* threadManagement
+          .getThreadShell(input.threadId)
+          .pipe(Effect.mapError(folderNotFound));
+        if (shell === null) return yield* folderNotFound();
+        if (shell.worktreePath !== null) return shell.worktreePath;
+        projectId = shell.projectId;
+      }
+      if (projectId === undefined) return null;
+      const project = yield* projectService
+        .getById(projectId)
+        .pipe(Effect.mapError(folderNotFound));
+      if (Option.isNone(project)) return yield* folderNotFound();
+      return project.value.workspaceRoot;
+    });
+    return ServerCursorMcpRpcGroup.of({
+      [WS_METHODS.cursorMcpStatus]: (input) => folder(input).pipe(Effect.flatMap(cursorMcp.status)),
+      [WS_METHODS.cursorMcpSignIn]: (input) =>
+        folder(input).pipe(Effect.flatMap((path) => cursorMcp.signIn(path, input.name))),
+      [WS_METHODS.cursorMcpSaveServer]: (input) => cursorMcp.saveServer(input),
+      [WS_METHODS.cursorMcpRemoveServer]: (input) => cursorMcp.removeServer(input.name),
     });
   }),
 );
@@ -3339,7 +3382,7 @@ export const layer = Layer.unwrap(
           return httpEffect;
         }).pipe(
           Effect.provide(
-            Layer.merge(
+            Layer.mergeAll(
               layerWsRpc(
                 session,
                 clientOrigin,
@@ -3347,7 +3390,9 @@ export const layer = Layer.unwrap(
                 previewAutomationBroker,
                 serverBrowser,
               ),
-              Layer.merge(layerReviewSessionsRpc, layerCtrlRpc),
+              layerReviewSessionsRpc,
+              layerCtrlRpc,
+              layerCursorMcpRpc.pipe(Layer.provide(CursorMcpServers.layer)),
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees

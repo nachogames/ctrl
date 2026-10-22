@@ -400,6 +400,14 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  CursorMcpFolderInput,
+  CursorMcpOperationError,
+  CursorMcpRemoveServerInput,
+  CursorMcpSaveServerInput,
+  CursorMcpSignInInput,
+  CursorMcpStatusResult,
+} from "./cursorMcp.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 import {
   ThreadGroupMutation,
@@ -572,6 +580,11 @@ export const WS_METHODS = {
   reviewSessionsRequest: "reviewSessions.request",
   reviewSessionsRunLocalReview: "reviewSessions.runLocalReview",
   reviewSessionsDiscussInSideChat: "reviewSessions.discussInSideChat",
+  // Ctrl: Cursor MCP servers.
+  cursorMcpStatus: "cursorMcp.status",
+  cursorMcpSignIn: "cursorMcp.signIn",
+  cursorMcpSaveServer: "cursorMcp.saveServer",
+  cursorMcpRemoveServer: "cursorMcp.removeServer",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2040,6 +2053,28 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+const CursorMcpRpcError = Schema.Union([CursorMcpOperationError, EnvironmentAuthorizationError]);
+const WsCursorMcpStatusRpc = Rpc.make(WS_METHODS.cursorMcpStatus, {
+  payload: CursorMcpFolderInput,
+  success: CursorMcpStatusResult,
+  error: CursorMcpRpcError,
+});
+const WsCursorMcpSignInRpc = Rpc.make(WS_METHODS.cursorMcpSignIn, {
+  payload: CursorMcpSignInInput,
+  success: CursorMcpStatusResult,
+  error: CursorMcpRpcError,
+});
+const WsCursorMcpSaveServerRpc = Rpc.make(WS_METHODS.cursorMcpSaveServer, {
+  payload: CursorMcpSaveServerInput,
+  success: Schema.Void,
+  error: CursorMcpRpcError,
+});
+const WsCursorMcpRemoveServerRpc = Rpc.make(WS_METHODS.cursorMcpRemoveServer, {
+  payload: CursorMcpRemoveServerInput,
+  success: Schema.Void,
+  error: CursorMcpRpcError,
+});
+
 /**
  * Checks the connection's scopes against the scope each RPC declares, before
  * the handler runs. Every RPC in `WsBaseRpcGroup`, `WsReviewSessionsRpcGroup` and `WsCtrlRpcGroup`
@@ -2082,6 +2117,14 @@ export const WsCtrlRpcGroup = RpcGroup.make(
   WsRemoteMcpAuthorizeRpc,
   WsRemoteMcpReconnectRpc,
   WsRemoteMcpRemoveRpc,
+).middleware(RpcScopeAuthorization);
+
+/** Cursor MCP server RPCs, a group of their own for the same reason as the review RPCs. */
+export const WsCursorMcpRpcGroup = RpcGroup.make(
+  WsCursorMcpStatusRpc,
+  WsCursorMcpSignInRpc,
+  WsCursorMcpSaveServerRpc,
+  WsCursorMcpRemoveServerRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Everything but the review RPCs, so the server builds its handlers apart; clients use `WsRpcGroup`. */
@@ -2283,4 +2326,8 @@ export const WsBaseRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeCommandOutputRpc,
 ).middleware(RpcScopeAuthorization);
 
-export const WsRpcGroup = WsBaseRpcGroup.merge(WsReviewSessionsRpcGroup, WsCtrlRpcGroup);
+export const WsRpcGroup = WsBaseRpcGroup.merge(
+  WsReviewSessionsRpcGroup,
+  WsCtrlRpcGroup,
+  WsCursorMcpRpcGroup,
+);

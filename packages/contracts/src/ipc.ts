@@ -1125,6 +1125,8 @@ export interface DesktopBridge {
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
+  /** Ctrl: quits and reopens the app, restarting its bundled server. */
+  relaunchApp?: () => Promise<void>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   cliCommand?: {
     getState: () => Promise<DesktopCliCommandState>;

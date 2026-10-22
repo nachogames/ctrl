@@ -28,6 +28,21 @@ Use **Change account** or **Sign out** in the same settings section. Both stop t
 instance's running threads and keep their history. Sign-out forgets the saved credential; to revoke
 the generated key before it expires, remove it from your Cursor dashboard's API keys.
 
+## MCP servers
+
+Cursor threads load the MCP servers in `~/.cursor/mcp.json` and the project's `.cursor/mcp.json`.
+Servers installed as Cursor app plugins may not load; add them as regular MCP servers instead.
+Manage your user-level servers in **Settings > Providers > Cursor > MCP servers**.
+
+Checking status and signing in use Cursor's command-line tool. Install it on the machine running
+T3 Code with `curl https://cursor.com/install -fsS | bash`.
+
+Cursor saves MCP sign-ins per folder, so each project and worktree needs its own sign-in. Before a
+Cursor thread's first message, T3 Code checks the folder and offers **Sign in** for any server
+that needs it; the browser opens on the machine running T3 Code. Cursor reads a folder's sign-ins
+once per server start, so a sign-in finished after a thread already used that folder needs a
+restart. On desktop, choose **Relaunch** when T3 Code asks.
+
 ## V2 Capability Mapping
 
 The adapter supports:

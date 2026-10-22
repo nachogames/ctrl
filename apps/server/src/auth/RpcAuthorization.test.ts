@@ -92,6 +92,17 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("lets readers check Cursor MCP status but only provider managers change it", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.cursorMcpStatus)).toBe(AuthOrchestrationReadScope);
+    for (const method of [
+      WS_METHODS.cursorMcpSignIn,
+      WS_METHODS.cursorMcpSaveServer,
+      WS_METHODS.cursorMcpRemoveServer,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthProvidersManageScope);
+    }
+  });
+
   it("separates ACP Registry discovery from provisioning", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverSearchAcpRegistry)).toBe(
       AuthOrchestrationReadScope,

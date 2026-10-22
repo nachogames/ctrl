@@ -460,6 +460,7 @@ import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEn
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { useAgentOpenedPreviews } from "./preview/useAgentOpenedPreviews";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { useCursorMcpSignInBanner } from "./chat/useCursorMcpSignInBanner";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
 import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../timestampFormat";
 import { ComposerSurface } from "./chat/ComposerSurface";
@@ -4700,6 +4701,22 @@ export default function ChatView(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
+  // A thread about to get a new worktree has no folder to check yet.
+  const cursorMcpFolder =
+    selectedProvider !== "cursor" ||
+    activeThread == null ||
+    (activeThread.worktreePath == null && sendEnvMode === "worktree")
+      ? null
+      : isServerThread
+        ? { threadId: activeThread.id }
+        : activeThread.worktreePath == null && activeProject != null
+          ? { projectId: activeProject.id }
+          : null;
+  const cursorMcpSignIn = useCursorMcpSignInBanner({
+    environmentId: activeThread?.environmentId ?? null,
+    folder: cursorMcpFolder,
+    firstTurn: activeMessageCount === 0,
+  });
   const localCheckoutBranchMismatch = isServerThread
     ? resolveLocalCheckoutBranchMismatch({
         effectiveEnvMode: envMode,
@@ -5432,12 +5449,14 @@ export default function ChatView(props: ChatViewProps) {
     ].filter((item) => item !== null);
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
+    const cursorMcpItems = cursorMcpSignIn.item === null ? [] : [cursorMcpSignIn.item];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
         ...limitRecoveryItems,
         ...usageLimitsItems,
         ...projectCloneItems,
+        ...cursorMcpItems,
         ...systemComposerBannerItems,
         ...backgroundWorkItems,
       ];
@@ -5447,6 +5466,7 @@ export default function ChatView(props: ChatViewProps) {
       ...limitRecoveryItems,
       ...usageLimitsItems,
       ...projectCloneItems,
+      ...cursorMcpItems,
       ...systemComposerBannerItems,
       ...backgroundWorkItems,
       {
@@ -6098,6 +6118,14 @@ export default function ChatView(props: ChatViewProps) {
     }
     if (!sendCtx?.providerAvailable) {
       notifyDirectAnnotationAttached();
+      return;
+    }
+    if (cursorMcpSignIn.blocksSend) {
+      toastManager.add({
+        type: "info",
+        title: "Sign in to Cursor's MCP servers first",
+        description: "Or choose Continue anyway above the composer.",
+      });
       return;
     }
     const multipleModelSelections = sendCtx.multipleModelSelections;

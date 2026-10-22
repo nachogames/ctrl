@@ -1276,6 +1276,34 @@ export function createServerEnvironmentAtoms<R, E>(
           `${environmentId}:${input.instanceId}:${input.projectId}:${input.providerId}`,
       },
     }),
+    cursorMcpStatus: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cursor-mcp:status",
+      tag: WS_METHODS.cursorMcpStatus,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.threadId ?? ""}:${input.projectId ?? ""}`,
+      },
+    }),
+    cursorMcpSignIn: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cursor-mcp:sign-in",
+      tag: WS_METHODS.cursorMcpSignIn,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.threadId ?? ""}:${input.projectId ?? ""}:${input.name}`,
+      },
+    }),
+    cursorMcpSaveServer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cursor-mcp:save-server",
+      tag: WS_METHODS.cursorMcpSaveServer,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    cursorMcpRemoveServer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cursor-mcp:remove-server",
+      tag: WS_METHODS.cursorMcpRemoveServer,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     logoutAcpRegistry: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:acp-registry:logout",
       tag: WS_METHODS.serverLogoutAcpRegistry,
