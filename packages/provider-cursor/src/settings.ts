@@ -32,7 +32,7 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Ask before MCP tools outside your allowlist",
         description:
-          "Shows an approval card before a Cursor thread calls an MCP tool your Cursor allowlist doesn't allow, even in Full access. Rules come from permissions in ~/.cursor/cli-config.json, such as Mcp(linear:get_*). Adds a hook to ~/.cursor/hooks.json that does nothing in the Cursor app.",
+          "Shows an approval card before a Cursor thread calls an MCP tool your Cursor allowlist doesn't allow, even in Full access. Uses the Cursor app's MCP allowlist, plus any permissions in ~/.cursor/cli-config.json. Adds a hook to ~/.cursor/hooks.json that does nothing in the Cursor app.",
         providerSettingsForm: { control: "switch" },
       }),
     ),

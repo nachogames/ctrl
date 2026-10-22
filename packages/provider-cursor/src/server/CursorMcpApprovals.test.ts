@@ -7,6 +7,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as SqlClient from "effect/sql/SqlClient";
+
 import * as Approvals from "./CursorMcpApprovals.ts";
 
 const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>) =>
@@ -239,4 +242,74 @@ describe("syncCursorApprovalHook", () => {
         expect(failure._tag).toBe("CursorApprovalHookError");
       }),
     ));
+});
+
+describe("the Cursor app's MCP allowlist", () => {
+  afterEach(() => Approvals.resetCursorApprovalSessionsForTest());
+
+  const writeAppSettings = Effect.fn("writeAppSettings")(function* (
+    home: string,
+    composerState: Record<string, unknown>,
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = path.join(
+      home,
+      "Library",
+      "Application Support",
+      "Cursor",
+      "User",
+      "globalStorage",
+    );
+    yield* fileSystem.makeDirectory(directory, { recursive: true });
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql.unsafe("CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)");
+      yield* sql.unsafe("INSERT INTO ItemTable (key, value) VALUES (?, ?)", [
+        "src.vs.platform.reactivestorage.browser.reactiveStorageServiceImpl.persistentStorage.applicationUser",
+        JSON.stringify({ composerState }),
+      ]);
+    }).pipe(
+      Effect.provide(
+        NodeSqliteClient.layer({
+          filename: path.join(directory, "state.vscdb"),
+          readerWorker: false,
+          checkpointWorker: false,
+        }),
+      ),
+    );
+  });
+
+  it("allows what the app allows, server-wide entries included, and asks for the rest", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupHome();
+        yield* writeAppSettings(test.home, {
+          mcpAllowedTools: ["linear:get_workspace", "plugin-figma-figma:*"],
+          yoloMcpToolsDisabled: false,
+        });
+        const session = fakeSession("deny");
+        yield* Approvals.registerCursorApprovalSession(session.session);
+        const decide = (server: string, tool: string) =>
+          test
+            .inHome(
+              Approvals.decideCursorMcpHook(hookCall({ mcp_server_name: server, tool_name: tool })),
+            )
+            .pipe(Effect.map((response) => response.permission));
+
+        expect(yield* decide("linear", "get_workspace")).toBe("allow");
+        expect(yield* decide("plugin-figma-figma", "get_screenshot")).toBe("allow");
+        expect(session.calls).toHaveLength(0);
+        expect(yield* decide("linear", "save_issue")).toBe("deny");
+        expect(session.calls.map((call) => call.tool)).toEqual(["save_issue"]);
+      }),
+    ));
+
+  it("asks for everything when the app has MCP auto-run turned off", () => {
+    expect(
+      Approvals.findMcpAllowedTools({
+        composerState: { mcpAllowedTools: ["linear:*"], yoloMcpToolsDisabled: true },
+      }),
+    ).toEqual([]);
+  });
 });

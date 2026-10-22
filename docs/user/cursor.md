@@ -61,14 +61,15 @@ their own. To approve MCP calls yourself, turn on **Ask before MCP tools outside
 in **Settings > Providers > Cursor**. Any MCP call your allowlist doesn't cover then waits for an
 approval card in the thread, even in Full access: **Allow**, **Allow for this chat**, or **Deny**.
 
-The allowlist is the `permissions` list in `~/.cursor/cli-config.json`, the same rules the
-`cursor-agent` CLI uses. Allow rules run without asking, deny rules are always refused, and
-anything else asks:
+The allowlist is the one you already keep in the Cursor app: tools you've set to run without
+asking there run without asking here, and anything else asks. Changes in the app apply right away.
+You can add rules of your own, including deny rules, in `~/.cursor/cli-config.json`, the same
+format the `cursor-agent` CLI uses:
 
 ```json
 {
   "permissions": {
-    "allow": ["Mcp(linear:get_*)", "Mcp(linear:list_*)", "Mcp(ember:*)"],
+    "allow": ["Mcp(ember:*)"],
     "deny": ["Mcp(linear:delete_*)"]
   }
 }

@@ -8,11 +8,13 @@
  */
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
 type JsonObject = Record<string, unknown>;
 
@@ -71,6 +73,80 @@ export function mcpPermission(
   return "ask";
 }
 
+/** The `mcpAllowedTools` list anywhere in a stored settings object. */
+export function findMcpAllowedTools(value: unknown, depth = 0): ReadonlyArray<string> | null {
+  if (depth > 8 || typeof value !== "object" || value === null) return null;
+  if (!Array.isArray(value)) {
+    const record = value as JsonObject;
+    if (Array.isArray(record.mcpAllowedTools)) {
+      // With MCP auto-run off, the app asks before every tool, whatever the list says.
+      if (record.yoloMcpToolsDisabled === true) return [];
+      return record.mcpAllowedTools.filter((entry): entry is string => typeof entry === "string");
+    }
+  }
+  for (const child of Object.values(value)) {
+    const found = findMcpAllowedTools(child, depth + 1);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * The Cursor app's MCP allowlist, `server:tool` entries it keeps in its own
+ * settings database. Undocumented, so any surprise reads as an empty list,
+ * which only makes calls ask.
+ */
+const readCursorAppAllowedTools = Effect.fn("CursorMcpApprovals.readAppAllowedTools")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
+  const platform = yield* HostProcess.Platform;
+  const userDirectory =
+    platform === "darwin"
+      ? path.join(homeDirectory, "Library", "Application Support", "Cursor", "User")
+      : platform === "linux"
+        ? path.join(homeDirectory, ".config", "Cursor", "User")
+        : null;
+  if (userDirectory === null) return [];
+  const database = path.join(userDirectory, "globalStorage", "state.vscdb");
+  if (!(yield* fileSystem.exists(database).pipe(Effect.orElseSucceed(() => false)))) return [];
+  return yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // Cursor holds the writer while it runs; fail fast instead of waiting on it.
+    yield* sql.unsafe("PRAGMA busy_timeout = 100");
+    const rows = yield* sql.unsafe<{ readonly value: unknown }>(
+      "SELECT value FROM ItemTable WHERE key LIKE '%reactivestorage%'",
+    );
+    for (const row of rows) {
+      const raw =
+        typeof row.value === "string"
+          ? row.value
+          : row.value instanceof Uint8Array
+            ? new TextDecoder().decode(row.value)
+            : null;
+      if (raw === null || !raw.includes("mcpAllowedTools")) continue;
+      const parsed = decodeJson(raw);
+      const found = Option.isSome(parsed) ? findMcpAllowedTools(parsed.value) : null;
+      if (found !== null) return found;
+    }
+    return [];
+  }).pipe(
+    Effect.provide(NodeSqliteClient.layer({ filename: database, readonly: true })),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not read the Cursor app's MCP allowlist.", { cause }).pipe(
+        Effect.as([]),
+      ),
+    ),
+  );
+});
+
+/** `server:tool` from the Cursor app as a `Mcp(server:tool)` rule. */
+const appAllowRule = (entry: string) => {
+  const separator = entry.indexOf(":");
+  return separator <= 0 ? null : `Mcp(${entry.slice(0, separator)}:${entry.slice(separator + 1)})`;
+};
+
+/** Rules from `~/.cursor/cli-config.json` plus the Cursor app's MCP allowlist. */
 const readRules = Effect.fn("CursorMcpApprovals.readRules")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -85,8 +161,12 @@ const readRules = Effect.fn("CursorMcpApprovals.readRules")(function* () {
       : {};
   const strings = (value: unknown) =>
     Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+  const appRules = (yield* readCursorAppAllowedTools()).flatMap((entry) => {
+    const rule = appAllowRule(entry);
+    return rule === null ? [] : [rule];
+  });
   return {
-    allow: strings(permissions.allow),
+    allow: [...strings(permissions.allow), ...appRules],
     deny: strings(permissions.deny),
   } satisfies McpPermissionRules;
 });
