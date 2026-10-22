@@ -4,6 +4,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 
@@ -317,4 +318,37 @@ describe("the Cursor app's MCP allowlist", () => {
       }),
     ).toEqual([]);
   });
+});
+
+describe("the approval hook script", () => {
+  it("is left alone while it is correct, and replaced when edited or not executable", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupHome();
+        const script = test.path.join(test.home, ".cursor", "hooks", "ctrl-mcp-approval.sh");
+        const modifiedAt = test.fileSystem
+          .stat(script)
+          .pipe(Effect.map((info) => Option.getOrUndefined(info.mtime)?.getTime()));
+
+        yield* test.inHome(Approvals.setCursorApprovalHookInstalled(true));
+        // Back-date the script so any rewrite, in place or by rename, shows up.
+        const fileSystem = test.fileSystem;
+        yield* fileSystem.utimes(script, 1_000, 1_000);
+        yield* test.inHome(Approvals.setCursorApprovalHookInstalled(true));
+        // Every turn runs this check; a correct script is not rewritten.
+        expect(yield* modifiedAt).toBe(1_000_000);
+
+        yield* test.fileSystem.writeFileString(script, "#!/bin/sh\necho '{}'\n");
+        yield* test.inHome(Approvals.setCursorApprovalHookInstalled(true));
+        expect(yield* test.fileSystem.readFileString(script)).toContain("T3CODE_CURSOR_HOOK_URL");
+
+        yield* test.fileSystem.chmod(script, 0o644);
+        yield* test.inHome(Approvals.setCursorApprovalHookInstalled(true));
+        expect(((yield* test.fileSystem.stat(script)).mode & 0o777).toString(8)).toBe("755");
+        // Rewrites leave nothing else behind in the user's hooks folder.
+        expect(yield* fileSystem.readDirectory(test.path.dirname(script))).toEqual([
+          "ctrl-mcp-approval.sh",
+        ]);
+      }),
+    ));
 });
