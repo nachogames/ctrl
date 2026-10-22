@@ -43,7 +43,8 @@ const SIGN_IN_TIMEOUT = Duration.minutes(5);
 // oxlint-disable-next-line no-control-regex -- strips the CLI's ANSI color codes.
 const ANSI_PATTERN = /\u001b\[[0-9;]*[A-Za-z]/g;
 // `cursor-agent mcp login` sometimes stops after receiving the OAuth code and
-// asks to be run again to finish the token exchange.
+// asks to be run again to finish the token exchange. It can print that hint
+// after a sign-in that already worked, so the server's status decides.
 const SIGN_IN_RERUN_PATTERN = /re-?run/i;
 
 type JsonObject = Record<string, unknown>;
@@ -567,6 +568,16 @@ const make = Effect.gen(function* () {
     name: string,
   ) {
     const cwd = folder ?? homeDirectory;
+    const isReady = runCli(["mcp", "list"], cwd, LIST_TIMEOUT).pipe(
+      Effect.map(
+        (listed) =>
+          Option.isSome(listed) &&
+          listed.value.code === 0 &&
+          parseCursorMcpList(listed.value.stdout).some(
+            (entry) => entry.name === name && entry.status === "ready",
+          ),
+      ),
+    );
     let attempts = 0;
     while (attempts < 2) {
       attempts += 1;
@@ -577,7 +588,9 @@ const make = Effect.gen(function* () {
       if (result.value.code !== 0) {
         return yield* new CursorMcpOperationError({ reason: "sign_in_failed" });
       }
+      // A second run opens the browser again, so only when the first did not finish.
       if (!SIGN_IN_RERUN_PATTERN.test(`${result.value.stdout}\n${result.value.stderr}`)) break;
+      if (yield* isReady) break;
     }
     if (folder !== null) {
       const state = cursorFolders.get(folder);
