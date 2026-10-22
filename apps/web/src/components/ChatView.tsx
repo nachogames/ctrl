@@ -166,7 +166,7 @@ import {
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { useLiveDraftGroup, useThreadGroup } from "../state/threadGroups";
-import { useCursorMcpSignInBanner } from "./chat/useCursorMcpSignInBanner";
+import { ComposerCursorMcpTab } from "./chat/ComposerCursorMcpTab";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
@@ -2251,11 +2251,14 @@ export default function ChatView(props: ChatViewProps) {
         : activeThread.worktreePath == null && activeProject != null
           ? { projectId: activeProject.id }
           : null;
-  const cursorMcpSignIn = useCursorMcpSignInBanner({
-    environmentId: activeThread?.environmentId ?? null,
-    folder: cursorMcpFolder,
-    firstTurn: activeMessageCount === 0,
-  });
+  const cursorMcpTab =
+    cursorMcpFolder === null || activeThread == null ? null : (
+      <ComposerCursorMcpTab
+        environmentId={activeThread.environmentId}
+        folder={cursorMcpFolder}
+        firstTurn={activeMessageCount === 0}
+      />
+    );
   const localCheckoutBranchMismatch = isServerThread
     ? resolveLocalCheckoutBranchMismatch({
         effectiveEnvMode: envMode,
@@ -2660,14 +2663,12 @@ export default function ChatView(props: ChatViewProps) {
     );
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
-    const cursorMcpItems = cursorMcpSignIn.item === null ? [] : [cursorMcpSignIn.item];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
         ...limitRecoveryItems,
         ...usageLimitsItems,
         ...projectCloneItems,
-        ...cursorMcpItems,
         ...systemComposerBannerItems,
         ...backgroundWorkItems,
       ];
@@ -2677,7 +2678,6 @@ export default function ChatView(props: ChatViewProps) {
       ...limitRecoveryItems,
       ...usageLimitsItems,
       ...projectCloneItems,
-      ...cursorMcpItems,
       ...systemComposerBannerItems,
       ...backgroundWorkItems,
       branchMismatchBannerItem({
@@ -2923,7 +2923,6 @@ export default function ChatView(props: ChatViewProps) {
     currentRouteThreadKeyRef,
     draftId,
     draftThread,
-    cursorMcpSignInBlocksSend: cursorMcpSignIn.blocksSend,
     activeThread,
     activeThreadKey,
     activeThreadBranch,
@@ -3586,6 +3585,7 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               queuedRunsControl={queuedRunsControl}
+                              shoulderTab={cursorMcpTab}
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}

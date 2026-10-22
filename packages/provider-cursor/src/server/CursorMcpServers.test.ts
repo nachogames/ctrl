@@ -1,3 +1,4 @@
+import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -268,6 +269,132 @@ describePosix("CursorMcpServers", () => {
         expect(failure.reason).toBe("config_invalid");
         expect(yield* test.readUserConfig).toBe("{ not json");
         expect((yield* test.service.status(null)).userConfigError).not.toBeNull();
+      }),
+    ));
+});
+
+// Two checkouts of one repository and an unrelated one, each with Cursor's
+// per-folder data directory under a fake home.
+const setupCheckouts = Effect.fn("setupCursorCheckouts")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const makeDirectory = (prefix: string) =>
+    fileSystem
+      .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix })
+      .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+  const home = yield* makeDirectory("cursor-share-home-");
+  const root = yield* makeDirectory("cursor-share-repo-");
+  const other = yield* makeDirectory("cursor-share-other-");
+  const worktree = path.join(yield* makeDirectory("cursor-share-worktrees-"), "feature");
+  const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+    Effect.sync(() => NodeChildProcess.execFileSync("git", args, { cwd, stdio: "ignore" }));
+  for (const repository of [root, other]) {
+    yield* git(repository, "init", "-q");
+    yield* git(
+      repository,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "init",
+    );
+  }
+  yield* git(root, "worktree", "add", "-q", worktree);
+  const authFile = (folder: string) =>
+    path.join(
+      home,
+      ".cursor",
+      "projects",
+      folder
+        .replace(/[^a-zA-Z0-9]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, ""),
+      "mcp-auth.json",
+    );
+  const writeAuth = Effect.fn("writeAuth")(function* (folder: string, value: unknown, at: Date) {
+    const file = authFile(folder);
+    yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
+    yield* fileSystem.writeFileString(file, JSON.stringify(value));
+    yield* fileSystem.utimes(file, at, at);
+  });
+  const readAuth = (folder: string) =>
+    fileSystem.readFileString(authFile(folder)).pipe(Effect.map((text) => JSON.parse(text)));
+  const share = (folder: string) =>
+    CursorMcpServers.shareCursorMcpSignIns(folder).pipe(
+      Effect.provideService(HostProcess.HomeDirectory, home),
+      Effect.provideService(HostProcess.Environment, { HOME: home }),
+    );
+  return { root, other, worktree, authFile, writeAuth, readAuth, share, fileSystem };
+});
+
+const ember = (token: string) => ({
+  tokens: { access_token: token, refresh_token: `${token}-refresh` },
+  clientInfo: { client_id: "ctrl" },
+});
+
+describePosix("shareCursorMcpSignIns", () => {
+  afterEach(() => CursorMcpServers.resetCursorMcpFolderCacheForTest());
+
+  it("gives a new worktree the newest sign-in per server from the repository's checkouts", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupCheckouts();
+        yield* test.writeAuth(
+          test.root,
+          { ember: ember("root"), linear: { access_token: "legacy" } },
+          new Date(2_000),
+        );
+        yield* test.writeAuth(test.other, { github: ember("other") }, new Date(3_000));
+        yield* test.writeAuth(
+          test.worktree,
+          { ember: ember("stale"), own: ember("own") },
+          new Date(1_000),
+        );
+
+        yield* test.share(test.worktree);
+
+        expect(yield* test.readAuth(test.worktree)).toEqual({
+          ember: ember("root"),
+          own: ember("own"),
+          linear: { tokens: { access_token: "legacy" } },
+        });
+        const info = yield* test.fileSystem.stat(test.authFile(test.worktree));
+        expect(info.mode & 0o777).toBe(0o600);
+        // Data flows into the folder being opened, never back out.
+        expect(yield* test.readAuth(test.root)).toEqual({
+          ember: ember("root"),
+          linear: { access_token: "legacy" },
+        });
+      }),
+    ));
+
+  it("keeps a folder's own sign-in when it is the newest", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupCheckouts();
+        yield* test.writeAuth(test.worktree, { ember: ember("worktree") }, new Date(1_000));
+        yield* test.writeAuth(test.root, { ember: ember("root") }, new Date(2_000));
+
+        yield* test.share(test.root);
+
+        expect(yield* test.readAuth(test.root)).toEqual({ ember: ember("root") });
+      }),
+    ));
+
+  it("leaves a folder Cursor already loaded alone, since Cursor would not read the change", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupCheckouts();
+        yield* test.writeAuth(test.root, { ember: ember("root") }, new Date(2_000));
+        CursorMcpServers.markCursorFolderLoaded(test.worktree);
+
+        yield* test.share(test.worktree);
+
+        expect(yield* test.fileSystem.exists(test.authFile(test.worktree))).toBe(false);
       }),
     ));
 });

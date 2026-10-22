@@ -15,17 +15,6 @@ export const getLocalEnvironmentEnabled = makeSyncIpcMethod({
   }),
 });
 
-// Ctrl: restarts the bundled server, for state a provider SDK only reads once per process.
-export const relaunchApp = makeIpcMethod({
-  channel: IpcChannels.RELAUNCH_APP_CHANNEL,
-  payload: Schema.Void,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.localEnvironment.relaunchApp")(function* () {
-    const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-    yield* lifecycle.relaunch("requested-by-renderer");
-  }),
-});
-
 export const setLocalEnvironmentEnabled = makeIpcMethod({
   channel: IpcChannels.SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL,
   payload: Schema.Boolean,

@@ -76,6 +76,9 @@ describe("RPC authorization scopes", () => {
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthProvidersManageScope);
     }
+    expect(requiredScopeForRpcMethod(WS_METHODS.cursorMcpRestartServer)).toBe(
+      AuthEnvironmentMaintainScope,
+    );
   });
 
   it("lets readers watch a review but only operators change it or start its chats", () => {

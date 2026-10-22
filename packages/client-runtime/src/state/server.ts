@@ -1332,6 +1332,11 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.cursorMcpRemoveServer,
       concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     }),
+    cursorMcpRestartServer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cursor-mcp:restart-server",
+      tag: WS_METHODS.cursorMcpRestartServer,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     logoutAcpRegistry: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:acp-registry:logout",
       tag: WS_METHODS.serverLogoutAcpRegistry,

@@ -481,6 +481,8 @@ export interface ChatComposerProps {
   onPageScrollRelease: () => void;
 
   queuedRunsControl?: ReactNode;
+  /** A tab beside the stash tab on the composer's top edge. */
+  shoulderTab?: ReactNode;
   editingQueuedAttachments: ReadonlyArray<{
     readonly attachment: ContractChatAttachment;
     readonly url: string | null;
@@ -3607,6 +3609,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           pulsing={stashPulse.active}
           onToggleMenu={toggleStashMenuStable}
         />
+        {props.shoulderTab}
       </ComposerBanner.Dock>
       <div className="relative">
         <ComposerSurface.Main

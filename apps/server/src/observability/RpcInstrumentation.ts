@@ -113,6 +113,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.cursorMcpSignIn]: "server",
   [WS_METHODS.cursorMcpSaveServer]: "server",
   [WS_METHODS.cursorMcpRemoveServer]: "server",
+  [WS_METHODS.cursorMcpRestartServer]: "server",
   [WS_METHODS.secretsAnswerRequest]: "secrets",
   [WS_METHODS.cloudGetRelayClientStatus]: "cloud",
   [WS_METHODS.cloudInstallRelayClient]: "cloud",

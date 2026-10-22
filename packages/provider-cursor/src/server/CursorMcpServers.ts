@@ -32,6 +32,8 @@ import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { CursorSettings } from "../settings.ts";
+
 export const CURSOR_CLI_INSTALL_COMMAND = "curl https://cursor.com/install -fsS | bash";
 
 const LIST_TIMEOUT = Duration.seconds(60);
@@ -161,6 +163,146 @@ function removeCursorMcpEntry(config: JsonObject, name: string): JsonObject | "s
   return { ...config, mcpServers: rest };
 }
 
+const decodeCursorSettings = Schema.decodeUnknownOption(CursorSettings);
+
+/** Whether a Cursor provider instance's saved config opted into sharing sign-ins. */
+export function cursorSharesMcpSignIns(config: unknown): boolean {
+  const settings = decodeCursorSettings(config ?? {});
+  return Option.isSome(settings) && settings.value.shareMcpSignInsWithWorktrees;
+}
+
+/** Cursor's per-folder data directory, named the way its SDK names it. */
+function cursorFolderDataDirectory(
+  path: Path.Path,
+  cursorDataDirectory: string,
+  folder: string,
+): string {
+  const slug = folder
+    .replace(/[^a-zA-Z0-9]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return path.join(cursorDataDirectory, "projects", slug);
+}
+
+const hasTokens = (entry: unknown): entry is JsonObject =>
+  isJsonObject(entry) &&
+  (isJsonObject(entry.tokens) || "access_token" in entry || "refresh_token" in entry);
+
+// Older Cursor builds stored bare tokens per server. The SDK converts a file
+// only when it is all one shape, so a copied entry always takes the new shape.
+const normalizedAuthEntry = (entry: JsonObject): JsonObject =>
+  "tokens" in entry || "clientInfo" in entry ? entry : { tokens: entry };
+
+/**
+ * Every checkout of the git repository holding `folder`: the main checkout and
+ * its worktrees, read from git's own metadata so nothing outside the repository
+ * is considered.
+ */
+const repositoryCheckouts = Effect.fn("CursorMcpServers.repositoryCheckouts")(function* (
+  folder: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const readText = (file: string) =>
+    fileSystem.readFileString(file).pipe(
+      Effect.map((text) => text.trim()),
+      Effect.option,
+    );
+  const dotGit = path.join(folder, ".git");
+  const info = yield* fileSystem.stat(dotGit).pipe(Effect.option);
+  if (Option.isNone(info)) return [];
+  let commonDirectory = dotGit;
+  if (info.value.type === "File") {
+    const pointer = yield* readText(dotGit);
+    if (Option.isNone(pointer) || !pointer.value.startsWith("gitdir:")) return [];
+    const gitDirectory = path.resolve(folder, pointer.value.slice("gitdir:".length).trim());
+    const common = yield* readText(path.join(gitDirectory, "commondir"));
+    commonDirectory = Option.isSome(common)
+      ? path.resolve(gitDirectory, common.value)
+      : gitDirectory;
+  }
+  const checkouts = new Set<string>();
+  if (path.basename(commonDirectory) === ".git") checkouts.add(path.dirname(commonDirectory));
+  const worktreesDirectory = path.join(commonDirectory, "worktrees");
+  const names = yield* fileSystem
+    .readDirectory(worktreesDirectory)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  for (const name of names) {
+    const gitFile = yield* readText(path.join(worktreesDirectory, name, "gitdir"));
+    if (Option.isSome(gitFile) && gitFile.value.length > 0) {
+      checkouts.add(path.dirname(path.resolve(worktreesDirectory, name, gitFile.value)));
+    }
+  }
+  checkouts.delete(folder);
+  return [...checkouts];
+});
+
+/**
+ * Before Cursor first opens `folder`, gives it the newest saved sign-in for each
+ * MCP server from the other checkouts of the same repository, so a new worktree
+ * starts signed in. Sign-ins stay in this user's Cursor data directory and never
+ * cross repositories. Does nothing once the folder is loaded: Cursor would not
+ * read the change until restart, and its own copy may be newer.
+ */
+export const shareCursorMcpSignIns = Effect.fn("CursorMcpServers.shareSignIns")(function* (
+  folder: string,
+) {
+  if (cursorFolders.get(folder)?.loaded === true) return;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
+  const cursorDataDirectory =
+    environment.CURSOR_DATA_DIR?.trim() || path.join(homeDirectory, ".cursor");
+  const authFile = (checkout: string) =>
+    path.join(cursorFolderDataDirectory(path, cursorDataDirectory, checkout), "mcp-auth.json");
+
+  const readAuth = Effect.fn("CursorMcpServers.readAuth")(function* (file: string) {
+    const info = yield* fileSystem.stat(file).pipe(Effect.option);
+    if (Option.isNone(info)) return null;
+    const text = yield* fileSystem.readFileString(file).pipe(Effect.option);
+    const parsed = Option.isSome(text) ? decodeJson(text.value) : Option.none();
+    if (Option.isNone(parsed) || !isJsonObject(parsed.value)) return null;
+    const modifiedAt = Option.match(info.value.mtime, {
+      onNone: () => 0,
+      onSome: (mtime) => mtime.getTime(),
+    });
+    return { entries: parsed.value, modifiedAt };
+  });
+
+  const checkouts = yield* repositoryCheckouts(folder);
+  if (checkouts.length === 0) return;
+  const targetFile = authFile(folder);
+  const target = yield* readAuth(targetFile);
+  const sources = [];
+  for (const checkout of checkouts) {
+    const source = yield* readAuth(authFile(checkout));
+    if (source !== null) sources.push(source);
+  }
+  // The most recently written file holds the freshest tokens for its servers.
+  const ranked = [...sources, ...(target === null ? [] : [target])].toSorted(
+    (left, right) => right.modifiedAt - left.modifiedAt,
+  );
+  const next: JsonObject = { ...target?.entries };
+  let changed = false;
+  const taken = new Set<string>();
+  for (const file of ranked) {
+    for (const [server, entry] of Object.entries(file.entries)) {
+      if (taken.has(server) || !hasTokens(entry)) continue;
+      taken.add(server);
+      if (file === target) continue;
+      next[server] = normalizedAuthEntry(entry);
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  const temporaryFile = `${targetFile}.ctrl.tmp`;
+  yield* fileSystem.makeDirectory(path.dirname(targetFile), { recursive: true, mode: 0o700 });
+  // @effect-diagnostics-next-line preferSchemaOverJson:off - Cursor's own file format.
+  yield* fileSystem.writeFileString(temporaryFile, JSON.stringify(next), { mode: 0o600 });
+  yield* fileSystem.rename(temporaryFile, targetFile);
+});
+
 interface CursorFolderState {
   loaded: boolean;
   /** Servers needing sign-in at the last check before the folder loaded. */
@@ -222,17 +364,21 @@ export function resetCursorMcpFolderCacheForTest(): void {
   cursorFolders.clear();
 }
 
+/** Status as Cursor sees it; the server adds whether it can restart itself. */
+export type CursorMcpFolderStatus = Omit<CursorMcpStatusResult, "canRestartServer">;
+
 export class CursorMcpServers extends Context.Service<
   CursorMcpServers,
   {
     /** `folder` is null for user-level servers only. */
     readonly status: (
       folder: string | null,
-    ) => Effect.Effect<CursorMcpStatusResult, CursorMcpOperationError>;
+      options?: { readonly shareSignIns?: boolean },
+    ) => Effect.Effect<CursorMcpFolderStatus, CursorMcpOperationError>;
     readonly signIn: (
       folder: string | null,
       name: string,
-    ) => Effect.Effect<CursorMcpStatusResult, CursorMcpOperationError>;
+    ) => Effect.Effect<CursorMcpFolderStatus, CursorMcpOperationError>;
     readonly saveServer: (
       input: CursorMcpSaveServerInput,
     ) => Effect.Effect<void, CursorMcpOperationError>;
@@ -284,6 +430,17 @@ const make = Effect.gen(function* () {
     return Option.none();
   });
 
+  const shareSignInsQuietly = (folder: string) =>
+    shareCursorMcpSignIns(folder).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HostProcess.Environment, environment),
+      Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not share Cursor MCP sign-ins with this folder.", { cause }),
+      ),
+    );
+
   const readConfig = Effect.fn("CursorMcpServers.readConfig")(function* (configPath: string) {
     const text = yield* fileSystem.readFileString(configPath).pipe(Effect.option);
     if (Option.isNone(text)) return { config: null, invalid: false } as const;
@@ -321,7 +478,13 @@ const make = Effect.gen(function* () {
     yield* writeUserConfig(next);
   });
 
-  const status = Effect.fn("CursorMcpServers.status")(function* (folder: string | null) {
+  const status = Effect.fn("CursorMcpServers.status")(function* (
+    folder: string | null,
+    options?: { readonly shareSignIns?: boolean },
+  ) {
+    if (folder !== null && options?.shareSignIns === true) {
+      yield* shareSignInsQuietly(folder);
+    }
     const user = yield* readConfig(userConfigPath);
     const project =
       folder === null
@@ -374,7 +537,7 @@ const make = Effect.gen(function* () {
       folderLoaded: folder !== null && (cursorFolders.get(folder)?.loaded ?? false),
       servers: [...servers.values()],
       userConfigError: user.invalid ? "~/.cursor/mcp.json is not valid JSON." : null,
-    } satisfies CursorMcpStatusResult;
+    } satisfies CursorMcpFolderStatus;
   });
 
   const signIn = Effect.fn("CursorMcpServers.signIn")(function* (

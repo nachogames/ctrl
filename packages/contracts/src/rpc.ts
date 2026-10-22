@@ -593,6 +593,7 @@ export const WS_METHODS = {
   cursorMcpSignIn: "cursorMcp.signIn",
   cursorMcpSaveServer: "cursorMcp.saveServer",
   cursorMcpRemoveServer: "cursorMcp.removeServer",
+  cursorMcpRestartServer: "cursorMcp.restartServer",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2101,6 +2102,12 @@ const WsCursorMcpRemoveServerRpc = Rpc.make(WS_METHODS.cursorMcpRemoveServer, {
   success: Schema.Void,
   error: CursorMcpRpcError,
 });
+/** Cursor reads a folder's MCP sign-ins once per server process, so a late sign-in needs one. */
+const WsCursorMcpRestartServerRpc = Rpc.make(WS_METHODS.cursorMcpRestartServer, {
+  payload: Schema.Struct({}),
+  success: Schema.Void,
+  error: CursorMcpRpcError,
+});
 
 /**
  * Checks the connection's scopes against the scope each RPC declares, before
@@ -2152,6 +2159,7 @@ export const WsCursorMcpRpcGroup = RpcGroup.make(
   WsCursorMcpSignInRpc,
   WsCursorMcpSaveServerRpc,
   WsCursorMcpRemoveServerRpc,
+  WsCursorMcpRestartServerRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Everything but the review RPCs, so the server builds its handlers apart; clients use `WsRpcGroup`. */

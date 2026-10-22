@@ -53,6 +53,8 @@ export const CursorMcpStatusResult = Schema.Struct({
   /** This server process has already opened a Cursor agent in the folder. */
   folderLoaded: Schema.Boolean,
   servers: Schema.Array(CursorMcpServer).check(Schema.isMaxLength(256)),
+  /** Something supervises this server and starts it again after it exits: the desktop app or the background service. */
+  canRestartServer: Schema.Boolean,
   /** Set when `~/.cursor/mcp.json` exists but cannot be read as JSON. */
   userConfigError: Schema.NullOr(CursorMcpText),
 });
@@ -85,6 +87,7 @@ export const CursorMcpOperationErrorReason = Schema.Literals([
   "folder_not_found",
   "sign_in_failed",
   "command_failed",
+  "restart_unsupported",
 ]);
 export type CursorMcpOperationErrorReason = typeof CursorMcpOperationErrorReason.Type;
 
@@ -111,6 +114,8 @@ export class CursorMcpOperationError extends Schema.TaggedError<CursorMcpOperati
         return "Cursor did not finish signing in to that MCP server.";
       case "command_failed":
         return "Cursor's command-line tool failed.";
+      case "restart_unsupported":
+        return "Nothing would start this server again, so restart it on the machine running it.";
     }
   }
 }
