@@ -6,6 +6,7 @@ import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -35,6 +36,7 @@ import * as PreviewManager from "../../../preview/Manager.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import { BUILT_IN_MCP_TOOL_NAMES } from "../../builtInToolNames.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -111,7 +113,20 @@ const decodeToolsListPayload = Schema.decodeUnknownEffect(ToolsListPayload);
 it.effect("production mcp layer lists worktree tools over http", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const layerRoutes = McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer));
+      const registry = Context.get(
+        yield* McpSessionRegistry.layer.pipe(
+          Layer.provide(
+            Layer.mock(ServerEnvironment.ServerEnvironment)({
+              getEnvironmentId: Effect.succeed("environment-scratch" as never),
+            }),
+          ),
+          Layer.build,
+        ),
+        McpSessionRegistry.McpSessionRegistry,
+      );
+      const layerRoutes = McpHttpServer.layer.pipe(
+        Layer.provide(Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry)),
+      );
       yield* HttpRouter.serve(layerRoutes, {
         disableListenLog: true,
         disableLogger: true,
@@ -124,18 +139,18 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         Layer.provide(PreviewAutomationBroker.layer),
         Layer.provide(PreviewBrowser.layer),
         Layer.provide(layerStubServices),
+        Layer.provide(McpProviderSessions.layer),
         Layer.build,
       );
 
-      const registry = McpSessionRegistry.issueActiveMcpCredential({
+      const credential = yield* registry.issue({
         threadId: ThreadId.make("thread-scratch"),
         providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       });
-      const credential = yield* registry;
       expect(credential).toBeDefined();
 
       const httpClient = yield* HttpClient.HttpClient;
-      const auth = credential!.config.authorizationHeader;
+      const auth = credential.config.authorizationHeader;
       const initResponse = yield* httpClient.post("/mcp", {
         headers: {
           accept: "application/json, text/event-stream",
@@ -206,7 +221,20 @@ it.effect("production mcp layer lists worktree tools over http", () =>
 it.effect("proxies remote MCP tools to every agent", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const layerRoutes = McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer));
+      const registry = Context.get(
+        yield* McpSessionRegistry.layer.pipe(
+          Layer.provide(
+            Layer.mock(ServerEnvironment.ServerEnvironment)({
+              getEnvironmentId: Effect.succeed("environment-scratch" as never),
+            }),
+          ),
+          Layer.build,
+        ),
+        McpSessionRegistry.McpSessionRegistry,
+      );
+      const layerRoutes = McpHttpServer.layer.pipe(
+        Layer.provide(Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry)),
+      );
       yield* HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
         Layer.provide(
           Layer.mock(ServerEnvironment.ServerEnvironment)({
@@ -216,16 +244,17 @@ it.effect("proxies remote MCP tools to every agent", () =>
         Layer.provide(PreviewAutomationBroker.layer),
         Layer.provide(PreviewBrowser.layer),
         Layer.provide(layerStubServices),
+        Layer.provide(McpProviderSessions.layer),
         Layer.build,
       );
-      const credential = yield* McpSessionRegistry.issueActiveMcpCredential({
+      const credential = yield* registry.issue({
         threadId: ThreadId.make("thread-scratch"),
         providerInstanceId: ProviderInstanceId.make("codex"),
       });
       const httpClient = yield* HttpClient.HttpClient;
       const headers = {
         accept: "application/json, text/event-stream",
-        authorization: credential!.config.authorizationHeader,
+        authorization: credential.config.authorizationHeader,
       };
       const session = (clientName: string) =>
         Effect.gen(function* () {
