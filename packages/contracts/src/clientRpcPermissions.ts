@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   type AuthEnvironmentScope,
@@ -54,6 +55,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.reviewSessionsRunLocalReview]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewSessionsDiscussInSideChat]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
+  // Each edits Cursor's MCP config or its saved sign-ins on this machine.
+  [WS_METHODS.cursorMcpSignIn]: AuthProvidersManageScope,
+  [WS_METHODS.cursorMcpSaveServer]: AuthProvidersManageScope,
+  [WS_METHODS.cursorMcpRemoveServer]: AuthProvidersManageScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

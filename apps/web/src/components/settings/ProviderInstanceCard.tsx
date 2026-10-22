@@ -60,6 +60,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { CursorMcpServersSection } from "./CursorMcpServersSection";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
@@ -1247,6 +1248,13 @@ export function ProviderInstanceCard({
           environmentId={environmentId}
           instanceId={instanceId}
           provider={liveProvider}
+          projects={acpProjects}
+          readOnly={readOnly}
+        />
+      ) : null}
+      {environmentId !== undefined && liveProvider?.driver === "cursor" ? (
+        <CursorMcpServersSection
+          environmentId={environmentId}
           projects={acpProjects}
           readOnly={readOnly}
         />
