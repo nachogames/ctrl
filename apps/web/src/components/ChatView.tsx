@@ -4702,12 +4702,15 @@ export default function ChatView(props: ChatViewProps) {
     isGitRepo,
   });
   // A draft headed for a new worktree has no folder to sign in to until it sends.
+  // A thread about to get a new worktree has no folder to check yet.
   const cursorMcpFolder =
-    selectedProvider !== "cursor" || activeThread == null
+    selectedProvider !== "cursor" ||
+    activeThread == null ||
+    (activeThread.worktreePath == null && sendEnvMode === "worktree")
       ? null
       : isServerThread
         ? { threadId: activeThread.id }
-        : sendEnvMode === "local" && activeThread.worktreePath == null && activeProject != null
+        : activeThread.worktreePath == null && activeProject != null
           ? { projectId: activeProject.id }
           : null;
   const cursorMcpSignIn = useCursorMcpSignInBanner({

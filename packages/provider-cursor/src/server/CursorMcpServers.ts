@@ -125,10 +125,13 @@ function saveCursorMcpEntry(
     return "server_exists";
   }
   const existing = isJsonObject(servers[previousName]) ? servers[previousName] : {};
-  const { url: _url, command: _command, args: _args, type: _type, ...kept } = existing;
+  const { url: _url, command: _command, args: _args, type, ...kept } = existing;
+  // `type` names the URL protocol (sse, http), so it survives only a URL-to-URL edit.
+  const keepType =
+    input.transport._tag === "url" && typeof existing.url === "string" && type !== undefined;
   const entry: JsonObject =
     input.transport._tag === "url"
-      ? { ...kept, url: input.transport.url }
+      ? { ...kept, ...(keepType ? { type } : {}), url: input.transport.url }
       : { ...kept, command: input.transport.command, args: [...input.transport.args] };
   if (input.transport._tag === "url") {
     delete entry.env;
@@ -325,11 +328,11 @@ const make = Effect.gen(function* () {
         ? { config: null, invalid: false }
         : yield* readConfig(path.join(folder, ".cursor", "mcp.json"));
     const listed = yield* runCli(["mcp", "list"], folder ?? homeDirectory, LIST_TIMEOUT);
-    const listEntries = Option.match(listed, {
-      onNone: () => [],
-      onSome: (output) => parseCursorMcpList(`${output.stdout}\n${output.stderr}`),
-    });
-    if (folder !== null && Option.isSome(listed)) recordCursorFolderCheck(folder, listEntries);
+    // A failed list (logged out, crashed) prints errors shaped like entries.
+    const listSucceeded = Option.isSome(listed) && listed.value.code === 0;
+    const listEntries =
+      Option.isSome(listed) && listSucceeded ? parseCursorMcpList(listed.value.stdout) : [];
+    if (folder !== null && listSucceeded) recordCursorFolderCheck(folder, listEntries);
 
     const servers = new Map<string, CursorMcpServer>();
     const addConfigured = (

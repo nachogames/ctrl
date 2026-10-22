@@ -13,7 +13,10 @@ import * as CursorMcpServers from "./CursorMcpServers.ts";
 // A stand-in for Cursor's CLI: `mcp list` prints $HOME/status.txt, and the first
 // `mcp login` asks to be re-run, like the real CLI after receiving the OAuth code.
 const FAKE_CLI = `#!/bin/sh
-if [ "$1 $2" = "mcp list" ]; then cat "$HOME/status.txt"; exit 0; fi
+if [ "$1 $2" = "mcp list" ]; then
+  if [ -f "$HOME/list-fails" ]; then echo "Error: Authentication required, run cursor-agent login" >&2; exit 1; fi
+  cat "$HOME/status.txt"; exit 0
+fi
 if [ "$1 $2" = "mcp login" ]; then
   echo "$3" >> "$HOME/logins.txt"
   if [ ! -f "$HOME/half-done" ]; then
@@ -76,7 +79,7 @@ const run = <A, E>(
 ) => effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.runPromise);
 
 // The fake CLI is a shell script.
-const describePosix = NodeOS.platform() === "win32" ? describe.skip : describe;
+const describePosix = HostProcess.Platform.defaultValue() === "win32" ? describe.skip : describe;
 
 describePosix("CursorMcpServers", () => {
   afterEach(() => CursorMcpServers.resetCursorMcpFolderCacheForTest());
@@ -177,6 +180,20 @@ describePosix("CursorMcpServers", () => {
       }),
     ));
 
+  it("reports no CLI statuses when listing fails, rather than reading its errors as servers", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setup({ cli: true });
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* test.writeJson(test.userConfig, { mcpServers: { linear: { url: "https://x" } } });
+        yield* fileSystem.writeFileString(`${test.home}/list-fails`, "");
+
+        const status = yield* test.service.status(test.folder);
+
+        expect(status.servers).toMatchObject([{ name: "linear", status: "unknown" }]);
+      }),
+    ));
+
   it("lists configured servers with unknown status when the CLI is missing", () =>
     run(
       Effect.gen(function* () {
@@ -201,7 +218,7 @@ describePosix("CursorMcpServers", () => {
           theme: "kept",
           mcpServers: {
             first: { command: "npx", args: ["a"], env: { TOKEN: "x" } },
-            linear: { url: "https://old", headers: { A: "b" } },
+            linear: { type: "sse", url: "https://old", headers: { A: "b" } },
             last: { url: "https://last" },
           },
         });
@@ -221,7 +238,11 @@ describePosix("CursorMcpServers", () => {
           theme: "kept",
           mcpServers: {
             first: { command: "npx", args: ["a"], env: { TOKEN: "x" } },
-            "linear-work": { url: "https://mcp.linear.app/mcp", headers: { A: "b" } },
+            "linear-work": {
+              type: "sse",
+              url: "https://mcp.linear.app/mcp",
+              headers: { A: "b" },
+            },
             added: { command: "uvx", args: ["tool"] },
           },
         });

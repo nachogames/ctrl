@@ -23,6 +23,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
@@ -58,7 +59,7 @@ function draftFor(server: CursorMcpServer): ServerDraft {
     kind: transport?._tag ?? "url",
     url: transport?._tag === "url" ? transport.url : "",
     command: transport?._tag === "command" ? transport.command : "",
-    args: transport?._tag === "command" ? transport.args.join(" ") : "",
+    args: transport?._tag === "command" ? transport.args.join("\n") : "",
   };
 }
 
@@ -69,7 +70,11 @@ function draftTransport(draft: ServerDraft): CursorMcpServerTransport | null {
   }
   const command = draft.command.trim();
   if (command.length === 0) return null;
-  const args = draft.args.trim().length === 0 ? [] : draft.args.trim().split(/\s+/);
+  // One argument per line, so an argument may contain spaces.
+  const args = draft.args
+    .split(/\r?\n/)
+    .map((arg) => arg.trim())
+    .filter((arg) => arg.length > 0);
   return { _tag: "command", command, args };
 }
 
@@ -395,7 +400,7 @@ export function CursorMcpServersSection(props: {
                 onValueChange={(url) => setDraft({ ...draft, url })}
               />
             ) : (
-              <div className="grid gap-2 sm:grid-cols-[12rem_minmax(0,1fr)]">
+              <div className="grid gap-2">
                 <Input
                   size="sm"
                   aria-label="Command"
@@ -404,13 +409,13 @@ export function CursorMcpServersSection(props: {
                   disabled={saving}
                   onValueChange={(command) => setDraft({ ...draft, command })}
                 />
-                <Input
+                <Textarea
                   size="sm"
-                  aria-label="Arguments"
-                  placeholder="Arguments, separated by spaces"
+                  aria-label="Arguments, one per line"
+                  placeholder={"Arguments, one per line\n-y\n@modelcontextprotocol/server-example"}
                   value={draft.args}
                   disabled={saving}
-                  onValueChange={(args) => setDraft({ ...draft, args })}
+                  onChange={(event) => setDraft({ ...draft, args: event.target.value })}
                 />
               </div>
             )}
