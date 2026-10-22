@@ -4701,7 +4701,6 @@ export default function ChatView(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
-  // A draft headed for a new worktree has no folder to sign in to until it sends.
   // A thread about to get a new worktree has no folder to check yet.
   const cursorMcpFolder =
     selectedProvider !== "cursor" ||
