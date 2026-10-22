@@ -19,6 +19,12 @@ if [ "$1 $2" = "mcp list" ]; then
 fi
 if [ "$1 $2" = "mcp login" ]; then
   echo "$3" >> "$HOME/logins.txt"
+  if [ -f "$HOME/finishes-first-time" ]; then
+    sed "s/^$3: .*/$3: ready/" "$HOME/status.txt" > "$HOME/status.next" && mv "$HOME/status.next" "$HOME/status.txt"
+    echo "MCP login successful"
+    echo "Received authorization code. You can close the browser. Re-running the command should now complete authentication."
+    exit 0
+  fi
   if [ ! -f "$HOME/half-done" ]; then
     touch "$HOME/half-done"
     echo "Received authorization code. Re-running the command should now complete authentication."
@@ -65,6 +71,10 @@ const setup = Effect.fn("setupCursorMcpTest")(function* (options: { readonly cli
     userConfig,
     writeJson,
     writeStatus: (text: string) => fileSystem.writeFileString(path.join(home, "status.txt"), text),
+    markFinishesFirstTime: fileSystem.writeFileString(path.join(home, "finishes-first-time"), ""),
+    readLogins: fileSystem
+      .readFileString(path.join(home, "logins.txt"))
+      .pipe(Effect.map((text) => text.trim().split("\n"))),
     readUserConfig: fileSystem.readFileString(userConfig),
     projectConfig: path.join(folder, ".cursor", "mcp.json"),
   };
@@ -142,6 +152,22 @@ describePosix("CursorMcpServers", () => {
         expect(status.servers).toMatchObject([
           { name: "linear", status: "ready", needsRelaunch: false },
         ]);
+        expect(yield* test.readLogins).toEqual(["linear", "linear"]);
+      }),
+    ));
+
+  it("signs in once when the CLI hints at a re-run after a sign-in that already worked", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setup({ cli: true });
+        yield* test.writeStatus("linear: requires_authentication\n");
+        yield* test.markFinishesFirstTime;
+
+        const status = yield* test.service.signIn(test.folder, "linear");
+
+        expect(status.servers).toMatchObject([{ name: "linear", status: "ready" }]);
+        // A second `mcp login` would open the browser a second time.
+        expect(yield* test.readLogins).toEqual(["linear"]);
       }),
     ));
 
