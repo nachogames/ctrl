@@ -34,6 +34,7 @@ import {
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { parseReviewPointTag } from "@t3tools/shared/reviewPointTag";
+import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
 import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -167,7 +168,17 @@ export class ReviewSessionService extends Context.Service<
     readonly read: (
       sessionId: ReviewSessionId,
     ) => Effect.Effect<ReviewSessionSnapshot, ReviewSessionError>;
-    /** The pull request's review in the chat's group: now, then after every change to it. */
+    /** The pull request's live review, whichever group holds it. */
+    readonly findSessionForPullRequest: (
+      key: ThreadPullRequestKey,
+    ) => Effect.Effect<ReviewSession | null, ReviewSessionError>;
+    /** Whether the chat runs a local review or discusses one point. */
+    readonly isAssignedChat: (threadId: ThreadId) => Effect.Effect<boolean, ReviewSessionError>;
+    /** Whether the review's own chat can still take a turn. */
+    readonly hasLiveReviewChat: (
+      sessionId: ReviewSessionId,
+    ) => Effect.Effect<boolean, ReviewSessionError>;
+    /** The pull request's review, whichever group holds it: now, then after every change to it. */
     readonly subscribe: (
       input: ReviewSessionSubscribeInput,
     ) => Stream.Stream<ReviewSessionSubscribeResult, ReviewSessionError>;
@@ -468,14 +479,35 @@ export const make = Effect.gen(function* () {
       })),
     );
 
-  /** Loads a live session and one of its points of the current, still-collecting round. */
-  const loadEditable = (input: PointInput) =>
+  /**
+   * Loads a live session and one of its points of the current, still-collecting round. With
+   * `allowStale`, a point from an earlier commit too: deciding it yourself is its recheck.
+   */
+  const loadEditable = (input: PointInput, options?: { readonly allowStale?: boolean }) =>
     Effect.gen(function* () {
       const session = yield* loadSession(input.sessionId);
       yield* requireLive(session);
       yield* requireCollecting(session, yield* loadRound(session));
-      const item = yield* loadItem(session.id, input.number);
-      yield* requireCurrent(session, item);
+      const found = yield* loadItem(session.id, input.number);
+      // An open point from an earlier round joins this one when you act on it.
+      const item =
+        options?.allowStale === true &&
+        found.stale &&
+        isOpenReviewPoint(found) &&
+        found.lastSeenRound < session.round
+          ? // Last round's fix or reply does not answer this round, as for a point raised again,
+            // and its posted reply is not posted twice.
+            {
+              ...found,
+              ...replyForNewRound(found, null),
+              lastSeenRound: session.round,
+              applyState: "pending" as const,
+            }
+          : found;
+      yield* requireCurrent(
+        session,
+        options?.allowStale === true ? { ...item, stale: false } : item,
+      );
       return { session, item };
     });
 
@@ -486,25 +518,42 @@ export const make = Effect.gen(function* () {
       const result = yield* writeLock.withPermits(1)(
         sql.withTransaction(
           Effect.gen(function* () {
-            const existing = yield* repo.findLiveSession({ key, groupId: input.groupId });
+            const existing = yield* repo.findLiveSession({
+              key,
+              projectId: input.projectId,
+              groupId: input.groupId,
+            });
             if (Option.isSome(existing)) {
               const session = existing.value;
-              // A review whose chat was deleted or archived could never be driven again; the
-              // chat that opens it takes it over, with its rounds, points and side chats.
-              if (
-                session.reviewThreadId === input.reviewThreadId ||
-                (yield* liveThread(session.reviewThreadId)) !== null
-              ) {
+              // A pull request has one review per project. Opened from another group, it moves to the chat
+              // that opened it; so does a review whose chat was deleted or archived. Either way
+              // it keeps its rounds, points and side chats. It never moves off a chat mid-turn,
+              // whose review calls would then fail.
+              const sameChat = session.reviewThreadId === input.reviewThreadId;
+              const current = sameChat ? null : yield* liveThread(session.reviewThreadId);
+              if (session.groupId === input.groupId && (sameChat || current !== null)) {
                 return { session, created: false };
+              }
+              if (current !== null && current.activeRunId !== null) {
+                return yield* fail(
+                  `This pull request's review is running in "${current.title}". Open it here once that chat finishes its turn.`,
+                  session.id,
+                );
               }
               const at = yield* now;
               yield* repo.setSessionReviewThread({
                 sessionId: session.id,
                 reviewThreadId: input.reviewThreadId,
+                groupId: input.groupId,
                 updatedAt: at,
               });
               return {
-                session: { ...session, reviewThreadId: input.reviewThreadId, updatedAt: at },
+                session: {
+                  ...session,
+                  reviewThreadId: input.reviewThreadId,
+                  groupId: input.groupId,
+                  updatedAt: at,
+                },
                 created: false,
               };
             }
@@ -548,12 +597,17 @@ export const make = Effect.gen(function* () {
     );
 
   // Discovery never launches an agent. A group is allocated only for a PR-bearing chat.
-  const ensureDiscovered = (input: ReviewSessionSubscribeInput) =>
+  const ensureDiscovered = (input: ReviewSessionSubscribeInput & { readonly threadId: ThreadId }) =>
     discoveryLock.withPermits(1)(
       Effect.gen(function* () {
         const shell = yield* liveThread(input.threadId);
         if (shell === null || shell.lineage.relationshipToParent === "subagent") return;
         if (!/^[a-z0-9-]+\/[a-z0-9_.-]+$/i.test(input.repository)) return;
+        const existing = yield* repo.findLatestSessionForPullRequest({
+          repository: input.repository.toLowerCase(),
+          number: input.number,
+        });
+        if (Option.isSome(existing)) return;
         const groupId = shell.groupId ?? ThreadGroupId.make(`review-group:${shell.id}`);
         if (shell.groupId == null)
           yield* groups.create({
@@ -563,12 +617,6 @@ export const make = Effect.gen(function* () {
             threadIds: [shell.id],
             title: shell.title,
           });
-        const existing = yield* repo.findLatestSessionForPullRequest({
-          repository: input.repository.toLowerCase(),
-          number: input.number,
-          groupId,
-        });
-        if (Option.isSome(existing)) return;
         yield* open({
           key: { host: "github.com", repository: input.repository, number: input.number },
           url: `https://github.com/${input.repository}/pull/${input.number}`,
@@ -614,51 +662,34 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         // Subscribe before the first read so a change landing between the two is not lost.
         const feed = yield* changes.subscribe;
-        yield* ensureDiscovered(input);
-        // The chat's group is read on every lookup: the agent may group the chat (or move it)
-        // after the tab opened, and the open tab must then show that group's review.
-        const lookup: Effect.Effect<ReviewSessionSubscribeResult, ReviewSessionError> =
-          Effect.suspend(() => threads.getThreadShell(input.threadId)).pipe(
-            Effect.orElseSucceed(() => null),
-            Effect.flatMap((shell) => {
-              const groupId = shell?.groupId ?? null;
-              if (groupId === null) {
-                return Effect.succeed<ReviewSessionSubscribeResult>({ snapshot: null });
-              }
-              return repo
-                .findLatestSessionForPullRequest({
-                  repository: input.repository,
-                  number: input.number,
-                  groupId,
-                })
-                .pipe(
-                  Effect.flatMap(
-                    Option.match({
-                      onNone: () =>
-                        Effect.succeed<ReviewSessionSubscribeResult>({ snapshot: null }),
-                      onSome: (session) =>
-                        snapshotOf(session).pipe(Effect.map((snapshot) => ({ snapshot }))),
-                    }),
-                  ),
-                  Effect.mapError(keepReviewErrors()),
-                );
-            }),
+        const threadId = input.threadId;
+        if (threadId !== undefined) yield* ensureDiscovered({ ...input, threadId });
+        // A pull request has one review, whichever group's chat shows the tab.
+        const lookup: Effect.Effect<ReviewSessionSubscribeResult, ReviewSessionError> = repo
+          .findLatestSessionForPullRequest({ repository: input.repository, number: input.number })
+          .pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.succeed<ReviewSessionSubscribeResult>({ snapshot: null }),
+                onSome: (session) =>
+                  snapshotOf(session).pipe(Effect.map((snapshot) => ({ snapshot }))),
+              }),
+            ),
+            Effect.mapError(keepReviewErrors()),
           );
         const first = yield* lookup;
-        // Re-read for this review, for any review while none is shown or it is done (a new one
-        // for the same pull request may start), or once the chat has left the shown review's
-        // group (another group's review may be the one to show).
+        // Re-read for this review, and for any review while none is shown or it is done (a new
+        // one for the same pull request may start).
         let shown = first.snapshot?.session ?? null;
+        // Opening the tab reads GitHub now rather than at the next sweep; what it changes
+        // arrives through the feed.
+        const refresh =
+          shown === null ? Stream.empty : Stream.fromEffectDrain(syncQuietly(shown.id));
         return Stream.concat(
           Stream.make(first),
-          feed.pipe(
-            Stream.filterEffect((sessionId) =>
-              shown === null || shown.phase === "done" || sessionId === shown.id
-                ? Effect.succeed(true)
-                : threads.getThreadShell(input.threadId).pipe(
-                    Effect.map((shell) => shell?.groupId !== shown?.groupId),
-                    Effect.orElseSucceed(() => true),
-                  ),
+          Stream.concat(refresh, feed).pipe(
+            Stream.filter(
+              (sessionId) => shown === null || shown.phase === "done" || sessionId === shown.id,
             ),
             Stream.mapEffect(() => lookup),
             Stream.tap((result) =>
@@ -728,6 +759,29 @@ export const make = Effect.gen(function* () {
       return yield* fail("No review is open for this chat. Start one with review_session_open.");
     }).pipe(Effect.mapError(keepReviewErrors()));
 
+  const findSessionForPullRequest: ReviewSessionService["Service"]["findSessionForPullRequest"] = (
+    key,
+  ) =>
+    repo.findLatestSessionForPullRequest({ repository: key.repository, number: key.number }).pipe(
+      Effect.map((found) =>
+        Option.isSome(found) && found.value.phase !== "done" ? found.value : null,
+      ),
+      Effect.mapError(keepReviewErrors()),
+    );
+
+  const isAssignedChat: ReviewSessionService["Service"]["isAssignedChat"] = (threadId) =>
+    Effect.gen(function* () {
+      if (Option.isSome(yield* repo.findLocalSourceByThread(threadId))) return true;
+      return Option.isSome(yield* repo.findSideChatItem(threadId));
+    }).pipe(Effect.mapError(keepReviewErrors()));
+
+  const hasLiveReviewChat: ReviewSessionService["Service"]["hasLiveReviewChat"] = (sessionId) =>
+    loadSession(sessionId).pipe(
+      Effect.flatMap((session) => liveThread(session.reviewThreadId)),
+      Effect.map((shell) => shell !== null),
+      Effect.mapError(keepReviewErrors(sessionId)),
+    );
+
   const agentView: ReviewSessionService["Service"]["agentView"] = (input) =>
     Effect.gen(function* () {
       const session = yield* loadSession(input.sessionId);
@@ -768,7 +822,12 @@ export const make = Effect.gen(function* () {
           (id) =>
             !sources.some(
               (source) =>
-                source.id === id && source.round === session.round && source.state === "done",
+                source.id === id &&
+                source.state === "done" &&
+                // An earlier round's review stays in its round; Triage offers it again for points
+                // still open from that commit.
+                (source.round === session.round ||
+                  (source.round < session.round && !source.triaged)),
             ),
         );
         if (unknown.length > 0) {
@@ -943,7 +1002,7 @@ export const make = Effect.gen(function* () {
       return yield* write(
         input.sessionId,
         Effect.gen(function* () {
-          const { session, item } = yield* loadEditable(input);
+          const { session, item } = yield* loadEditable(input, { allowStale: true });
           const postAs = input.postAs ?? item.postAs ?? null;
           const changed = input.decision !== item.decision || postAs !== (item.postAs ?? null);
           const next: ReviewItem = {
@@ -954,6 +1013,8 @@ export const make = Effect.gen(function* () {
             reason: input.reason ?? (changed ? null : item.reason),
             applyState: changed ? "pending" : item.applyState,
             viewed: changed ? false : item.viewed,
+            // A decision on a point from an earlier commit is its recheck.
+            stale: item.stale && input.decision === "needs-call",
             updatedAt: yield* now,
           };
           yield* repo.upsertItem(session.id, next);
@@ -966,7 +1027,7 @@ export const make = Effect.gen(function* () {
     write(
       input.sessionId,
       Effect.gen(function* () {
-        const { session, item } = yield* loadEditable(input);
+        const { session, item } = yield* loadEditable(input, { allowStale: true });
         const at = yield* now;
         let next: ReviewItem = { ...item, viewed: input.viewed, updatedAt: at };
         if (input.viewed && item.decision === "needs-call") {
@@ -979,6 +1040,10 @@ export const make = Effect.gen(function* () {
             decidedBy: "panel",
             applyState: "pending",
           };
+        }
+        // Viewing a point from an earlier commit and keeping its call is its recheck.
+        if (input.viewed && next.decision !== "needs-call") {
+          next = { ...next, stale: false };
         }
         yield* repo.upsertItem(session.id, next);
         return next;
@@ -1499,37 +1564,32 @@ export const make = Effect.gen(function* () {
       } else {
         yield* requireCollecting(session, yield* loadRound(session));
       }
+      // The action runs in the chat beside the panel when that is one of this review's ordinary
+      // chats; from a review-only chat, a point chat, or another group it goes to the review chat.
       let targetThreadId = session.reviewThreadId;
-      if (request._tag !== "rewrite-reply" && input.targetThreadId !== undefined) {
-        const target = yield* liveThread(input.targetThreadId);
-        if (
-          target === null ||
-          target.projectId !== session.projectId ||
-          target.groupId !== session.groupId
-        )
-          return yield* fail(
-            "Review actions must run in an active chat in this review's group.",
-            session.id,
-          );
-        const access = yield* resolveForThread({
-          threadId: target.id,
-          groupId: target.groupId,
-          sessionId: session.id,
-        });
-        if (access.role !== "review")
-          return yield* fail(
-            "Use an ordinary group chat for review actions, not an assigned review or point chat.",
-            session.id,
-          );
-        targetThreadId = target.id;
-      } else {
-        yield* reviewChatOf(session);
-      }
+      const beside =
+        request._tag === "rewrite-reply" || input.targetThreadId === undefined
+          ? null
+          : yield* liveThread(input.targetThreadId);
+      const access =
+        beside === null ||
+        beside.projectId !== session.projectId ||
+        beside.groupId !== session.groupId
+          ? null
+          : yield* resolveForThread({
+              threadId: beside.id,
+              groupId: beside.groupId,
+              sessionId: session.id,
+            }).pipe(Effect.orElseSucceed(() => null));
+      if (beside !== null && access?.role === "review") targetThreadId = beside.id;
+      else yield* reviewChatOf(session);
       let item: ReviewItem | null = null;
       let untriaged: ReadonlyArray<ReviewSource> = [];
       if (request._tag === "triage") {
-        // A merge can make already-triaged findings stale without producing a new review.
-        // Offer their original sources again, retaining rounds, decisions and reply drafts.
+        // A push or merge can make already-triaged findings stale without producing a new review.
+        // Offer their original sources again, retaining decisions and reply drafts. Points still
+        // open from an earlier round come along; their sources stay in the round they reviewed,
+        // so a GitHub review never answers a later round's request.
         untriaged = yield* write(
           session.id,
           Effect.gen(function* () {
@@ -1539,22 +1599,20 @@ export const make = Effect.gen(function* () {
               (yield* repo.listItems(session.id))
                 .filter(
                   (point) =>
-                    point.lastSeenRound === current.round &&
-                    point.stale &&
-                    point.githubState !== "resolved",
+                    point.lastSeenRound <= current.round && point.stale && isOpenReviewPoint(point),
                 )
                 .flatMap((point) => point.sourceIds),
             );
             const ready = (yield* repo.listSources(session.id)).filter(
               (source) =>
-                source.round === current.round &&
                 source.state === "done" &&
                 !source.failed &&
-                (!source.triaged || staleSourceIds.has(source.id)),
+                (source.round === current.round
+                  ? !source.triaged || staleSourceIds.has(source.id)
+                  : staleSourceIds.has(source.id)),
             );
-            for (const source of ready) {
-              if (source.triaged) yield* repo.resetSourcesTriage(session.id, [source.id]);
-            }
+            const retriage = ready.filter((source) => source.triaged).map((source) => source.id);
+            if (retriage.length > 0) yield* repo.resetSourcesTriage(session.id, retriage);
             return ready.map((source) => ({ ...source, triaged: false }));
           }),
         );
@@ -1666,6 +1724,9 @@ export const make = Effect.gen(function* () {
     subscribe,
     readSourceComments,
     resolveForThread,
+    findSessionForPullRequest,
+    isAssignedChat,
+    hasLiveReviewChat,
     agentView,
     importItems,
     annotate,

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   effectiveDecision,
@@ -7,15 +8,20 @@ import {
   pointKindFor,
   reviewApplySummary,
   reviewerApplyLines,
+  reviewHistoryRounds,
+  reviewProgress,
   suggestedReviewVerdict,
 } from "@t3tools/client-runtime/state/review-sessions";
 import {
+  isReviewOverview,
   latestViewerReview,
   reReviewReason,
   reviewRole,
   isViewerSource,
   type EnvironmentId,
+  type PullRequestCheck,
   type PullRequestRef,
+  type PullRequestReviewDecision,
   type ReviewDecision,
   type ReviewItem,
   type ReviewPendingChoice,
@@ -26,9 +32,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
-import { useThreadProjection, useThreadShells } from "~/state/entities";
+import { useThreadProjection } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
-import { pullRequestEnvironment } from "~/state/pullRequests";
 import { reviewSessionEnvironment } from "~/state/reviewSessions";
 import { EMPTY_SERVER_PROVIDERS, environmentServerConfigsAtom } from "~/state/server";
 import { Button } from "../../ui/button";
@@ -42,137 +47,84 @@ import { ReviewApplyDialog } from "./ReviewApplyDialog";
 import { ReviewPointMenu, ReviewSideChatBanner, useOpenReviewSideChat } from "./ReviewPointMenu";
 import { useReviewPointFocusStore } from "./reviewPointFocusStore";
 import { ReviewPointRow } from "./ReviewPointRow";
-import { ReviewRoundCard } from "./ReviewRoundCard";
+import { ReviewProgressCard } from "./ReviewProgressCard";
+import { ReviewCommitHistory, ReviewRoundCard } from "./ReviewRoundCard";
 import { useReviewCommand } from "./useReviewCommand";
 
 const NO_MENTIONS: ReadonlyMap<number, number> = new Map();
 const NO_ITEMS: ReadonlyArray<ReviewItem> = [];
 const NO_LINES: ReadonlyArray<string> = [];
 
-/** Standalone PRs use an existing linked group, never create a separate review workspace. */
+/** What the pull request page knows about it beyond the review: CI, approval, current head. */
+export interface PullRequestReviewStatus {
+  readonly checks?: ReadonlyArray<PullRequestCheck> | undefined;
+  readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
+  readonly headSha?: string | null | undefined;
+}
+
+/**
+ * The pull request's one review, whichever chat or group it lives in. Beside a chat, that chat
+ * starts one when there is none; on its own, the tab shows GitHub's history until one starts.
+ */
 export function PullRequestReviewTab({
   environmentId,
   threadRef,
   reference,
   fallback,
+  status,
 }: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
   reference: PullRequestRef;
   fallback: ReactNode;
-}) {
-  return threadRef === null ? (
-    <LinkedPullRequestReview
-      key={`${environmentId}:${reference.host}:${reference.repository}:${reference.number}`}
-      environmentId={environmentId}
-      reference={reference}
-      fallback={fallback}
-    />
-  ) : (
-    <GroupPullRequestReview
-      environmentId={environmentId}
-      threadRef={threadRef}
-      reference={reference}
-      fallback={fallback}
-    />
-  );
-}
-
-function LinkedPullRequestReview({
-  environmentId,
-  reference,
-  fallback,
-}: {
-  environmentId: EnvironmentId;
-  reference: PullRequestRef;
-  fallback: ReactNode;
-}) {
-  const query = useEnvironmentQuery(
-    pullRequestEnvironment.linkedThreads({ environmentId, input: reference }),
-  );
-  const shells = useThreadShells();
-  const [selected, setSelected] = useState<string | null>(null);
-  const groups = useMemo(() => {
-    const shellsById = new Map(
-      shells
-        .filter((thread) => thread.environmentId === environmentId)
-        .map((thread) => [thread.id, thread]),
-    );
-    const seen = new Set<string>();
-    return (query.data?.threads ?? []).filter((thread) => {
-      if (thread.archivedAt !== null) return false;
-      const key = shellsById.get(thread.id)?.groupId ?? thread.id;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [environmentId, query.data, shells]);
-  const chosen =
-    groups.find((thread) => thread.id === selected) ?? (groups.length === 1 ? groups[0] : null);
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      {groups.length > 1 ? (
-        <div className="flex flex-wrap items-center gap-2 border-b p-3">
-          <span className="text-sm text-muted-foreground">Review group:</span>
-          {groups.map((thread) => (
-            <Button
-              key={thread.id}
-              size="sm"
-              variant={chosen?.id === thread.id ? "secondary" : "outline"}
-              onClick={() => setSelected(thread.id)}
-            >
-              {thread.title}
-            </Button>
-          ))}
-        </div>
-      ) : null}
-      {chosen ? (
-        <div className="min-h-0 flex-1">
-          <GroupPullRequestReview
-            key={chosen.id}
-            environmentId={environmentId}
-            threadRef={scopeThreadRef(environmentId, chosen.id)}
-            reference={reference}
-            fallback={fallback}
-          />
-        </div>
-      ) : (
-        fallback
-      )}
-    </div>
-  );
-}
-
-/**
- * The Review tab: the pull request's review in this chat's group, as a stack of rounds.
- * The server owns every decision and viewed mark; this only renders and sends the user's acts.
- */
-function GroupPullRequestReview({
-  environmentId,
-  threadRef,
-  reference,
-  fallback,
-}: {
-  environmentId: EnvironmentId;
-  threadRef: ScopedThreadRef;
-  reference: PullRequestRef;
-  fallback: ReactNode;
+  status?: PullRequestReviewStatus | undefined;
 }) {
   const query = useEnvironmentQuery(
     reviewSessionEnvironment.session({
       environmentId,
       input: {
-        threadId: threadRef.threadId,
+        ...(threadRef === null ? {} : { threadId: threadRef.threadId }),
         repository: reference.repository,
         number: reference.number,
       },
     }),
   );
   const snapshot = query.data?.snapshot ?? null;
-  const sessionId = snapshot?.session.id ?? null;
+  if (snapshot === null) return fallback;
+  const beside = threadRef ?? scopeThreadRef(environmentId, snapshot.session.reviewThreadId);
+  return (
+    <GroupPullRequestReview
+      key={`${snapshot.session.id}:${scopedThreadKey(beside)}`}
+      environmentId={environmentId}
+      threadRef={beside}
+      reference={reference}
+      snapshot={snapshot}
+      status={status}
+    />
+  );
+}
+
+/**
+ * The Review tab: where the pull request stands, then the round being worked and its history.
+ * The server owns every decision and viewed mark; this only renders and sends the user's acts.
+ */
+function GroupPullRequestReview({
+  environmentId,
+  threadRef,
+  reference,
+  snapshot,
+  status,
+}: {
+  environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef;
+  reference: PullRequestRef;
+  snapshot: ReviewSessionSnapshot;
+  status?: PullRequestReviewStatus | undefined;
+}) {
+  const sessionId = snapshot.session.id;
   // The open point belongs to the chat beside the panel, whichever chat in the group it is: the
   // composer chip and message tags read it under that chat's key.
-  const reviewThreadKey = sessionId === null ? null : scopedThreadKey(threadRef);
+  const reviewThreadKey: string | null = scopedThreadKey(threadRef);
   const providers = useAtomValue(
     environmentServerConfigsAtom,
     (configs) => configs.get(environmentId)?.providers ?? EMPTY_SERVER_PROVIDERS,
@@ -216,27 +168,35 @@ function GroupPullRequestReview({
   // same callbacks across subscription updates.
   const liveItems = useMemo(
     () =>
-      snapshot === null || snapshot.session.phase === "done"
+      snapshot.session.phase === "done"
         ? NO_ITEMS
         : liveRoundItems(snapshot, snapshot.session.round),
     [snapshot],
   );
+  // Points the panel lists, open from an earlier commit included; they open like any other.
+  const listedItems =
+    snapshot.session.phase === "done"
+      ? NO_ITEMS
+      : snapshot.items.filter(
+          (item) =>
+            item.lastSeenRound <= snapshot.session.round &&
+            item.githubState !== "resolved" &&
+            !isReviewOverview(item),
+        );
   const liveItemsRef = useRef(liveItems);
   useEffect(() => {
     liveItemsRef.current = liveItems;
   }, [liveItems]);
 
-  const session = snapshot?.session ?? null;
-  const applyKey = session === null ? null : `${session.id}:${session.round}`;
+  const session = snapshot.session;
+  const applyKey: string | null = `${session.id}:${session.round}`;
   const currentRoundState =
-    session === null
-      ? null
-      : (snapshot?.rounds.find((round) => round.round === session.round)?.state ?? null);
+    snapshot.rounds.find((round) => round.round === session.round)?.state ?? null;
   if (applySent !== null && (applySent !== applyKey || currentRoundState !== "collecting")) {
     setApplySent(null);
   }
   useEffect(() => {
-    if (session === null || reviewThreadKey === null) return;
+    if (reviewThreadKey === null) return;
     useReviewPointFocusStore.getState().registerReviewChat(reviewThreadKey, {
       environmentId,
       projectId: reference.projectId,
@@ -250,10 +210,10 @@ function GroupPullRequestReview({
   // moved on, gone stale) closes, and closing the panel takes the chip away too.
   useEffect(() => {
     if (reviewThreadKey === null || openNumber === null) return;
-    if (!liveItems.some((item) => item.number === openNumber)) {
+    if (!listedItems.some((item) => item.number === openNumber)) {
       useReviewPointFocusStore.getState().closePoint(reviewThreadKey);
     }
-  }, [liveItems, openNumber, reviewThreadKey]);
+  }, [listedItems, openNumber, reviewThreadKey]);
   useEffect(() => {
     if (reviewThreadKey === null) return;
     return () => useReviewPointFocusStore.getState().closePoint(reviewThreadKey);
@@ -274,10 +234,10 @@ function GroupPullRequestReview({
   );
   useEffect(() => {
     if (reviewThreadKey === null || requestedPoint === undefined) return;
-    const item = liveItems.find((candidate) => candidate.number === requestedPoint);
+    const item = listedItems.find((candidate) => candidate.number === requestedPoint);
     if (item !== undefined) focusPoint(item);
     useReviewPointFocusStore.getState().takeRequestedPoint(reviewThreadKey);
-  }, [focusPoint, liveItems, requestedPoint, reviewThreadKey]);
+  }, [focusPoint, listedItems, requestedPoint, reviewThreadKey]);
   // Apply may be sent again for this round once it is back to collecting (a failed send).
   useEffect(() => {
     if (currentRoundState !== "collecting") applyInFlightRef.current = null;
@@ -289,7 +249,6 @@ function GroupPullRequestReview({
   );
   const onViewed = useCallback(
     (item: ReviewItem, viewed: boolean) => {
-      if (sessionId === null) return;
       void (async () => {
         const result = await setViewed({
           environmentId,
@@ -311,7 +270,6 @@ function GroupPullRequestReview({
   );
   const onDecide = useCallback(
     (item: ReviewItem, decision: ReviewDecision, postAs?: ReviewPostAs) => {
-      if (sessionId === null) return;
       void decide({
         environmentId,
         input: { sessionId, number: item.number, decision, ...(postAs ? { postAs } : {}) },
@@ -328,10 +286,6 @@ function GroupPullRequestReview({
     },
     [openLink],
   );
-
-  if (snapshot === null || sessionId === null) {
-    return fallback;
-  }
 
   const reviewing = reviewRole(snapshot.session) === "reviewer";
   // GitHub keeps one pending review per person; the dialog asks whether to add to it.
@@ -379,109 +333,163 @@ function GroupPullRequestReview({
     ...item,
     decision: effectiveDecision(item) ?? ("needs-call" as const),
   }));
+  // History is every reviewed commit before the one the current card shows.
+  const commits = reviewHistoryRounds(snapshot.sources, snapshot.items);
+  // The workspace shows the latest reviewed commit and every earlier one with anything still
+  // open; History keeps the rounds where everything is resolved.
+  // Settled: nothing open, nothing still reviewing, and no finished review waiting for triage.
+  // A round whose reviews found nothing is settled too.
+  const settled = (group: (typeof commits)[number]) =>
+    group.items.every((item) => !isOpenReviewPoint(item)) &&
+    group.sources.every(
+      (source) =>
+        source.state !== "reviewing" &&
+        source.state !== "requested" &&
+        source.state !== "pending" &&
+        !(source.kind === "local" && source.state === "done" && !source.triaged),
+    );
+  const latestCommit = views.some((view) => view.current) ? commits.at(-1) : undefined;
+  // A finished review has no workspace: every round is history.
+  const openRounds =
+    latestCommit === undefined
+      ? []
+      : commits.filter((group) => group === latestCommit || !settled(group));
+  const earlier = commits.filter((group) => !openRounds.includes(group));
+  const renderView = (view: (typeof views)[number]) => {
+    const collecting = view.current && view.round.state === "collecting";
+    return (
+      <ReviewRoundCard
+        // A round that stops being current collapses under the new one.
+        key={`${view.round.round}:${view.current}`}
+        view={view}
+        sessionId={sessionId}
+        targetThreadId={threadRef.threadId}
+        environmentId={environmentId}
+        providers={providers}
+        viewerLogin={viewerLogin}
+        reviewer={reviewer}
+        openRounds={view.current ? openRounds : undefined}
+        actions={
+          reviewer && view.current && view.round.state !== "collecting" ? (
+            <ReviewerSubmitRow
+              snapshot={snapshot}
+              roundState={view.round.state}
+              disabled={!canRequest}
+              onOpenLink={onOpenLink}
+              onRequest={(tag) =>
+                void continueReview({
+                  environmentId,
+                  input: {
+                    sessionId,
+                    targetThreadId: threadRef.threadId,
+                    request: { _tag: tag },
+                  },
+                })
+              }
+            />
+          ) : null
+        }
+        discussed={
+          view.items.filter(
+            (item) => (mentions.get(item.number) ?? 0) > 0 || item.sideThreadId !== null,
+          ).length
+        }
+        footer={
+          collecting ? (
+            <ApplyRow
+              left={
+                view.items.filter(
+                  (item) =>
+                    effectiveDecision(item) === null &&
+                    pointKindFor(item, snapshot.session, reviewer) !== "context",
+                ).length
+              }
+              reviewer={reviewer}
+              sending={applySent === applyKey}
+              disabled={!canRequest}
+              onApply={() => setConfirmingApply(true)}
+            />
+          ) : null
+        }
+        renderPoint={(item) => {
+          const open = view.current && openNumber === item.number;
+          const sideThreadId = item.sideThreadId;
+          return (
+            <ReviewPointRow
+              key={item.number}
+              item={item}
+              environmentId={environmentId}
+              sessionId={sessionId}
+              roundState={view.round.state}
+              open={open}
+              openable={view.current}
+              collecting={collecting}
+              canView={canView}
+              canDecide={canDecide}
+              talked={mentions.get(item.number) ?? 0}
+              reviewerRound={reviewer ? snapshot.session.round : null}
+              onOpenChange={onOpenChange}
+              onViewed={onViewed}
+              onDecide={onDecide}
+              onOpenLink={onOpenLink}
+              // Only the open row gets these, so the closed rows stay memoised.
+              menu={
+                open ? (
+                  <ReviewPointMenu
+                    environmentId={environmentId}
+                    disabled={!collecting || sideChat.opening}
+                    onDiscuss={() => void sideChat.open(sessionId, item.number)}
+                  />
+                ) : undefined
+              }
+              banner={
+                open && sideThreadId !== null ? (
+                  <ReviewSideChatBanner
+                    environmentId={environmentId}
+                    threadId={sideThreadId}
+                    onOpen={() => void sideChat.goToThread(sideThreadId)}
+                  />
+                ) : undefined
+              }
+            />
+          );
+        }}
+      />
+    );
+  };
+  const current = views.filter((view) => view.current);
+
+  const progress = reviewProgress({
+    role: reviewer ? "reviewer" : "author",
+    viewerLogin,
+    authorLogin: snapshot.session.authorLogin ?? null,
+    sources: snapshot.sources,
+    items: snapshot.items,
+    checks: status?.checks,
+    reviewDecision: status?.reviewDecision,
+    headSha: status?.headSha ?? snapshot.session.headSha,
+    reReview: reReviewReason(snapshot.session, snapshot.sources),
+  });
   return (
     <div className="flex h-full flex-col gap-2.5 overflow-y-auto p-3">
-      {views.map((view) => {
-        const collecting = view.current && view.round.state === "collecting";
-        return (
-          <ReviewRoundCard
-            // A round that stops being current collapses under the new one.
-            key={`${view.round.round}:${view.current}`}
-            view={view}
-            sessionId={sessionId}
-            targetThreadId={threadRef.threadId}
-            environmentId={environmentId}
-            providers={providers}
-            viewerLogin={viewerLogin}
-            reviewer={reviewer}
-            actions={
-              reviewer && view.current && view.round.state !== "collecting" ? (
-                <ReviewerSubmitRow
-                  snapshot={snapshot}
-                  roundState={view.round.state}
-                  disabled={!canRequest}
-                  onOpenLink={onOpenLink}
-                  onRequest={(tag) =>
-                    void continueReview({
-                      environmentId,
-                      input: {
-                        sessionId,
-                        targetThreadId: threadRef.threadId,
-                        request: { _tag: tag },
-                      },
-                    })
-                  }
-                />
-              ) : null
-            }
-            discussed={
-              view.items.filter(
-                (item) => (mentions.get(item.number) ?? 0) > 0 || item.sideThreadId !== null,
-              ).length
-            }
-            footer={
-              collecting ? (
-                <ApplyRow
-                  left={
-                    view.items.filter(
-                      (item) =>
-                        effectiveDecision(item) === null &&
-                        pointKindFor(item, snapshot.session, reviewer) !== "context",
-                    ).length
-                  }
-                  reviewer={reviewer}
-                  sending={applySent === applyKey}
-                  disabled={!canRequest}
-                  onApply={() => setConfirmingApply(true)}
-                />
-              ) : null
-            }
-            renderPoint={(item) => {
-              const open = view.current && openNumber === item.number;
-              const sideThreadId = item.sideThreadId;
-              return (
-                <ReviewPointRow
-                  key={item.number}
-                  item={item}
-                  environmentId={environmentId}
-                  sessionId={sessionId}
-                  roundState={view.round.state}
-                  open={open}
-                  openable={view.current}
-                  collecting={collecting}
-                  canView={canView}
-                  canDecide={canDecide}
-                  talked={mentions.get(item.number) ?? 0}
-                  reviewerRound={reviewer ? snapshot.session.round : null}
-                  onOpenChange={onOpenChange}
-                  onViewed={onViewed}
-                  onDecide={onDecide}
-                  onOpenLink={onOpenLink}
-                  // Only the open row gets these, so the closed rows stay memoised.
-                  menu={
-                    open ? (
-                      <ReviewPointMenu
-                        environmentId={environmentId}
-                        disabled={!collecting || sideChat.opening}
-                        onDiscuss={() => void sideChat.open(sessionId, item.number)}
-                      />
-                    ) : undefined
-                  }
-                  banner={
-                    open && sideThreadId !== null ? (
-                      <ReviewSideChatBanner
-                        environmentId={environmentId}
-                        threadId={sideThreadId}
-                        onOpen={() => void sideChat.goToThread(sideThreadId)}
-                      />
-                    ) : undefined
-                  }
-                />
-              );
-            }}
-          />
-        );
-      })}
+      <ReviewProgressCard progress={progress} />
+      {current.map(renderView)}
+      {earlier.length === 0 ? null : (
+        <details className="rounded-xl border border-border/70 px-3 py-2 text-sm">
+          <summary className="cursor-pointer text-muted-foreground">
+            History · {earlier.length} resolved {earlier.length === 1 ? "round" : "rounds"}
+          </summary>
+          <div className="flex flex-col pt-1">
+            <ReviewCommitHistory
+              groups={earlier}
+              environmentId={environmentId}
+              sessionId={sessionId}
+              providers={providers}
+              viewerLogin={viewerLogin}
+            />
+          </div>
+        </details>
+      )}
       <ReviewApplyDialog
         open={confirmingApply}
         onOpenChange={setConfirmingApply}
@@ -546,7 +554,7 @@ const VERDICT_TEXT = {
 
 /**
  * After a reviewer round is posted: where your review stands on GitHub, the verdict to pick,
- * and the way on (Re-review once you are asked again, Finish once you approved).
+ * and the way on: Re-review once you are asked again or the author pushes.
  */
 function ReviewerSubmitRow({
   snapshot,
@@ -559,7 +567,7 @@ function ReviewerSubmitRow({
   roundState: "applying" | "applied";
   disabled: boolean;
   onOpenLink: (url: string) => void;
-  onRequest: (tag: "re-review" | "finish") => void;
+  onRequest: (tag: "re-review") => void;
 }) {
   const { session, sources } = snapshot;
   const pending = sources.find(
@@ -579,7 +587,7 @@ function ReviewerSubmitRow({
             : reason === "head-moved"
               ? "New commits since your review."
               : submitted.verdict === "approved"
-                ? "Finish when you are done."
+                ? `Nothing left to do. This comes back if ${author} asks again or pushes.`
                 : `Waiting for ${author} to push fixes and ask again.`
         }`
       : pending !== undefined
@@ -598,14 +606,6 @@ function ReviewerSubmitRow({
       <span className="min-w-0 flex-1 text-xs text-muted-foreground">{line}</span>
       <Button size="sm" variant="outline" onClick={() => onOpenLink(pending?.url ?? session.url)}>
         Open on GitHub
-      </Button>
-      <Button
-        size="sm"
-        variant={submitted?.verdict === "approved" ? "default" : "outline"}
-        disabled={disabled}
-        onClick={() => onRequest("finish")}
-      >
-        Finish
       </Button>
       <Button
         size="sm"

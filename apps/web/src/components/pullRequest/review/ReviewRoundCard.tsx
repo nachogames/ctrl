@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
 import {
   type ReviewHistoryRound,
   reviewFindingTitle,
@@ -47,6 +48,7 @@ export function ReviewRoundCard({
   actions,
   viewerLogin = null,
   reviewer = false,
+  openRounds,
 }: {
   view: ReviewRoundView;
   sessionId: ReviewSessionId;
@@ -64,11 +66,9 @@ export function ReviewRoundCard({
   viewerLogin?: string | null;
   /** Reviewing someone else's pull request. */
   reviewer?: boolean;
+  /** The current card's reviewed commits: the latest, and earlier ones with anything open. */
+  openRounds?: ReadonlyArray<ReviewHistoryRound> | undefined;
 }) {
-  const [historyExpanded, setHistoryOpen] = useState<boolean | null>(null);
-  const historyOpen =
-    historyExpanded ??
-    (view.history ?? []).some((item) => item.stale && item.githubState !== "resolved");
   const [collapsed, setCollapsed] = useState(!view.current);
   // The reviews a Triage click covered. The request only queues the agent's turn; the triage
   // runs until the agent marks each of them triaged. Keyed so a new round or session drops it.
@@ -92,7 +92,20 @@ export function ReviewRoundCard({
     triage?.key === triageKey ? triage.ids : NO_SOURCE_IDS,
   );
   const offerLocal = offersLocalReview(view);
-  const folded = foldPostedReviews(view.sources, viewerLogin);
+  // Open points from an earlier commit wait here with the rest until a recheck brings them back.
+  const recheck = view.current
+    ? (view.history ?? []).filter((item) => item.stale && isOpenReviewPoint(item))
+    : [];
+  // Every review the card lists, earlier commits included, so each posted review folds into its run.
+  const folded = foldPostedReviews(
+    [
+      ...view.sources,
+      ...(openRounds ?? []).flatMap((group) =>
+        group.sources.filter((source) => !view.sources.some((own) => own.id === source.id)),
+      ),
+    ],
+    viewerLogin,
+  );
   const viewed = view.items.filter((item) => item.viewed).length;
 
   const startTriage = async () => {
@@ -159,38 +172,85 @@ export function ReviewRoundCard({
       </header>
       {collapsed ? null : (
         <>
-          {view.reviewHistory?.map((group) => (
-            <ReviewHistoryGroup key={group.number} group={group}>
-              <ul className="flex flex-col gap-0.5">
-                {group.sources
-                  .filter(
-                    (source) =>
-                      source.round === view.round.round &&
-                      !folded.hidden.has(source.id) &&
-                      !(offerLocal && source.kind === "local" && source.state === "not-run"),
-                  )
-                  .map((source) => (
-                    <ReviewSourceRow
-                      key={source.id}
-                      source={source}
-                      environmentId={environmentId}
-                      sessionId={sessionId}
-                      ranOn={ranOnLabel(source.ranOn, providers)}
-                      viewerLogin={viewerLogin}
-                      posted={folded.postedFor.get(source.id)}
-                      resolution={
-                        source.state === "done"
-                          ? reviewResolutionLabel(
-                              group.items.filter((item) => item.sourceIds.includes(source.id)),
-                              [source],
-                            )
-                          : undefined
-                      }
-                    />
-                  ))}
-              </ul>
-            </ReviewHistoryGroup>
-          ))}
+          {view.current
+            ? (openRounds ?? []).map((group) => (
+                <section
+                  key={group.number}
+                  aria-label={`Review round ${group.number}`}
+                  className="flex flex-col gap-0.5 border-t border-border/60 pt-2 first:border-t-0 first:pt-0"
+                >
+                  <h4 className="flex items-center gap-2 px-1 text-xs">
+                    <span className="font-semibold">Round {group.number}</span>
+                    {group.commitSha === null ? null : (
+                      <span className="font-mono text-muted-foreground">
+                        {group.commitSha.slice(0, 7)}
+                      </span>
+                    )}
+                    <span className="ml-auto text-muted-foreground">
+                      {reviewResolutionLabel(group.items, group.sources)}
+                    </span>
+                  </h4>
+                  <ul className="flex flex-col gap-0.5">
+                    {group.sources
+                      .filter(
+                        (source) =>
+                          !folded.hidden.has(source.id) &&
+                          !(offerLocal && source.kind === "local" && source.state === "not-run"),
+                      )
+                      .map((source) => (
+                        <ReviewSourceRow
+                          key={source.id}
+                          source={source}
+                          environmentId={environmentId}
+                          sessionId={sessionId}
+                          ranOn={ranOnLabel(source.ranOn, providers)}
+                          viewerLogin={viewerLogin}
+                          posted={folded.postedFor.get(source.id)}
+                          resolution={
+                            source.state === "done"
+                              ? reviewResolutionLabel(
+                                  group.items.filter((item) => item.sourceIds.includes(source.id)),
+                                  [source],
+                                )
+                              : undefined
+                          }
+                        />
+                      ))}
+                  </ul>
+                </section>
+              ))
+            : view.reviewHistory?.map((group) => (
+                <ReviewHistoryGroup key={group.number} group={group}>
+                  <ul className="flex flex-col gap-0.5">
+                    {group.sources
+                      .filter(
+                        (source) =>
+                          source.round === view.round.round &&
+                          !folded.hidden.has(source.id) &&
+                          !(offerLocal && source.kind === "local" && source.state === "not-run"),
+                      )
+                      .map((source) => (
+                        <ReviewSourceRow
+                          key={source.id}
+                          source={source}
+                          environmentId={environmentId}
+                          sessionId={sessionId}
+                          ranOn={ranOnLabel(source.ranOn, providers)}
+                          viewerLogin={viewerLogin}
+                          posted={folded.postedFor.get(source.id)}
+                          resolution={
+                            source.state === "done"
+                              ? reviewResolutionLabel(
+                                  group.items.filter((item) => item.sourceIds.includes(source.id)),
+                                  [source],
+                                )
+                              : undefined
+                          }
+                        />
+                      ))}
+                  </ul>
+                </ReviewHistoryGroup>
+              ))}
           <ul>
             {offerLocal ? (
               <ReviewLocalOfferRow
@@ -199,36 +259,18 @@ export function ReviewRoundCard({
               />
             ) : null}
           </ul>
-          {(view.history?.length ?? 0) > 0 ? (
-            <details
-              className="border-t border-border/60 px-1 py-2 text-xs"
-              open={historyOpen}
-              onToggle={(event) => setHistoryOpen(event.currentTarget.open)}
-            >
-              <summary>Resolved or earlier-head findings ({view.history?.length})</summary>
-              {historyOpen ? (
-                <ul className="flex flex-col gap-1.5 pt-2">
-                  {view.history?.map((item) => (
-                    <ReviewHistoryItem
-                      key={item.number}
-                      item={item}
-                      environmentId={environmentId}
-                    />
-                  ))}
-                </ul>
-              ) : null}
-            </details>
-          ) : null}
-          {view.items.length === 0 ? null : (
+          {view.items.length === 0 && recheck.length === 0 ? null : (
             <>
               <div className="flex items-center gap-2.5 border-t border-border/60 px-1 pt-2">
-                <p className={SECTION_LABEL}>Points</p>
+                <p className={SECTION_LABEL}>Open points</p>
                 <span className="flex-1" />
                 <span className="text-xs text-muted-foreground">
+                  {recheck.length > 0 ? `${recheck.length} from an earlier commit · ` : ""}
                   {reviewPointCounts({ total: view.items.length, viewed, discussed })}
                 </span>
               </div>
               <ul className="flex flex-col gap-1.5">
+                {recheck.map((item) => renderPoint(item, view))}
                 {view.items.map((item) => renderPoint(item, view))}
               </ul>
               {footer}
@@ -249,14 +291,25 @@ function ReviewHistoryItem({
   item: ReviewItem;
   environmentId: EnvironmentId;
 }) {
+  // Open from an earlier commit: whether the new code touched it, until a recheck.
+  const recheck = item.stale && isOpenReviewPoint(item);
   const [open, setOpen] = useState(false);
   return (
     <li>
       <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-        <summary>
-          #{item.number} ·{" "}
-          {item.githubState === "resolved" ? "Resolved on GitHub" : "Needs reverification"} ·{" "}
-          {reviewFindingTitle(item.summary)}
+        <summary className="cursor-pointer text-xs">
+          #{item.number} · {reviewFindingTitle(item.summary)} ·{" "}
+          <span className="text-muted-foreground">
+            {item.githubState === "outdated"
+              ? "code changed"
+              : recheck
+                ? "not touched"
+                : item.githubState === "resolved"
+                  ? "resolved"
+                  : item.githubState === "open"
+                    ? "open"
+                    : "not posted"}
+          </span>
         </summary>
         {open ? (
           <div className="pt-2">
@@ -326,7 +379,15 @@ export function ReviewHistoryGroup({
             aria-hidden="true"
             className={open ? "size-3 shrink-0 rotate-90" : "size-3 shrink-0"}
           />
-          <span className="font-semibold">Review round {group.number}</span>
+          <span className="font-semibold">
+            Review round {group.number}
+            {group.commitSha === null ? null : (
+              <span className="font-mono font-normal text-muted-foreground">
+                {" "}
+                · {group.commitSha.slice(0, 7)}
+              </span>
+            )}
+          </span>
           <span className="ml-auto">
             {group.sources.every((source) => source.failed)
               ? "Failed · no review produced"
@@ -336,5 +397,62 @@ export function ReviewHistoryGroup({
       </h4>
       {open ? children : null}
     </section>
+  );
+}
+
+/** Earlier reviewed commits, newest first: who reviewed each, and what came of its points. */
+export function ReviewCommitHistory({
+  groups,
+  environmentId,
+  sessionId,
+  providers,
+  viewerLogin,
+}: {
+  groups: ReadonlyArray<ReviewHistoryRound>;
+  environmentId: EnvironmentId;
+  sessionId: ReviewSessionId | null;
+  providers: ReadonlyArray<ServerProvider>;
+  viewerLogin: string | null;
+}) {
+  return (
+    <>
+      {groups.toReversed().map((group) => {
+        const folded = foldPostedReviews(group.sources, viewerLogin);
+        return (
+          <ReviewHistoryGroup key={group.number} group={group}>
+            <ul className="flex flex-col gap-0.5">
+              {group.sources
+                .filter((source) => !folded.hidden.has(source.id))
+                .map((source) => (
+                  <ReviewSourceRow
+                    key={source.id}
+                    source={source}
+                    environmentId={environmentId}
+                    sessionId={sessionId}
+                    ranOn={ranOnLabel(source.ranOn, providers)}
+                    viewerLogin={viewerLogin}
+                    posted={folded.postedFor.get(source.id)}
+                    resolution={
+                      source.state === "done"
+                        ? reviewResolutionLabel(
+                            group.items.filter((item) => item.sourceIds.includes(source.id)),
+                            [source],
+                          )
+                        : undefined
+                    }
+                  />
+                ))}
+            </ul>
+            {group.items.length === 0 ? null : (
+              <ul className="flex flex-col gap-1 px-1 pb-1">
+                {group.items.map((item) => (
+                  <ReviewHistoryItem key={item.number} item={item} environmentId={environmentId} />
+                ))}
+              </ul>
+            )}
+          </ReviewHistoryGroup>
+        );
+      })}
+    </>
   );
 }

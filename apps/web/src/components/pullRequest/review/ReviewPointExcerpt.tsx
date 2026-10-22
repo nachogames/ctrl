@@ -9,6 +9,7 @@ import {
   resolveDiffThemeName,
 } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
+import { trimReviewExcerpt } from "./pullRequestReview.logic";
 
 /** Render captured review hunks with their original line numbers, without fetching source. */
 export function ReviewPointExcerpt({
@@ -21,17 +22,17 @@ export function ReviewPointExcerpt({
   excerpt: string | null;
 }) {
   const { resolvedTheme } = useTheme();
+  const shown = excerpt ? trimReviewExcerpt(excerpt.trimStart()) : null;
   const patch = useMemo(() => {
-    if (!excerpt) return null;
-    const hunk = excerpt.trimStart();
+    if (!shown) return null;
     // GitHub's diffHunk omits file headers. Use a neutral parser path; the actual path is below.
     return getRenderablePatch(
-      hunk.startsWith("@@")
-        ? `diff --git a/review b/review\n--- a/review\n+++ b/review\n${excerpt}`
-        : excerpt,
+      shown.startsWith("@@")
+        ? `diff --git a/review b/review\n--- a/review\n+++ b/review\n${shown}`
+        : shown,
       "review-point",
     );
-  }, [excerpt]);
+  }, [shown]);
   if (!path && !excerpt) return null;
   return (
     <div className="overflow-hidden rounded-lg border border-border/60">
@@ -58,9 +59,9 @@ export function ReviewPointExcerpt({
             />
           ))}
         </DiffWorkerPoolProvider>
-      ) : excerpt ? (
+      ) : shown ? (
         <pre className="overflow-x-auto py-3 text-xs">
-          {excerpt.split("\n").map((text, index) => (
+          {shown.split("\n").map((text, index) => (
             <span
               key={`${index}:${text}`}
               className={`block min-w-max px-3 ${

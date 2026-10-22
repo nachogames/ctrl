@@ -8,6 +8,7 @@ import {
   ReviewSourceComment,
   ReviewAlreadyFixedIn,
   type ReviewGithubState,
+  type ProjectId,
   type ThreadGroupId,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -253,23 +254,32 @@ export class ReviewSessionRepository extends Context.Service<
     readonly insertSession: (session: ReviewSession) => Effect.Effect<void, E>;
     readonly updateSession: (session: ReviewSession) => Effect.Effect<void, E>;
     readonly getSession: (id: ReviewSessionId) => Effect.Effect<Option.Option<ReviewSession>, E>;
-    /** Hands the review to another chat; only for a review whose chat is gone. */
+    /** Hands the review to another chat, and that chat's group. */
     readonly setSessionReviewThread: (input: {
       readonly sessionId: ReviewSessionId;
       readonly reviewThreadId: ThreadId;
+      readonly groupId: ThreadGroupId;
       readonly updatedAt: string;
     }) => Effect.Effect<void, E>;
+    /**
+     * A pull request has one live review per project: the one in `groupId` when there is one,
+     * else the newest. Two clones of a repository are two projects, each with its own review.
+     */
     readonly findLiveSession: (input: {
       readonly key: ThreadPullRequestKey;
+      readonly projectId: ProjectId;
       readonly groupId: ThreadGroupId;
     }) => Effect.Effect<Option.Option<ReviewSession>, E>;
-    /** The newest review of a pull request in a group, finished or not, for the Review tab. */
+    /** The pull request's review for the Review tab: the newest live one, else the newest finished. */
     readonly findLatestSessionForPullRequest: (input: {
       readonly repository: string;
       readonly number: number;
-      readonly groupId: ThreadGroupId;
     }) => Effect.Effect<Option.Option<ReviewSession>, E>;
     readonly listLiveSessions: () => Effect.Effect<ReadonlyArray<ReviewSession>, E>;
+    /** Finished reviews last changed at or after `since`, newest first, for GitHub to reopen. */
+    readonly listFinishedSessions: (
+      since: string,
+    ) => Effect.Effect<ReadonlyArray<ReviewSession>, E>;
     readonly listLiveSessionsForThread: (
       threadId: ThreadId,
     ) => Effect.Effect<ReadonlyArray<ReviewSession>, E>;
@@ -413,24 +423,25 @@ const make = Effect.gen(function* () {
         Effect.mapError(sqlError("getReviewSession")),
         Effect.flatMap(firstSession),
       ),
-    setSessionReviewThread: ({ sessionId, reviewThreadId, updatedAt }) =>
+    setSessionReviewThread: ({ sessionId, reviewThreadId, groupId, updatedAt }) =>
       sql`
-        UPDATE review_sessions SET review_thread_id = ${reviewThreadId}, updated_at = ${updatedAt}
+        UPDATE review_sessions
+        SET review_thread_id = ${reviewThreadId}, group_id = ${groupId}, updated_at = ${updatedAt}
         WHERE session_id = ${sessionId}
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("setReviewSessionThread"))),
-    findLiveSession: ({ key, groupId }) =>
+    findLiveSession: ({ key, projectId, groupId }) =>
       sql<SessionRow>`
         SELECT * FROM review_sessions
         WHERE host = ${key.host} AND repository = ${key.repository} AND number = ${key.number}
-          AND group_id = ${groupId} AND phase <> 'done'
+          AND project_id = ${projectId} AND phase <> 'done'
+        ORDER BY group_id = ${groupId} DESC, updated_at DESC, session_id DESC LIMIT 1
       `.pipe(Effect.mapError(sqlError("findLiveReviewSession")), Effect.flatMap(firstSession)),
-    findLatestSessionForPullRequest: ({ repository, number, groupId }) =>
-      // Host is left out: one group never reviews two hosts' copies of the same repository.
+    findLatestSessionForPullRequest: ({ repository, number }) =>
+      // Host is left out: one environment never reviews two hosts' copies of the same repository.
       sql<SessionRow>`
         SELECT * FROM review_sessions
         WHERE lower(repository) = lower(${repository}) AND number = ${number}
-          AND group_id = ${groupId}
-        ORDER BY created_at DESC, session_id DESC LIMIT 1
+        ORDER BY phase <> 'done' DESC, updated_at DESC, session_id DESC LIMIT 1
       `.pipe(
         Effect.mapError(sqlError("findLatestReviewSessionForPullRequest")),
         Effect.flatMap(firstSession),
@@ -439,6 +450,11 @@ const make = Effect.gen(function* () {
       sql<SessionRow>`
         SELECT * FROM review_sessions WHERE phase <> 'done' ORDER BY created_at, session_id
       `.pipe(Effect.mapError(sqlError("listLiveReviewSessions")), Effect.flatMap(sessions)),
+    listFinishedSessions: (since) =>
+      sql<SessionRow>`
+        SELECT * FROM review_sessions WHERE phase = 'done' AND updated_at >= ${since}
+        ORDER BY updated_at DESC, session_id DESC
+      `.pipe(Effect.mapError(sqlError("listFinishedReviewSessions")), Effect.flatMap(sessions)),
     listLiveSessionsForThread: (threadId) =>
       sql<SessionRow>`
         SELECT * FROM review_sessions

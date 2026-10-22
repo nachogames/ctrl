@@ -1214,7 +1214,7 @@ const layerReviewSessionsRpc = ServerReviewSessionsRpcGroup.toLayer(
         reviewSessions.setViewed(input).pipe(Effect.map((item) => ({ item }))),
       [WS_METHODS.reviewSessionsEditReply]: (input) =>
         reviewSessions.editReply(input).pipe(Effect.map((item) => ({ item }))),
-      [WS_METHODS.reviewSessionsRequest]: (input) => reviewSessions.requestTurn(input),
+      [WS_METHODS.reviewSessionsRequest]: (input) => reviewHost.request(input),
       [WS_METHODS.reviewSessionsRunLocalReview]: (input) => reviewSessions.runLocalReview(input),
       [WS_METHODS.reviewSessionsDiscussInSideChat]: (input) => reviewSessions.openSideChat(input),
     });

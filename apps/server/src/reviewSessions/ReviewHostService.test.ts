@@ -25,13 +25,22 @@ import {
 } from "./testkit.ts";
 
 const reference = { projectId, repository: "nachogames/ctrl", number: 23 };
-function harness(options: { linked?: boolean; currentHead?: boolean; closed?: boolean } = {}) {
+function harness(
+  options: {
+    linked?: boolean;
+    currentHead?: boolean;
+    closed?: boolean;
+    reviewChatLive?: boolean;
+  } = {},
+) {
   let shell = options.linked
     ? { ...chatShell(ThreadId.make("linked")), pullRequests: [prLink(23, "feature", "main")] }
     : null;
   const launches: string[] = [];
   let prepared = 0;
   let runs = 0;
+  const opened: string[] = [];
+  const turns: string[] = [];
   const layer = Host.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -94,16 +103,34 @@ function harness(options: { linked?: boolean; currentHead?: boolean; closed?: bo
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
         }),
         Layer.mock(Reviews.ReviewSessionService)({
-          open: () =>
+          findSessionForPullRequest: () => Effect.succeed(null),
+          isAssignedChat: () => Effect.succeed(false),
+          hasLiveReviewChat: () => Effect.succeed(options.reviewChatLive !== false),
+          read: () =>
             Effect.succeed({
-              created: true,
-              snapshot: {
-                session: sessionFixture(),
-                rounds: [roundFixture(1)],
-                sources: [],
-                items: [],
-              },
+              session: sessionFixture(),
+              rounds: [roundFixture(1)],
+              sources: [],
+              items: [],
             }),
+          requestTurn: (input) =>
+            Effect.sync(() => {
+              turns.push(input.request._tag);
+            }),
+          open: (input) =>
+            Effect.sync(() => {
+              opened.push(input.reviewThreadId);
+            }).pipe(
+              Effect.as({
+                created: true,
+                snapshot: {
+                  session: sessionFixture(),
+                  rounds: [roundFixture(1)],
+                  sources: [],
+                  items: [],
+                },
+              }),
+            ),
           runLocalReview: () =>
             Effect.sync(() => {
               if (!options.linked) assert.equal(shell?.worktreePath, "/isolated");
@@ -114,7 +141,7 @@ function harness(options: { linked?: boolean; currentHead?: boolean; closed?: bo
       ),
     ),
   );
-  return { layer, launches, counts: () => ({ prepared, runs }) };
+  return { layer, launches, opened, turns, counts: () => ({ prepared, runs }) };
 }
 
 it.effect("reads requested and completed reviews without creating chats", () => {
@@ -159,3 +186,26 @@ it.effect("does not review an outdated checkout or a closed PR", () =>
     }
   }),
 );
+it.effect("sends an action straight to a live review chat", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    yield* (yield* Host.ReviewHostService).request({
+      sessionId: sessionFixture().id,
+      request: { _tag: "re-review" },
+    });
+    assert.deepEqual([h.launches.length, h.opened, h.turns], [0, [], ["re-review"]]);
+  }).pipe(Effect.provide(h.layer));
+});
+it.effect("gives a review whose chats are gone a new chat, then sends the action", () => {
+  const h = harness({ reviewChatLive: false });
+  return Effect.gen(function* () {
+    yield* (yield* Host.ReviewHostService).request({
+      sessionId: sessionFixture().id,
+      request: { _tag: "re-review" },
+    });
+    assert.equal(h.launches.length, 1);
+    assert.deepEqual([h.opened, h.turns], [h.launches, ["re-review"]]);
+    // Moving the review never starts another independent review.
+    assert.deepEqual(h.counts(), { prepared: 1, runs: 0 });
+  }).pipe(Effect.provide(h.layer));
+});
