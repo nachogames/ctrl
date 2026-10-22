@@ -16,7 +16,7 @@ import { useEffect, useEffectEvent, useState } from "react";
 import { APP_BASE_NAME } from "../../branding";
 
 import { ensureLocalApi } from "../../localApi";
-import { useRestartServerForCursorMcp } from "../chat/ComposerCursorMcpTab";
+import { useRestartServerForCursorMcp } from "../chat/ComposerCursorMcpControl";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";

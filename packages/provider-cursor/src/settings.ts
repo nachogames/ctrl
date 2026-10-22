@@ -16,13 +16,13 @@ export const CursorSettings = makeProviderSettingsSchema(
     apiEndpoint: Schema.optionalKey(TrimmedString).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    // Ctrl: opt-in, since it copies saved OAuth tokens between this repository's checkouts.
-    shareMcpSignInsWithWorktrees: Schema.Boolean.pipe(
+    // Ctrl: opt-in, since it copies saved OAuth tokens between folders.
+    shareMcpSignIns: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({
-        title: "Share MCP sign-ins with worktrees",
+        title: "Share MCP sign-ins across folders",
         description:
-          "Before a thread first runs in a worktree, copy the newest Cursor MCP sign-ins from the other checkouts of the same repository, so you sign in once per repository instead of once per worktree. Sign-ins stay in your Cursor data folder on this machine.",
+          "Sign in to a server from ~/.cursor/mcp.json once, and every Cursor thread uses it: before a thread first runs in a folder, the newest sign-in is copied there. Servers a project's own .cursor/mcp.json defines still sign in per folder. Sign-ins stay in your Cursor data folder on this machine.",
         providerSettingsForm: { control: "switch" },
       }),
     ),

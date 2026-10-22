@@ -31,6 +31,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { CursorSettings } from "../settings.ts";
 
@@ -168,7 +169,7 @@ const decodeCursorSettings = Schema.decodeUnknownOption(CursorSettings);
 /** Whether a Cursor provider instance's saved config opted into sharing sign-ins. */
 export function cursorSharesMcpSignIns(config: unknown): boolean {
   const settings = decodeCursorSettings(config ?? {});
-  return Option.isSome(settings) && settings.value.shareMcpSignInsWithWorktrees;
+  return Option.isSome(settings) && settings.value.shareMcpSignIns;
 }
 
 /** Cursor's per-folder data directory, named the way its SDK names it. */
@@ -193,83 +194,14 @@ const hasTokens = (entry: unknown): entry is JsonObject =>
 const normalizedAuthEntry = (entry: JsonObject): JsonObject =>
   "tokens" in entry || "clientInfo" in entry ? entry : { tokens: entry };
 
-/** The git common directory a checkout's `.git` leads to, resolved through symlinks. */
-const gitCommonDirectory = Effect.fn("CursorMcpServers.gitCommonDirectory")(function* (
-  checkout: string,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const readText = (file: string) =>
-    fileSystem.readFileString(file).pipe(
-      Effect.map((text) => text.trim()),
-      Effect.option,
-    );
-  const dotGit = path.join(checkout, ".git");
-  const info = yield* fileSystem.stat(dotGit).pipe(Effect.option);
-  if (Option.isNone(info)) return null;
-  let commonDirectory = dotGit;
-  if (info.value.type === "File") {
-    const pointer = yield* readText(dotGit);
-    if (Option.isNone(pointer) || !pointer.value.startsWith("gitdir:")) return null;
-    const gitDirectory = path.resolve(checkout, pointer.value.slice("gitdir:".length).trim());
-    const common = yield* readText(path.join(gitDirectory, "commondir"));
-    commonDirectory = Option.isSome(common)
-      ? path.resolve(gitDirectory, common.value)
-      : gitDirectory;
-  } else if (info.value.type !== "Directory") {
-    return null;
-  }
-  return yield* fileSystem.realPath(commonDirectory).pipe(Effect.orElseSucceed(() => null));
-});
-
-/**
- * The other checkouts of the git repository holding `folder`: the main checkout
- * and its worktrees. Git metadata in a folder could name any directory, so the
- * folder and each candidate must both be listed by, and lead back to, the same
- * common directory.
- */
-const repositoryCheckouts = Effect.fn("CursorMcpServers.repositoryCheckouts")(function* (
-  folder: string,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const commonDirectory = yield* gitCommonDirectory(folder);
-  if (commonDirectory === null) return [];
-  const candidates = new Set<string>();
-  if (path.basename(commonDirectory) === ".git") candidates.add(path.dirname(commonDirectory));
-  const worktreesDirectory = path.join(commonDirectory, "worktrees");
-  const names = yield* fileSystem
-    .readDirectory(worktreesDirectory)
-    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-  for (const name of names) {
-    const gitFile = yield* fileSystem
-      .readFileString(path.join(worktreesDirectory, name, "gitdir"))
-      .pipe(Effect.option);
-    const pointer = Option.isSome(gitFile) ? gitFile.value.trim() : "";
-    if (pointer.length > 0) {
-      candidates.add(path.dirname(path.resolve(worktreesDirectory, name, pointer)));
-    }
-  }
-  const realPath = (candidate: string) =>
-    fileSystem.realPath(candidate).pipe(Effect.orElseSucceed(() => null));
-  const self = yield* realPath(folder);
-  let registered = false;
-  const checkouts = [];
-  for (const candidate of candidates) {
-    if ((yield* gitCommonDirectory(candidate)) !== commonDirectory) continue;
-    if ((yield* realPath(candidate)) === self) registered = true;
-    else checkouts.push(candidate);
-  }
-  // The folder itself must be one the repository lists, not one that only points at it.
-  return registered ? checkouts : [];
-});
-
 /**
  * Before Cursor first opens `folder`, gives it the newest saved sign-in for each
- * MCP server from the other checkouts of the same repository, so a new worktree
- * starts signed in. Sign-ins stay in this user's Cursor data directory and never
- * cross repositories. Does nothing once the folder is loaded: Cursor would not
- * read the change until restart, and its own copy may be newer.
+ * server in `~/.cursor/mcp.json` from any folder Cursor has saved one for, so a
+ * sign-in anywhere reaches every Cursor thread. Servers that the folder's own
+ * `.cursor/mcp.json` defines are skipped, so a project cannot claim a user-level
+ * server's name and receive its tokens. Sign-ins stay in this user's Cursor data
+ * directory. Does nothing once the folder is loaded: Cursor would not read the
+ * change until restart, and its own copy may be newer.
  */
 export const shareCursorMcpSignIns = Effect.fn("CursorMcpServers.shareSignIns")(function* (
   folder: string,
@@ -281,71 +213,116 @@ export const shareCursorMcpSignIns = Effect.fn("CursorMcpServers.shareSignIns")(
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const cursorDataDirectory =
     environment.CURSOR_DATA_DIR?.trim() || path.join(homeDirectory, ".cursor");
-  const authFile = (checkout: string) =>
-    path.join(cursorFolderDataDirectory(path, cursorDataDirectory, checkout), "mcp-auth.json");
-
-  const readAuth = Effect.fn("CursorMcpServers.readAuth")(function* (file: string) {
-    const info = yield* fileSystem.stat(file).pipe(Effect.option);
-    if (Option.isNone(info)) return null;
+  const readJson = Effect.fn("CursorMcpServers.readJson")(function* (file: string) {
     const text = yield* fileSystem.readFileString(file).pipe(Effect.option);
     const parsed = Option.isSome(text) ? decodeJson(text.value) : Option.none();
-    if (Option.isNone(parsed) || !isJsonObject(parsed.value)) return null;
+    return Option.isSome(parsed) && isJsonObject(parsed.value) ? parsed.value : null;
+  });
+
+  const projectServers = new Set(
+    cursorMcpConfigEntries(yield* readJson(path.join(folder, ".cursor", "mcp.json"))).map(
+      (entry) => entry.name,
+    ),
+  );
+  const shared = new Set(
+    cursorMcpConfigEntries(yield* readJson(path.join(homeDirectory, ".cursor", "mcp.json")))
+      .map((entry) => entry.name)
+      .filter((name) => !projectServers.has(name)),
+  );
+  if (shared.size === 0) return;
+
+  const projectsDirectory = path.join(cursorDataDirectory, "projects");
+  const targetDirectory = cursorFolderDataDirectory(path, cursorDataDirectory, folder);
+  const targetFile = path.join(targetDirectory, "mcp-auth.json");
+  const directories = yield* fileSystem
+    .readDirectory(projectsDirectory)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  const files = [];
+  for (const name of directories) {
+    const file = path.join(projectsDirectory, name, "mcp-auth.json");
+    const info = yield* fileSystem.stat(file).pipe(Effect.option);
+    if (Option.isNone(info)) continue;
+    const entries = yield* readJson(file);
+    if (entries === null) continue;
     const modifiedAt = Option.match(info.value.mtime, {
       onNone: () => 0,
       onSome: (mtime) => mtime.getTime(),
     });
-    return { entries: parsed.value, modifiedAt };
-  });
-
-  // A folder's own `.cursor/mcp.json` can reuse a server's name for another
-  // address, so a sign-in moves only between folders that define it alike.
-  const projectServers = Effect.fn("CursorMcpServers.projectServers")(function* (checkout: string) {
-    const text = yield* fileSystem
-      .readFileString(path.join(checkout, ".cursor", "mcp.json"))
-      .pipe(Effect.option);
-    const parsed = Option.isSome(text) ? decodeJson(text.value) : Option.none();
-    const config = Option.isSome(parsed) ? parsed.value : null;
-    return new Map(
-      cursorMcpConfigEntries(config).map((entry) => [entry.name, JSON.stringify(entry.transport)]),
-    );
-  });
-
-  const checkouts = yield* repositoryCheckouts(folder);
-  if (checkouts.length === 0) return;
-  const targetFile = authFile(folder);
-  const target = yield* readAuth(targetFile);
-  const targetServers = yield* projectServers(folder);
-  const sources = [];
-  for (const checkout of checkouts) {
-    const source = yield* readAuth(authFile(checkout));
-    if (source !== null) {
-      sources.push({ ...source, isTarget: false, servers: yield* projectServers(checkout) });
-    }
+    files.push({ entries, modifiedAt, isTarget: file === targetFile });
   }
+  const target = files.find((file) => file.isTarget);
   // The most recently written file holds the freshest tokens for its servers.
-  const ranked = [
-    ...sources,
-    ...(target === null ? [] : [{ ...target, isTarget: true, servers: targetServers }]),
-  ].toSorted((left, right) => right.modifiedAt - left.modifiedAt);
+  const ranked = files.toSorted((left, right) => right.modifiedAt - left.modifiedAt);
   const next: JsonObject = { ...target?.entries };
   let changed = false;
-  const taken = new Set<string>();
-  for (const file of ranked) {
-    for (const [server, entry] of Object.entries(file.entries)) {
-      if (taken.has(server) || !hasTokens(entry)) continue;
-      if (!file.isTarget && file.servers.get(server) !== targetServers.get(server)) continue;
-      taken.add(server);
-      if (file.isTarget) continue;
-      next[server] = normalizedAuthEntry(entry);
-      changed = true;
-    }
+  for (const server of shared) {
+    const newest = ranked.find((file) => hasTokens(file.entries[server]));
+    if (newest === undefined || newest.isTarget) continue;
+    next[server] = normalizedAuthEntry(newest.entries[server] as JsonObject);
+    changed = true;
   }
   if (!changed) return;
   const temporaryFile = `${targetFile}.ctrl.tmp`;
-  yield* fileSystem.makeDirectory(path.dirname(targetFile), { recursive: true, mode: 0o700 });
+  yield* fileSystem.makeDirectory(targetDirectory, { recursive: true, mode: 0o700 });
   // @effect-diagnostics-next-line preferSchemaOverJson:off - Cursor's own file format.
   yield* fileSystem.writeFileString(temporaryFile, JSON.stringify(next), { mode: 0o600 });
   yield* fileSystem.rename(temporaryFile, targetFile);
+});
+
+const ICON_TIMEOUT = Duration.seconds(4);
+const ICON_LINK_PATTERN = /<link\b[^>]*>/gi;
+const iconUrlsByHost = new Map<string, string | null>();
+
+/** The first icon a page's `<link rel="... icon ...">` tags declare, made absolute. */
+export function declaredIconUrl(html: string, pageUrl: string): string | null {
+  for (const tag of html.match(ICON_LINK_PATTERN) ?? []) {
+    const rel = /\brel\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1]?.toLowerCase() ?? "";
+    const href = /\bhref\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+    if (href === undefined || !rel.split(/\s+/).includes("icon")) continue;
+    try {
+      const url = new URL(href, pageUrl);
+      if (url.protocol === "https:") return url.href;
+    } catch {
+      // A malformed href is skipped.
+    }
+  }
+  return null;
+}
+
+/**
+ * An icon for a URL MCP server, from its own host or else its parent domain,
+ * since endpoints often live on a subdomain such as `mcp.linear.app`. Results
+ * are kept for the life of the process; a server with none gets null.
+ */
+export const cursorMcpServerIconUrl = Effect.fn("CursorMcpServers.iconUrl")(function* (
+  serverUrl: string,
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  let host: string;
+  try {
+    host = new URL(serverUrl).host;
+  } catch {
+    return null;
+  }
+  const cached = iconUrlsByHost.get(host);
+  if (cached !== undefined) return cached;
+  const labels = host.split(".");
+  const candidates = labels.length > 2 ? [host, labels.slice(1).join(".")] : [host];
+  for (const candidate of candidates) {
+    const pageUrl = `https://${candidate}/`;
+    const page = yield* httpClient.get(pageUrl).pipe(
+      Effect.flatMap((response) => response.text),
+      Effect.timeoutOption(ICON_TIMEOUT),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+    const declared = Option.isSome(page) ? declaredIconUrl(page.value, pageUrl) : null;
+    if (declared !== null) {
+      iconUrlsByHost.set(host, declared);
+      return declared;
+    }
+  }
+  iconUrlsByHost.set(host, null);
+  return null;
 });
 
 interface CursorFolderState {

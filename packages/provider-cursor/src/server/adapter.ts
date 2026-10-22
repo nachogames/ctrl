@@ -2166,7 +2166,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* Ref.set(liveAgent, null);
           }
           if (openInput.runtimePolicy.cwd !== null) {
-            if (adapterOptions.settings.shareMcpSignInsWithWorktrees) {
+            if (adapterOptions.settings.shareMcpSignIns) {
               yield* shareCursorMcpSignIns(openInput.runtimePolicy.cwd).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),

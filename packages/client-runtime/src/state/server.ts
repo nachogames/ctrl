@@ -1310,7 +1310,7 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) =>
-          `${environmentId}:${input.threadId ?? ""}:${input.projectId ?? ""}`,
+          `${environmentId}:${input.threadId ?? ""}:${input.projectId ?? ""}:${input.providerInstanceId ?? ""}`,
       },
     }),
     cursorMcpSignIn: createEnvironmentRpcCommand(runtime, {

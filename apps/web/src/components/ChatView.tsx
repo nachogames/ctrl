@@ -166,7 +166,6 @@ import {
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { useLiveDraftGroup, useThreadGroup } from "../state/threadGroups";
-import { ComposerCursorMcpTab } from "./chat/ComposerCursorMcpTab";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
@@ -2240,25 +2239,21 @@ export default function ChatView(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
-  // A thread about to get a new worktree has no folder to check yet.
+  // A draft, including one about to get a new worktree, checks its project's
+  // root with the Cursor instance it would start on.
   const cursorMcpFolder =
-    selectedProvider !== "cursor" ||
-    activeThread == null ||
-    (activeThread.worktreePath == null && sendEnvMode === "worktree")
+    selectedProvider !== "cursor"
       ? null
-      : isServerThread
+      : isServerThread && activeThread != null
         ? { threadId: activeThread.id }
-        : activeThread.worktreePath == null && activeProject != null
-          ? { projectId: activeProject.id }
+        : activeProject != null
+          ? {
+              projectId: activeProject.id,
+              ...(activeProviderInstanceId === null
+                ? {}
+                : { providerInstanceId: activeProviderInstanceId }),
+            }
           : null;
-  const cursorMcpTab =
-    cursorMcpFolder === null || activeThread == null ? null : (
-      <ComposerCursorMcpTab
-        environmentId={activeThread.environmentId}
-        folder={cursorMcpFolder}
-        firstTurn={activeMessageCount === 0}
-      />
-    );
   const localCheckoutBranchMismatch = isServerThread
     ? resolveLocalCheckoutBranchMismatch({
         effectiveEnvMode: envMode,
@@ -3585,7 +3580,8 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               queuedRunsControl={queuedRunsControl}
-                              shoulderTab={cursorMcpTab}
+                              cursorMcpFolder={cursorMcpFolder}
+                              firstTurn={activeMessageCount === 0}
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}

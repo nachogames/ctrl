@@ -42,11 +42,12 @@ Cursor saves MCP sign-ins per folder, so each project and worktree needs its own
 **MCP** tab on a Cursor thread's composer lists its servers and whether each is signed in for that
 folder; choose **Sign in** there, and the browser opens on the machine running T3 Code.
 
-To sign in once per repository instead of once per worktree, turn on **Share MCP sign-ins with
-worktrees** in **Settings > Providers > Cursor**. Before a thread first runs in a folder, T3 Code
-copies the newest sign-in for each server from the repository's other checkouts. Sign-ins stay in
-your Cursor data folder on that machine and are never copied between repositories. A server that
-replaces its refresh token on every refresh can still sign one copy out; sign in again there.
+To sign in once for every Cursor thread, turn on **Share MCP sign-ins across folders** in
+**Settings > Providers > Cursor**. Before a thread first runs in a folder, T3 Code copies the newest
+sign-in for each server in `~/.cursor/mcp.json` from any folder you signed in from. Servers that a
+project's own `.cursor/mcp.json` defines still sign in per folder. Sign-ins stay in your Cursor data
+folder on that machine. A server that replaces its refresh token on every refresh can still sign one
+copy out; sign in again there.
 
 Cursor reads a folder's sign-ins once per server start, so a sign-in finished after a thread already
 used that folder needs a restart. Choose **Restart** in the MCP tab. It works when the desktop app

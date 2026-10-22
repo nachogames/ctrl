@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 // Ctrl: Cursor's MCP servers, managed through Cursor's own config file and CLI.
 
@@ -36,6 +37,8 @@ export const CursorMcpServer = Schema.Struct({
   statusDetail: Schema.NullOr(CursorMcpText),
   /** Signed in on disk, but this server process loaded the folder while it was signed out. */
   needsRelaunch: Schema.Boolean,
+  /** An icon the server's site declares, for URL servers that have one. */
+  iconUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2_048))),
 });
 export type CursorMcpServer = typeof CursorMcpServer.Type;
 
@@ -43,6 +46,8 @@ export type CursorMcpServer = typeof CursorMcpServer.Type;
 export const CursorMcpFolderInput = Schema.Struct({
   threadId: Schema.optionalKey(ThreadId),
   projectId: Schema.optionalKey(ProjectId),
+  /** For a project: the Cursor instance whose settings apply, as a draft has no thread yet. */
+  providerInstanceId: Schema.optionalKey(ProviderInstanceId),
 });
 export type CursorMcpFolderInput = typeof CursorMcpFolderInput.Type;
 

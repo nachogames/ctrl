@@ -22,6 +22,8 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   }>;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
+  /** Ctrl: menu content for further blocks that moved into overflow, shown last. */
+  extraMenuContent?: ReactNode;
   size?: "sm" | "xs";
   /**
    * The resting strip keeps this menu mounted out of flow while every block
@@ -89,6 +91,12 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
+        {props.extraMenuContent ? (
+          <>
+            <MenuDivider />
+            {props.extraMenuContent}
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

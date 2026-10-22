@@ -105,6 +105,7 @@ import {
 } from "@t3tools/contracts";
 import * as CursorMcpServers from "@t3tools/provider-cursor/server/CursorMcpServers";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import {
   HttpRouter,
   HttpServerRequest,
@@ -1308,6 +1309,14 @@ const layerCursorMcpRpc = ServerCursorMcpRpcGroup.toLayer(
         reason: "folder_not_found",
         ...(cause === undefined ? {} : { cause }),
       });
+    // The Cursor instance a thread runs on decides whether its folder borrows sign-ins.
+    const sharesSignIns = (instanceId: ProviderInstanceId) =>
+      serverSettings.getSettings.pipe(
+        Effect.map((settings) =>
+          CursorMcpServers.cursorSharesMcpSignIns(settings.providerInstances[instanceId]?.config),
+        ),
+        Effect.orElseSucceed(() => false),
+      );
     const folderFor = Effect.fn("ws.cursorMcp.folder")(function* (input: CursorMcpFolderInput) {
       const projectId = input.projectId;
       if (input.threadId !== undefined) {
@@ -1315,13 +1324,7 @@ const layerCursorMcpRpc = ServerCursorMcpRpcGroup.toLayer(
           .getThreadShell(input.threadId)
           .pipe(Effect.mapError(folderNotFound));
         if (shell === null) return yield* folderNotFound();
-        // A thread's Cursor instance decides whether its folder borrows sign-ins.
-        const settings = yield* serverSettings.getSettings.pipe(Effect.option);
-        const shareSignIns =
-          Option.isSome(settings) &&
-          CursorMcpServers.cursorSharesMcpSignIns(
-            settings.value.providerInstances[shell.providerInstanceId]?.config,
-          );
+        const shareSignIns = yield* sharesSignIns(shell.providerInstanceId);
         if (shell.worktreePath !== null) return { path: shell.worktreePath, shareSignIns };
         const project = yield* projectService
           .getById(shell.projectId)
@@ -1334,29 +1337,45 @@ const layerCursorMcpRpc = ServerCursorMcpRpcGroup.toLayer(
         .getById(projectId)
         .pipe(Effect.mapError(folderNotFound));
       if (Option.isNone(project)) return yield* folderNotFound();
-      return { path: project.value.workspaceRoot, shareSignIns: false };
+      return {
+        path: project.value.workspaceRoot,
+        shareSignIns:
+          input.providerInstanceId !== undefined &&
+          (yield* sharesSignIns(input.providerInstanceId)),
+      };
     });
     // The desktop app and the background service start the server again after it exits.
     const config = yield* ServerConfig.ServerConfig;
     const environment = yield* HostProcess.Environment;
     const canRestartServer =
       config.mode === "desktop" || environment[SERVICE_LAUNCHER_CONTEXT_ENV] !== undefined;
-    const withRestart = (status: CursorMcpServers.CursorMcpFolderStatus) => ({
-      ...status,
-      canRestartServer,
-    });
+    // Adds what the server knows beyond Cursor: whether it can restart, and site icons.
+    const withRestart = (status: CursorMcpServers.CursorMcpFolderStatus) =>
+      Effect.forEach(
+        status.servers,
+        (server) =>
+          server.transport?._tag === "url"
+            ? CursorMcpServers.cursorMcpServerIconUrl(server.transport.url).pipe(
+                Effect.map((iconUrl) => (iconUrl === null ? server : { ...server, iconUrl })),
+              )
+            : Effect.succeed(server),
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.map((servers) => ({ ...status, servers, canRestartServer })),
+        Effect.provide(FetchHttpClient.layer),
+      );
     return ServerCursorMcpRpcGroup.of({
       [WS_METHODS.cursorMcpStatus]: (input) =>
         folderFor(input).pipe(
           Effect.flatMap((folder) =>
             cursorMcp.status(folder?.path ?? null, { shareSignIns: folder?.shareSignIns === true }),
           ),
-          Effect.map(withRestart),
+          Effect.flatMap(withRestart),
         ),
       [WS_METHODS.cursorMcpSignIn]: (input) =>
         folderFor(input).pipe(
           Effect.flatMap((folder) => cursorMcp.signIn(folder?.path ?? null, input.name)),
-          Effect.map(withRestart),
+          Effect.flatMap(withRestart),
         ),
       [WS_METHODS.cursorMcpRestartServer]: () =>
         canRestartServer

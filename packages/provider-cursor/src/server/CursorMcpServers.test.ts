@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - the test builds a real git repository and worktree.
-import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -274,9 +272,8 @@ describePosix("CursorMcpServers", () => {
     ));
 });
 
-// Two checkouts of one repository and an unrelated one, each with Cursor's
-// per-folder data directory under a fake home.
-const setupCheckouts = Effect.fn("setupCursorCheckouts")(function* () {
+// Three folders Cursor knows, under a fake home with one user-level server.
+const setupFolders = Effect.fn("setupCursorFolders")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const makeDirectory = (prefix: string) =>
@@ -284,27 +281,19 @@ const setupCheckouts = Effect.fn("setupCursorCheckouts")(function* () {
       .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix })
       .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
   const home = yield* makeDirectory("cursor-share-home-");
-  const root = yield* makeDirectory("cursor-share-repo-");
-  const other = yield* makeDirectory("cursor-share-other-");
-  const worktree = path.join(yield* makeDirectory("cursor-share-worktrees-"), "feature");
-  const git = (cwd: string, ...args: ReadonlyArray<string>) =>
-    Effect.sync(() => NodeChildProcess.execFileSync("git", args, { cwd, stdio: "ignore" }));
-  for (const repository of [root, other]) {
-    yield* git(repository, "init", "-q");
-    yield* git(
-      repository,
-      "-c",
-      "user.name=t",
-      "-c",
-      "user.email=t@t",
-      "commit",
-      "-q",
-      "--allow-empty",
-      "-m",
-      "init",
-    );
-  }
-  yield* git(root, "worktree", "add", "-q", worktree);
+  const first = yield* makeDirectory("cursor-share-first-");
+  const second = yield* makeDirectory("cursor-share-second-");
+  const target = yield* makeDirectory("cursor-share-target-");
+  const writeJson = (file: string, value: unknown) =>
+    fileSystem
+      .makeDirectory(path.dirname(file), { recursive: true })
+      .pipe(Effect.andThen(fileSystem.writeFileString(file, JSON.stringify(value))));
+  yield* writeJson(path.join(home, ".cursor", "mcp.json"), {
+    mcpServers: {
+      ember: { url: "https://ember.example/mcp" },
+      linear: { url: "https://l.example" },
+    },
+  });
   const authFile = (folder: string) =>
     path.join(
       home,
@@ -317,10 +306,8 @@ const setupCheckouts = Effect.fn("setupCursorCheckouts")(function* () {
       "mcp-auth.json",
     );
   const writeAuth = Effect.fn("writeAuth")(function* (folder: string, value: unknown, at: number) {
-    const file = authFile(folder);
-    yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
-    yield* fileSystem.writeFileString(file, JSON.stringify(value));
-    yield* fileSystem.utimes(file, at, at);
+    yield* writeJson(authFile(folder), value);
+    yield* fileSystem.utimes(authFile(folder), at, at);
   });
   const readAuth = (folder: string) =>
     fileSystem.readFileString(authFile(folder)).pipe(Effect.map((text) => JSON.parse(text)));
@@ -330,20 +317,20 @@ const setupCheckouts = Effect.fn("setupCursorCheckouts")(function* () {
       Effect.provideService(HostProcess.Environment, { HOME: home }),
     );
   return {
-    root,
-    other,
-    worktree,
+    first,
+    second,
+    target,
     authFile,
     writeAuth,
     readAuth,
     share,
+    writeJson,
     fileSystem,
     path,
-    makeDirectory,
   };
 });
 
-const ember = (token: string) => ({
+const signIn = (token: string) => ({
   tokens: { access_token: token, refresh_token: `${token}-refresh` },
   clientInfo: { client_id: "ctrl" },
 });
@@ -351,31 +338,32 @@ const ember = (token: string) => ({
 describePosix("shareCursorMcpSignIns", () => {
   afterEach(() => CursorMcpServers.resetCursorMcpFolderCacheForTest());
 
-  it("gives a new worktree the newest sign-in per server from the repository's checkouts", () =>
+  it("gives a folder the newest sign-in for each user-level server from any folder", () =>
     run(
       Effect.gen(function* () {
-        const test = yield* setupCheckouts();
+        const test = yield* setupFolders();
         yield* test.writeAuth(
-          test.root,
-          { ember: ember("root"), linear: { access_token: "legacy" } },
-          2_000,
+          test.first,
+          { ember: signIn("old"), linear: { access_token: "legacy" }, local: signIn("local") },
+          1_000,
         );
-        yield* test.writeAuth(test.other, { github: ember("other") }, 3_000);
-        yield* test.writeAuth(test.worktree, { ember: ember("stale"), own: ember("own") }, 1_000);
+        yield* test.writeAuth(test.second, { ember: signIn("new") }, 3_000);
+        yield* test.writeAuth(test.target, { own: signIn("own") }, 2_000);
 
-        yield* test.share(test.worktree);
+        yield* test.share(test.target);
 
-        expect(yield* test.readAuth(test.worktree)).toEqual({
-          ember: ember("root"),
-          own: ember("own"),
+        expect(yield* test.readAuth(test.target)).toEqual({
+          own: signIn("own"),
+          ember: signIn("new"),
           linear: { tokens: { access_token: "legacy" } },
         });
-        const info = yield* test.fileSystem.stat(test.authFile(test.worktree));
+        const info = yield* test.fileSystem.stat(test.authFile(test.target));
         expect(info.mode & 0o777).toBe(0o600);
         // Data flows into the folder being opened, never back out.
-        expect(yield* test.readAuth(test.root)).toEqual({
-          ember: ember("root"),
+        expect(yield* test.readAuth(test.first)).toEqual({
+          ember: signIn("old"),
           linear: { access_token: "legacy" },
+          local: signIn("local"),
         });
       }),
     ));
@@ -383,61 +371,45 @@ describePosix("shareCursorMcpSignIns", () => {
   it("keeps a folder's own sign-in when it is the newest", () =>
     run(
       Effect.gen(function* () {
-        const test = yield* setupCheckouts();
-        yield* test.writeAuth(test.worktree, { ember: ember("worktree") }, 1_000);
-        yield* test.writeAuth(test.root, { ember: ember("root") }, 2_000);
+        const test = yield* setupFolders();
+        yield* test.writeAuth(test.first, { ember: signIn("first") }, 1_000);
+        yield* test.writeAuth(test.target, { ember: signIn("target") }, 2_000);
 
-        yield* test.share(test.root);
+        yield* test.share(test.target);
 
-        expect(yield* test.readAuth(test.root)).toEqual({ ember: ember("root") });
+        expect(yield* test.readAuth(test.target)).toEqual({ ember: signIn("target") });
       }),
     ));
 
-  it("gives nothing to a folder whose git metadata points at a repository that does not list it", () =>
+  it("skips a server the folder's own config defines, so a project cannot take its tokens", () =>
     run(
       Effect.gen(function* () {
-        const test = yield* setupCheckouts();
-        yield* test.writeAuth(test.root, { ember: ember("root") }, 2_000);
-        const crafted = yield* test.makeDirectory("cursor-share-crafted-");
-        yield* test.fileSystem.writeFileString(
-          test.path.join(crafted, ".git"),
-          `gitdir: ${test.path.join(test.root, ".git")}\n`,
+        const test = yield* setupFolders();
+        yield* test.writeAuth(
+          test.first,
+          { ember: signIn("ember"), linear: signIn("linear") },
+          1_000,
         );
+        yield* test.writeJson(test.path.join(test.target, ".cursor", "mcp.json"), {
+          mcpServers: { ember: { url: "https://elsewhere.example/mcp" } },
+        });
 
-        yield* test.share(crafted);
+        yield* test.share(test.target);
 
-        expect(yield* test.fileSystem.exists(test.authFile(crafted))).toBe(false);
-      }),
-    ));
-
-  it("skips a server the folder's own config points somewhere else", () =>
-    run(
-      Effect.gen(function* () {
-        const test = yield* setupCheckouts();
-        yield* test.writeAuth(test.root, { ember: ember("root"), linear: ember("linear") }, 2_000);
-        const projectConfig = test.path.join(test.worktree, ".cursor", "mcp.json");
-        yield* test.fileSystem.makeDirectory(test.path.dirname(projectConfig), { recursive: true });
-        yield* test.fileSystem.writeFileString(
-          projectConfig,
-          JSON.stringify({ mcpServers: { ember: { url: "https://elsewhere.example/mcp" } } }),
-        );
-
-        yield* test.share(test.worktree);
-
-        expect(yield* test.readAuth(test.worktree)).toEqual({ linear: ember("linear") });
+        expect(yield* test.readAuth(test.target)).toEqual({ linear: signIn("linear") });
       }),
     ));
 
   it("leaves a folder Cursor already loaded alone, since Cursor would not read the change", () =>
     run(
       Effect.gen(function* () {
-        const test = yield* setupCheckouts();
-        yield* test.writeAuth(test.root, { ember: ember("root") }, 2_000);
-        CursorMcpServers.markCursorFolderLoaded(test.worktree);
+        const test = yield* setupFolders();
+        yield* test.writeAuth(test.first, { ember: signIn("first") }, 1_000);
+        CursorMcpServers.markCursorFolderLoaded(test.target);
 
-        yield* test.share(test.worktree);
+        yield* test.share(test.target);
 
-        expect(yield* test.fileSystem.exists(test.authFile(test.worktree))).toBe(false);
+        expect(yield* test.fileSystem.exists(test.authFile(test.target))).toBe(false);
       }),
     ));
 });
@@ -447,5 +419,21 @@ describe("parseCursorMcpList", () => {
     expect(
       CursorMcpServers.parseCursorMcpList("Loading…\nAsk 24G: requires_authentication\n\n"),
     ).toEqual([{ name: "Ask 24G", status: "needs_sign_in", detail: "requires_authentication" }]);
+  });
+});
+
+describe("declaredIconUrl", () => {
+  it("takes the first https icon a page declares and resolves it against the page", () => {
+    const html = `<link rel="stylesheet" href="/a.css"><link rel="apple-touch-icon" href="/t.png">
+      <link rel="alternate icon" type="image/png" href="/favicon.png"><link rel="icon" href="/x.svg">`;
+    expect(CursorMcpServers.declaredIconUrl(html, "https://linear.app/")).toBe(
+      "https://linear.app/favicon.png",
+    );
+    expect(
+      CursorMcpServers.declaredIconUrl(
+        '<link rel="icon" href="http://x.test/i.png">',
+        "https://x.test/",
+      ),
+    ).toBeNull();
   });
 });
