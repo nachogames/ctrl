@@ -52,15 +52,18 @@ const fakeSession = (
   overrides: Partial<Approvals.CursorApprovalSession> = {},
 ) => {
   const calls: Array<Approvals.CursorMcpCall> = [];
+  const matches: Array<boolean> = [];
   const session: Approvals.CursorApprovalSession = {
     enforced: true,
     agentId: () => "agent-1",
     cwd: "/repo",
     hasActiveTurn: () => true,
-    requestApproval: (call) => Effect.sync(() => (calls.push(call), decision)),
+    ctrlMcpUrl: () => "http://127.0.0.1:1/mcp",
+    requestApproval: (call, { matchedByAgent }) =>
+      Effect.sync(() => (calls.push(call), matches.push(matchedByAgent), decision)),
     ...overrides,
   };
-  return { session, calls };
+  return { session, calls, matches };
 };
 
 describe("mcpPermission", () => {
@@ -72,7 +75,10 @@ describe("mcpPermission", () => {
     expect(Approvals.mcpPermission(rules, "linear", "get_issue")).toBe("allow");
     expect(Approvals.mcpPermission(rules, "linear", "delete_issue")).toBe("deny");
     expect(Approvals.mcpPermission(rules, "linear", "save_issue")).toBe("ask");
-    expect(Approvals.mcpPermission(rules, "Ember", "create_task")).toBe("allow");
+    // Allow rules match case exactly, deny rules ignore case.
+    expect(Approvals.mcpPermission(rules, "ember", "create_task")).toBe("allow");
+    expect(Approvals.mcpPermission(rules, "Ember", "create_task")).toBe("ask");
+    expect(Approvals.mcpPermission(rules, "LINEAR", "delete_issue")).toBe("deny");
     expect(Approvals.mcpPermission(rules, "figma", "get_file")).toBe("ask");
   });
 });
@@ -128,6 +134,8 @@ describe("decideCursorMcpHook", () => {
         const response = yield* test.inHome(Approvals.decideCursorMcpHook(hookCall()));
         expect(response.permission).toBe("allow");
         expect(running.calls).toHaveLength(1);
+        // Matched by folder only, so the card cannot allow the tool for the whole chat.
+        expect(running.matches).toEqual([false]);
       }),
     ));
 
@@ -152,17 +160,27 @@ describe("decideCursorMcpHook", () => {
       }),
     ));
 
-  it("always allows Ctrl's own MCP tools", () =>
+  it("allows Ctrl's own MCP server only at the address Ctrl gave the agent", () =>
     run(
       Effect.gen(function* () {
         const test = yield* setupHome();
         const session = fakeSession("deny");
         yield* Approvals.registerCursorApprovalSession(session.session);
-        const response = yield* test.inHome(
-          Approvals.decideCursorMcpHook(hookCall({ mcp_server_name: "t3-code" })),
+        const own = yield* test.inHome(
+          Approvals.decideCursorMcpHook(
+            hookCall({ mcp_server_name: "t3-code", mcp_server_url: "http://127.0.0.1:1/mcp" }),
+          ),
         );
-        expect(response.permission).toBe("allow");
+        expect(own.permission).toBe("allow");
         expect(session.calls).toHaveLength(0);
+        // A project server that borrows the name is asked about like any other.
+        const impostor = yield* test.inHome(
+          Approvals.decideCursorMcpHook(
+            hookCall({ mcp_server_name: "t3-code", mcp_server_url: "https://evil.example/mcp" }),
+          ),
+        );
+        expect(impostor.permission).toBe("deny");
+        expect(session.calls).toHaveLength(1);
       }),
     ));
 });
@@ -187,7 +205,7 @@ describe("setCursorApprovalHookInstalled", () => {
         yield* test.inHome(Approvals.setCursorApprovalHookInstalled(true));
         yield* test.inHome(Approvals.setCursorApprovalHookInstalled(true));
         expect((yield* readHooks).hooks).toEqual({
-          beforeMCPExecution: [theirs, { command: script, timeout: 3600, failClosed: true }],
+          beforeMCPExecution: [theirs, { command: `'${script}'`, timeout: 3600, failClosed: true }],
           stop: [theirs],
         });
         expect(((yield* test.fileSystem.stat(script)).mode & 0o777).toString(8)).toBe("755");
@@ -195,6 +213,30 @@ describe("setCursorApprovalHookInstalled", () => {
         yield* test.inHome(Approvals.setCursorApprovalHookInstalled(false));
         expect((yield* readHooks).hooks).toEqual({ beforeMCPExecution: [theirs], stop: [theirs] });
         expect(yield* test.fileSystem.exists(script)).toBe(false);
+      }),
+    ));
+});
+
+describe("syncCursorApprovalHook", () => {
+  it("keeps the hook while any instance wants it, and refuses a hooks.json it cannot read", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupHome();
+        const script = test.path.join(test.home, ".cursor", "hooks", "ctrl-mcp-approval.sh");
+        yield* test.inHome(Approvals.syncCursorApprovalHook("cursor", true));
+        yield* test.inHome(Approvals.syncCursorApprovalHook("cursor_work", false));
+        expect(yield* test.fileSystem.exists(script)).toBe(true);
+        yield* test.inHome(Approvals.syncCursorApprovalHook("cursor", false));
+        expect(yield* test.fileSystem.exists(script)).toBe(false);
+
+        yield* test.fileSystem.writeFileString(
+          test.path.join(test.home, ".cursor", "hooks.json"),
+          "{ // comments are not JSON\n}",
+        );
+        const failure = yield* test
+          .inHome(Approvals.setCursorApprovalHookInstalled(true))
+          .pipe(Effect.flip);
+        expect(failure._tag).toBe("CursorApprovalHookError");
       }),
     ));
 });

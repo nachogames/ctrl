@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - constant-time token comparison.
+import * as NodeCrypto from "node:crypto";
+
 import {
   CURSOR_HOOK_PATH,
   CURSOR_HOOK_TOKEN_ENV,
@@ -10,7 +13,12 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 const handler = Effect.fn("CursorApprovalRoute.handle")(function* (expectedAuthorization: string) {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  if (request.headers["authorization"] !== expectedAuthorization) {
+  const authorization = Buffer.from(request.headers["authorization"] ?? "");
+  const expected = Buffer.from(expectedAuthorization);
+  if (
+    authorization.length !== expected.length ||
+    !NodeCrypto.timingSafeEqual(authorization, expected)
+  ) {
     return HttpServerResponse.jsonUnsafe({ permission: "deny" }, { status: 401 });
   }
   const payload = yield* request.json.pipe(Effect.orElseSucceed(() => null));

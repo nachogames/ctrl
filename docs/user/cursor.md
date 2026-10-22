@@ -75,7 +75,9 @@ anything else asks:
 ```
 
 The setting adds one hook to `~/.cursor/hooks.json`. It does nothing when the Cursor app or
-`cursor-agent` runs it, and turning the setting off removes it. T3 Code's own tools never ask.
+`cursor-agent` runs it, and turning the setting off removes it. T3 Code's own tools never ask. If
+the hook can't be installed, for example because `hooks.json` has comments, Cursor threads won't
+start until you fix the file or turn the setting off. Windows isn't supported yet.
 
 ## V2 Capability Mapping
 

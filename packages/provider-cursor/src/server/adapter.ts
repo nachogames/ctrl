@@ -53,6 +53,7 @@ import {
   type CursorMcpCall,
   registerCursorApprovalSession,
   setCursorApprovalHookInstalled,
+  syncCursorApprovalHook,
 } from "./CursorMcpApprovals.ts";
 import { markCursorFolderLoaded, shareCursorMcpSignIns } from "./CursorMcpServers.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -930,7 +931,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const adapterOptions = options;
   const apiKey = adapterOptions.environment.CURSOR_API_KEY?.trim() || undefined;
-  yield* setCursorApprovalHookInstalled(adapterOptions.settings.askBeforeMcpTools).pipe(
+  const askBeforeMcpTools = adapterOptions.settings.askBeforeMcpTools;
+  yield* syncCursorApprovalHook(adapterOptions.instanceId, askBeforeMcpTools).pipe(
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(Path.Path, path),
     Effect.catch((cause) =>
@@ -979,6 +981,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
         >();
         const toolsAllowedForSession = new Set<string>();
+        // The Ctrl MCP server URL the current turn gave Cursor, which marks its calls as Ctrl's own.
+        let ctrlMcpUrl: string | null = null;
         const services = yield* Effect.context();
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
@@ -2479,7 +2483,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             : askUserResult(questions, resolved);
         });
 
-        const requestMcpApproval = Effect.fnUntraced(function* (call: CursorMcpCall) {
+        const requestMcpApproval = Effect.fnUntraced(function* (
+          call: CursorMcpCall,
+          matchedByAgent: boolean,
+        ) {
           const toolKey = `${call.server}\u0000${call.tool}`;
           if (toolsAllowedForSession.has(toolKey)) return "allow_for_session" as const;
           const context = yield* Ref.get(activeTurn);
@@ -2554,9 +2561,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             ...(context.input.runtimePolicy.runtimeMode === "full-access"
               ? { fullAccessOverride: "ask_rule" as const }
               : {}),
+            // A call matched only by folder might not be this chat's, so it is never
+            // allowed for the rest of the chat.
             options: [
               { decision: "accept", label: "Allow" },
-              { decision: "acceptForSession", label: "Allow for this chat" },
+              ...(matchedByAgent
+                ? [{ decision: "acceptForSession" as const, label: "Allow for this chat" }]
+                : []),
               { decision: "decline", label: "Deny" },
             ],
           };
@@ -2587,12 +2598,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           );
         });
         yield* registerCursorApprovalSession({
-          enforced: adapterOptions.settings.askBeforeMcpTools,
+          enforced: askBeforeMcpTools,
           agentId: () => Ref.getUnsafe(liveAgent)?.nativeThreadId ?? null,
           cwd: input.runtimePolicy.cwd,
           hasActiveTurn: () => Ref.getUnsafe(activeTurn) !== null,
-          requestApproval: (call) =>
-            requestMcpApproval(call).pipe(
+          ctrlMcpUrl: () => ctrlMcpUrl,
+          requestApproval: (call, { matchedByAgent }) =>
+            requestMcpApproval(call, matchedByAgent).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("orchestration-v2.cursor-mcp-approval-failed", { cause }).pipe(
                   Effect.as("deny" as const),
@@ -2636,6 +2648,23 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               runtimePolicy: turnInput.runtimePolicy,
             });
             const mcpServers = cursorMcpServers(yield* mcpSessions.read(turnInput.threadId));
+            const ctrlServer = mcpServers?.["t3-code"];
+            ctrlMcpUrl = ctrlServer !== undefined && "url" in ctrlServer ? ctrlServer.url : null;
+            if (askBeforeMcpTools) {
+              // Another server or a hand edit may have removed the hook; without it
+              // calls would run unasked, so the turn does not start.
+              yield* setCursorApprovalHookInstalled(true).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.mapError(
+                  (error) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      detail: `${error.message} Turn off "Ask before MCP tools" in Cursor settings to run without approvals.`,
+                    }),
+                ),
+              );
+            }
             const message = yield* resolveUserMessage(turnInput, mcpServers);
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
