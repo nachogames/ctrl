@@ -96,7 +96,16 @@ export function ReviewRoundCard({
   const recheck = view.current
     ? (view.history ?? []).filter((item) => item.stale && isOpenReviewPoint(item))
     : [];
-  const folded = foldPostedReviews(view.sources, viewerLogin);
+  // Every review the card lists, earlier commits included, so each posted review folds into its run.
+  const folded = foldPostedReviews(
+    [
+      ...view.sources,
+      ...(openRounds ?? []).flatMap((group) =>
+        group.sources.filter((source) => !view.sources.some((own) => own.id === source.id)),
+      ),
+    ],
+    viewerLogin,
+  );
   const viewed = view.items.filter((item) => item.viewed).length;
 
   const startTriage = async () => {
