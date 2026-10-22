@@ -326,8 +326,8 @@ the review chat and isolated checkout and start an independent review.
 The review workspace lists every round that still has something open, each with its reviews,
 then all open points together under one Triage. A round moves to History once everything in it is
 resolved. When the PR head changes, open points from an earlier commit are marked **code changed**
-or **not touched** until you choose **Recheck N against the new code**. Their decisions and reply drafts remain; choose
-**Recheck N against the new code**.
+or **not touched** until you choose **Recheck N against the new code**. Their decisions and reply
+drafts remain.
 Ask the agent to triage when you want explanations and recommendations, or to run an
 independent local review.
 Any ordinary chat in the PR’s group can update the same review panel. Review actions started

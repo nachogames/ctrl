@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
 import {
   type ReviewHistoryRound,
   reviewFindingTitle,
@@ -93,7 +94,7 @@ export function ReviewRoundCard({
   const offerLocal = offersLocalReview(view);
   // Open points from an earlier commit wait here with the rest until a recheck brings them back.
   const recheck = view.current
-    ? (view.history ?? []).filter((item) => item.stale && item.githubState !== "resolved")
+    ? (view.history ?? []).filter((item) => item.stale && isOpenReviewPoint(item))
     : [];
   const folded = foldPostedReviews(view.sources, viewerLogin);
   const viewed = view.items.filter((item) => item.viewed).length;
@@ -282,7 +283,7 @@ function ReviewHistoryItem({
   environmentId: EnvironmentId;
 }) {
   // Open from an earlier commit: whether the new code touched it, until a recheck.
-  const recheck = item.stale && item.githubState !== "resolved";
+  const recheck = item.stale && isOpenReviewPoint(item);
   const [open, setOpen] = useState(false);
   return (
     <li>

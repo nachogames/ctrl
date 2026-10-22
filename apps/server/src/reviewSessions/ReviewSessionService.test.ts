@@ -822,3 +822,24 @@ it.effect("takes your decision on a point from an earlier commit as its recheck"
     assert.deepEqual([point?.decision, point?.stale], ["decline", false]);
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
+
+it.effect("brings a point still open from an earlier round into this one when you decide it", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("gh:T1")] });
+    // The round moved on after a push; #1 is still open on GitHub.
+    yield* repo.updateSession({ ...snapshot.session, round: 2 });
+    yield* repo.upsertRound(sessionId, { ...snapshot.rounds[0]!, state: "applied" });
+    yield* repo.upsertRound(sessionId, { ...snapshot.rounds[0]!, round: 2 });
+    yield* repo.markItemsStale(sessionId);
+    yield* reviews.decide({ sessionId, number: 1, decision: "fix", authority: { _tag: "panel" } });
+    const [point] = (yield* reviews.read(sessionId)).items;
+    assert.deepEqual(
+      [point?.lastSeenRound, point?.stale, point?.applyState],
+      [2, false, "pending"],
+    );
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);

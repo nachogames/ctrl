@@ -40,6 +40,8 @@ const point = (number: number, lastSeenRound: number, stale: boolean) =>
     sourceKeys: [],
     sourceIds: [],
     githubState: null,
+    decision: "needs-call",
+    applyState: "pending",
   }) as unknown as ReviewItem;
 const source = (id: string, round: number, kind: ReviewSource["kind"], state = "done") =>
   ({ id, round, kind, state, updatedAt: "2026-10-14T10:00:00.000Z" }) as ReviewSource;
@@ -225,7 +227,7 @@ describe("reviewApplyLines", () => {
   });
 });
 
-it("keeps stale round history and offers reverification after a base merge", () => {
+it("carries points still open from an earlier round into the current round's recheck", () => {
   const prior = source("R1", 1, "copilot");
   const current = { ...source("R2", 2, "copilot"), triaged: true };
   const snapshot = {
@@ -236,10 +238,10 @@ it("keeps stale round history and offers reverification after a base merge", () 
   } as unknown as ReviewSessionSnapshot;
   const views = reviewRoundViews(snapshot);
   expect(views).toHaveLength(2);
-  expect(views[0]!.history?.map((item) => item.number)).toEqual([2]);
+  expect(views[0]!.history?.map((item) => item.number)).toEqual([1, 2]);
   expect(views[1]!.items.map((item) => item.number)).toEqual([1]);
   expect(triageButton(views[0]!, [])).toEqual({
-    label: "Recheck 1 against the new code",
+    label: "Recheck 2 against the new code",
     ready: true,
     busy: false,
   });

@@ -1,4 +1,5 @@
 import { isActiveReviewItem, isReviewOverview, isViewerSource } from "@t3tools/contracts";
+import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
 import {
   reviewHistoryRounds,
   type ReviewHistoryRound,
@@ -43,10 +44,13 @@ export function reviewRoundViews(snapshot: ReviewSessionSnapshot): ReadonlyArray
         group.sources.some((source) => source.round === round.round),
       ),
       sources: snapshot.sources.filter((source) => source.round === round.round),
+      // The current round's history also holds points still open from earlier rounds; they are
+      // listed with its open points until a recheck or your decision brings them into it.
       history: current
         ? snapshot.items.filter(
             (item) =>
-              item.lastSeenRound === round.round &&
+              (item.lastSeenRound === round.round ||
+                (item.lastSeenRound < round.round && isOpenReviewPoint(item))) &&
               !isReviewOverview(item) &&
               !isActiveReviewItem(item),
           )
@@ -175,7 +179,7 @@ export function triageButton(
   }
   const untriaged = view.sources.filter((source) => source.state === "done" && !source.triaged);
   const recheck = (view.history ?? []).filter(
-    (item) => item.stale && item.githubState !== "resolved",
+    (item) => item.stale && isOpenReviewPoint(item),
   ).length;
   if (recheck > 0) {
     return {

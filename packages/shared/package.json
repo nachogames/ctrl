@@ -11,6 +11,10 @@
       "types": "./src/reviewPointTag.ts",
       "import": "./src/reviewPointTag.ts"
     },
+    "./reviewPoints": {
+      "types": "./src/reviewPoints.ts",
+      "import": "./src/reviewPoints.ts"
+    },
     "./orderKeys": {
       "types": "./src/orderKeys.ts",
       "import": "./src/orderKeys.ts"

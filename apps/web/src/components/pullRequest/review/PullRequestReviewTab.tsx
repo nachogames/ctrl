@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   effectiveDecision,
@@ -178,7 +179,7 @@ function GroupPullRequestReview({
       ? NO_ITEMS
       : snapshot.items.filter(
           (item) =>
-            item.lastSeenRound === snapshot.session.round &&
+            item.lastSeenRound <= snapshot.session.round &&
             item.githubState !== "resolved" &&
             !isReviewOverview(item),
         );
@@ -339,7 +340,7 @@ function GroupPullRequestReview({
   // Settled: nothing open, nothing still reviewing, and no finished review waiting for triage.
   // A round whose reviews found nothing is settled too.
   const settled = (group: (typeof commits)[number]) =>
-    group.items.every((item) => item.githubState === "resolved") &&
+    group.items.every((item) => !isOpenReviewPoint(item)) &&
     group.sources.every(
       (source) =>
         source.state !== "reviewing" &&
@@ -348,7 +349,11 @@ function GroupPullRequestReview({
         !(source.kind === "local" && source.state === "done" && !source.triaged),
     );
   const latestCommit = views.some((view) => view.current) ? commits.at(-1) : undefined;
-  const openRounds = commits.filter((group) => group === latestCommit || !settled(group));
+  // A finished review has no workspace: every round is history.
+  const openRounds =
+    latestCommit === undefined
+      ? []
+      : commits.filter((group) => group === latestCommit || !settled(group));
   const earlier = commits.filter((group) => !openRounds.includes(group));
   const renderView = (view: (typeof views)[number]) => {
     const collecting = view.current && view.round.state === "collecting";

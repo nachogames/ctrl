@@ -136,6 +136,21 @@ describe("review progress", () => {
     ]);
   });
 
+  it("never counts a finding you skipped before it reached GitHub", () => {
+    const skipped = issue(9, "r4", {
+      sources: ["local-review"],
+      githubState: null,
+      decision: "decline",
+    });
+    const resolvedAll = reviewing.items.map((item) => ({
+      ...item,
+      githubState: "resolved" as const,
+    }));
+    const progress = reviewProgress({ ...reviewing, items: [...resolvedAll, skipped] });
+    expect(progress.headline).toBe("Everything you raised is resolved");
+    expect(progress.gates[0]!.value).toBe("7 of 7 resolved");
+  });
+
   it("says a pull request is ready once approved, resolved and passing", () => {
     expect(
       reviewProgress({

@@ -1,4 +1,5 @@
 import { isMinePoint, isReviewOverview, isViewerSource } from "@t3tools/contracts";
+import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
 import type {
   PullRequestCheck,
   PullRequestReviewDecision,
@@ -57,7 +58,7 @@ const SOURCE_NAMES: Record<string, string> = {
 };
 
 const quantity = (count: number, noun: string) => `${count} ${count === 1 ? noun : `${noun}s`}`;
-const isOpen = (item: ReviewItem) => item.githubState !== "resolved";
+const isOpen = isOpenReviewPoint;
 const time = (source: ReviewSource) => source.submittedAt ?? source.updatedAt;
 
 function checksGate(checks: ReadonlyArray<PullRequestCheck> | undefined): ReviewGate | null {
@@ -97,7 +98,11 @@ function trendOf(rounds: ReadonlyArray<ReviewProgressRound>): string | null {
  * it is yours. Every number comes from GitHub's threads and reviews, never from Ctrl decisions.
  */
 export function reviewProgress(input: ReviewProgressInput): ReviewProgress {
-  const items = input.items.filter((item) => !isReviewOverview(item));
+  // A finding skipped before it reached GitHub was never raised, so it is not counted.
+  const items = input.items.filter(
+    (item) =>
+      !isReviewOverview(item) && !(item.githubState === null && item.decision === "decline"),
+  );
   const history = reviewHistoryRounds(input.sources, items);
   const firstRound = new Map<number, number>();
   for (const round of history)
@@ -166,7 +171,10 @@ export function reviewProgress(input: ReviewProgressInput): ReviewProgress {
               "It stays invisible to the author until you submit it.",
             ]
           : approved
-            ? ["You approved", "Finish the review when you are done with it."]
+            ? [
+                "You approved",
+                `Nothing left to do. This comes back if ${author} asks again or pushes.`,
+              ]
             : mineOpen.length > 0
               ? [
                   `${quantity(mineOpen.length, "issue")} left before you can approve`,

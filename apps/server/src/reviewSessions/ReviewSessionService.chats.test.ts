@@ -606,3 +606,35 @@ it.effect("sends actions from an unrelated or review-only chat to the review cha
     }
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
+
+it.effect("rechecks points still open from an earlier round in this round's triage", () => {
+  const harness = newHarness();
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.runLocalReview({ sessionId });
+    const [running] = (yield* reviews.read(sessionId)).sources;
+    const done = yield* reviews.submitLocalFindings({
+      sessionId,
+      sourceId: running!.id,
+      headSha: "abc123",
+      findings: [{ path: null, line: null, title: "Bug", body: "Fix it.", slug: "bug" }],
+    });
+    yield* reviews.importItems({
+      sessionId,
+      sourceIds: [done.id],
+      items: [importItem("local::bug", { sources: ["local-review"] })],
+    });
+    // A push moved the review to round 2; the point is still open.
+    yield* repo.updateSession({ ...snapshot.session, round: 2 });
+    yield* repo.upsertRound(sessionId, { ...snapshot.rounds[0]!, state: "applied" });
+    yield* repo.upsertRound(sessionId, { ...snapshot.rounds[0]!, round: 2 });
+    yield* repo.markItemsStale(sessionId);
+    yield* reviews.requestTurn({ sessionId, request: { _tag: "triage" } });
+    assert.include(harness.sent.at(-1)?.text ?? "", "Triage round 2");
+    const [carried] = (yield* reviews.read(sessionId)).sources;
+    assert.deepEqual([carried?.id, carried?.round, carried?.triaged], [done.id, 2, false]);
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});

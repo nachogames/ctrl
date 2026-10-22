@@ -34,6 +34,7 @@ import {
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { parseReviewPointTag } from "@t3tools/shared/reviewPointTag";
+import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
 import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -487,7 +488,16 @@ export const make = Effect.gen(function* () {
       const session = yield* loadSession(input.sessionId);
       yield* requireLive(session);
       yield* requireCollecting(session, yield* loadRound(session));
-      const item = yield* loadItem(session.id, input.number);
+      const found = yield* loadItem(session.id, input.number);
+      // An open point from an earlier round joins this one when you act on it.
+      const item =
+        options?.allowStale === true &&
+        found.stale &&
+        isOpenReviewPoint(found) &&
+        found.lastSeenRound < session.round
+          ? // Last round's fix or reply does not answer this round, as for a point raised again.
+            { ...found, lastSeenRound: session.round, applyState: "pending" as const }
+          : found;
       yield* requireCurrent(
         session,
         options?.allowStale === true ? { ...item, stale: false } : item,
@@ -1556,8 +1566,9 @@ export const make = Effect.gen(function* () {
       let item: ReviewItem | null = null;
       let untriaged: ReadonlyArray<ReviewSource> = [];
       if (request._tag === "triage") {
-        // A merge can make already-triaged findings stale without producing a new review.
-        // Offer their original sources again, retaining rounds, decisions and reply drafts.
+        // A push or merge can make already-triaged findings stale without producing a new review.
+        // Offer their original sources again, retaining decisions and reply drafts. Points still
+        // open from an earlier round come along: their sources move to this round.
         untriaged = yield* write(
           session.id,
           Effect.gen(function* () {
@@ -1567,20 +1578,21 @@ export const make = Effect.gen(function* () {
               (yield* repo.listItems(session.id))
                 .filter(
                   (point) =>
-                    point.lastSeenRound === current.round &&
-                    point.stale &&
-                    point.githubState !== "resolved",
+                    point.lastSeenRound <= current.round && point.stale && isOpenReviewPoint(point),
                 )
                 .flatMap((point) => point.sourceIds),
             );
             const ready = (yield* repo.listSources(session.id)).filter(
               (source) =>
-                source.round === current.round &&
                 source.state === "done" &&
                 !source.failed &&
-                (!source.triaged || staleSourceIds.has(source.id)),
+                (source.round === current.round
+                  ? !source.triaged || staleSourceIds.has(source.id)
+                  : staleSourceIds.has(source.id)),
             );
             for (const source of ready) {
+              if (source.round !== current.round)
+                yield* repo.moveSourceToRound(session.id, source.id, current.round);
               if (source.triaged) yield* repo.resetSourcesTriage(session.id, [source.id]);
             }
             return ready.map((source) => ({ ...source, triaged: false }));

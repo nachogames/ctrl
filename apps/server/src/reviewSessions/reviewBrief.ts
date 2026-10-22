@@ -142,6 +142,6 @@ The server has already opened the next round on the new head.
 3. When it is done, triage it with any new reviews of the round as above. Apply waits until both the follow-ups and the new review are triaged, so they go out in one pending review.
 
 ## Finishing
-The user finishes from the Review tab once they approve. Never call review_round_advance with finish: true unless the user asks.
+There is nothing to finish after the user approves: the review follows GitHub, comes back on a re-request or new commits, and ends when the pull request is merged or closed. Never call review_round_advance with finish: true unless the user asks.
 `;
 }
