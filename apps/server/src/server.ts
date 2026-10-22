@@ -48,6 +48,12 @@ import * as ReviewSessionChanges from "./reviewSessions/ReviewSessionChanges.ts"
 import * as ReviewHostService from "./reviewSessions/ReviewHostService.ts";
 import * as RemoteMcpServers from "./remoteMcp/RemoteMcpServers.ts";
 import * as RemoteMcpCallbackRoute from "./remoteMcp/callbackRoute.ts";
+import * as CursorApprovalRoute from "./cursorHooks/approvalRoute.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  CURSOR_HOOK_PATH,
+  CURSOR_HOOK_URL_ENV,
+} from "@t3tools/provider-cursor/server/CursorMcpApprovals";
 import * as ReviewSessionService from "./reviewSessions/ReviewSessionService.ts";
 import * as ReviewSyncService from "./reviewSessions/ReviewSyncService.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
@@ -726,6 +732,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     RemoteMcpCallbackRoute.layer,
+    CursorApprovalRoute.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
@@ -783,6 +790,17 @@ const layerMakeServer = Layer.unwrap(
         yield* HttpServer.HttpServer;
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
         yield* startup.markHttpListening;
+      }),
+    );
+    // Ctrl's Cursor approval hook reads where to reach this server from its environment.
+    const layerCursorHookUrl = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const server = yield* HttpServer.HttpServer;
+        const address = server.address;
+        if (typeof address === "string" || !("port" in address)) return;
+        const environment = yield* HostProcess.Environment;
+        environment[CURSOR_HOOK_URL_ENV] =
+          `http://${loopbackUrlHostForAddress(address)}:${address.port}${CURSOR_HOOK_PATH}`;
       }),
     );
     const layerRuntimeState = Layer.effectDiscard(
@@ -1074,6 +1092,7 @@ const layerMakeServer = Layer.unwrap(
     const layerServerApplication = Layer.mergeAll(
       layerRoutes,
       layerHttpListening,
+      layerCursorHookUrl,
       layerRuntimeState.pipe(Layer.provide(layerLauncher)),
       layerTailscaleServe,
       layerCloudDesiredLinkReconcile,

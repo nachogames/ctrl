@@ -54,6 +54,29 @@ used that folder needs a restart. Choose **Restart** in the MCP tab. It works wh
 or the background service runs the server, and interrupts any running turns; otherwise restart the
 server yourself.
 
+### Approving MCP calls
+
+Cursor threads in T3 Code don't use the Cursor app's allowlist, and they can't stop to ask you on
+their own. To approve MCP calls yourself, turn on **Ask before MCP tools outside your allowlist**
+in **Settings > Providers > Cursor**. Any MCP call your allowlist doesn't cover then waits for an
+approval card in the thread, even in Full access: **Allow**, **Allow for this chat**, or **Deny**.
+
+The allowlist is the `permissions` list in `~/.cursor/cli-config.json`, the same rules the
+`cursor-agent` CLI uses. Allow rules run without asking, deny rules are always refused, and
+anything else asks:
+
+```json
+{
+  "permissions": {
+    "allow": ["Mcp(linear:get_*)", "Mcp(linear:list_*)", "Mcp(ember:*)"],
+    "deny": ["Mcp(linear:delete_*)"]
+  }
+}
+```
+
+The setting adds one hook to `~/.cursor/hooks.json`. It does nothing when the Cursor app or
+`cursor-agent` runs it, and turning the setting off removes it. T3 Code's own tools never ask.
+
 ## V2 Capability Mapping
 
 The adapter supports:

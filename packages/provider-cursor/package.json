@@ -31,6 +31,10 @@
       "types": "./src/server/CursorAccountReader.ts",
       "import": "./src/server/CursorAccountReader.ts"
     },
+    "./server/CursorMcpApprovals": {
+      "types": "./src/server/CursorMcpApprovals.ts",
+      "import": "./src/server/CursorMcpApprovals.ts"
+    },
     "./server/CursorMcpServers": {
       "types": "./src/server/CursorMcpServers.ts",
       "import": "./src/server/CursorMcpServers.ts"

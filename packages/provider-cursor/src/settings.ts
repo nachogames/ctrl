@@ -26,6 +26,16 @@ export const CursorSettings = makeProviderSettingsSchema(
         providerSettingsForm: { control: "switch" },
       }),
     ),
+    // Ctrl: opt-in, since it adds a hook to ~/.cursor/hooks.json.
+    askBeforeMcpTools: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Ask before MCP tools outside your allowlist",
+        description:
+          "Shows an approval card before a Cursor thread calls an MCP tool your Cursor allowlist doesn't allow, even in Full access. Rules come from permissions in ~/.cursor/cli-config.json, such as Mcp(linear:get_*). Adds a hook to ~/.cursor/hooks.json that does nothing in the Cursor app.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
