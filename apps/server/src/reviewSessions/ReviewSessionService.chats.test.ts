@@ -634,7 +634,15 @@ it.effect("rechecks points still open from an earlier round in this round's tria
     yield* repo.markItemsStale(sessionId);
     yield* reviews.requestTurn({ sessionId, request: { _tag: "triage" } });
     assert.include(harness.sent.at(-1)?.text ?? "", "Triage round 2");
+    // The review stays in the round it reviewed, offered again, and round 2 can import it.
     const [carried] = (yield* reviews.read(sessionId)).sources;
-    assert.deepEqual([carried?.id, carried?.round, carried?.triaged], [done.id, 2, false]);
+    assert.deepEqual([carried?.id, carried?.round, carried?.triaged], [done.id, 1, false]);
+    yield* reviews.importItems({
+      sessionId,
+      sourceIds: [done.id],
+      items: [importItem("local::bug", { sources: ["local-review"] })],
+    });
+    const [point] = (yield* reviews.read(sessionId)).items;
+    assert.deepEqual([point?.lastSeenRound, point?.stale], [2, false]);
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });

@@ -92,6 +92,7 @@ const make = Effect.gen(function* () {
       if (reviewReopenReason(session, read) === null) return null;
       const live = yield* repo.findLiveSession({
         key: session.pullRequest,
+        projectId: session.projectId,
         groupId: session.groupId,
       });
       if (Option.isSome(live)) return null;

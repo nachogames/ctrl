@@ -279,13 +279,19 @@ it.effect("finds a pull request's one review whichever group holds it", () =>
     yield* repo.insertSession(session);
     yield* repo.insertSession(elsewhere);
     yield* repo.insertSession(finished);
-    const live = (groupId: string) =>
+    const live = (groupId: string, projectId = session.projectId) =>
       repo
-        .findLiveSession({ key: session.pullRequest, groupId: ThreadGroupId.make(groupId) })
+        .findLiveSession({
+          key: session.pullRequest,
+          projectId,
+          groupId: ThreadGroupId.make(groupId),
+        })
         .pipe(Effect.map((found) => Option.getOrNull(found)?.id));
     // The caller's own group wins; otherwise the newest live review.
     assert.equal(yield* live("group:review"), session.id);
     assert.equal(yield* live("group:new"), elsewhere.id);
+    // Another clone of the repository is another project, with its own review.
+    assert.equal(yield* live("group:review", ProjectId.make("other-clone")), undefined);
     // The tab shows a live review over a newer finished one.
     const latest = yield* repo.findLatestSessionForPullRequest({
       repository: "NachoGames/Ctrl",

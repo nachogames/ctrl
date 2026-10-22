@@ -8,6 +8,7 @@ import {
   ReviewSourceComment,
   ReviewAlreadyFixedIn,
   type ReviewGithubState,
+  type ProjectId,
   type ThreadGroupId,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -260,9 +261,13 @@ export class ReviewSessionRepository extends Context.Service<
       readonly groupId: ThreadGroupId;
       readonly updatedAt: string;
     }) => Effect.Effect<void, E>;
-    /** A pull request has one live review: the one in `groupId` when there is one, else the newest. */
+    /**
+     * A pull request has one live review per project: the one in `groupId` when there is one,
+     * else the newest. Two clones of a repository are two projects, each with its own review.
+     */
     readonly findLiveSession: (input: {
       readonly key: ThreadPullRequestKey;
+      readonly projectId: ProjectId;
       readonly groupId: ThreadGroupId;
     }) => Effect.Effect<Option.Option<ReviewSession>, E>;
     /** The pull request's review for the Review tab: the newest live one, else the newest finished. */
@@ -424,11 +429,11 @@ const make = Effect.gen(function* () {
         SET review_thread_id = ${reviewThreadId}, group_id = ${groupId}, updated_at = ${updatedAt}
         WHERE session_id = ${sessionId}
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("setReviewSessionThread"))),
-    findLiveSession: ({ key, groupId }) =>
+    findLiveSession: ({ key, projectId, groupId }) =>
       sql<SessionRow>`
         SELECT * FROM review_sessions
         WHERE host = ${key.host} AND repository = ${key.repository} AND number = ${key.number}
-          AND phase <> 'done'
+          AND project_id = ${projectId} AND phase <> 'done'
         ORDER BY group_id = ${groupId} DESC, updated_at DESC, session_id DESC LIMIT 1
       `.pipe(Effect.mapError(sqlError("findLiveReviewSession")), Effect.flatMap(firstSession)),
     findLatestSessionForPullRequest: ({ repository, number }) =>

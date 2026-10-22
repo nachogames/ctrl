@@ -495,8 +495,14 @@ export const make = Effect.gen(function* () {
         found.stale &&
         isOpenReviewPoint(found) &&
         found.lastSeenRound < session.round
-          ? // Last round's fix or reply does not answer this round, as for a point raised again.
-            { ...found, lastSeenRound: session.round, applyState: "pending" as const }
+          ? // Last round's fix or reply does not answer this round, as for a point raised again,
+            // and its posted reply is not posted twice.
+            {
+              ...found,
+              ...replyForNewRound(found, null),
+              lastSeenRound: session.round,
+              applyState: "pending" as const,
+            }
           : found;
       yield* requireCurrent(
         session,
@@ -512,10 +518,14 @@ export const make = Effect.gen(function* () {
       const result = yield* writeLock.withPermits(1)(
         sql.withTransaction(
           Effect.gen(function* () {
-            const existing = yield* repo.findLiveSession({ key, groupId: input.groupId });
+            const existing = yield* repo.findLiveSession({
+              key,
+              projectId: input.projectId,
+              groupId: input.groupId,
+            });
             if (Option.isSome(existing)) {
               const session = existing.value;
-              // A pull request has one review. Opened from another group, it moves to the chat
+              // A pull request has one review per project. Opened from another group, it moves to the chat
               // that opened it; so does a review whose chat was deleted or archived. Either way
               // it keeps its rounds, points and side chats.
               if (
@@ -807,7 +817,12 @@ export const make = Effect.gen(function* () {
           (id) =>
             !sources.some(
               (source) =>
-                source.id === id && source.round === session.round && source.state === "done",
+                source.id === id &&
+                source.state === "done" &&
+                // An earlier round's review stays in its round; Triage offers it again for points
+                // still open from that commit.
+                (source.round === session.round ||
+                  (source.round < session.round && !source.triaged)),
             ),
         );
         if (unknown.length > 0) {
@@ -1568,7 +1583,8 @@ export const make = Effect.gen(function* () {
       if (request._tag === "triage") {
         // A push or merge can make already-triaged findings stale without producing a new review.
         // Offer their original sources again, retaining decisions and reply drafts. Points still
-        // open from an earlier round come along: their sources move to this round.
+        // open from an earlier round come along; their sources stay in the round they reviewed,
+        // so a GitHub review never answers a later round's request.
         untriaged = yield* write(
           session.id,
           Effect.gen(function* () {
@@ -1590,11 +1606,8 @@ export const make = Effect.gen(function* () {
                   ? !source.triaged || staleSourceIds.has(source.id)
                   : staleSourceIds.has(source.id)),
             );
-            for (const source of ready) {
-              if (source.round !== current.round)
-                yield* repo.moveSourceToRound(session.id, source.id, current.round);
-              if (source.triaged) yield* repo.resetSourcesTriage(session.id, [source.id]);
-            }
+            const retriage = ready.filter((source) => source.triaged).map((source) => source.id);
+            if (retriage.length > 0) yield* repo.resetSourcesTriage(session.id, retriage);
             return ready.map((source) => ({ ...source, triaged: false }));
           }),
         );

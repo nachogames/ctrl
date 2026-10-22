@@ -107,6 +107,7 @@ export const make = Effect.gen(function* () {
       const snapshot = yield* threads.getShellSnapshot();
       const linked = snapshot.threads.filter(
         (thread) =>
+          thread.projectId === input.projectId &&
           thread.archivedAt === null &&
           thread.lineage.relationshipToParent !== "subagent" &&
           (thread.pullRequests ?? []).some(

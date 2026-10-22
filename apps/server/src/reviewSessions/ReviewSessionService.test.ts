@@ -830,6 +830,14 @@ it.effect("brings a point still open from an earlier round into this one when yo
     const { snapshot } = yield* reviews.open(openInput);
     const sessionId = snapshot.session.id;
     yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("gh:T1")] });
+    // Round 1 already posted a reply to #1; its thread is still open on GitHub.
+    const [posted] = (yield* reviews.read(sessionId)).items;
+    yield* repo.upsertItem(sessionId, {
+      ...posted!,
+      draftReply: "Fixed in round 1.",
+      applyState: "replied",
+    });
+    yield* repo.setItemGithubState(sessionId, 1, "open");
     // The round moved on after a push; #1 is still open on GitHub.
     yield* repo.updateSession({ ...snapshot.session, round: 2 });
     yield* repo.upsertRound(sessionId, { ...snapshot.rounds[0]!, state: "applied" });
@@ -838,8 +846,8 @@ it.effect("brings a point still open from an earlier round into this one when yo
     yield* reviews.decide({ sessionId, number: 1, decision: "fix", authority: { _tag: "panel" } });
     const [point] = (yield* reviews.read(sessionId)).items;
     assert.deepEqual(
-      [point?.lastSeenRound, point?.stale, point?.applyState],
-      [2, false, "pending"],
+      [point?.lastSeenRound, point?.stale, point?.applyState, point?.draftReply],
+      [2, false, "pending", null],
     );
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
