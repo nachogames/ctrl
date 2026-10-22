@@ -204,8 +204,9 @@ it.effect("refuses a decision the user did not state, and records one they did",
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
 
-it.effect("keeps one live review per pull request across groups", () =>
-  Effect.gen(function* () {
+it.effect("keeps one live review per pull request across groups", () => {
+  const harness = newHarness();
+  return Effect.gen(function* () {
     const reviews = yield* service;
     const first = yield* reviews.open(openInput);
     const again = yield* reviews.open(openInput);
@@ -217,7 +218,9 @@ it.effect("keeps one live review per pull request across groups", () =>
       [[1, "collecting"]],
     );
 
-    // Opened from another group, the same review moves to that group's chat.
+    // Opened from another group, the same review moves to that group's chat once its own
+    // chat is between turns.
+    harness.shells.set(reviewThreadId, chatShell(reviewThreadId, { activeRunId: null }));
     const otherChat = ThreadId.make("thread:other-group");
     const otherGroup = yield* reviews.open({
       ...openInput,
@@ -242,8 +245,8 @@ it.effect("keeps one live review per pull request across groups", () =>
     const reopened = yield* reviews.open(openInput);
     assert.isTrue(reopened.created);
     assert.notEqual(reopened.snapshot.session.id, first.snapshot.session.id);
-  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
-);
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
 
 it.effect("applies decided points without requiring viewed marks", () =>
   Effect.gen(function* () {
@@ -389,6 +392,29 @@ it.effect("follows a group change after discovering an ungrouped chat's review",
       emitted.map((result) => result.snapshot?.session.reviewThreadId ?? null),
       [caller, caller],
     );
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("does not take a review from a chat in the middle of a turn", () => {
+  const harness = newHarness();
+  const otherGroup = ThreadGroupId.make("group:other");
+  const otherChat = ThreadId.make("thread:other-group");
+  harness.shells.set(reviewThreadId, chatShell(reviewThreadId));
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    yield* reviews.open(openInput);
+    const busy = yield* Effect.flip(
+      reviews.open({ ...openInput, groupId: otherGroup, reviewThreadId: otherChat }),
+    );
+    assert.include(busy.message, "once that chat finishes its turn");
+
+    harness.shells.set(reviewThreadId, chatShell(reviewThreadId, { activeRunId: null }));
+    const moved = yield* reviews.open({
+      ...openInput,
+      groupId: otherGroup,
+      reviewThreadId: otherChat,
+    });
+    assert.equal(moved.snapshot.session.reviewThreadId, otherChat);
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
 

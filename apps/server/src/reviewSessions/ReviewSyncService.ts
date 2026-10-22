@@ -29,6 +29,7 @@ import {
   repairUnknownLocalSources,
   reviewReopenReason,
   shouldSyncReview,
+  viewerPendingReview,
   type ReviewSyncMark,
 } from "./reviewSync.ts";
 
@@ -154,7 +155,13 @@ const make = Effect.gen(function* () {
           let session = found.value;
           if (session.phase === "done") {
             const reopened = yield* reopen(session, read);
-            if (reopened === null) return false;
+            if (reopened === null) {
+              // Once the request you finished under is gone, asking you again brings it back.
+              if (session.viewerRequested !== true || viewerPendingReview(session, read))
+                return false;
+              yield* repo.updateSession({ ...session, viewerRequested: false });
+              return false;
+            }
             session = reopened;
           }
           const roundState = yield* currentRoundState(session);

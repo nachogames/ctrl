@@ -409,6 +409,46 @@ it.effect("brings a finished review back when you are asked again after approvin
   }).pipe(Effect.provide(makeSyncLayer(harness)));
 });
 
+it.effect("keeps a review finished under a pending request until you are asked again", () => {
+  const requested = reviewRoundRead({
+    authorLogin: "august",
+    viewerLogin: "nach",
+    pendingReviewers: [actor("nach")],
+  });
+  const harness: SyncHarness = { read: requested };
+  return Effect.gen(function* () {
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const sync = yield* ReviewSyncService.ReviewSyncService;
+    const session = sessionFixture({
+      phase: "done",
+      authorLogin: "august",
+      viewerLogin: "nach",
+      viewerRequested: true,
+    });
+    yield* repo.insertSession(session);
+    yield* repo.upsertRound(session.id, { ...roundFixture(1), state: "applied" });
+    const phase = () =>
+      repo
+        .getSession(session.id)
+        .pipe(
+          Effect.map((found) =>
+            found._tag === "Some" ? [found.value.phase, found.value.viewerRequested] : [],
+          ),
+        );
+    // Finished before you submitted: the same request does not bring it back.
+    yield* sync.syncSession(session.id);
+    assert.deepEqual(yield* phase(), ["done", true]);
+
+    // You submitted on GitHub, so the request is gone; asking you again is new.
+    harness.read = reviewRoundRead({ authorLogin: "august", viewerLogin: "nach" });
+    yield* sync.syncSession(session.id);
+    assert.deepEqual(yield* phase(), ["done", false]);
+    harness.read = requested;
+    yield* sync.syncSession(session.id);
+    assert.deepEqual(yield* phase(), ["self-review", true]);
+  }).pipe(Effect.provide(makeSyncLayer(harness)));
+});
+
 it.effect("opens a new round on your own finished pull request after a push", () => {
   const harness: SyncHarness = { read: reviewRoundRead({ headSha: "def456" }) };
   return Effect.gen(function* () {

@@ -260,6 +260,14 @@ describe("reviewReopenReason", () => {
       reviewReopenReason(finished, reviewRoundRead({ pendingReviewers: [actor("Nach")] })),
     ).toBe("requested");
   });
+  it("does not bring it back for the request you finished under", () => {
+    expect(
+      reviewReopenReason(
+        { ...finished, viewerRequested: true },
+        reviewRoundRead({ pendingReviewers: [actor("nach")] }),
+      ),
+    ).toBeNull();
+  });
   it("brings a review back when commits land after it finished", () => {
     expect(reviewReopenReason(finished, reviewRoundRead({ headSha: "def456" }))).toBe(
       "new-commits",

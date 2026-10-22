@@ -422,23 +422,35 @@ export function repairUnknownLocalSources(
 /** Why GitHub brings a finished review back, or null while nothing new wants you. */
 export type ReviewReopenReason = "requested" | "new-commits" | "new-review";
 
+/** True when GitHub lists you as a pending reviewer of someone else's pull request. */
+export function viewerPendingReview(
+  session: Pick<ReviewSession, "authorLogin" | "viewerLogin">,
+  read: Pick<ProviderChangeRequestReviewRound, "pendingReviewers">,
+): boolean {
+  const viewer = session.viewerLogin?.toLowerCase() ?? null;
+  return (
+    reviewRole(session) === "reviewer" &&
+    viewer !== null &&
+    read.pendingReviewers.some((reviewer) => reviewer.login.toLowerCase() === viewer)
+  );
+}
+
 /**
  * A finished review comes back when GitHub moved past where it ended: someone asked you to
  * review again (even after you approved), commits landed after it finished, or, on your own
- * pull request, someone else reviewed it since.
+ * pull request, someone else reviewed it since. A request still pending from before you
+ * finished is not a new one.
  */
 export function reviewReopenReason(
-  session: Pick<ReviewSession, "headSha" | "updatedAt" | "authorLogin" | "viewerLogin">,
+  session: Pick<
+    ReviewSession,
+    "headSha" | "updatedAt" | "authorLogin" | "viewerLogin" | "viewerRequested"
+  >,
   read: Pick<ProviderChangeRequestReviewRound, "headSha" | "reviews" | "pendingReviewers">,
 ): ReviewReopenReason | null {
   const viewer = session.viewerLogin?.toLowerCase() ?? null;
   const reviewing = reviewRole(session) === "reviewer";
-  if (
-    reviewing &&
-    viewer !== null &&
-    read.pendingReviewers.some((reviewer) => reviewer.login.toLowerCase() === viewer)
-  )
-    return "requested";
+  if (session.viewerRequested !== true && viewerPendingReview(session, read)) return "requested";
   if (read.headSha !== null && session.headSha !== null && read.headSha !== session.headSha)
     return "new-commits";
   if (

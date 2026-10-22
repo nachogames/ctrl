@@ -527,13 +527,18 @@ export const make = Effect.gen(function* () {
               const session = existing.value;
               // A pull request has one review per project. Opened from another group, it moves to the chat
               // that opened it; so does a review whose chat was deleted or archived. Either way
-              // it keeps its rounds, points and side chats.
-              if (
-                session.groupId === input.groupId &&
-                (session.reviewThreadId === input.reviewThreadId ||
-                  (yield* liveThread(session.reviewThreadId)) !== null)
-              ) {
+              // it keeps its rounds, points and side chats. It never moves off a chat mid-turn,
+              // whose review calls would then fail.
+              const sameChat = session.reviewThreadId === input.reviewThreadId;
+              const current = sameChat ? null : yield* liveThread(session.reviewThreadId);
+              if (session.groupId === input.groupId && (sameChat || current !== null)) {
                 return { session, created: false };
+              }
+              if (current !== null && current.activeRunId !== null) {
+                return yield* fail(
+                  `This pull request's review is running in "${current.title}". Open it here once that chat finishes its turn.`,
+                  session.id,
+                );
               }
               const at = yield* now;
               yield* repo.setSessionReviewThread({
