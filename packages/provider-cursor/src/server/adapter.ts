@@ -48,6 +48,13 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
+import {
+  type CursorMcpApprovalDecision,
+  type CursorMcpCall,
+  registerCursorApprovalSession,
+  setCursorApprovalHookInstalled,
+  syncCursorApprovalHook,
+} from "./CursorMcpApprovals.ts";
 import { markCursorFolderLoaded, shareCursorMcpSignIns } from "./CursorMcpServers.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
@@ -220,6 +227,18 @@ export function cursorRuntimeAgentPolicy(
         ? runtimePolicy.runtimeMode !== "full-access" && !(platform === "win32" && autoReview)
         : sandboxPolicyType !== "dangerFullAccess",
   };
+}
+
+const MCP_APPROVAL_ARGS_LIMIT = 600;
+
+/** The approval card's text for one MCP call, with its arguments abbreviated. */
+export function mcpApprovalPrompt(call: CursorMcpCall): string {
+  const args = call.input.trim();
+  const shown =
+    args === "" || args === "{}"
+      ? ""
+      : `\n${args.length > MCP_APPROVAL_ARGS_LIMIT ? `${args.slice(0, MCP_APPROVAL_ARGS_LIMIT)}…` : args}`;
+  return `Cursor wants to use ${call.server}: ${call.tool}${shown}`;
 }
 
 export function cursorMcpServers(
@@ -912,6 +931,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const adapterOptions = options;
   const apiKey = adapterOptions.environment.CURSOR_API_KEY?.trim() || undefined;
+  const askBeforeMcpTools = adapterOptions.settings.askBeforeMcpTools;
+  yield* syncCursorApprovalHook(adapterOptions.instanceId, askBeforeMcpTools).pipe(
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(Path.Path, path),
+    Effect.catch((cause) =>
+      Effect.logWarning("Could not update Ctrl's Cursor approval hook.", { cause }),
+    ),
+  );
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -943,10 +970,56 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             readonly answers: Deferred.Deferred<ProviderUserInputAnswers | null, never>;
           }
         >();
+        // MCP calls held by Ctrl's approval hook, by runtime request id, and the
+        // tools the user allowed for the rest of this session.
+        const pendingApprovals = new Map<
+          string,
+          {
+            readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+            readonly call: CursorMcpCall;
+            readonly decision: Deferred.Deferred<CursorMcpApprovalDecision, never>;
+            readonly request: OrchestrationV2RuntimeRequest;
+            readonly node: OrchestrationV2ExecutionNode;
+            readonly turnItem: OrchestrationV2TurnItem;
+          }
+        >();
+        const toolsAllowedForSession = new Set<string>();
+        // The Ctrl MCP server URL the current turn gave Cursor, which marks its calls as Ctrl's own.
+        let ctrlMcpUrl: string | null = null;
         const services = yield* Effect.context();
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
+
+        // Denies a held MCP call nobody answered and closes its card, so a turn
+        // that ends or a hook that gives up never leaves a card waiting.
+        const cancelPendingApproval = Effect.fnUntraced(function* (requestId: string) {
+          const pending = pendingApprovals.get(requestId);
+          if (pending === undefined) return;
+          pendingApprovals.delete(requestId);
+          yield* Deferred.succeed(pending.decision, "deny");
+          const resolvedAt = yield* DateTime.now;
+          yield* emitProviderEvent({
+            type: "runtime_request.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            runtimeRequest: { ...pending.request, status: "cancelled", resolvedAt },
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            node: { ...pending.node, status: "cancelled", completedAt: resolvedAt },
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            turnItem: {
+              ...pending.turnItem,
+              status: "cancelled",
+              completedAt: resolvedAt,
+              updatedAt: resolvedAt,
+            },
+          });
+        });
 
         const resolveItemOrdinal = (context: ActiveCursorTurn, nativeItemId: string) =>
           Effect.sync(() => {
@@ -2304,6 +2377,18 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               return Deferred.succeed(pending.answers, null);
             },
             { discard: true },
+          ).pipe(
+            // A held MCP call is denied when its turn ends or stops.
+            Effect.andThen(
+              Effect.forEach(
+                [...pendingApprovals.entries()].filter(
+                  ([, pending]) =>
+                    providerTurnId === null || pending.providerTurnId === providerTurnId,
+                ),
+                ([requestId]) => cancelPendingApproval(requestId),
+                { discard: true },
+              ),
+            ),
           );
 
         // The SDK can call a host tool before `send` has returned. startTurn
@@ -2428,6 +2513,143 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             : askUserResult(questions, resolved);
         });
 
+        const requestMcpApproval = Effect.fnUntraced(function* (
+          call: CursorMcpCall,
+          matchedByAgent: boolean,
+        ) {
+          const toolKey = `${call.server}\u0000${call.tool}`;
+          if (toolsAllowedForSession.has(toolKey)) return "allow_for_session" as const;
+          // The SDK can call a tool before `send` has returned, as with ask_user.
+          const context = yield* awaitActiveTurn;
+          if (context === null || context.finalized || context.interrupted) return "deny" as const;
+          const providerSessionId = context.input.providerThread.providerSessionId ?? session.id;
+          const createdAt = yield* DateTime.now;
+          const requestId = yield* idAllocator.allocate.runtimeRequest({
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            providerTurnId: context.providerTurnId,
+            ...(call.toolCallId === null
+              ? {}
+              : { nativeRequestId: `mcp-approval:${call.toolCallId}` }),
+          });
+          const nodeId = idAllocator.derive.approvalNode({ requestId });
+          const nativeItemRef =
+            call.toolCallId === null
+              ? null
+              : {
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  nativeId: call.toolCallId,
+                  strength: "weak" as const,
+                };
+          const ordinal = yield* resolveItemOrdinal(context, `mcp-approval:${requestId}`);
+          const node: OrchestrationV2ExecutionNode = {
+            id: nodeId,
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            parentNodeId: context.input.rootNodeId,
+            rootNodeId: context.input.rootNodeId,
+            kind: "approval_request",
+            status: "waiting",
+            countsForRun: false,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeItemRef,
+            runtimeRequestId: requestId,
+            checkpointScopeId: null,
+            startedAt: createdAt,
+            completedAt: null,
+          };
+          const request: OrchestrationV2RuntimeRequest = {
+            id: requestId,
+            nodeId,
+            providerTurnId: context.providerTurnId,
+            nativeRequestRef: nativeItemRef,
+            kind: "permission",
+            status: "pending",
+            responseCapability: { type: "live", providerSessionId },
+            createdAt,
+            resolvedAt: null,
+          };
+          const turnItem: OrchestrationV2TurnItem = {
+            id: idAllocator.derive.approvalTurnItem({ requestId }),
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            nodeId,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeItemRef,
+            parentItemId: null,
+            ordinal,
+            status: "waiting",
+            title: null,
+            startedAt: createdAt,
+            completedAt: null,
+            updatedAt: createdAt,
+            type: "approval_request",
+            requestId,
+            requestKind: "permission",
+            prompt: mcpApprovalPrompt(call),
+            appName: call.server,
+            ...(context.input.runtimePolicy.runtimeMode === "full-access"
+              ? { fullAccessOverride: "ask_rule" as const }
+              : {}),
+            // A call matched only by folder might not be this chat's, so it is never
+            // allowed for the rest of the chat.
+            options: [
+              { decision: "accept", label: "Allow" },
+              ...(matchedByAgent
+                ? [{ decision: "acceptForSession" as const, label: "Allow for this chat" }]
+                : []),
+              { decision: "decline", label: "Deny" },
+            ],
+          };
+          const decision = yield* Deferred.make<CursorMcpApprovalDecision, never>();
+          if (context.finalized || context.interrupted) return "deny" as const;
+          pendingApprovals.set(String(requestId), {
+            providerTurnId: context.providerTurnId,
+            call,
+            decision,
+            request,
+            node,
+            turnItem,
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            node,
+          });
+          yield* emitProviderEvent({
+            type: "runtime_request.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            runtimeRequest: request,
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            turnItem,
+          });
+          return yield* Deferred.await(decision).pipe(
+            // The hook's request was dropped (Cursor timed out or stopped): close the card.
+            Effect.onInterrupt(() => cancelPendingApproval(String(requestId))),
+          );
+        });
+        yield* registerCursorApprovalSession({
+          enforced: askBeforeMcpTools,
+          agentId: () => Ref.getUnsafe(liveAgent)?.nativeThreadId ?? null,
+          cwd: input.runtimePolicy.cwd,
+          hasActiveTurn: () =>
+            Ref.getUnsafe(activeTurn) !== null || Ref.getUnsafe(startingTurn) !== null,
+          ctrlMcpUrl: () => ctrlMcpUrl,
+          requestApproval: (call, { matchedByAgent }) =>
+            requestMcpApproval(call, matchedByAgent).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("orchestration-v2.cursor-mcp-approval-failed", { cause }).pipe(
+                  Effect.as("deny" as const),
+                ),
+              ),
+              Effect.provide(services),
+            ),
+        });
+
         const askUserTool: SDKCustomTool = {
           description: ASK_USER_TOOL_DESCRIPTION,
           inputSchema: ASK_USER_INPUT_SCHEMA,
@@ -2462,6 +2684,23 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               runtimePolicy: turnInput.runtimePolicy,
             });
             const mcpServers = cursorMcpServers(yield* mcpSessions.read(turnInput.threadId));
+            const ctrlServer = mcpServers?.["t3-code"];
+            ctrlMcpUrl = ctrlServer !== undefined && "url" in ctrlServer ? ctrlServer.url : null;
+            if (askBeforeMcpTools) {
+              // Another server or a hand edit may have removed the hook; without it
+              // calls would run unasked, so the turn does not start.
+              yield* setCursorApprovalHookInstalled(true).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.mapError(
+                  (error) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      detail: `${error.message} Turn off "Ask before MCP tools" in Cursor settings to run without approvals.`,
+                    }),
+                ),
+              );
+            }
             const message = yield* resolveUserMessage(turnInput, mcpServers);
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
@@ -2785,6 +3024,21 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           ),
           respondToRuntimeRequest: (requestInput) =>
             Effect.suspend(() => {
+              const approval = pendingApprovals.get(String(requestInput.requestId));
+              if (approval !== undefined) {
+                pendingApprovals.delete(String(requestInput.requestId));
+                const decision: CursorMcpApprovalDecision =
+                  requestInput.decision === "accept"
+                    ? "allow_once"
+                    : requestInput.decision === "acceptForSession" ||
+                        requestInput.decision === "acceptAlways"
+                      ? "allow_for_session"
+                      : "deny";
+                if (decision === "allow_for_session") {
+                  toolsAllowedForSession.add(`${approval.call.server}\u0000${approval.call.tool}`);
+                }
+                return Deferred.succeed(approval.decision, decision).pipe(Effect.asVoid);
+              }
               const pending = pendingUserInputs.get(String(requestInput.requestId));
               if (pending === undefined) {
                 return Effect.fail(
@@ -2793,8 +3047,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     requestId: requestInput.requestId,
                     cause: new ProviderAdapter.ProviderAdapterProtocolError({
                       driver: CursorAgentSdk.CURSOR_PROVIDER,
-                      detail:
-                        "Cursor only answers its own pending questions; it has no approval requests.",
+                      detail: "Cursor only answers its own pending questions and MCP approvals.",
                     }),
                   }),
                 );
