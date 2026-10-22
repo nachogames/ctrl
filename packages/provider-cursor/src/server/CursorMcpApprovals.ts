@@ -8,6 +8,7 @@
  */
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -350,16 +351,13 @@ export const setCursorApprovalHookInstalled = Effect.fn("CursorMcpApprovals.setH
     const path = yield* Path.Path;
     const homeDirectory = yield* HostProcess.HomeDirectory;
     const cursorDirectory = path.join(homeDirectory, ".cursor");
+    // The atomic writer keeps a symlinked hooks.json (a dotfile manager's) as a link.
     const linkPath = path.join(cursorDirectory, "hooks.json");
-    // Write through a symlink, such as one a dotfile manager keeps, instead of replacing it.
-    const configPath = yield* fileSystem
-      .realPath(linkPath)
-      .pipe(Effect.orElseSucceed(() => linkPath));
     const scriptPath = path.join(cursorDirectory, "hooks", HOOK_SCRIPT_NAME);
     const failed = (detail: string) => (cause: unknown) =>
       new CursorApprovalHookError({ detail, cause });
 
-    const existingText = yield* fileSystem.readFileString(configPath).pipe(Effect.option);
+    const existingText = yield* fileSystem.readFileString(linkPath).pipe(Effect.option);
     const parsed = Option.isSome(existingText) ? decodeJson(existingText.value) : Option.none();
     if (Option.isSome(existingText) && (Option.isNone(parsed) || !isJsonObject(parsed.value))) {
       return yield* new CursorApprovalHookError({
@@ -394,35 +392,36 @@ export const setCursorApprovalHookInstalled = Effect.fn("CursorMcpApprovals.setH
           Effect.mapError(failed("Ctrl could not write its Cursor approval hook script.")),
         );
     } else {
-      yield* fileSystem.remove(scriptPath).pipe(Effect.ignore);
-      // Leave a file Ctrl never added to exactly as the user wrote it.
+      // Touch nothing unless Ctrl's entry is installed, so starting with the
+      // setting off leaves the user's files exactly as they are.
       if (!entries.some(isOurs)) return;
+      yield* fileSystem.remove(scriptPath).pipe(Effect.ignore);
     }
     // @effect-diagnostics-next-line preferSchemaOverJson:off - Cursor's own file, kept readable.
     const serialized = `${JSON.stringify(next, null, 2)}\n`;
     if (Option.isSome(existingText) && existingText.value === serialized) return;
-    const temporaryPath = `${configPath}.ctrl.tmp`;
-    yield* fileSystem
-      .makeDirectory(path.dirname(configPath), { recursive: true })
-      .pipe(
-        Effect.andThen(fileSystem.writeFileString(temporaryPath, serialized)),
-        Effect.andThen(fileSystem.rename(temporaryPath, configPath)),
-        Effect.mapError(failed("Ctrl could not update ~/.cursor/hooks.json.")),
-      );
+    // A unique temp file per write, so two turns installing at once cannot collide.
+    yield* writeFileStringAtomically({ filePath: linkPath, contents: serialized }).pipe(
+      Effect.mapError(failed("Ctrl could not update ~/.cursor/hooks.json.")),
+    );
   },
 );
 
 // Cursor instances in this server that turned approvals on. The hook is
-// global, so one instance turning the setting off must not remove it while
-// another still relies on it.
+// global, so it stays while any of them wants it, and only an instance that
+// had it on removes it: a server starting with the setting off (another
+// worktree's dev server, say) must not pull it from one that relies on it.
 const enforcingInstances = new Set<string>();
 
-/** Records an instance's setting, then installs the hook if any instance wants it, else removes it. */
+/** Records an instance's setting, installing the hook or, when the last instance turns it off, removing it. */
 export const syncCursorApprovalHook = Effect.fn("CursorMcpApprovals.syncHook")(function* (
   instanceId: string,
   enforced: boolean,
 ) {
-  if (enforced) enforcingInstances.add(instanceId);
-  else enforcingInstances.delete(instanceId);
-  yield* setCursorApprovalHookInstalled(enforcingInstances.size > 0);
+  if (enforced) {
+    enforcingInstances.add(instanceId);
+    return yield* setCursorApprovalHookInstalled(true);
+  }
+  if (!enforcingInstances.delete(instanceId) || enforcingInstances.size > 0) return;
+  yield* setCursorApprovalHookInstalled(false);
 });

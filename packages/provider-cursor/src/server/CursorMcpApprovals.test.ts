@@ -232,6 +232,11 @@ describe("syncCursorApprovalHook", () => {
         yield* test.inHome(Approvals.syncCursorApprovalHook("cursor", false));
         expect(yield* test.fileSystem.exists(script)).toBe(false);
 
+        // Another server starting with the setting off leaves an installed hook alone.
+        yield* test.inHome(Approvals.setCursorApprovalHookInstalled(true));
+        yield* test.inHome(Approvals.syncCursorApprovalHook("other_server", false));
+        expect(yield* test.fileSystem.exists(script)).toBe(true);
+
         yield* test.fileSystem.writeFileString(
           test.path.join(test.home, ".cursor", "hooks.json"),
           "{ // comments are not JSON\n}",

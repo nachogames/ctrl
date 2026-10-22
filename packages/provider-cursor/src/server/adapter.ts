@@ -978,6 +978,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
             readonly call: CursorMcpCall;
             readonly decision: Deferred.Deferred<CursorMcpApprovalDecision, never>;
+            readonly request: OrchestrationV2RuntimeRequest;
+            readonly node: OrchestrationV2ExecutionNode;
+            readonly turnItem: OrchestrationV2TurnItem;
           }
         >();
         const toolsAllowedForSession = new Set<string>();
@@ -987,6 +990,36 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
+
+        // Denies a held MCP call nobody answered and closes its card, so a turn
+        // that ends or a hook that gives up never leaves a card waiting.
+        const cancelPendingApproval = Effect.fnUntraced(function* (requestId: string) {
+          const pending = pendingApprovals.get(requestId);
+          if (pending === undefined) return;
+          pendingApprovals.delete(requestId);
+          yield* Deferred.succeed(pending.decision, "deny");
+          const resolvedAt = yield* DateTime.now;
+          yield* emitProviderEvent({
+            type: "runtime_request.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            runtimeRequest: { ...pending.request, status: "cancelled", resolvedAt },
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            node: { ...pending.node, status: "cancelled", completedAt: resolvedAt },
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CursorAgentSdk.CURSOR_PROVIDER,
+            turnItem: {
+              ...pending.turnItem,
+              status: "cancelled",
+              completedAt: resolvedAt,
+              updatedAt: resolvedAt,
+            },
+          });
+        });
 
         const resolveItemOrdinal = (context: ActiveCursorTurn, nativeItemId: string) =>
           Effect.sync(() => {
@@ -2352,10 +2385,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   ([, pending]) =>
                     providerTurnId === null || pending.providerTurnId === providerTurnId,
                 ),
-                ([requestId, pending]) => {
-                  pendingApprovals.delete(requestId);
-                  return Deferred.succeed(pending.decision, "deny");
-                },
+                ([requestId]) => cancelPendingApproval(requestId),
                 { discard: true },
               ),
             ),
@@ -2489,7 +2519,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         ) {
           const toolKey = `${call.server}\u0000${call.tool}`;
           if (toolsAllowedForSession.has(toolKey)) return "allow_for_session" as const;
-          const context = yield* Ref.get(activeTurn);
+          // The SDK can call a tool before `send` has returned, as with ask_user.
+          const context = yield* awaitActiveTurn;
           if (context === null || context.finalized || context.interrupted) return "deny" as const;
           const providerSessionId = context.input.providerThread.providerSessionId ?? session.id;
           const createdAt = yield* DateTime.now;
@@ -2577,6 +2608,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             providerTurnId: context.providerTurnId,
             call,
             decision,
+            request,
+            node,
+            turnItem,
           });
           yield* emitProviderEvent({
             type: "node.updated",
@@ -2594,14 +2628,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             turnItem,
           });
           return yield* Deferred.await(decision).pipe(
-            Effect.ensuring(Effect.sync(() => pendingApprovals.delete(String(requestId)))),
+            // The hook's request was dropped (Cursor timed out or stopped): close the card.
+            Effect.onInterrupt(() => cancelPendingApproval(String(requestId))),
           );
         });
         yield* registerCursorApprovalSession({
           enforced: askBeforeMcpTools,
           agentId: () => Ref.getUnsafe(liveAgent)?.nativeThreadId ?? null,
           cwd: input.runtimePolicy.cwd,
-          hasActiveTurn: () => Ref.getUnsafe(activeTurn) !== null,
+          hasActiveTurn: () =>
+            Ref.getUnsafe(activeTurn) !== null || Ref.getUnsafe(startingTurn) !== null,
           ctrlMcpUrl: () => ctrlMcpUrl,
           requestApproval: (call, { matchedByAgent }) =>
             requestMcpApproval(call, matchedByAgent).pipe(
