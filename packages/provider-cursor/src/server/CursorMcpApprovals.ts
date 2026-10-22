@@ -325,6 +325,44 @@ const hookEntryFor = (scriptPath: string) => ({
   failClosed: true,
 });
 
+/**
+ * Writes the hook script only when it is missing, changed or not executable,
+ * which every turn checks. A hook another thread runs at that moment must
+ * never read a half-written file, so a new script is made executable in a
+ * temp file first and renamed into place.
+ */
+const writeHookScript = Effect.fn("CursorMcpApprovals.writeHookScript")(function* (
+  scriptPath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const current = yield* fileSystem.readFileString(scriptPath).pipe(Effect.option);
+  const info = yield* fileSystem.stat(scriptPath).pipe(Effect.option);
+  if (
+    Option.isSome(current) &&
+    current.value === HOOK_SCRIPT &&
+    Option.isSome(info) &&
+    (info.value.mode & 0o111) === 0o111
+  ) {
+    return;
+  }
+  const directory = path.dirname(scriptPath);
+  yield* fileSystem.makeDirectory(directory, { recursive: true });
+  // As in writeFileStringAtomically: the temp directory is always removed.
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const temporaryDirectory = yield* Effect.acquireRelease(
+        fileSystem.makeTempDirectory({ directory, prefix: `.${path.basename(scriptPath)}.` }),
+        (created) => fileSystem.remove(created, { recursive: true }).pipe(Effect.ignore),
+      );
+      const temporaryPath = path.join(temporaryDirectory, "contents.tmp");
+      yield* fileSystem.writeFileString(temporaryPath, HOOK_SCRIPT);
+      yield* fileSystem.chmod(temporaryPath, 0o755);
+      yield* fileSystem.rename(temporaryPath, scriptPath);
+    }),
+  );
+});
+
 export class CursorApprovalHookError extends Schema.TaggedError<CursorApprovalHookError>()(
   "CursorApprovalHookError",
   { detail: Schema.String, cause: Schema.optionalKey(Schema.Defect()) },
@@ -384,13 +422,9 @@ export const setCursorApprovalHookInstalled = Effect.fn("CursorMcpApprovals.setH
     const next = { ...config, version: config.version ?? 1, hooks: nextHooks };
 
     if (installed) {
-      yield* fileSystem
-        .makeDirectory(path.dirname(scriptPath), { recursive: true })
-        .pipe(
-          Effect.andThen(fileSystem.writeFileString(scriptPath, HOOK_SCRIPT, { mode: 0o755 })),
-          Effect.andThen(fileSystem.chmod(scriptPath, 0o755)),
-          Effect.mapError(failed("Ctrl could not write its Cursor approval hook script.")),
-        );
+      yield* writeHookScript(scriptPath).pipe(
+        Effect.mapError(failed("Ctrl could not write its Cursor approval hook script.")),
+      );
     } else {
       // Touch nothing unless Ctrl's entry is installed, so starting with the
       // setting off leaves the user's files exactly as they are.
