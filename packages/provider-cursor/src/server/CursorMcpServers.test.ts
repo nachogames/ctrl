@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - the test builds a real git repository and worktree.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -315,7 +316,7 @@ const setupCheckouts = Effect.fn("setupCursorCheckouts")(function* () {
         .replace(/^-+|-+$/g, ""),
       "mcp-auth.json",
     );
-  const writeAuth = Effect.fn("writeAuth")(function* (folder: string, value: unknown, at: Date) {
+  const writeAuth = Effect.fn("writeAuth")(function* (folder: string, value: unknown, at: number) {
     const file = authFile(folder);
     yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
     yield* fileSystem.writeFileString(file, JSON.stringify(value));
@@ -328,7 +329,18 @@ const setupCheckouts = Effect.fn("setupCursorCheckouts")(function* () {
       Effect.provideService(HostProcess.HomeDirectory, home),
       Effect.provideService(HostProcess.Environment, { HOME: home }),
     );
-  return { root, other, worktree, authFile, writeAuth, readAuth, share, fileSystem };
+  return {
+    root,
+    other,
+    worktree,
+    authFile,
+    writeAuth,
+    readAuth,
+    share,
+    fileSystem,
+    path,
+    makeDirectory,
+  };
 });
 
 const ember = (token: string) => ({
@@ -346,14 +358,10 @@ describePosix("shareCursorMcpSignIns", () => {
         yield* test.writeAuth(
           test.root,
           { ember: ember("root"), linear: { access_token: "legacy" } },
-          new Date(2_000),
+          2_000,
         );
-        yield* test.writeAuth(test.other, { github: ember("other") }, new Date(3_000));
-        yield* test.writeAuth(
-          test.worktree,
-          { ember: ember("stale"), own: ember("own") },
-          new Date(1_000),
-        );
+        yield* test.writeAuth(test.other, { github: ember("other") }, 3_000);
+        yield* test.writeAuth(test.worktree, { ember: ember("stale"), own: ember("own") }, 1_000);
 
         yield* test.share(test.worktree);
 
@@ -376,8 +384,8 @@ describePosix("shareCursorMcpSignIns", () => {
     run(
       Effect.gen(function* () {
         const test = yield* setupCheckouts();
-        yield* test.writeAuth(test.worktree, { ember: ember("worktree") }, new Date(1_000));
-        yield* test.writeAuth(test.root, { ember: ember("root") }, new Date(2_000));
+        yield* test.writeAuth(test.worktree, { ember: ember("worktree") }, 1_000);
+        yield* test.writeAuth(test.root, { ember: ember("root") }, 2_000);
 
         yield* test.share(test.root);
 
@@ -385,11 +393,46 @@ describePosix("shareCursorMcpSignIns", () => {
       }),
     ));
 
+  it("gives nothing to a folder whose git metadata points at a repository that does not list it", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupCheckouts();
+        yield* test.writeAuth(test.root, { ember: ember("root") }, 2_000);
+        const crafted = yield* test.makeDirectory("cursor-share-crafted-");
+        yield* test.fileSystem.writeFileString(
+          test.path.join(crafted, ".git"),
+          `gitdir: ${test.path.join(test.root, ".git")}\n`,
+        );
+
+        yield* test.share(crafted);
+
+        expect(yield* test.fileSystem.exists(test.authFile(crafted))).toBe(false);
+      }),
+    ));
+
+  it("skips a server the folder's own config points somewhere else", () =>
+    run(
+      Effect.gen(function* () {
+        const test = yield* setupCheckouts();
+        yield* test.writeAuth(test.root, { ember: ember("root"), linear: ember("linear") }, 2_000);
+        const projectConfig = test.path.join(test.worktree, ".cursor", "mcp.json");
+        yield* test.fileSystem.makeDirectory(test.path.dirname(projectConfig), { recursive: true });
+        yield* test.fileSystem.writeFileString(
+          projectConfig,
+          JSON.stringify({ mcpServers: { ember: { url: "https://elsewhere.example/mcp" } } }),
+        );
+
+        yield* test.share(test.worktree);
+
+        expect(yield* test.readAuth(test.worktree)).toEqual({ linear: ember("linear") });
+      }),
+    ));
+
   it("leaves a folder Cursor already loaded alone, since Cursor would not read the change", () =>
     run(
       Effect.gen(function* () {
         const test = yield* setupCheckouts();
-        yield* test.writeAuth(test.root, { ember: ember("root") }, new Date(2_000));
+        yield* test.writeAuth(test.root, { ember: ember("root") }, 2_000);
         CursorMcpServers.markCursorFolderLoaded(test.worktree);
 
         yield* test.share(test.worktree);

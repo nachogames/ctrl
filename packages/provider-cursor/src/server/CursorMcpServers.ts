@@ -193,13 +193,9 @@ const hasTokens = (entry: unknown): entry is JsonObject =>
 const normalizedAuthEntry = (entry: JsonObject): JsonObject =>
   "tokens" in entry || "clientInfo" in entry ? entry : { tokens: entry };
 
-/**
- * Every checkout of the git repository holding `folder`: the main checkout and
- * its worktrees, read from git's own metadata so nothing outside the repository
- * is considered.
- */
-const repositoryCheckouts = Effect.fn("CursorMcpServers.repositoryCheckouts")(function* (
-  folder: string,
+/** The git common directory a checkout's `.git` leads to, resolved through symlinks. */
+const gitCommonDirectory = Effect.fn("CursorMcpServers.gitCommonDirectory")(function* (
+  checkout: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -208,33 +204,64 @@ const repositoryCheckouts = Effect.fn("CursorMcpServers.repositoryCheckouts")(fu
       Effect.map((text) => text.trim()),
       Effect.option,
     );
-  const dotGit = path.join(folder, ".git");
+  const dotGit = path.join(checkout, ".git");
   const info = yield* fileSystem.stat(dotGit).pipe(Effect.option);
-  if (Option.isNone(info)) return [];
+  if (Option.isNone(info)) return null;
   let commonDirectory = dotGit;
   if (info.value.type === "File") {
     const pointer = yield* readText(dotGit);
-    if (Option.isNone(pointer) || !pointer.value.startsWith("gitdir:")) return [];
-    const gitDirectory = path.resolve(folder, pointer.value.slice("gitdir:".length).trim());
+    if (Option.isNone(pointer) || !pointer.value.startsWith("gitdir:")) return null;
+    const gitDirectory = path.resolve(checkout, pointer.value.slice("gitdir:".length).trim());
     const common = yield* readText(path.join(gitDirectory, "commondir"));
     commonDirectory = Option.isSome(common)
       ? path.resolve(gitDirectory, common.value)
       : gitDirectory;
+  } else if (info.value.type !== "Directory") {
+    return null;
   }
-  const checkouts = new Set<string>();
-  if (path.basename(commonDirectory) === ".git") checkouts.add(path.dirname(commonDirectory));
+  return yield* fileSystem.realPath(commonDirectory).pipe(Effect.orElseSucceed(() => null));
+});
+
+/**
+ * The other checkouts of the git repository holding `folder`: the main checkout
+ * and its worktrees. Git metadata in a folder could name any directory, so the
+ * folder and each candidate must both be listed by, and lead back to, the same
+ * common directory.
+ */
+const repositoryCheckouts = Effect.fn("CursorMcpServers.repositoryCheckouts")(function* (
+  folder: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const commonDirectory = yield* gitCommonDirectory(folder);
+  if (commonDirectory === null) return [];
+  const candidates = new Set<string>();
+  if (path.basename(commonDirectory) === ".git") candidates.add(path.dirname(commonDirectory));
   const worktreesDirectory = path.join(commonDirectory, "worktrees");
   const names = yield* fileSystem
     .readDirectory(worktreesDirectory)
     .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   for (const name of names) {
-    const gitFile = yield* readText(path.join(worktreesDirectory, name, "gitdir"));
-    if (Option.isSome(gitFile) && gitFile.value.length > 0) {
-      checkouts.add(path.dirname(path.resolve(worktreesDirectory, name, gitFile.value)));
+    const gitFile = yield* fileSystem
+      .readFileString(path.join(worktreesDirectory, name, "gitdir"))
+      .pipe(Effect.option);
+    const pointer = Option.isSome(gitFile) ? gitFile.value.trim() : "";
+    if (pointer.length > 0) {
+      candidates.add(path.dirname(path.resolve(worktreesDirectory, name, pointer)));
     }
   }
-  checkouts.delete(folder);
-  return [...checkouts];
+  const realPath = (candidate: string) =>
+    fileSystem.realPath(candidate).pipe(Effect.orElseSucceed(() => null));
+  const self = yield* realPath(folder);
+  let registered = false;
+  const checkouts = [];
+  for (const candidate of candidates) {
+    if ((yield* gitCommonDirectory(candidate)) !== commonDirectory) continue;
+    if ((yield* realPath(candidate)) === self) registered = true;
+    else checkouts.push(candidate);
+  }
+  // The folder itself must be one the repository lists, not one that only points at it.
+  return registered ? checkouts : [];
 });
 
 /**
@@ -270,27 +297,45 @@ export const shareCursorMcpSignIns = Effect.fn("CursorMcpServers.shareSignIns")(
     return { entries: parsed.value, modifiedAt };
   });
 
+  // A folder's own `.cursor/mcp.json` can reuse a server's name for another
+  // address, so a sign-in moves only between folders that define it alike.
+  const projectServers = Effect.fn("CursorMcpServers.projectServers")(function* (checkout: string) {
+    const text = yield* fileSystem
+      .readFileString(path.join(checkout, ".cursor", "mcp.json"))
+      .pipe(Effect.option);
+    const parsed = Option.isSome(text) ? decodeJson(text.value) : Option.none();
+    const config = Option.isSome(parsed) ? parsed.value : null;
+    return new Map(
+      cursorMcpConfigEntries(config).map((entry) => [entry.name, JSON.stringify(entry.transport)]),
+    );
+  });
+
   const checkouts = yield* repositoryCheckouts(folder);
   if (checkouts.length === 0) return;
   const targetFile = authFile(folder);
   const target = yield* readAuth(targetFile);
+  const targetServers = yield* projectServers(folder);
   const sources = [];
   for (const checkout of checkouts) {
     const source = yield* readAuth(authFile(checkout));
-    if (source !== null) sources.push(source);
+    if (source !== null) {
+      sources.push({ ...source, isTarget: false, servers: yield* projectServers(checkout) });
+    }
   }
   // The most recently written file holds the freshest tokens for its servers.
-  const ranked = [...sources, ...(target === null ? [] : [target])].toSorted(
-    (left, right) => right.modifiedAt - left.modifiedAt,
-  );
+  const ranked = [
+    ...sources,
+    ...(target === null ? [] : [{ ...target, isTarget: true, servers: targetServers }]),
+  ].toSorted((left, right) => right.modifiedAt - left.modifiedAt);
   const next: JsonObject = { ...target?.entries };
   let changed = false;
   const taken = new Set<string>();
   for (const file of ranked) {
     for (const [server, entry] of Object.entries(file.entries)) {
       if (taken.has(server) || !hasTokens(entry)) continue;
+      if (!file.isTarget && file.servers.get(server) !== targetServers.get(server)) continue;
       taken.add(server);
-      if (file === target) continue;
+      if (file.isTarget) continue;
       next[server] = normalizedAuthEntry(entry);
       changed = true;
     }
