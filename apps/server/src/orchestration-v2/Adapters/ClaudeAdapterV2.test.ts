@@ -574,7 +574,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.deepEqual(overrides, { allowedTools: ["Read"] });
   });
 
-  it("pre-approves all t3-code tools when attaching an MCP session without an allowlist", () => {
+  it("pre-approves the built-in t3-code tools, not proxied remote ones", () => {
     const threadId = ThreadId.make("thread-claude-mcp-no-allowlist");
     const mcpSession = mcpSessionFor(threadId);
     const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
@@ -583,24 +583,27 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     });
 
     assert.deepEqual(overrides, {
-      allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD],
+      allowedTools: [...ClaudeAdapterV2.CLAUDE_T3_MCP_ALLOWED_TOOLS],
       mcpServers: T3_MCP_SERVERS,
     });
+    assert.include(overrides.allowedTools ?? [], "mcp__t3-code__delegate_task");
+    assert.notInclude(overrides.allowedTools ?? [], "mcp__t3-code__*");
   });
 
-  it("extends an explicit allowlist with the t3-code wildcard", () => {
+  it("extends an explicit allowlist with the built-in t3-code tools", () => {
     const threadId = ThreadId.make("thread-claude-mcp-with-allowlist");
     const mcpSession = mcpSessionFor(threadId);
     const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
       mcpSession,
       readOnlySandbox: false,
-      allowedTools: ["Read", "mcp__t3-code__*"],
+      allowedTools: ["Read", "mcp__t3-code__delegate_task"],
     });
 
-    assert.deepEqual(overrides, {
-      allowedTools: ["Read", "mcp__t3-code__*"],
-      mcpServers: T3_MCP_SERVERS,
-    });
+    assert.sameMembers(
+      [...(overrides.allowedTools ?? [])],
+      ["Read", ...ClaudeAdapterV2.CLAUDE_T3_MCP_ALLOWED_TOOLS],
+    );
+    assert.deepEqual(overrides.mcpServers, T3_MCP_SERVERS);
   });
 
   it("pre-approves only read-only t3-code tools in a read-only sandbox", () => {
@@ -619,7 +622,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ],
       mcpServers: T3_MCP_SERVERS,
     });
-    assert.isFalse(overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD));
+    assert.notInclude(overrides.allowedTools ?? [], "mcp__t3-code__delegate_task");
   });
 
   it("pre-approves only read-only t3-code tools in a read-only sandbox without an allowlist", () => {
@@ -732,7 +735,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       allowedTools: ["Read"],
     });
     assert.deepEqual(overrides, {
-      allowedTools: ["Read", "mcp__t3-code__*"],
+      allowedTools: ["Read", ...ClaudeAdapterV2.CLAUDE_T3_MCP_ALLOWED_TOOLS],
       mcpServers: {
         "t3-code": {
           type: "http",

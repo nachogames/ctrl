@@ -39,3 +39,13 @@ export function renderErrorPage(description: string): string {
     <p>Close this page and start the sign-in again from your agent.</p>`,
   );
 }
+
+/** The page a browser lands on after signing T3 Code in to someone else's MCP server. */
+export function renderNoticePage(input: { readonly heading: string; readonly message: string }) {
+  return shell(
+    input.heading,
+    `<h1>${escapeHtml(input.heading)}</h1>
+    <p>${escapeHtml(input.message)}</p>
+    <p>You can close this page.</p>`,
+  );
+}

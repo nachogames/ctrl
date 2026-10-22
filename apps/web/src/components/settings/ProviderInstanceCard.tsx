@@ -62,6 +62,7 @@ import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { CursorMcpServersSection } from "./CursorMcpServersSection";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
+import { ProviderInventorySection } from "./ProviderInventorySection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
@@ -1256,6 +1257,19 @@ export function ProviderInstanceCard({
         <CursorMcpServersSection
           environmentId={environmentId}
           projects={acpProjects}
+          readOnly={readOnly}
+        />
+      ) : null}
+
+      {environmentId !== undefined &&
+      projectOverride === undefined &&
+      enabled &&
+      liveProvider?.supportsInventory === true ? (
+        <ProviderInventorySection
+          environmentId={environmentId}
+          instanceId={instanceId}
+          driver={instance.driver}
+          disabled={instance.disabledInventory}
           readOnly={readOnly}
         />
       ) : null}

@@ -45,6 +45,8 @@ import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.
 import * as ReviewSessions from "./persistence/ReviewSessions.ts";
 import * as ReviewSessionChanges from "./reviewSessions/ReviewSessionChanges.ts";
 import * as ReviewHostService from "./reviewSessions/ReviewHostService.ts";
+import * as RemoteMcpServers from "./remoteMcp/RemoteMcpServers.ts";
+import * as RemoteMcpCallbackRoute from "./remoteMcp/callbackRoute.ts";
 import * as ReviewSessionService from "./reviewSessions/ReviewSessionService.ts";
 import * as ReviewSyncService from "./reviewSessions/ReviewSyncService.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
@@ -707,6 +709,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
+    RemoteMcpCallbackRoute.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
@@ -726,6 +729,8 @@ const layerMakeRoutes = Layer.mergeAll(
   // above. Provided before `layerPullRequestService`, which therefore reaches the sync too.
   // One review service for the MCP tools and WebSocket subscribers, so each sees every change.
   Layer.provide(ReviewHostService.layer),
+  // One set of remote MCP connections for the settings RPCs, the sign-in callback and /mcp.
+  Layer.provide(RemoteMcpServers.layer),
   Layer.provide(ReviewSessionService.layer),
   Layer.provide(ReviewSyncService.layer),
   Layer.provide(Layer.mergeAll(ReviewSessions.layer, ReviewSessionChanges.layer)),

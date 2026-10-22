@@ -191,6 +191,10 @@
       "types": "./src/state/device.ts",
       "default": "./src/state/device.ts"
     },
+    "./state/remoteMcp": {
+      "types": "./src/state/remoteMcp.ts",
+      "default": "./src/state/remoteMcp.ts"
+    },
     "./state/deviceHubAccess": {
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
