@@ -34,6 +34,7 @@ import * as ThreadGroupStore from "../../../orchestration-v2/ThreadGroupStore.ts
 import * as PreviewManager from "../../../preview/Manager.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import { BUILT_IN_MCP_TOOL_NAMES } from "../../builtInToolNames.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -168,6 +169,11 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       expect(toolNames).toContain("t3_worktree_status");
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
+      // Claude pre-approves exactly this list, so a served tool missing from it
+      // would start asking for approval.
+      expect(toolNames.filter((name) => !BUILT_IN_MCP_TOOL_NAMES.includes(name))).toEqual([
+        "notes_echo",
+      ]);
 
       const handoff = tools.find((tool) => tool.name === "t3_worktree_handoff");
       expect(handoff?.annotations?.readOnlyHint).toBe(false);

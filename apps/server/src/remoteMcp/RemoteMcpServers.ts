@@ -55,18 +55,24 @@ const StoredServer = Schema.Struct({
       redirectUrl: Schema.optional(Schema.String),
       clientInformation: Schema.optional(Schema.Unknown),
       tokens: Schema.optional(Schema.Unknown),
-      // Saved, not held in memory, so a server restart mid sign-in still completes it.
+      // A sign-in in progress, kept apart from the working tokens until it succeeds and saved
+      // rather than held in memory, so a server restart mid sign-in still completes it.
       pending: Schema.optional(
         Schema.Struct({
           state: Schema.String,
           expiresAt: Schema.Number,
+          redirectUrl: Schema.String,
           codeVerifier: Schema.optional(Schema.String),
+          clientInformation: Schema.optional(Schema.Unknown),
+          // The saved registration was rejected, so this sign-in registers afresh.
+          newClient: Schema.optional(Schema.Boolean),
         }),
       ),
     }),
   ),
 });
 type StoredServer = typeof StoredServer.Type;
+type OAuthState = NonNullable<StoredServer["oauth"]>;
 type MutableStoredServer = { -readonly [K in keyof StoredServer]: StoredServer[K] };
 
 const StoredServers = Schema.fromJsonString(Schema.Array(StoredServer));
@@ -112,7 +118,7 @@ export class RemoteMcpServers extends Context.Service<
     readonly remove: (input: { readonly id: string }) => Effect.Effect<void, RemoteMcpError>;
     /** Every tool any connected server offers, for registration on the t3-code server. */
     readonly tools: () => ReadonlyArray<ProxiedTool>;
-    /** Signals that `tools()` may have changed. */
+    /** Signals that `tools()` may have changed, starting with one signal on subscribe. */
     readonly toolChanges: Stream.Stream<void>;
     readonly isVisible: (toolName: string) => boolean;
     /** The remote server's raw `tools/call` result. */
@@ -238,21 +244,22 @@ export const make = Effect.gen(function* () {
     return persisting;
   };
 
+  const clientMetadata = (redirectUrl: string | undefined) => ({
+    client_name: "T3 Code",
+    redirect_uris: redirectUrl === undefined ? [] : [redirectUrl],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+  });
+
+  /** The live connection's credentials. It refreshes tokens but never starts a sign-in. */
   const oauthProvider = (server: LiveServer): OAuthClientProvider => ({
     get redirectUrl() {
       return server.stored.oauth?.redirectUrl;
     },
     get clientMetadata() {
-      const redirectUrl = server.stored.oauth?.redirectUrl;
-      return {
-        client_name: "T3 Code",
-        redirect_uris: redirectUrl === undefined ? [] : [redirectUrl],
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
-        token_endpoint_auth_method: "none",
-      };
+      return clientMetadata(server.stored.oauth?.redirectUrl);
     },
-    state: () => server.stored.oauth?.pending?.state ?? "",
     clientInformation: () =>
       server.stored.oauth?.clientInformation as OAuthClientInformationMixed | undefined,
     saveClientInformation: (clientInformation) => {
@@ -264,34 +271,21 @@ export const make = Effect.gen(function* () {
       server.stored.oauth = { ...server.stored.oauth, tokens };
       return persist();
     },
-    // Ctrl never opens a browser itself: `authorize` hands this URL to the client that asked.
-    redirectToAuthorization: (authorizationUrl) => {
-      server.authorizationUrl = authorizationUrl;
+    // A failed refresh falls through to a new sign-in, which only the user can start.
+    redirectToAuthorization: () => {
+      throw new UnauthorizedError("Sign in again from Settings.");
     },
-    saveCodeVerifier: (codeVerifier) => {
-      const pending = server.stored.oauth?.pending;
-      if (pending === undefined) throw new Error("No sign-in is in progress.");
-      server.stored.oauth = { ...server.stored.oauth, pending: { ...pending, codeVerifier } };
-      return persist();
+    saveCodeVerifier: () => {
+      throw new UnauthorizedError("Sign in again from Settings.");
     },
     codeVerifier: () => {
-      const codeVerifier = server.stored.oauth?.pending?.codeVerifier;
-      if (codeVerifier === undefined) throw new Error("No sign-in is in progress.");
-      return codeVerifier;
+      throw new UnauthorizedError("Sign in again from Settings.");
     },
     invalidateCredentials: (scope) => {
-      const { clientInformation, tokens, pending, ...rest } = server.stored.oauth ?? {};
-      if (scope === "verifier") {
-        server.stored.oauth = {
-          ...rest,
-          ...(clientInformation === undefined ? {} : { clientInformation }),
-          ...(tokens === undefined ? {} : { tokens }),
-        };
-        return persist();
-      }
+      if (scope === "verifier") return;
+      const { clientInformation, tokens, ...rest } = server.stored.oauth ?? {};
       server.stored.oauth = {
         ...rest,
-        ...(pending === undefined ? {} : { pending }),
         ...(scope === "all" || scope === "client" || clientInformation === undefined
           ? {}
           : { clientInformation }),
@@ -300,6 +294,69 @@ export const make = Effect.gen(function* () {
       return persist();
     },
   });
+
+  /**
+   * A sign-in the user started. It never sees the working tokens and replaces
+   * them only once its code exchange succeeds, so an abandoned sign-in, or one
+   * from another address, leaves the live connection alone.
+   */
+  const signInProvider = (server: LiveServer): OAuthClientProvider => {
+    const pending = () => {
+      const current = server.stored.oauth?.pending;
+      if (current === undefined) throw new Error("No sign-in is in progress.");
+      return current;
+    };
+    const updatePending = (patch: Partial<NonNullable<OAuthState["pending"]>>) => {
+      server.stored.oauth = { ...server.stored.oauth, pending: { ...pending(), ...patch } };
+      return persist();
+    };
+    // A registration is bound to its redirect URI, so the saved one fits only the same address.
+    const reusableClient = () =>
+      pending().newClient !== true && server.stored.oauth?.redirectUrl === pending().redirectUrl
+        ? server.stored.oauth?.clientInformation
+        : undefined;
+    return {
+      get redirectUrl() {
+        return server.stored.oauth?.pending?.redirectUrl;
+      },
+      get clientMetadata() {
+        return clientMetadata(server.stored.oauth?.pending?.redirectUrl);
+      },
+      state: () => pending().state,
+      clientInformation: () =>
+        (pending().clientInformation ?? reusableClient()) as
+          | OAuthClientInformationMixed
+          | undefined,
+      saveClientInformation: (clientInformation) => updatePending({ clientInformation }),
+      tokens: () => undefined,
+      saveTokens: (tokens) => {
+        const current = pending();
+        const clientInformation = current.clientInformation ?? reusableClient();
+        const { pending: _pending, ...oauth } = server.stored.oauth ?? {};
+        server.stored.oauth = {
+          ...oauth,
+          redirectUrl: current.redirectUrl,
+          ...(clientInformation === undefined ? {} : { clientInformation }),
+          tokens,
+        };
+        return persist();
+      },
+      // Ctrl never opens a browser itself: `authorize` hands this URL to the client that asked.
+      redirectToAuthorization: (authorizationUrl) => {
+        server.authorizationUrl = authorizationUrl;
+      },
+      saveCodeVerifier: (codeVerifier) => updatePending({ codeVerifier }),
+      codeVerifier: () => {
+        const codeVerifier = pending().codeVerifier;
+        if (codeVerifier === undefined) throw new Error("No sign-in is in progress.");
+        return codeVerifier;
+      },
+      invalidateCredentials: (scope) =>
+        scope === "all" || scope === "client"
+          ? updatePending({ clientInformation: undefined, newClient: true })
+          : undefined,
+    };
+  };
 
   const clearPending = (server: LiveServer) => {
     if (server.stored.oauth?.pending === undefined) return Promise.resolve();
@@ -431,8 +488,13 @@ export const make = Effect.gen(function* () {
     }),
   );
 
+  // Starts with one signal once subscribed, so a change before the first pull is never lost.
   const toolChanges = Stream.unwrap(
-    PubSub.subscribe(toolChangesHub).pipe(Effect.map(Stream.fromSubscription)),
+    PubSub.subscribe(toolChangesHub).pipe(
+      Effect.map((subscription) =>
+        Stream.concat(Stream.make(undefined), Stream.fromSubscription(subscription)),
+      ),
+    ),
   );
 
   const promise = <A>(serverId: string | undefined, run: () => Promise<A>) =>
@@ -487,13 +549,13 @@ export const make = Effect.gen(function* () {
       );
       const expiresAt = (yield* Clock.currentTimeMillis) + PENDING_AUTHORIZATION_TTL_MS;
       return yield* promise(input.id, async () => {
-        // A registration is bound to its redirect URI, so another origin needs a new one.
-        if (server.stored.oauth?.redirectUrl !== redirectUrl) {
-          server.stored.oauth = { redirectUrl };
-        }
-        server.stored.oauth = { ...server.stored.oauth, pending: { state, expiresAt } };
+        server.stored.oauth = {
+          ...server.stored.oauth,
+          pending: { state, expiresAt, redirectUrl },
+        };
         server.authorizationUrl = undefined;
-        const result = await auth(oauthProvider(server), { serverUrl: server.stored.url });
+        await persist();
+        const result = await auth(signInProvider(server), { serverUrl: server.stored.url });
         if (result === "AUTHORIZED") {
           await clearPending(server);
           await connect(server);
@@ -523,7 +585,7 @@ export const make = Effect.gen(function* () {
       }
       return yield* promise(server.stored.id, async () => {
         try {
-          await auth(oauthProvider(server), {
+          await auth(signInProvider(server), {
             serverUrl: server.stored.url,
             authorizationCode: input.code,
           });
@@ -580,8 +642,9 @@ export const make = Effect.gen(function* () {
         try {
           return await call();
         } catch (error) {
-          if (isAuthFailure(error)) throw error;
-          // Remote sessions expire; one fresh connection covers that without hiding real failures.
+          // Only an expired session is safe to retry: the server refused the call before running
+          // it. A timeout or dropped connection may have run the tool already.
+          if (!(error instanceof StreamableHTTPError && error.code === 404)) throw error;
           await connect(server);
           return call();
         }

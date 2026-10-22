@@ -226,6 +226,16 @@ it.effect("finishes an OAuth sign-in that a server restart interrupted", () =>
         ["notes_echo"],
       );
 
+      // Starting another sign-in from a different address must not touch the working tokens.
+      yield* after.service.authorize({ id: "notes", callbackOrigin: "http://127.0.0.1:9" });
+      const saved = new TextDecoder().decode(stored.get("remote-mcp-servers"));
+      assert.include(saved, `"access_token":"${TOKEN}"`);
+      assert.strictEqual((yield* after.service.list).servers[0]?.state, "connected");
+      assert.deepStrictEqual(
+        (yield* after.service.callTool("notes_echo", { text: "still here" })) as unknown,
+        { content: [{ type: "text", text: "still here" }] },
+      );
+
       const reused = yield* after.service
         .completeAuthorization({
           state: callback.searchParams.get("state")!,
@@ -233,6 +243,37 @@ it.effect("finishes an OAuth sign-in that a server restart interrupted", () =>
         })
         .pipe(Effect.flip);
       assert.include(reused.message, "expired");
+    }),
+  ),
+);
+
+it.effect("asks for a new sign-in when a saved OAuth token stops working", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const url = yield* startRemoteServer;
+      const stored = new Map([
+        [
+          "remote-mcp-servers",
+          new TextEncoder().encode(
+            JSON.stringify([
+              {
+                id: "notes",
+                name: "Notes",
+                url,
+                authMode: "oauth",
+                oauth: {
+                  redirectUrl: "http://localhost:3773/oauth/remote-mcp/callback",
+                  clientInformation: { client_id: "client-1" },
+                  tokens: { access_token: "expired", token_type: "Bearer" },
+                },
+              },
+            ]),
+          ),
+        ],
+      ]);
+      const { service } = yield* makeService(stored);
+      yield* service.reconnect({ id: "notes" });
+      assert.strictEqual((yield* service.list).servers[0]?.state, "needs_authorization");
     }),
   ),
 );

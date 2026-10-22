@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RemoteMcpAuthMode, RemoteMcpServer } from "@t3tools/contracts/remoteMcp";
+import {
+  type AtomCommandResult,
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
 
 import { readLocalApi } from "../../localApi";
@@ -13,6 +18,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { toastManager } from "../ui/toast";
 import { RemoteMcpDuplicateCheck } from "./RemoteMcpDuplicateCheck";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -157,6 +163,16 @@ function RemoteMcpServerList({ environmentId }: { readonly environmentId: Enviro
   );
 }
 
+function toastOnFailure(result: AtomCommandResult<unknown, unknown>, title: string) {
+  if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+  const error = squashAtomCommandFailure(result);
+  toastManager.add({
+    type: "error",
+    title,
+    description: error instanceof Error ? error.message : "Try again.",
+  });
+}
+
 function RemoteMcpServerRow({
   environmentId,
   server,
@@ -172,10 +188,13 @@ function RemoteMcpServerRow({
   const [pending, setPending] = useState(false);
   const status = statusOf(server);
 
-  const run = async (action: () => Promise<unknown>) => {
+  const run = async (
+    failureTitle: string,
+    action: () => Promise<AtomCommandResult<unknown, unknown>>,
+  ) => {
     setPending(true);
     try {
-      await action();
+      toastOnFailure(await action(), failureTitle);
     } finally {
       setPending(false);
     }
@@ -183,7 +202,7 @@ function RemoteMcpServerRow({
 
   const signIn = () => {
     const signInWindow = startSignInWindow();
-    return run(async () => {
+    return run(`Could not sign in to ${server.name}`, async () => {
       const result = await authorize({
         environmentId,
         input: { id: server.id, callbackOrigin: callbackOrigin(environmentId) },
@@ -193,6 +212,7 @@ function RemoteMcpServerRow({
       } else {
         signInWindow.cancel();
       }
+      return result;
     });
   };
 
@@ -229,7 +249,11 @@ function RemoteMcpServerRow({
               size="xs"
               variant="outline"
               disabled={!canEdit || pending || server.state === "connecting"}
-              onClick={() => void run(() => reconnect({ environmentId, input: { id: server.id } }))}
+              onClick={() =>
+                void run(`Could not reconnect ${server.name}`, () =>
+                  reconnect({ environmentId, input: { id: server.id } }),
+                )
+              }
             >
               Reconnect
             </Button>
@@ -238,7 +262,11 @@ function RemoteMcpServerRow({
             size="xs"
             variant="outline"
             disabled={!canEdit || pending}
-            onClick={() => void run(() => remove({ environmentId, input: { id: server.id } }))}
+            onClick={() =>
+              void run(`Could not remove ${server.name}`, () =>
+                remove({ environmentId, input: { id: server.id } }),
+              )
+            }
           >
             Remove
           </Button>
@@ -300,9 +328,11 @@ function AddRemoteMcpServerForm({
             await signInWindow.open(signIn.value.authorizationUrl);
           } else {
             signInWindow.cancel();
+            toastOnFailure(signIn, `Could not sign in to ${name}`);
           }
         } else {
           signInWindow?.cancel();
+          toastOnFailure(result, `Could not add ${name}`);
         }
         setSaving(false);
         if (result._tag === "Success") onDone();

@@ -1052,7 +1052,8 @@ const registerRemoteTools = Effect.fn("McpHttpServer.registerRemoteTools")(funct
           }),
       });
     });
-  const sync = Effect.forEach(remote.tools(), register, { discard: true });
+  // Reads the tool list on every run: servers connect after startup.
+  const sync = Effect.suspend(() => Effect.forEach(remote.tools(), register, { discard: true }));
   yield* sync;
   yield* remote.toolChanges.pipe(
     Stream.runForEach(() => sync),

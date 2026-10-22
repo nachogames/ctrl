@@ -36,6 +36,8 @@ own config.
   them; agents call the tools through the environment.
 - Only agents T3 Code started get these tools. An [outside agent](./outside-agents.md)
   connected to the environment's MCP URL does not.
+- Claude asks before calling one of these tools unless the thread has full
+  access, the same as for its other tools.
 - The browser that signs in must reach the environment at the address your
   client uses for it. A sign-in started over Tailscale returns to the Tailscale
   address, for example.

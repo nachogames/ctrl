@@ -321,9 +321,10 @@ describe("AddProviderInstanceDialog environment routing", () => {
         config: { setupMode: "existing" },
       },
     });
-    expect(actions.toast).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "success", title: "Provider instance added" }),
-    );
+    // Codex lists its connectors, so a new instance continues to the sign-in step.
+    expect(actions.onOpenChange).not.toHaveBeenCalled();
+    expect(signInStep()?.textContent).toContain("remote-device/codex_work");
+    await click("Finish sign-in");
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
   });
 
@@ -352,6 +353,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(button("Add instance").disabled).toBe(false);
     await click("Add instance");
     expect(settingsHooks.mutate).toHaveBeenCalledOnce();
+    await click("Finish sign-in");
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
   });
 });

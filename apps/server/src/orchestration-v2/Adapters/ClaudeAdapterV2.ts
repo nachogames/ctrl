@@ -113,6 +113,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { BUILT_IN_MCP_TOOL_NAMES } from "../../mcp/builtInToolNames.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import {
@@ -1216,7 +1217,11 @@ export function makeClaudeQueryOptions(input: {
   return input.cwd === null ? withDirectories : { ...withDirectories, cwd: input.cwd };
 }
 
-export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
+// Not `mcp__t3-code__*`: remote MCP tools an admin connected are served on the
+// same endpoint and must still go through the thread's approval policy.
+export const CLAUDE_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = BUILT_IN_MCP_TOOL_NAMES.map(
+  (name) => `mcp__t3-code__${name}`,
+);
 
 // Must stay in sync with the Tool.Readonly annotations on OrchestratorToolkit;
 // ClaudeAdapterV2.test.ts cross-checks this list against the toolkit.
@@ -1251,7 +1256,7 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
 export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 
 // The SDK's `allowedTools` only pre-approves tool calls; availability is the separate `tools`
-// option. Attaching the t3-code MCP server therefore always pre-approves its tools (headless
+// option. Attaching the t3-code MCP server therefore always pre-approves its built-in tools (headless
 // modes like `dontAsk` deny anything that is not pre-approved), but read-only sandboxes
 // pre-approve only the annotated read-only orchestrator tools so a read-only session cannot
 // silently spawn threads or scheduled tasks.
@@ -1270,7 +1275,7 @@ export function claudeMcpQueryOverrides(input: {
   }
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
-    : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+    : CLAUDE_T3_MCP_ALLOWED_TOOLS;
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
