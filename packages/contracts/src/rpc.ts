@@ -379,8 +379,8 @@ import {
   ReviewItemSetViewedInput,
   ReviewItemsDecideInput,
   ReviewRequestInput,
+  ReviewRunLocalInput,
   ReviewSessionError,
-  ReviewSessionInput,
   ReviewSessionSubscribeInput,
   ReviewHostInput,
   ReviewHostResult,
@@ -2021,7 +2021,7 @@ const WsReviewSessionsRequestRpc = Rpc.make(WS_METHODS.reviewSessionsRequest, {
 
 /** "Run your review": the local review in its own chat. */
 const WsReviewSessionsRunLocalReviewRpc = Rpc.make(WS_METHODS.reviewSessionsRunLocalReview, {
-  payload: ReviewSessionInput,
+  payload: ReviewRunLocalInput,
   success: ReviewThreadResult,
   error: ReviewRpcError,
 });

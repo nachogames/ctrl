@@ -10,6 +10,7 @@ import {
   type ReviewHostInput,
   type ReviewHostResult,
   type ReviewRequestInput,
+  type ReviewRunLocalInput,
   type ReviewSession,
   type ReviewSessionSnapshot,
   type ReviewThreadResult,
@@ -56,6 +57,10 @@ export class ReviewHostService extends Context.Service<
      * a review whose chats are all gone gets its own Review chat first.
      */
     readonly request: (input: ReviewRequestInput) => Effect.Effect<void, ReviewSessionError>;
+    /** "Run your review" from the panel; its chat goes in the open chat's group, which takes the review over. */
+    readonly runLocalReview: (
+      input: ReviewRunLocalInput,
+    ) => Effect.Effect<ReviewThreadResult, ReviewSessionError>;
   }
 >()("t3/reviewSessions/ReviewHostService") {}
 
@@ -268,12 +273,11 @@ export const make = Effect.gen(function* () {
    * It takes the review over first, so the action never lands in a chat the user is not looking at.
    */
   const besideChat = Effect.fn("ReviewHostService.besideChat")(function* (
-    input: ReviewRequestInput,
+    threadId: ThreadId | undefined,
     session: ReviewSession,
   ) {
-    if (input.targetThreadId === undefined || session.phase === "done") return null;
-    if (input.request._tag === "rewrite-reply" || input.request._tag === "finish") return null;
-    const shell = yield* threads.getThreadShell(input.targetThreadId);
+    if (threadId === undefined || session.phase === "done") return null;
+    const shell = yield* threads.getThreadShell(threadId);
     if (
       shell === null ||
       shell.deletedAt !== null ||
@@ -285,18 +289,28 @@ export const make = Effect.gen(function* () {
     return shell;
   });
 
+  const takeOver = Effect.fn("ReviewHostService.takeOver")(function* (
+    session: ReviewSession,
+    chat: OrchestrationV2ThreadShell,
+  ) {
+    yield* reviews.moveToChat({
+      sessionId: session.id,
+      threadId: chat.id,
+      groupId: yield* groupOf(chat),
+    });
+  });
+
   const request: ReviewHostService["Service"]["request"] = (input) =>
     lock
       .withPermits(1)(
         Effect.gen(function* () {
           const { session } = yield* reviews.read(input.sessionId);
-          const beside = yield* besideChat(input, session);
+          const beside =
+            input.request._tag === "rewrite-reply" || input.request._tag === "finish"
+              ? null
+              : yield* besideChat(input.targetThreadId, session);
           if (beside !== null) {
-            yield* reviews.moveToChat({
-              sessionId: session.id,
-              threadId: beside.id,
-              groupId: yield* groupOf(beside),
-            });
+            yield* takeOver(session, beside);
             return;
           }
           if (yield* reviews.hasLiveReviewChat(input.sessionId)) return;
@@ -321,6 +335,20 @@ export const make = Effect.gen(function* () {
         Effect.mapError(failure),
       );
 
-  return ReviewHostService.of({ read, start, request });
+  const runLocalReview: ReviewHostService["Service"]["runLocalReview"] = (input) =>
+    lock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const { session } = yield* reviews.read(input.sessionId);
+          const beside = yield* besideChat(input.targetThreadId, session);
+          if (beside !== null) yield* takeOver(session, beside);
+        }),
+      )
+      .pipe(
+        Effect.flatMap(() => reviews.runLocalReview({ sessionId: input.sessionId })),
+        Effect.mapError(failure),
+      );
+
+  return ReviewHostService.of({ read, start, request, runLocalReview });
 });
 export const layer = Layer.effect(ReviewHostService, make);
