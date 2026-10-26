@@ -13,6 +13,8 @@ type ProjectChipProps = Pick<
   readonly indicatorByProjectKey?: ReadonlyMap<string, ProjectChipIndicator>;
   /** Pinned to the right of the scrolling chips, such as the Edit button. */
   readonly trailing?: ReactNode;
+  /** List padding the scroller bleeds through so pills start where row content does. */
+  readonly gutter?: number;
 };
 
 function ProjectChips(props: ProjectChipProps) {
@@ -39,11 +41,15 @@ function ProjectChips(props: ProjectChipProps) {
   );
 }
 
-const ROW_STYLE = { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 } as const;
+const ROW_STYLE = { paddingHorizontal: 20, paddingTop: 2, paddingBottom: 10, gap: 8 } as const;
 
-function ChipRow(props: { readonly trailing?: ReactNode; readonly children: ReactNode }) {
+function ChipRow(props: {
+  readonly trailing?: ReactNode;
+  readonly gutter?: number | undefined;
+  readonly children: ReactNode;
+}) {
   return (
-    <View className="flex-row items-start">
+    <View className="flex-row items-start" style={{ marginHorizontal: -(props.gutter ?? 0) }}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -61,7 +67,7 @@ function ChipRow(props: { readonly trailing?: ReactNode; readonly children: Reac
 export function ProjectFilterChips(props: ProjectChipProps) {
   if (props.projects.length < 2 && !props.trailing) return null;
   return (
-    <ChipRow trailing={props.trailing}>
+    <ChipRow trailing={props.trailing} gutter={props.gutter}>
       {props.projects.length > 1 ? <ProjectChips {...props} /> : null}
     </ChipRow>
   );
@@ -77,13 +83,13 @@ export function ThreadListFilters(
     | "onEnvironmentChange"
     | "onProjectChange"
   > &
-    Pick<ProjectChipProps, "indicatorByProjectKey" | "trailing">,
+    Pick<ProjectChipProps, "indicatorByProjectKey" | "trailing" | "gutter">,
 ) {
   const selectedEnvironment = props.environments.find(
     (environment) => environment.environmentId === props.selectedEnvironmentId,
   );
   return (
-    <ChipRow trailing={props.trailing}>
+    <ChipRow trailing={props.trailing} gutter={props.gutter}>
       <ListFilterMenu
         label={selectedEnvironment?.label ?? "All environments"}
         accessibilityLabel="Filter threads by environment"

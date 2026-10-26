@@ -193,11 +193,7 @@ function RemoteMcpServerRow({
     action: () => Promise<AtomCommandResult<unknown, unknown>>,
   ) => {
     setPending(true);
-    try {
-      toastOnFailure(await action(), failureTitle);
-    } finally {
-      setPending(false);
-    }
+    toastOnFailure(await action().finally(() => setPending(false)), failureTitle);
   };
 
   const signIn = () => {

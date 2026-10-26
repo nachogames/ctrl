@@ -17,7 +17,6 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -123,8 +122,7 @@ const makeLayer = (input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadGroupStore.ThreadGroupStoreV2)({
-          getShell: () =>
-            Effect.succeed(Option.some(group(input.worktreePath, input.manualResources))),
+          getShell: () => Effect.succeedSome(group(input.worktreePath, input.manualResources)),
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           listProjectThreads: () => Effect.succeed([thread(member, true), thread(outsider, false)]),
@@ -151,7 +149,7 @@ const makeLayer = (input: {
           },
         }),
         Layer.mock(ProjectService.ProjectService)({
-          getById: () => Effect.succeed(Option.some({ id: projectId, scripts: [] } as never)),
+          getById: () => Effect.succeedSome({ id: projectId, scripts: [] } as never),
         }),
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Effect.succeed({

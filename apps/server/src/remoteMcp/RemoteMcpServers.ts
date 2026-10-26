@@ -202,13 +202,15 @@ export const make = Effect.gen(function* () {
   const servers = new Map<string, LiveServer>();
   let toolIndex = new Map<string, ProxiedTool>();
   let persisting: Promise<void> = Promise.resolve();
+  const runSync = Effect.runSyncWith(yield* Effect.context<never>());
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
 
   const notify = () => {
-    Effect.runSync(PubSub.publish(changes, undefined));
+    runSync(PubSub.publish(changes, undefined));
   };
 
   const sha256 = (text: string) =>
-    Effect.runPromise(
+    runPromise(
       crypto.digest("SHA-256", new TextEncoder().encode(text)).pipe(Effect.map(Hex.encode)),
     );
 
@@ -218,7 +220,7 @@ export const make = Effect.gen(function* () {
       for (const tool of server.tools) next.set(tool.name, tool);
     }
     toolIndex = next;
-    Effect.runSync(PubSub.publish(toolChangesHub, undefined));
+    runSync(PubSub.publish(toolChangesHub, undefined));
   };
 
   const setState = (server: LiveServer, state: RemoteMcpConnectionState, message?: string) => {
@@ -231,7 +233,7 @@ export const make = Effect.gen(function* () {
   const persist = () => {
     const snapshot = encodeStored([...servers.values()].map((server) => server.stored));
     persisting = persisting.then(() =>
-      Effect.runPromise(
+      runPromise(
         secrets
           .set(SECRET_NAME, new TextEncoder().encode(snapshot))
           .pipe(
@@ -424,7 +426,6 @@ export const make = Effect.gen(function* () {
         await client.close().catch(() => undefined);
         return;
       }
-      // oxlint-disable-next-line unicorn/prefer-add-event-listener -- the SDK Client exposes only this callback.
       client.onclose = () => {
         if (server.client !== client) return;
         server.client = undefined;
@@ -533,70 +534,72 @@ export const make = Effect.gen(function* () {
       });
     });
 
-  const authorize: RemoteMcpServers["Service"]["authorize"] = (input) =>
-    Effect.gen(function* () {
-      const server = yield* findServer(input.id);
-      if (server.stored.authMode !== "oauth") {
-        return yield* remoteError("This server does not use sign-in.", input.id);
-      }
-      const redirectUrl = yield* Effect.try({
-        try: () => callbackUrl(input.callbackOrigin),
-        catch: (error) => remoteError(describe(error), input.id),
-      });
-      const state = yield* crypto.randomBytes(32).pipe(
-        Effect.map((bytes) => Buffer.from(bytes).toString("base64url")),
-        Effect.mapError((error) => remoteError(describe(error), input.id)),
-      );
-      const expiresAt = (yield* Clock.currentTimeMillis) + PENDING_AUTHORIZATION_TTL_MS;
-      return yield* promise(input.id, async () => {
-        server.stored.oauth = {
-          ...server.stored.oauth,
-          pending: { state, expiresAt, redirectUrl },
-        };
-        server.authorizationUrl = undefined;
-        await persist();
-        const result = await auth(signInProvider(server), { serverUrl: server.stored.url });
-        if (result === "AUTHORIZED") {
-          await clearPending(server);
-          await connect(server);
-          return {};
-        }
-        // Set by `redirectToAuthorization` during `auth`, which TypeScript cannot see.
-        const authorizationUrl = server.authorizationUrl as URL | undefined;
-        if (authorizationUrl === undefined) {
-          throw new Error("The server did not start a sign-in.");
-        }
-        if (authorizationUrl.protocol !== "https:" && authorizationUrl.protocol !== "http:") {
-          throw new Error("The server returned a sign-in link that is not a web address.");
-        }
-        return { authorizationUrl: authorizationUrl.href };
-      });
+  const authorize: RemoteMcpServers["Service"]["authorize"] = Effect.fn(
+    "RemoteMcpServers.authorize",
+  )(function* (input) {
+    const server = yield* findServer(input.id);
+    if (server.stored.authMode !== "oauth") {
+      return yield* remoteError("This server does not use sign-in.", input.id);
+    }
+    const redirectUrl = yield* Effect.try({
+      try: () => callbackUrl(input.callbackOrigin),
+      catch: (error) => remoteError(describe(error), input.id),
     });
-
-  const completeAuthorization: RemoteMcpServers["Service"]["completeAuthorization"] = (input) =>
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      const server = [...servers.values()].find(
-        (candidate) => candidate.stored.oauth?.pending?.state === input.state,
-      );
-      const pending = server?.stored.oauth?.pending;
-      if (server === undefined || pending === undefined || pending.expiresAt < now) {
-        return yield* remoteError("This sign-in link expired. Start the sign-in again.");
-      }
-      return yield* promise(server.stored.id, async () => {
-        try {
-          await auth(signInProvider(server), {
-            serverUrl: server.stored.url,
-            authorizationCode: input.code,
-          });
-        } finally {
-          // A code is single-use, so a failed exchange needs a fresh sign-in either way.
-          await clearPending(server);
-        }
+    const state = yield* crypto.randomBytes(32).pipe(
+      Effect.map((bytes) => Buffer.from(bytes).toString("base64url")),
+      Effect.mapError((error) => remoteError(describe(error), input.id)),
+    );
+    const expiresAt = (yield* Clock.currentTimeMillis) + PENDING_AUTHORIZATION_TTL_MS;
+    return yield* promise(input.id, async () => {
+      server.stored.oauth = {
+        ...server.stored.oauth,
+        pending: { state, expiresAt, redirectUrl },
+      };
+      server.authorizationUrl = undefined;
+      await persist();
+      const result = await auth(signInProvider(server), { serverUrl: server.stored.url });
+      if (result === "AUTHORIZED") {
+        await clearPending(server);
         await connect(server);
-        return { name: server.stored.name };
-      });
+        return {};
+      }
+      // Set by `redirectToAuthorization` during `auth`, which TypeScript cannot see.
+      const authorizationUrl = server.authorizationUrl as URL | undefined;
+      if (authorizationUrl === undefined) {
+        throw new Error("The server did not start a sign-in.");
+      }
+      if (authorizationUrl.protocol !== "https:" && authorizationUrl.protocol !== "http:") {
+        throw new Error("The server returned a sign-in link that is not a web address.");
+      }
+      return { authorizationUrl: authorizationUrl.href };
     });
+  });
+
+  const completeAuthorization: RemoteMcpServers["Service"]["completeAuthorization"] = Effect.fn(
+    "RemoteMcpServers.completeAuthorization",
+  )(function* (input) {
+    const now = yield* Clock.currentTimeMillis;
+    const server = [...servers.values()].find(
+      (candidate) => candidate.stored.oauth?.pending?.state === input.state,
+    );
+    const pending = server?.stored.oauth?.pending;
+    if (server === undefined || pending === undefined || pending.expiresAt < now) {
+      return yield* remoteError("This sign-in link expired. Start the sign-in again.");
+    }
+    return yield* promise(server.stored.id, async () => {
+      try {
+        await auth(signInProvider(server), {
+          serverUrl: server.stored.url,
+          authorizationCode: input.code,
+        });
+      } finally {
+        // A code is single-use, so a failed exchange needs a fresh sign-in either way.
+        await clearPending(server);
+      }
+      await connect(server);
+      return { name: server.stored.name };
+    });
+  });
 
   const reconnect: RemoteMcpServers["Service"]["reconnect"] = (input) =>
     findServer(input.id).pipe(Effect.flatMap((server) => promise(input.id, () => connect(server))));

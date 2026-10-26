@@ -16,7 +16,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import type { GroupOrderItem } from "@t3tools/shared/groupOrder";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
+import { resolveThreadCurrentPullRequestLink } from "../sourceControl/threadPullRequests.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -237,11 +237,9 @@ export class ThreadGroupService extends Context.Service<
     /** Prune every live group; a restart uses it to catch deletes it missed. */
     readonly pruneEmptyGroups: Effect.Effect<void, ThreadGroupServiceError>;
     /**
-     * Run a launch that puts a thread into the group while holding the group's
-     * lock, so an ungroup or prune cannot delete the group under it. A reused
-     * thread's previous group is pruned afterwards when the launch emptied it.
-     * It does not check the group: `launch` does, so a retry can replay.
-     * `launch` must not call a locked method of this service for the same group.
+     * Run a launch into the group under its lock so ungroup/prune can't delete it mid-launch;
+     * a reused thread's emptied old group is pruned after. `launch` checks the group (so retries
+     * replay) and must not call this service's locked methods for the same group.
      */
     readonly withGroupLaunch: <A, E, R>(
       groupId: ThreadGroupId,
@@ -449,12 +447,9 @@ export const make = Effect.gen(function* () {
     );
 
   /**
-   * Plan a chat's join so it shows first in the group. Returns the writes that
-   * re-key other members bottom-up (run them before the join) and the joiner's
-   * own key. Each re-key's command id names its key: a retry after a partial
-   * write re-plans from the keys that landed, and must not replay a receipt
-   * holding a key from the earlier plan.
-   * `seated` is the group's order and is updated, so the next joiner sees it.
+   * Plan a join that shows the chat first: bottom-up re-key writes to run before the join, plus
+   * the joiner's key. Re-key command ids name their key so a retry re-plans from landed keys and
+   * never replays a stale receipt. `seated` is updated so the next joiner sees the new order.
    */
   const placeJoiner = (
     commandId: CommandId,
@@ -726,8 +721,8 @@ export const make = Effect.gen(function* () {
    * generation model. Best effort: the title changes only while it is still
    * the chat title the group started with, and a failure keeps that title.
    */
-  const titleFromGoal = (input: ThreadGroupCreateInput, fallback: string) =>
-    Effect.gen(function* () {
+  const titleFromGoal = Effect.fn("ThreadGroupService.titleFromGoal")(
+    function* (input: ThreadGroupCreateInput, fallback: string) {
       const goal = input.goal?.trim();
       if (!goal) return;
       const project = yield* projects.get(input.projectId);
@@ -758,17 +753,19 @@ export const make = Effect.gen(function* () {
           });
         }),
       );
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.interrupt
-          : Effect.logWarning("orchestration-v2.thread-group.goal-title-failed", {
-              groupId: input.groupId,
-              cause,
-            }),
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("orchestration-v2.thread-group.goal-title-failed", {
+                groupId: input.groupId,
+                cause,
+              }),
+        ),
       ),
-      Effect.withSpan("ThreadGroupService.titleFromGoal"),
-    );
+  );
 
   const create: ThreadGroupService["Service"]["create"] = Effect.fn("ThreadGroupService.create")(
     function* (input) {
@@ -885,29 +882,28 @@ export const make = Effect.gen(function* () {
   );
 
   /** Change one list field of a group under its lock; `change` returns null to leave it. */
-  const updateListLocked = <T, E>(
+  const updateListLocked = Effect.fn("ThreadGroupService.updateListLocked")(function* <T, E>(
     groupId: ThreadGroupId,
     commandId: CommandId,
     read: (group: OrchestrationThreadGroupShell) => ReadonlyArray<T>,
     toPatch: (next: ReadonlyArray<T>) => ThreadGroupUpdatePayload,
     change: (current: ReadonlyArray<T>) => Effect.Effect<ReadonlyArray<T> | null, E>,
-  ) =>
-    Effect.gen(function* () {
-      yield* groupLocks.withLock(
-        groupId,
-        Effect.gen(function* () {
-          const next = yield* change(read(yield* readShell(groupId)));
-          if (next === null) return;
-          yield* commitLocked({
-            type: "thread-group.meta.update",
-            commandId,
-            groupId,
-            patch: toPatch(next),
-          });
-        }),
-      );
-      return yield* readShell(groupId);
-    });
+  ) {
+    yield* groupLocks.withLock(
+      groupId,
+      Effect.gen(function* () {
+        const next = yield* change(read(yield* readShell(groupId)));
+        if (next === null) return;
+        yield* commitLocked({
+          type: "thread-group.meta.update",
+          commandId,
+          groupId,
+          patch: toPatch(next),
+        });
+      }),
+    );
+    return yield* readShell(groupId);
+  });
 
   const updateManualResources: ThreadGroupService["Service"]["updateManualResources"] = (
     groupId,
@@ -1143,52 +1139,49 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const withGroupLaunch: ThreadGroupService["Service"]["withGroupLaunch"] = (
-    groupId,
-    launch,
-    options,
-  ) =>
-    Effect.gen(function* () {
-      const reusedThreadId = options?.reusedThreadId;
-      // A missing reused thread is the launch's error to report, not the group's.
-      const previous =
-        reusedThreadId === undefined
-          ? null
-          : yield* readThread(reusedThreadId).pipe(
-              Effect.map((thread) => thread.groupId ?? null),
-              Effect.catchTags({ ThreadGroupThreadNotFoundError: () => Effect.succeed(null) }),
-            );
-      // The launch checks the group itself, after its receipt, so a retried
-      // launch replays even when the group has gone since.
-      const launchLocked = groupLocks.withLock(
-        groupId,
-        Effect.gen(function* () {
-          const found = yield* readGroup(groupId);
-          const liveBefore = Option.isNone(found)
-            ? 0
-            : (yield* liveMembers(found.value.projectId, groupId)).length;
-          const launched = yield* launch;
-          yield* startActiveIfGrownLocked(groupId, liveBefore);
-          return launched;
-        }),
-      );
-      if (previous === null || previous === groupId) return yield* launchLocked;
-      // A reuse launch can move the thread and then fail, so prune on every
-      // exit. A prune failure must not fail a launch that already committed;
-      // the restart sweep catches what it misses.
-      return yield* launchLocked.pipe(
-        Effect.ensuring(
-          pruneIfEmpty(previous).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("orchestration-v2.thread-group.launch-prune-failed", {
-                groupId: previous,
-                cause,
-              }),
-            ),
+  const withGroupLaunch: ThreadGroupService["Service"]["withGroupLaunch"] = Effect.fn(
+    "ThreadGroupService.withGroupLaunch",
+  )(function* (groupId, launch, options) {
+    const reusedThreadId = options?.reusedThreadId;
+    // A missing reused thread is the launch's error to report, not the group's.
+    const previous =
+      reusedThreadId === undefined
+        ? null
+        : yield* readThread(reusedThreadId).pipe(
+            Effect.map((thread) => thread.groupId ?? null),
+            Effect.catchTags({ ThreadGroupThreadNotFoundError: () => Effect.succeed(null) }),
+          );
+    // The launch checks the group itself, after its receipt, so a retried
+    // launch replays even when the group has gone since.
+    const launchLocked = groupLocks.withLock(
+      groupId,
+      Effect.gen(function* () {
+        const found = yield* readGroup(groupId);
+        const liveBefore = Option.isNone(found)
+          ? 0
+          : (yield* liveMembers(found.value.projectId, groupId)).length;
+        const launched = yield* launch;
+        yield* startActiveIfGrownLocked(groupId, liveBefore);
+        return launched;
+      }),
+    );
+    if (previous === null || previous === groupId) return yield* launchLocked;
+    // A reuse launch can move the thread and then fail, so prune on every
+    // exit. A prune failure must not fail a launch that already committed;
+    // the restart sweep catches what it misses.
+    return yield* launchLocked.pipe(
+      Effect.ensuring(
+        pruneIfEmpty(previous).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.thread-group.launch-prune-failed", {
+              groupId: previous,
+              cause,
+            }),
           ),
         ),
-      );
-    }).pipe(Effect.withSpan("ThreadGroupService.withGroupLaunch"));
+      ),
+    );
+  });
 
   return ThreadGroupService.of({
     create,

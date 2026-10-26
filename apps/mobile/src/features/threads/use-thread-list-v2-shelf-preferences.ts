@@ -11,14 +11,13 @@ export function useThreadListV2ShelfPreferences() {
     loaded && preferencesResult.value.threadListSnoozedShelfExpanded === true;
   const settledShelfExpanded =
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
-  const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled === true;
+  const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled !== false;
   // Project sections are the default; only an explicit false turns them off.
   const byProject = !loaded || preferencesResult.value.threadListByProject !== false;
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
 
-  // A transform reads the optimistic value, so two presses before the next
-  // render still toggle twice instead of writing the same value.
+  // Transforms read optimistic state so same-frame presses toggle twice.
   const toggleSnoozedShelf = () => {
     if (!loaded) return;
     savePreferences({

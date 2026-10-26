@@ -88,45 +88,47 @@ const make = Effect.gen(function* () {
    * else's pull request, it returns to its posted round so Re-review is offered; on your own,
    * a new round opens on the new head. Never while another review of the pull request is live.
    */
-  const reopen = (session: ReviewSession, read: ProviderChangeRequestReviewRound) =>
-    Effect.gen(function* () {
-      if (reviewReopenReason(session, read) === null) return null;
-      const live = yield* repo.findLiveSession({
-        key: session.pullRequest,
-        projectId: session.projectId,
-        groupId: session.groupId,
-      });
-      if (Option.isSome(live)) return null;
-      const at = DateTime.formatIso(yield* DateTime.now);
-      const roundState = yield* currentRoundState(session);
-      const nextRound = reviewRole(session) === "author" && roundState === "applied";
-      const next: ReviewSession = nextRound
-        ? {
-            ...session,
-            phase: "self-review",
-            round: session.round + 1,
-            headSha: read.headSha ?? session.headSha,
-            updatedAt: at,
-          }
-        : { ...session, phase: "self-review", updatedAt: at };
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          yield* repo.updateSession(next);
-          if (!nextRound) return;
-          yield* repo.upsertRound(session.id, {
-            round: next.round,
-            headSha: next.headSha,
-            state: "collecting",
-            appliedSha: null,
-            createdAt: at,
-            updatedAt: at,
-          });
-          yield* repo.markItemsStale(session.id);
-        }),
-      );
-      yield* changes.publish(session.id);
-      return next;
+  const reopen = Effect.fn("ReviewSyncService.reopen")(function* (
+    session: ReviewSession,
+    read: ProviderChangeRequestReviewRound,
+  ) {
+    if (reviewReopenReason(session, read) === null) return null;
+    const live = yield* repo.findLiveSession({
+      key: session.pullRequest,
+      projectId: session.projectId,
+      groupId: session.groupId,
     });
+    if (Option.isSome(live)) return null;
+    const at = DateTime.formatIso(yield* DateTime.now);
+    const roundState = yield* currentRoundState(session);
+    const nextRound = reviewRole(session) === "author" && roundState === "applied";
+    const next: ReviewSession = nextRound
+      ? {
+          ...session,
+          phase: "self-review",
+          round: session.round + 1,
+          headSha: read.headSha ?? session.headSha,
+          updatedAt: at,
+        }
+      : { ...session, phase: "self-review", updatedAt: at };
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* repo.updateSession(next);
+        if (!nextRound) return;
+        yield* repo.upsertRound(session.id, {
+          round: next.round,
+          headSha: next.headSha,
+          state: "collecting",
+          appliedSha: null,
+          createdAt: at,
+          updatedAt: at,
+        });
+        yield* repo.markItemsStale(session.id);
+      }),
+    );
+    yield* changes.publish(session.id);
+    return next;
+  });
 
   const syncSession: ReviewSyncService["Service"]["syncSession"] = (sessionId) =>
     lockFor(sessionId)
@@ -398,7 +400,7 @@ const make = Effect.gen(function* () {
 
   return ReviewSyncService.of({
     syncSession,
-    start: () =>
+    start: Effect.fn("ReviewSyncService.start")(() =>
       forkParked(
         sweep.pipe(
           // A defect in one sweep must not end the loop for the server's lifetime.
@@ -407,6 +409,7 @@ const make = Effect.gen(function* () {
           Effect.asVoid,
         ),
       ),
+    ),
   });
 });
 

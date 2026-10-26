@@ -3,9 +3,9 @@ import {
   type ReviewSessionId,
   type ReviewSessionError,
 } from "@t3tools/contracts";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
+import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
+import { normalizeThreadPullRequestKey } from "../../../sourceControl/threadPullRequests.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -62,15 +62,16 @@ const callingChat = Effect.gen(function* () {
 });
 
 /** The review this chat works on, and its role in it. */
-const reviewAccess = (input: { readonly sessionId?: ReviewSessionId | undefined }) =>
-  Effect.gen(function* () {
-    const caller = yield* callingChat;
-    const sessions = yield* ReviewSessionService.ReviewSessionService;
-    const access = yield* sessions
-      .resolveForThread({ threadId: caller.id, groupId: caller.groupId ?? null, ...input })
-      .pipe(Effect.catch(reviewFailure));
-    return { ...access, caller };
-  });
+const reviewAccess = Effect.fn("ReviewToolkit.reviewAccess")(function* (input: {
+  readonly sessionId?: ReviewSessionId | undefined;
+}) {
+  const caller = yield* callingChat;
+  const sessions = yield* ReviewSessionService.ReviewSessionService;
+  const access = yield* sessions
+    .resolveForThread({ threadId: caller.id, groupId: caller.groupId ?? null, ...input })
+    .pipe(Effect.catch(reviewFailure));
+  return { ...access, caller };
+});
 
 const LOCAL_ONLY =
   "This chat runs your independent review: it may not read the list (it holds the other reviews' comments) and may only hand in findings with review_source_submit.";
@@ -113,7 +114,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           "Put this chat in the pull request's group first: t3_group_create, or t3_group_move_thread into the group.",
         );
       }
-      const parsed = parseChangeRequestUrl(input.url);
+      const parsed = sourceControlDefinitions.parseChangeRequestUrl(input.url)?.link ?? null;
       if (parsed === null) return yield* invalid("This is not a recognised pull request URL.");
       if (parsed.host !== "github.com")
         return yield* invalid("Review sessions support GitHub pull requests.");

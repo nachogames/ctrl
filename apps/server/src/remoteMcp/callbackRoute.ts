@@ -22,32 +22,32 @@ const page = (status: number, heading: string, message: string) =>
     headers: PAGE_HEADERS,
   });
 
-const handler = (remoteMcp: RemoteMcpServers.RemoteMcpServers["Service"]) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
-    if (Option.isNone(url))
-      return page(400, "Sign-in failed", "The sign-in response was malformed.");
-    const params = url.value.searchParams;
-    const state = params.get("state");
-    const code = params.get("code");
-    const denied = params.get("error");
-    if (denied !== null || state === null || code === null) {
-      return page(
-        400,
-        "Sign-in failed",
-        denied === "access_denied"
-          ? "The sign-in was declined."
-          : "The server did not return a sign-in code. Start the sign-in again from Settings.",
-      );
-    }
-    return yield* remoteMcp.completeAuthorization({ state, code }).pipe(
-      Effect.match({
-        onFailure: (error) => page(400, "Sign-in failed", error.message),
-        onSuccess: ({ name }) => page(200, "Signed in", `T3 Code is connected to ${name}.`),
-      }),
+const handler = Effect.fn("RemoteMcpCallbackRoute.handler")(function* (
+  remoteMcp: RemoteMcpServers.RemoteMcpServers["Service"],
+) {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url)) return page(400, "Sign-in failed", "The sign-in response was malformed.");
+  const params = url.value.searchParams;
+  const state = params.get("state");
+  const code = params.get("code");
+  const denied = params.get("error");
+  if (denied !== null || state === null || code === null) {
+    return page(
+      400,
+      "Sign-in failed",
+      denied === "access_denied"
+        ? "The sign-in was declined."
+        : "The server did not return a sign-in code. Start the sign-in again from Settings.",
     );
-  });
+  }
+  return yield* remoteMcp.completeAuthorization({ state, code }).pipe(
+    Effect.match({
+      onFailure: (error) => page(400, "Sign-in failed", error.message),
+      onSuccess: ({ name }) => page(200, "Signed in", `T3 Code is connected to ${name}.`),
+    }),
+  );
+});
 
 /**
  * The remote server's authorization server redirects the browser here. It

@@ -23,7 +23,9 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const changes = yield* PubSub.unbounded<ReviewSessionId>();
     return ReviewSessionChanges.of({
-      publish: (sessionId) => PubSub.publish(changes, sessionId).pipe(Effect.asVoid),
+      publish: Effect.fn("ReviewSessionChanges.publish")((sessionId) =>
+        PubSub.publish(changes, sessionId).pipe(Effect.asVoid),
+      ),
       subscribe: PubSub.subscribe(changes).pipe(
         Effect.map((subscription) => Stream.fromSubscription(subscription)),
       ),

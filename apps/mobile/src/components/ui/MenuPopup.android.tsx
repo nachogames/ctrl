@@ -45,11 +45,10 @@ function BatteryGlyph(props: { readonly battery: HostBattery }) {
   );
 }
 
-// The glyph is a React Native view hosted in the Compose row, and its native host consumes
-// every touch over it, so the row's onClick never sees a tap on the icon. The glyph runs the
-// row's action itself; the row stays the accessible element.
+// The Compose glyph host consumes touches; run the action here and keep accessibility on the row.
 function MenuIcon(props: {
   readonly name: AppSymbolName;
+  readonly color?: MenuAction["imageColor"];
   readonly onPress: () => void;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
@@ -69,20 +68,21 @@ function MenuIcon(props: {
           name={props.name}
           size={iconSize}
           type="monochrome"
-          tintColorClassName={
-            props.disabled
-              ? "accent-icon-subtle"
-              : props.destructive
-                ? "accent-danger-foreground"
-                : "accent-foreground"
-          }
+          {...(typeof props.color === "string" && !props.disabled
+            ? { tintColor: props.color }
+            : {
+                tintColorClassName: props.disabled
+                  ? "accent-icon-subtle"
+                  : props.destructive
+                    ? "accent-danger-foreground"
+                    : "accent-foreground",
+              })}
         />
       </Pressable>
     </RNHostView>
   );
 }
 
-/** Native popup positioned at the original trigger, outside virtualized rows. */
 export function MenuPopup(props: MenuPopupProps) {
   const { appearance, themeVariables: colors } = useAppearancePreferences();
   const { scale, menuItemHeight } = useAndroidControlSizing();
@@ -127,6 +127,7 @@ export function MenuPopup(props: MenuPopupProps) {
               <DropdownMenuItem.LeadingIcon>
                 <MenuIcon
                   name={action.image}
+                  color={action.imageColor}
                   onPress={() => props.onPress(action)}
                   destructive={action.attributes?.destructive}
                   disabled={action.attributes?.disabled}
