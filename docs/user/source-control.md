@@ -332,7 +332,8 @@ The top of the tab sums it up: what stands between you and approving (or merging
 PR), CI, and how many issues each round found, so you can see whether it is settling down.
 On the Pull Requests page, the **Review** tab also shows requested and completed GitHub
 reviews before a chat exists. Choose **Run your review** under **Your review** to create
-the review chat and isolated checkout and start an independent review.
+a **Review #N** chat in its own group, with an isolated checkout, and start an independent
+review. It does not join the group of the chat that made the PR.
 The review workspace lists every round that still has something open, each with its reviews,
 then all open points together under one Triage. A round moves to History once everything in it is
 resolved. When the PR head changes, open points from an earlier commit are marked **code changed**
@@ -340,10 +341,11 @@ or **not touched** until you choose **Recheck N against the new code**. Their de
 drafts remain.
 Ask the agent to triage when you want explanations and recommendations, or to run an
 independent local review.
-Any ordinary chat in the PR’s group can update the same review panel. Review actions started
-from anywhere else go to the review's chat, and if every chat for the PR is gone, a new group
-and chat are created for it. Ask about `#3` in any
-of those chats, or open a point's own chat. Questions leave decisions alone;
+Review actions such as **Triage** and **Apply** run in the chat you have open. If that chat is in
+another group, the review moves into its group, keeping its rounds and decisions; that is also how
+you move a review. A review can't move while its current chat is mid-turn. If every chat for the
+PR is gone, its **Review #N** chat takes it over. Ask about `#3` in any
+chat in the review's group, or open a point's own chat. Questions leave decisions alone;
 say `#3 fix` or `#3 decline` to decide. Conclusions and reply drafts stay with the point.
 
 To change how the agent runs reviews, such as how its triage reply reads, write **Review rules**
