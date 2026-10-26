@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ThreadGroupId,
   ThreadId,
   type OrchestrationV2ThreadShell,
@@ -54,6 +55,7 @@ function harness(
   let prepared = 0;
   let runs = 0;
   const opened: Array<{ thread: string; group: string }> = [];
+  const moved: Array<{ thread: string; group: string }> = [];
   const turns: string[] = [];
   const snapshot = {
     session: sessionFixture(),
@@ -151,6 +153,10 @@ function harness(
             Effect.sync(() => {
               opened.push({ thread: input.reviewThreadId, group: input.groupId });
             }).pipe(Effect.as({ created: true, snapshot })),
+          moveToChat: (input) =>
+            Effect.sync(() => {
+              moved.push({ thread: input.threadId, group: input.groupId });
+            }),
           runLocalReview: () =>
             Effect.sync(() => {
               assert.equal(shells.get(reviewChatId)?.worktreePath, "/isolated");
@@ -166,6 +172,7 @@ function harness(
     launches,
     groupsCreated,
     opened,
+    moved,
     turns,
     counts: () => ({ prepared, runs }),
   };
@@ -232,40 +239,47 @@ it.effect("sends an action straight to a live review chat", () => {
     assert.deepEqual([h.launches.length, h.opened, h.turns], [0, [], ["re-review"]]);
   }).pipe(Effect.provide(h.layer));
 });
-it.effect("moves the review to the open chat's group before its action runs there", () => {
+it.effect("hands the review to the open chat before its action runs there", () => {
   const other = ThreadGroupId.make("group:other");
   const h = harness({
     chats: [
       chatShell(ThreadId.make("beside"), { groupId: other }),
       chatShell(ThreadId.make("loose"), { groupId: null }),
+      // A reviewer or point chat, and another chat of the review's own group, count too.
+      chatShell(ThreadId.make("point"), { groupId: other }),
+      chatShell(ThreadId.make("sibling")),
     ],
   });
   return Effect.gen(function* () {
     const host = yield* Host.ReviewHostService;
-    yield* host.request({
-      sessionId: sessionFixture().id,
-      targetThreadId: ThreadId.make("beside"),
-      request: { _tag: "triage" },
-    });
-    // A chat with no group gets one, and the review moves into it.
-    yield* host.request({
-      sessionId: sessionFixture().id,
-      targetThreadId: ThreadId.make("loose"),
-      request: { _tag: "apply" },
-    });
-    assert.deepEqual(h.opened, [
+    const sessionId = sessionFixture().id;
+    for (const [chat, tag] of [
+      ["beside", "triage"],
+      ["loose", "apply"],
+      ["point", "triage"],
+      ["sibling", "triage"],
+    ] as const) {
+      yield* host.request({
+        sessionId,
+        targetThreadId: ThreadId.make(chat),
+        request: { _tag: tag },
+      });
+    }
+    assert.deepEqual(h.moved, [
       { thread: "beside", group: other },
       { thread: "loose", group: "review-group:loose" },
+      { thread: "point", group: other },
+      { thread: "sibling", group: sessionFixture().groupId },
     ]);
-    assert.deepEqual([h.groupsCreated, h.turns], [["review-group:loose"], ["triage", "apply"]]);
+    assert.deepEqual(h.groupsCreated, ["review-group:loose"]);
+    assert.deepEqual(h.turns, ["triage", "apply", "triage", "triage"]);
   }).pipe(Effect.provide(h.layer));
 });
-it.effect("leaves the review alone for its own group, point chats, and reply rewrites", () => {
+it.effect("leaves the review where it is for reply rewrites and chats of other projects", () => {
   const h = harness({
     chats: [
-      chatShell(ThreadId.make("sibling")),
-      chatShell(ThreadId.make("point"), { groupId: ThreadGroupId.make("group:other") }),
       chatShell(ThreadId.make("elsewhere"), { groupId: ThreadGroupId.make("group:other") }),
+      chatShell(ThreadId.make("foreign"), { projectId: ProjectId.make("other-project") }),
     ],
   });
   return Effect.gen(function* () {
@@ -273,21 +287,15 @@ it.effect("leaves the review alone for its own group, point chats, and reply rew
     const sessionId = sessionFixture().id;
     yield* host.request({
       sessionId,
-      targetThreadId: ThreadId.make("sibling"),
-      request: { _tag: "triage" },
-    });
-    yield* host.request({
-      sessionId,
-      targetThreadId: ThreadId.make("point"),
-      request: { _tag: "triage" },
-    });
-    yield* host.request({
-      sessionId,
       targetThreadId: ThreadId.make("elsewhere"),
       request: { _tag: "rewrite-reply", number: 1, style: "shorter" },
     });
-    assert.deepEqual(h.opened, []);
-    assert.equal(h.turns.length, 3);
+    yield* host.request({
+      sessionId,
+      targetThreadId: ThreadId.make("foreign"),
+      request: { _tag: "triage" },
+    });
+    assert.deepEqual([h.moved, h.opened, h.turns.length], [[], [], 2]);
   }).pipe(Effect.provide(h.layer));
 });
 it.effect("gives a review whose chats are gone its Review chat, then sends the action", () => {

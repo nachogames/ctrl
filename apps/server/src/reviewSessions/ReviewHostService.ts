@@ -52,8 +52,8 @@ export class ReviewHostService extends Context.Service<
       input: ReviewHostInput,
     ) => Effect.Effect<ReviewThreadResult, ReviewSessionError>;
     /**
-     * A review action from the panel. It runs in the open chat, which takes the review over from
-     * another group; a review whose chats are all gone gets its own Review chat first.
+     * A review action from the panel. It runs in the open chat, which takes the review over first;
+     * a review whose chats are all gone gets its own Review chat first.
      */
     readonly request: (input: ReviewRequestInput) => Effect.Effect<void, ReviewSessionError>;
   }
@@ -264,8 +264,8 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError(failure));
 
   /**
-   * The ordinary chat beside the panel that a review action should run in. A chat from another
-   * group takes the review over, so the action never lands in a chat the user is not looking at.
+   * The chat beside the panel that a review action runs in: any live chat of the review's project.
+   * It takes the review over first, so the action never lands in a chat the user is not looking at.
    */
   const besideChat = Effect.fn("ReviewHostService.besideChat")(function* (
     input: ReviewRequestInput,
@@ -279,8 +279,7 @@ export const make = Effect.gen(function* () {
       shell.deletedAt !== null ||
       shell.archivedAt !== null ||
       shell.projectId !== session.projectId ||
-      shell.lineage.relationshipToParent === "subagent" ||
-      (yield* reviews.isAssignedChat(shell.id))
+      shell.lineage.relationshipToParent === "subagent"
     )
       return null;
     return shell;
@@ -292,20 +291,15 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const { session } = yield* reviews.read(input.sessionId);
           const beside = yield* besideChat(input, session);
-          const reviewChatLive = yield* reviews.hasLiveReviewChat(input.sessionId);
           if (beside !== null) {
-            if (beside.groupId === session.groupId && reviewChatLive) return;
-            yield* reviews.open({
-              key: session.pullRequest,
-              url: session.url,
-              projectId: session.projectId,
+            yield* reviews.moveToChat({
+              sessionId: session.id,
+              threadId: beside.id,
               groupId: yield* groupOf(beside),
-              reviewThreadId: beside.id,
-              headSha: null,
             });
             return;
           }
-          if (reviewChatLive) return;
+          if (yield* reviews.hasLiveReviewChat(input.sessionId)) return;
           const { thread, groupId } = yield* ensureReviewChat({
             projectId: session.projectId,
             host: session.pullRequest.host,

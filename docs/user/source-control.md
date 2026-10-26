@@ -341,10 +341,11 @@ or **not touched** until you choose **Recheck N against the new code**. Their de
 drafts remain.
 Ask the agent to triage when you want explanations and recommendations, or to run an
 independent local review.
-Review actions such as **Triage** and **Apply** run in the chat you have open. If that chat is in
-another group, the review moves into its group, keeping its rounds and decisions; that is also how
-you move a review. A review can't move while its current chat is mid-turn. If every chat for the
-PR is gone, its **Review #N** chat takes it over. Ask about `#3` in any
+Review actions such as **Triage** and **Apply** run in the chat you have open, which takes the
+review over first, keeping its rounds and decisions; that is also how you move a review. Any chat
+in the project can hold it, including its reviewer chat or a point's chat. A review can't move
+while its current chat is mid-turn. If every chat for the PR is gone, its **Review #N** chat takes
+it over. Ask about `#3` in any
 chat in the review's group, or open a point's own chat. Questions leave decisions alone;
 say `#3 fix` or `#3 decline` to decide. Conclusions and reply drafts stay with the point.
 
