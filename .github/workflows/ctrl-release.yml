@@ -105,13 +105,26 @@ jobs:
           export APPLE_API_KEY="$key_path"
           unset APPLE_API_KEY_CONTENT
 
-          vp run dist:desktop:artifact \
-            --platform mac \
-            --target dmg \
-            --arch arm64 \
-            --build-version "${{ steps.version.outputs.version }}" \
-            --signed \
-            --verbose
+          # Stapling right after notarization sometimes fails (code 68) when Apple's
+          # ticket lookup drops the connection or the ticket has not propagated yet.
+          # Retry the build for that error only; anything else fails at once.
+          build_log="$RUNNER_TEMP/desktop-build.log"
+          for attempt in 1 2 3; do
+            if vp run dist:desktop:artifact \
+              --platform mac \
+              --target dmg \
+              --arch arm64 \
+              --build-version "${{ steps.version.outputs.version }}" \
+              --signed \
+              --verbose 2>&1 | tee "$build_log"; then
+              break
+            fi
+            if [[ "$attempt" == 3 ]] || ! grep -q "Failed to staple" "$build_log"; then
+              exit 1
+            fi
+            echo "::warning::Stapling failed on attempt $attempt; retrying in 60s."
+            sleep 60
+          done
 
           rm -f "$key_path"
 
