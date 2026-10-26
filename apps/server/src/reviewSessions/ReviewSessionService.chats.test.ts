@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadGroupId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -644,5 +644,32 @@ it.effect("rechecks points still open from an earlier round in this round's tria
     });
     const [point] = (yield* reviews.read(sessionId)).items;
     assert.deepEqual([point?.lastSeenRound, point?.stale], [2, false]);
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("hands the review to its reviewer chat, which then acts as the review chat", () => {
+  const harness = newHarness();
+  const elsewhere = ThreadGroupId.make("group:elsewhere");
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    const local = yield* reviews.runLocalReview({ sessionId });
+    // The review chat is mid-turn: the review stays put until it finishes.
+    const refused = yield* Effect.flip(
+      reviews.moveToChat({ sessionId, threadId: local.threadId, groupId: elsewhere }),
+    );
+    assert.include(refused.message, "running in");
+    harness.shells.set(reviewThreadId, chatShell(reviewThreadId, { activeRunId: null }));
+    yield* reviews.moveToChat({ sessionId, threadId: local.threadId, groupId: elsewhere });
+    const { session } = yield* reviews.read(sessionId);
+    assert.deepEqual([session.reviewThreadId, session.groupId], [local.threadId, elsewhere]);
+    const access = yield* reviews.resolveForThread({
+      threadId: local.threadId,
+      groupId: elsewhere,
+    });
+    assert.equal(access.role, "review");
+    // It still hands in its own findings.
+    assert.isNotNull(access.localSourceId);
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });

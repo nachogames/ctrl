@@ -257,6 +257,15 @@ export class ReviewSessionService extends Context.Service<
       readonly headSha: string;
       readonly findings: ReadonlyArray<ReviewLocalFinding>;
     }) => Effect.Effect<ReviewSource, ReviewSessionError>;
+    /**
+     * Hands the review to a chat, in that chat's group, keeping its rounds, points and decisions.
+     * Any chat of the project can hold it, a reviewer or point chat included.
+     */
+    readonly moveToChat: (input: {
+      readonly sessionId: ReviewSessionId;
+      readonly threadId: ThreadId;
+      readonly groupId: ThreadGroupId;
+    }) => Effect.Effect<void, ReviewSessionError>;
     /** A Review tab button: a turn in the review chat, sent as the system. */
     readonly requestTurn: (input: {
       readonly sessionId: ReviewSessionId;
@@ -713,6 +722,24 @@ export const make = Effect.gen(function* () {
     "ReviewSessionService.resolveForThread",
   )(function* (input) {
     const local = yield* repo.findLocalSourceByThread(input.threadId);
+    // The chat holding a review is its review chat, even one that also ran your own review or
+    // discusses a point; a reviewer chat keeps handing in its findings.
+    const own = yield* repo.listLiveSessionsForThread(input.threadId);
+    const held =
+      input.sessionId !== undefined
+        ? own.find((session) => session.id === input.sessionId)
+        : own.length === 1
+          ? own[0]
+          : undefined;
+    if (held !== undefined) {
+      return {
+        session: held,
+        role: "review" as const,
+        scopedToItem: null,
+        localSourceId:
+          Option.isSome(local) && local.value.sessionId === held.id ? local.value.sourceId : null,
+      };
+    }
     if (Option.isSome(local)) {
       if (input.sessionId !== undefined && input.sessionId !== local.value.sessionId)
         return yield* fail("This local review chat is scoped to its assigned review.");
@@ -740,7 +767,6 @@ export const make = Effect.gen(function* () {
       scopedToItem: null,
       localSourceId: null,
     });
-    const own = yield* repo.listLiveSessionsForThread(input.threadId);
     const inGroup =
       input.groupId === null ? [] : yield* repo.listLiveSessionsForGroup(input.groupId);
     const candidates = [
@@ -1551,6 +1577,40 @@ export const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
 
+  const moveToChat: ReviewSessionService["Service"]["moveToChat"] = Effect.fn(
+    "ReviewSessionService.moveToChat",
+  )(
+    function* (input) {
+      const moved = yield* writeLock.withPermits(1)(
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const session = yield* loadSession(input.sessionId);
+            yield* requireLive(session);
+            if (session.reviewThreadId === input.threadId && session.groupId === input.groupId)
+              return false;
+            // Never off a chat mid-turn: its review calls would then fail.
+            const current = yield* liveThread(session.reviewThreadId);
+            if (current !== null && current.id !== input.threadId && current.activeRunId !== null) {
+              return yield* fail(
+                `This pull request's review is running in "${current.title}". Move it once that chat finishes its turn.`,
+                session.id,
+              );
+            }
+            yield* repo.setSessionReviewThread({
+              sessionId: session.id,
+              reviewThreadId: input.threadId,
+              groupId: input.groupId,
+              updatedAt: yield* now,
+            });
+            return true;
+          }),
+        ),
+      );
+      if (moved) yield* changes.publish(input.sessionId);
+    },
+    (effect, input) => effect.pipe(Effect.mapError(keepReviewErrors(input.sessionId))),
+  );
+
   const requestTurn: ReviewSessionService["Service"]["requestTurn"] = Effect.fn(
     "ReviewSessionService.requestTurn",
   )(
@@ -1763,6 +1823,7 @@ export const make = Effect.gen(function* () {
     openSideChat,
     runLocalReview,
     submitLocalFindings,
+    moveToChat,
     requestTurn,
   });
 });

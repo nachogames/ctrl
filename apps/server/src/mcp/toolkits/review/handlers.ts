@@ -179,7 +179,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
   review_source_submit: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const access = yield* reviewAccess(input);
-      if (access.role !== "local" || access.localSourceId === null) {
+      if (access.localSourceId === null) {
         return yield* invalid("Only the chat your local review runs in hands in its findings.");
       }
       const sessions = yield* ReviewSessionService.ReviewSessionService;
