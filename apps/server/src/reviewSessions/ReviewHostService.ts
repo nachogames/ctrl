@@ -6,9 +6,12 @@ import {
   ReviewSessionError,
   ThreadGroupId,
   ThreadId,
+  type OrchestrationV2ThreadShell,
   type ReviewHostInput,
   type ReviewHostResult,
   type ReviewRequestInput,
+  type ReviewSession,
+  type ReviewSessionSnapshot,
   type ReviewThreadResult,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -31,6 +34,16 @@ import { itemGithubState, planReviewSync, rawReviewItems } from "./reviewSync.ts
 
 const isReviewSessionError = Schema.is(ReviewSessionError);
 
+/** Whether this round already has your own review running or done. */
+const hasLocalReview = (snapshot: ReviewSessionSnapshot) =>
+  snapshot.sources.some(
+    (source) =>
+      source.kind === "local" &&
+      source.round === snapshot.session.round &&
+      source.threadId !== null &&
+      (source.state === "reviewing" || source.state === "done"),
+  );
+
 export class ReviewHostService extends Context.Service<
   ReviewHostService,
   {
@@ -38,7 +51,10 @@ export class ReviewHostService extends Context.Service<
     readonly start: (
       input: ReviewHostInput,
     ) => Effect.Effect<ReviewThreadResult, ReviewSessionError>;
-    /** A review action from the panel; a review whose chats are all gone gets a new group first. */
+    /**
+     * A review action from the panel. It runs in the open chat, which takes the review over from
+     * another group; a review whose chats are all gone gets its own Review chat first.
+     */
     readonly request: (input: ReviewRequestInput) => Effect.Effect<void, ReviewSessionError>;
   }
 >()("t3/reviewSessions/ReviewHostService") {}
@@ -88,11 +104,22 @@ export const make = Effect.gen(function* () {
     };
   }, Effect.mapError(failure));
 
-  /**
-   * The pull request's review chat: its live review chat, else the newest ordinary chat linked
-   * to it, else a new "Review #N" chat with its own group and checkout.
-   */
-  const ensureReviewChat = Effect.fn("ReviewHostService.ensureReviewChat")(function* (
+  const groupOf = Effect.fn("ReviewHostService.groupOf")(function* (
+    thread: OrchestrationV2ThreadShell,
+  ) {
+    if (thread.groupId != null) return thread.groupId;
+    const groupId = ThreadGroupId.make(`review-group:${thread.id}`);
+    yield* groups.create({
+      commandId: CommandId.make(`review-group:${yield* crypto.randomUUIDv4()}`),
+      groupId,
+      projectId: thread.projectId,
+      threadIds: [thread.id],
+      title: thread.title,
+    });
+    return groupId;
+  });
+
+  const openPullRequest = Effect.fn("ReviewHostService.openPullRequest")(function* (
     input: ReviewHostInput,
   ) {
     const detail = yield* pullRequests.summary(input);
@@ -106,32 +133,27 @@ export const make = Effect.gen(function* () {
       repository: detail.repository.toLowerCase(),
       number: detail.number,
     };
-    const snapshot = yield* threads.getShellSnapshot();
-    const linked = snapshot.threads.filter(
-      (thread) =>
-        thread.projectId === input.projectId &&
-        thread.archivedAt === null &&
-        thread.lineage.relationshipToParent !== "subagent" &&
-        (thread.pullRequests ?? []).some(
-          (link) =>
-            link.host === key.host &&
-            link.repository.toLowerCase() === key.repository &&
-            link.number === key.number &&
-            link.source !== "stack-dismissed",
-        ),
+    return { detail, key };
+  });
+
+  /**
+   * The pull request's own "Review #N" chat, in its own group and checkout. Chats that worked on
+   * the PR are never picked: the review runs beside them, not inside their group.
+   */
+  const ensureReviewChat = Effect.fn("ReviewHostService.ensureReviewChat")(function* (
+    input: ReviewHostInput,
+  ) {
+    const { detail, key } = yield* openPullRequest(input);
+    // Stable identity makes retries reuse a prepared review chat, even after a server restart.
+    const stableId = ThreadId.make(
+      `pr-review:${input.projectId}:${key.host}:${key.repository}:${key.number}`,
     );
-    const live = yield* reviews.findSessionForPullRequest(key);
-    // Review-only and point chats belong to their review; they never become its chat.
-    const ordinary: Array<(typeof linked)[number]> = [];
-    for (const candidate of linked) {
-      if (!(yield* reviews.isAssignedChat(candidate.id))) ordinary.push(candidate);
-    }
+    const existing = yield* threads.getThreadShell(stableId);
     let thread =
-      ordinary.find((candidate) => candidate.id === live?.reviewThreadId) ??
-      ordinary.toSorted(
-        (a, b) => DateTime.toEpochMillis(b.updatedAt) - DateTime.toEpochMillis(a.updatedAt),
-      )[0];
-    if (thread === undefined) {
+      existing !== null && existing.deletedAt === null && existing.archivedAt === null
+        ? existing
+        : null;
+    if (thread === null) {
       const found = yield* projects.getById(input.projectId);
       if (Option.isNone(found))
         return yield* new ReviewSessionError({
@@ -144,15 +166,15 @@ export const make = Effect.gen(function* () {
         project.id,
         project,
       ).settings;
+      const snapshot = yield* threads.getShellSnapshot();
       const previous = snapshot.threads.find(
         (candidate) =>
           candidate.projectId === project.id &&
           candidate.lineage.relationshipToParent !== "subagent",
       );
-      // Stable identity makes retries reuse a prepared review chat, even after a server restart.
-      const id = ThreadId.make(
-        `pr-review:${project.id}:${key.host}:${key.repository}:${key.number}`,
-      );
+      // An archived or deleted review chat keeps its id; the new one needs another.
+      const id =
+        existing === null ? stableId : ThreadId.make(`${stableId}:${yield* crypto.randomUUIDv4()}`);
       const modelSelection = resolved.defaultModelSelection ??
         previous?.modelSelection ?? {
           instanceId: ProviderInstanceId.make("codex"),
@@ -210,23 +232,22 @@ export const make = Effect.gen(function* () {
         source: "manual",
       });
     }
-    const groupId = thread.groupId ?? ThreadGroupId.make(`review-group:${thread.id}`);
-    if (thread.groupId == null)
-      yield* groups.create({
-        commandId: CommandId.make(`review-group:${yield* crypto.randomUUIDv4()}`),
-        groupId,
-        projectId: thread.projectId,
-        threadIds: [thread.id],
-        title: thread.title,
-      });
-    return { thread, groupId, detail, key };
+    return { thread, groupId: yield* groupOf(thread), detail, key };
   });
 
   const start: ReviewHostService["Service"]["start"] = (input) =>
     lock
       .withPermits(1)(
         Effect.gen(function* () {
-          const { thread, groupId, detail, key } = yield* ensureReviewChat(input);
+          const { key } = yield* openPullRequest(input);
+          // A review already running its own review stays where it is, even in a group it was
+          // moved to; Run your review then just opens it.
+          const live = yield* reviews.findSessionForPullRequest(key);
+          if (live !== null && (yield* reviews.hasLiveReviewChat(live.id))) {
+            if (hasLocalReview(yield* reviews.read(live.id)))
+              return { threadId: live.reviewThreadId };
+          }
+          const { thread, groupId, detail } = yield* ensureReviewChat(input);
           const { snapshot: opened } = yield* reviews.open({
             key,
             url: detail.url,
@@ -235,27 +256,56 @@ export const make = Effect.gen(function* () {
             reviewThreadId: thread.id,
             headSha: null,
           });
-          if (
-            !opened.sources.some(
-              (source) =>
-                source.kind === "local" &&
-                source.round === opened.session.round &&
-                source.threadId !== null &&
-                (source.state === "reviewing" || source.state === "done"),
-            )
-          ) {
+          if (!hasLocalReview(opened))
             yield* reviews.runLocalReview({ sessionId: opened.session.id });
-          }
           return { threadId: opened.session.reviewThreadId };
         }),
       )
       .pipe(Effect.mapError(failure));
+
+  /**
+   * The ordinary chat beside the panel that a review action should run in. A chat from another
+   * group takes the review over, so the action never lands in a chat the user is not looking at.
+   */
+  const besideChat = Effect.fn("ReviewHostService.besideChat")(function* (
+    input: ReviewRequestInput,
+    session: ReviewSession,
+  ) {
+    if (input.targetThreadId === undefined || session.phase === "done") return null;
+    if (input.request._tag === "rewrite-reply" || input.request._tag === "finish") return null;
+    const shell = yield* threads.getThreadShell(input.targetThreadId);
+    if (
+      shell === null ||
+      shell.deletedAt !== null ||
+      shell.archivedAt !== null ||
+      shell.projectId !== session.projectId ||
+      shell.lineage.relationshipToParent === "subagent" ||
+      (yield* reviews.isAssignedChat(shell.id))
+    )
+      return null;
+    return shell;
+  });
+
   const request: ReviewHostService["Service"]["request"] = (input) =>
     lock
       .withPermits(1)(
         Effect.gen(function* () {
-          if (yield* reviews.hasLiveReviewChat(input.sessionId)) return;
           const { session } = yield* reviews.read(input.sessionId);
+          const beside = yield* besideChat(input, session);
+          const reviewChatLive = yield* reviews.hasLiveReviewChat(input.sessionId);
+          if (beside !== null) {
+            if (beside.groupId === session.groupId && reviewChatLive) return;
+            yield* reviews.open({
+              key: session.pullRequest,
+              url: session.url,
+              projectId: session.projectId,
+              groupId: yield* groupOf(beside),
+              reviewThreadId: beside.id,
+              headSha: null,
+            });
+            return;
+          }
+          if (reviewChatLive) return;
           const { thread, groupId } = yield* ensureReviewChat({
             projectId: session.projectId,
             host: session.pullRequest.host,
