@@ -83,6 +83,32 @@ jobs:
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ steps.version.outputs.version }}"
 
+      # @electron/notarize staples with a single request to Apple's ticket server, and
+      # GitHub's macOS runners sometimes lose that connection (stapler error 68, "The
+      # network connection was lost") after notarization already succeeded. Put an
+      # xcrun in front of the real one that retries only `stapler staple`.
+      - name: Retry stapling on dropped connections
+        run: |
+          set -euo pipefail
+          shim="$RUNNER_TEMP/xcrun-shim"
+          mkdir -p "$shim"
+          cat > "$shim/xcrun" <<'SHIM'
+          #!/bin/bash
+          if [[ "${1:-}" == stapler && "${2:-}" == staple ]]; then
+            for attempt in 1 2 3 4 5; do
+              status=0
+              /usr/bin/xcrun "$@" || status=$?
+              if [[ "$status" == 0 ]]; then exit 0; fi
+              if [[ "$attempt" == 5 ]]; then exit "$status"; fi
+              echo "stapler failed with $status (attempt $attempt); retrying in $((attempt * 15))s" >&2
+              sleep $((attempt * 15))
+            done
+          fi
+          exec /usr/bin/xcrun "$@"
+          SHIM
+          chmod +x "$shim/xcrun"
+          echo "$shim" >> "$GITHUB_PATH"
+
       - name: Build signed desktop artifact
         env:
           CSC_LINK: ${{ secrets.CTRL_MAC_CERT_P12_BASE64 }}
@@ -105,26 +131,13 @@ jobs:
           export APPLE_API_KEY="$key_path"
           unset APPLE_API_KEY_CONTENT
 
-          # Stapling right after notarization sometimes fails (code 68) when Apple's
-          # ticket lookup drops the connection or the ticket has not propagated yet.
-          # Retry the build for that error only; anything else fails at once.
-          build_log="$RUNNER_TEMP/desktop-build.log"
-          for attempt in 1 2 3; do
-            if vp run dist:desktop:artifact \
-              --platform mac \
-              --target dmg \
-              --arch arm64 \
-              --build-version "${{ steps.version.outputs.version }}" \
-              --signed \
-              --verbose 2>&1 | tee "$build_log"; then
-              break
-            fi
-            if [[ "$attempt" == 3 ]] || ! grep -q "Failed to staple" "$build_log"; then
-              exit 1
-            fi
-            echo "::warning::Stapling failed on attempt $attempt; retrying in 60s."
-            sleep 60
-          done
+          vp run dist:desktop:artifact \
+            --platform mac \
+            --target dmg \
+            --arch arm64 \
+            --build-version "${{ steps.version.outputs.version }}" \
+            --signed \
+            --verbose
 
           rm -f "$key_path"
 
