@@ -1,21 +1,7 @@
 /**
- * The running resources of a chat group, computed live on each scan.
- *
- * A local server belongs to the group when the T3 terminal that started it
- * belongs to a member chat, or when its process's working directory is inside
- * the group's worktree. A container belongs to it when its compose
- * `working_dir` label is inside the worktree. A group without a worktree gets
- * terminal attribution only. Registered resources come from the group shell.
- * Servers a member terminal owns, and anything registered, are "known"; the
- * rest only run in the worktree and are "found".
- * Scanner failures degrade to fewer results, never an error.
- *
- * A chat outside any group is scanned as a group of one: its own terminals and
- * its own worktree, with nothing registered.
- *
- * `changes` streams a target's resources while someone watches it. Every
- * watcher of one target shares a single scan loop, so open panels never
- * multiply `lsof` or `docker` runs.
+ * A chat group's running resources, scanned live; ungrouped chats scan as a group of one.
+ * Member terminals, worktree cwds and compose `working_dir` attribute them; failures only
+ * shrink results. Watchers of one target share a scan loop so panels never multiply `lsof`.
  */
 import type {
   DiscoveredLocalServer,
@@ -171,11 +157,9 @@ const terminalProgram = (terminalId: string, terminal: TerminalCommand | undefin
 };
 
 /**
- * Whether a script terminal still runs its script: its program is unknown, is
- * one of the command's words, or is a JS runtime under a launcher such as
- * `npm` or `vp` (they are node scripts, so `ps` shows `node`). A reused
- * terminal keeps its id after the script stops, so the id alone would name a
- * stranger.
+ * Whether a script terminal still runs its script: unknown program, one of the command's words,
+ * or a JS runtime under a launcher like `npm` (`ps` shows `node`). Reused terminals keep their
+ * id after the script stops, so the id alone would name a stranger.
  */
 const stillRunsScript = (command: string, program: string | null) => {
   if (program === null) return true;
@@ -291,11 +275,9 @@ const resourcesEqual = (
 };
 
 /**
- * One scan loop per watched target, shared by all of its watchers and stopped
- * when the last one leaves. The loop scans, then waits for `interval` or a
- * wake from `watch`, whichever comes first. A watcher sees the current list,
- * then each changed list. A scan that returns null or dies keeps the previous list,
- * or yields an empty one when there is none yet.
+ * One shared scan loop per target, stopped when its last watcher leaves; it rescans after
+ * `interval` or a wake. Watchers see the current list, then each change. A failed scan keeps
+ * the previous list (empty when there is none yet).
  */
 export const makeResourceFeed = Effect.fn("GroupResourceScanner.makeResourceFeed")(
   function* (options: {
@@ -308,34 +290,33 @@ export const makeResourceFeed = Effect.fn("GroupResourceScanner.makeResourceFeed
   }) {
     // Targets are plain objects, which RcMap matches structurally.
     const feeds = yield* RcMap.make({
-      lookup: (target: GroupResourceTarget) =>
-        Effect.gen(function* () {
-          const latest =
-            yield* SubscriptionRef.make<ReadonlyArray<ThreadGroupRunningResource> | null>(null);
-          const wake = yield* Queue.sliding<void>(1);
-          const rescan = Effect.gen(function* () {
-            // A defect must not end the loop every watcher of this group shares.
-            const next = yield* options.scan(target).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("group resource scan died; keeping the last list", {
-                  target,
-                  cause: Cause.pretty(cause),
-                }).pipe(Effect.as(null)),
-              ),
-            );
-            const current = yield* SubscriptionRef.get(latest);
-            if (current !== null && (next === null || resourcesEqual(current, next))) return;
-            yield* SubscriptionRef.set(latest, next ?? []);
-          });
-          yield* options.watch(Queue.offer(wake, undefined).pipe(Effect.asVoid));
-          yield* Effect.forkScoped(
-            rescan.pipe(
-              Effect.andThen(Effect.race(Effect.sleep(options.interval), Queue.take(wake))),
-              Effect.forever,
+      lookup: Effect.fn("GroupResourceScanner.lookup")(function* (target: GroupResourceTarget) {
+        const latest =
+          yield* SubscriptionRef.make<ReadonlyArray<ThreadGroupRunningResource> | null>(null);
+        const wake = yield* Queue.sliding<void>(1);
+        const rescan = Effect.gen(function* () {
+          // A defect must not end the loop every watcher of this group shares.
+          const next = yield* options.scan(target).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("group resource scan died; keeping the last list", {
+                target,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(null)),
             ),
           );
-          return latest;
-        }),
+          const current = yield* SubscriptionRef.get(latest);
+          if (current !== null && (next === null || resourcesEqual(current, next))) return;
+          yield* SubscriptionRef.set(latest, next ?? []);
+        });
+        yield* options.watch(Queue.offer(wake, undefined).pipe(Effect.asVoid));
+        yield* Effect.forkScoped(
+          rescan.pipe(
+            Effect.andThen(Effect.race(Effect.sleep(options.interval), Queue.take(wake))),
+            Effect.forever,
+          ),
+        );
+        return latest;
+      }),
     });
     const changes = (target: GroupResourceTarget) =>
       Stream.unwrap(
@@ -377,7 +358,7 @@ export class GroupResourceScanner extends Context.Service<
   }
 >()("t3/threadGroups/GroupResourceScanner") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -550,11 +531,10 @@ export const make = Effect.gen(function* () {
       ),
     // Shares the preview scanner's retain, so its poll keeps the listener rows
     // fresh, and rescans as soon as it sees a server come or go.
-    watch: (wake) =>
-      Effect.gen(function* () {
-        yield* ports.retain;
-        yield* ports.subscribe({ configuredUrls: [], initialSnapshot: [] }, () => wake);
-      }),
+    watch: Effect.fn("GroupResourceScanner.watch")(function* (wake) {
+      yield* ports.retain;
+      yield* ports.subscribe({ configuredUrls: [], initialSnapshot: [] }, () => wake);
+    }),
     interval: RESOURCE_RESCAN_INTERVAL,
   });
 

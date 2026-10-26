@@ -10,7 +10,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { groupLinkLabel } from "@t3tools/shared/threadGroups";
-import { resolveNewestCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
+import { resolveNewestCurrentPullRequestLink } from "../../../sourceControl/threadPullRequests.ts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -139,12 +139,11 @@ const readMembers = Effect.fn("mcp.group.readMembers")(function* (
   context: Caller,
   group: OrchestrationThreadGroupShell,
 ) {
-  const active = yield* context.threads
-    .listProjectThreads({ projectId: group.projectId, includeSubagents: false })
-    .pipe(Effect.mapError(unavailable));
-  const archive = yield* context.threads
-    .getShellSnapshot({ location: "archive" })
-    .pipe(Effect.mapError(unavailable));
+  const active = yield* context.threads.listProjectThreads({
+    projectId: group.projectId,
+    includeSubagents: false,
+  });
+  const archive = yield* context.threads.getShellSnapshot({ location: "archive" });
   const byId = new Map<ThreadId, OrchestrationV2ThreadShell>();
   for (const thread of [...active, ...archive.archivedThreads]) {
     if (
@@ -161,7 +160,7 @@ const readMembers = Effect.fn("mcp.group.readMembers")(function* (
     (left, right) =>
       DateTime.toEpochMillis(left.createdAt) - DateTime.toEpochMillis(right.createdAt),
   );
-});
+}, Effect.mapError(unavailable));
 
 /**
  * Settles or unsettles every live chat of the group that is not already so.

@@ -109,9 +109,7 @@ const item: ReviewItem = {
   updatedAt: at,
 };
 
-const repository = Effect.gen(function* () {
-  return yield* ReviewSessions.ReviewSessionRepository;
-});
+const repository = ReviewSessions.ReviewSessionRepository;
 
 it.effect("links one point to every review that raised it", () =>
   Effect.gen(function* () {

@@ -35,7 +35,7 @@ import {
 } from "@t3tools/contracts";
 import { parseReviewPointTag } from "@t3tools/shared/reviewPointTag";
 import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
-import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
+import { normalizeThreadPullRequestKey } from "../sourceControl/threadPullRequests.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -483,36 +483,35 @@ export const make = Effect.gen(function* () {
    * Loads a live session and one of its points of the current, still-collecting round. With
    * `allowStale`, a point from an earlier commit too: deciding it yourself is its recheck.
    */
-  const loadEditable = (input: PointInput, options?: { readonly allowStale?: boolean }) =>
-    Effect.gen(function* () {
-      const session = yield* loadSession(input.sessionId);
-      yield* requireLive(session);
-      yield* requireCollecting(session, yield* loadRound(session));
-      const found = yield* loadItem(session.id, input.number);
-      // An open point from an earlier round joins this one when you act on it.
-      const item =
-        options?.allowStale === true &&
-        found.stale &&
-        isOpenReviewPoint(found) &&
-        found.lastSeenRound < session.round
-          ? // Last round's fix or reply does not answer this round, as for a point raised again,
-            // and its posted reply is not posted twice.
-            {
-              ...found,
-              ...replyForNewRound(found, null),
-              lastSeenRound: session.round,
-              applyState: "pending" as const,
-            }
-          : found;
-      yield* requireCurrent(
-        session,
-        options?.allowStale === true ? { ...item, stale: false } : item,
-      );
-      return { session, item };
-    });
+  const loadEditable = Effect.fn("ReviewSessionService.loadEditable")(function* (
+    input: PointInput,
+    options?: { readonly allowStale?: boolean },
+  ) {
+    const session = yield* loadSession(input.sessionId);
+    yield* requireLive(session);
+    yield* requireCollecting(session, yield* loadRound(session));
+    const found = yield* loadItem(session.id, input.number);
+    // An open point from an earlier round joins this one when you act on it.
+    const item =
+      options?.allowStale === true &&
+      found.stale &&
+      isOpenReviewPoint(found) &&
+      found.lastSeenRound < session.round
+        ? // Last round's fix or reply does not answer this round, as for a point raised again,
+          // and its posted reply is not posted twice.
+          {
+            ...found,
+            ...replyForNewRound(found, null),
+            lastSeenRound: session.round,
+            applyState: "pending" as const,
+          }
+        : found;
+    yield* requireCurrent(session, options?.allowStale === true ? { ...item, stale: false } : item);
+    return { session, item };
+  });
 
-  const open: ReviewSessionService["Service"]["open"] = (input) =>
-    Effect.gen(function* () {
+  const open: ReviewSessionService["Service"]["open"] = Effect.fn("ReviewSessionService.open")(
+    function* (input) {
       // Stored and looked up in one case, so `Owner/Repo` and `owner/repo` are one review.
       const key = normalizeThreadPullRequestKey(input.key);
       const result = yield* writeLock.withPermits(1)(
@@ -588,7 +587,9 @@ export const make = Effect.gen(function* () {
       yield* changes.publish(result.session.id);
       yield* syncQuietly(result.session.id);
       return { snapshot: yield* read(result.session.id), created: result.created };
-    }).pipe(Effect.mapError(keepReviewErrors()));
+    },
+    Effect.mapError(keepReviewErrors()),
+  );
 
   const read: ReviewSessionService["Service"]["read"] = (sessionId) =>
     loadSession(sessionId).pipe(
@@ -628,9 +629,10 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.mapError(keepReviewErrors())),
     );
 
-  const discoverLinked: ReviewSessionService["Service"]["discoverLinked"] = () =>
-    Effect.gen(function* () {
-      const rows = yield* sql<{ thread_id: string; repository: string; number: number }>`
+  const discoverLinked: ReviewSessionService["Service"]["discoverLinked"] = Effect.fn(
+    "ReviewSessionService.discoverLinked",
+  )(function* () {
+    const rows = yield* sql<{ thread_id: string; repository: string; number: number }>`
       SELECT t.thread_id, json_extract(link.value, '$.repository') AS repository,
         json_extract(link.value, '$.number') AS number
       FROM orchestration_v2_projection_threads t JOIN json_each(t.payload_json, '$.pullRequests') link
@@ -645,17 +647,17 @@ export const make = Effect.gen(function* () {
         AND json_type(t.payload_json, '$.pullRequests') IS NULL
         AND json_type(t.payload_json, '$.linkedPullRequest') = 'object'
     `;
-      for (const row of rows)
-        yield* ensureDiscovered({
-          threadId: ThreadId.make(row.thread_id),
-          repository: row.repository,
-          number: row.number,
-        }).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("review discovery failed", { cause: error.cause }),
-          ),
-        );
-    }).pipe(Effect.mapError(keepReviewErrors()));
+    for (const row of rows)
+      yield* ensureDiscovered({
+        threadId: ThreadId.make(row.thread_id),
+        repository: row.repository,
+        number: row.number,
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("review discovery failed", { cause: error.cause }),
+        ),
+      );
+  }, Effect.mapError(keepReviewErrors()));
 
   const subscribe: ReviewSessionService["Service"]["subscribe"] = (input) =>
     Stream.unwrap(
@@ -707,57 +709,58 @@ export const make = Effect.gen(function* () {
       .listSourceComments(input.sessionId, input.sourceId)
       .pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
 
-  const resolveForThread: ReviewSessionService["Service"]["resolveForThread"] = (input) =>
-    Effect.gen(function* () {
-      const local = yield* repo.findLocalSourceByThread(input.threadId);
-      if (Option.isSome(local)) {
-        if (input.sessionId !== undefined && input.sessionId !== local.value.sessionId)
-          return yield* fail("This local review chat is scoped to its assigned review.");
-        return {
-          session: yield* loadSession(local.value.sessionId),
-          role: "local" as const,
-          scopedToItem: null,
-          localSourceId: local.value.sourceId,
-        };
-      }
-      const side = yield* repo.findSideChatItem(input.threadId);
-      if (Option.isSome(side)) {
-        if (input.sessionId !== undefined && input.sessionId !== side.value.sessionId)
-          return yield* fail("This side chat is scoped to its assigned review.");
-        return {
-          session: yield* loadSession(side.value.sessionId),
-          role: "side" as const,
-          scopedToItem: side.value.number,
-          localSourceId: null,
-        };
-      }
-      const asReview = (session: ReviewSession): ReviewSessionAccess => ({
-        session,
-        role: "review",
+  const resolveForThread: ReviewSessionService["Service"]["resolveForThread"] = Effect.fn(
+    "ReviewSessionService.resolveForThread",
+  )(function* (input) {
+    const local = yield* repo.findLocalSourceByThread(input.threadId);
+    if (Option.isSome(local)) {
+      if (input.sessionId !== undefined && input.sessionId !== local.value.sessionId)
+        return yield* fail("This local review chat is scoped to its assigned review.");
+      return {
+        session: yield* loadSession(local.value.sessionId),
+        role: "local" as const,
         scopedToItem: null,
+        localSourceId: local.value.sourceId,
+      };
+    }
+    const side = yield* repo.findSideChatItem(input.threadId);
+    if (Option.isSome(side)) {
+      if (input.sessionId !== undefined && input.sessionId !== side.value.sessionId)
+        return yield* fail("This side chat is scoped to its assigned review.");
+      return {
+        session: yield* loadSession(side.value.sessionId),
+        role: "side" as const,
+        scopedToItem: side.value.number,
         localSourceId: null,
-      });
-      const own = yield* repo.listLiveSessionsForThread(input.threadId);
-      const inGroup =
-        input.groupId === null ? [] : yield* repo.listLiveSessionsForGroup(input.groupId);
-      const candidates = [
-        ...new Map([...own, ...inGroup].map((session) => [session.id, session])).values(),
-      ];
-      if (input.sessionId !== undefined) {
-        const selected = candidates.find((session) => session.id === input.sessionId);
-        if (selected) return asReview(selected);
-        return yield* fail(
-          "That review is not live in this chat's group. Open the PR with review_session_open first.",
-        );
-      }
-      if (candidates.length === 1) return asReview(candidates[0]!);
-      if (candidates.length > 1) {
-        return yield* fail(
-          `This group has several reviews. Pass sessionId on each review tool call; review_session_open with the PR URL returns it. Available reviews: ${candidates.map((session) => `${session.url} (sessionId: ${session.id})`).join(", ")}`,
-        );
-      }
-      return yield* fail("No review is open for this chat. Start one with review_session_open.");
-    }).pipe(Effect.mapError(keepReviewErrors()));
+      };
+    }
+    const asReview = (session: ReviewSession): ReviewSessionAccess => ({
+      session,
+      role: "review",
+      scopedToItem: null,
+      localSourceId: null,
+    });
+    const own = yield* repo.listLiveSessionsForThread(input.threadId);
+    const inGroup =
+      input.groupId === null ? [] : yield* repo.listLiveSessionsForGroup(input.groupId);
+    const candidates = [
+      ...new Map([...own, ...inGroup].map((session) => [session.id, session])).values(),
+    ];
+    if (input.sessionId !== undefined) {
+      const selected = candidates.find((session) => session.id === input.sessionId);
+      if (selected) return asReview(selected);
+      return yield* fail(
+        "That review is not live in this chat's group. Open the PR with review_session_open first.",
+      );
+    }
+    if (candidates.length === 1) return asReview(candidates[0]!);
+    if (candidates.length > 1) {
+      return yield* fail(
+        `This group has several reviews. Pass sessionId on each review tool call; review_session_open with the PR URL returns it. Available reviews: ${candidates.map((session) => `${session.url} (sessionId: ${session.id})`).join(", ")}`,
+      );
+    }
+    return yield* fail("No review is open for this chat. Start one with review_session_open.");
+  }, Effect.mapError(keepReviewErrors()));
 
   const findSessionForPullRequest: ReviewSessionService["Service"]["findSessionForPullRequest"] = (
     key,
@@ -769,11 +772,12 @@ export const make = Effect.gen(function* () {
       Effect.mapError(keepReviewErrors()),
     );
 
-  const isAssignedChat: ReviewSessionService["Service"]["isAssignedChat"] = (threadId) =>
-    Effect.gen(function* () {
-      if (Option.isSome(yield* repo.findLocalSourceByThread(threadId))) return true;
-      return Option.isSome(yield* repo.findSideChatItem(threadId));
-    }).pipe(Effect.mapError(keepReviewErrors()));
+  const isAssignedChat: ReviewSessionService["Service"]["isAssignedChat"] = Effect.fn(
+    "ReviewSessionService.isAssignedChat",
+  )(function* (threadId) {
+    if (Option.isSome(yield* repo.findLocalSourceByThread(threadId))) return true;
+    return Option.isSome(yield* repo.findSideChatItem(threadId));
+  }, Effect.mapError(keepReviewErrors()));
 
   const hasLiveReviewChat: ReviewSessionService["Service"]["hasLiveReviewChat"] = (sessionId) =>
     loadSession(sessionId).pipe(
@@ -782,8 +786,10 @@ export const make = Effect.gen(function* () {
       Effect.mapError(keepReviewErrors(sessionId)),
     );
 
-  const agentView: ReviewSessionService["Service"]["agentView"] = (input) =>
-    Effect.gen(function* () {
+  const agentView: ReviewSessionService["Service"]["agentView"] = Effect.fn(
+    "ReviewSessionService.agentView",
+  )(
+    function* (input) {
       const session = yield* loadSession(input.sessionId);
       const snapshot = yield* snapshotOf(session);
       const comments = Object.fromEntries(
@@ -808,7 +814,9 @@ export const make = Effect.gen(function* () {
           session.pullRequest,
         ),
       };
-    }).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
+    },
+    (effect, input) => effect.pipe(Effect.mapError(keepReviewErrors(input.sessionId))),
+  );
 
   const importItems: ReviewSessionService["Service"]["importItems"] = (input) =>
     write(
@@ -984,8 +992,10 @@ export const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
 
-  const decide: ReviewSessionService["Service"]["decide"] = (input) =>
-    Effect.gen(function* () {
+  const decide: ReviewSessionService["Service"]["decide"] = Effect.fn(
+    "ReviewSessionService.decide",
+  )(
+    function* (input) {
       if (input.authority._tag === "chat") {
         const message = yield* latestUserMessageText(input.authority.threadId).pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
@@ -1021,7 +1031,9 @@ export const make = Effect.gen(function* () {
           return next;
         }),
       );
-    }).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
+    },
+    (effect, input) => effect.pipe(Effect.mapError(keepReviewErrors(input.sessionId))),
+  );
 
   const setViewed: ReviewSessionService["Service"]["setViewed"] = (input) =>
     write(
@@ -1100,71 +1112,73 @@ export const make = Effect.gen(function* () {
    * running: nothing could triage it once the review is done. A local run whose chat is gone
    * never hands in findings, so it does not hold the review.
    */
-  const requireReviewsSettled = (session: ReviewSession) =>
-    Effect.gen(function* () {
-      const untriaged: Array<string> = [];
-      const running: Array<string> = [];
-      for (const source of yield* repo.listSources(session.id)) {
-        if (source.round !== session.round) continue;
-        if (source.state === "done" && !source.triaged) untriaged.push(reviewSourceName(source));
-        if (source.state !== "requested" && source.state !== "reviewing") continue;
-        if (source.kind === "local") {
-          if (source.threadId === null || (yield* liveThread(source.threadId)) === null) continue;
-        }
-        running.push(reviewSourceName(source));
+  const requireReviewsSettled = Effect.fn("ReviewSessionService.requireReviewsSettled")(function* (
+    session: ReviewSession,
+  ) {
+    const untriaged: Array<string> = [];
+    const running: Array<string> = [];
+    for (const source of yield* repo.listSources(session.id)) {
+      if (source.round !== session.round) continue;
+      if (source.state === "done" && !source.triaged) untriaged.push(reviewSourceName(source));
+      if (source.state !== "requested" && source.state !== "reviewing") continue;
+      if (source.kind === "local") {
+        if (source.threadId === null || (yield* liveThread(source.threadId)) === null) continue;
       }
-      const clauses = [
-        ...(untriaged.length === 0
-          ? []
-          : [
-              `${namesOf(untriaged)} ${untriaged.length === 1 ? "is" : "are"} done but not triaged`,
-            ]),
-        ...(running.length === 0
-          ? []
-          : [`${namesOf(running)} ${running.length === 1 ? "is" : "are"} still reviewing`]),
-      ];
-      if (clauses.length === 0) return;
-      return yield* fail(
-        `The review cannot finish yet: ${clauses.join("; ")}. Triage what is in and wait for what is running (or withdraw that review request on GitHub), then finish.`,
-        session.id,
-      );
-    });
+      running.push(reviewSourceName(source));
+    }
+    const clauses = [
+      ...(untriaged.length === 0
+        ? []
+        : [`${namesOf(untriaged)} ${untriaged.length === 1 ? "is" : "are"} done but not triaged`]),
+      ...(running.length === 0
+        ? []
+        : [`${namesOf(running)} ${running.length === 1 ? "is" : "are"} still reviewing`]),
+    ];
+    if (clauses.length === 0) return;
+    return yield* fail(
+      `The review cannot finish yet: ${clauses.join("; ")}. Triage what is in and wait for what is running (or withdraw that review request on GitHub), then finish.`,
+      session.id,
+    );
+  });
 
   /** Opens the round after `session.round` on `headSha`; the current round is already closed. */
-  const openNextRound = (session: ReviewSession, headSha: string, at: string) =>
-    Effect.gen(function* () {
-      const updated: ReviewSession = {
-        ...session,
-        round: session.round + 1,
-        headSha,
-        updatedAt: at,
-      };
-      yield* repo.updateSession(updated);
-      yield* repo.upsertRound(session.id, {
-        round: updated.round,
-        headSha,
-        state: "collecting",
-        appliedSha: null,
-        createdAt: at,
-        updatedAt: at,
-      });
-      // Points stay stale until a new round's import raises them again.
-      yield* repo.markItemsStale(session.id);
-      // A review that finished but was never triaged goes to the next round's triage. Your own
-      // submitted review stays with the round it answered; an unsubmitted pending one is the
-      // review the new round builds on (GitHub keeps one per person).
-      for (const source of yield* repo.listSources(session.id)) {
-        if (source.round !== session.round) continue;
-        const yours = isViewerSource(source, session.viewerLogin);
-        if (
-          (source.state === "done" && !source.triaged && !yours) ||
-          (source.state === "pending" && yours)
-        ) {
-          yield* repo.moveSourceToRound(session.id, source.id, updated.round);
-        }
-      }
-      return updated;
+  const openNextRound = Effect.fn("ReviewSessionService.openNextRound")(function* (
+    session: ReviewSession,
+    headSha: string,
+    at: string,
+  ) {
+    const updated: ReviewSession = {
+      ...session,
+      round: session.round + 1,
+      headSha,
+      updatedAt: at,
+    };
+    yield* repo.updateSession(updated);
+    yield* repo.upsertRound(session.id, {
+      round: updated.round,
+      headSha,
+      state: "collecting",
+      appliedSha: null,
+      createdAt: at,
+      updatedAt: at,
     });
+    // Points stay stale until a new round's import raises them again.
+    yield* repo.markItemsStale(session.id);
+    // A review that finished but was never triaged goes to the next round's triage. Your own
+    // submitted review stays with the round it answered; an unsubmitted pending one is the
+    // review the new round builds on (GitHub keeps one per person).
+    for (const source of yield* repo.listSources(session.id)) {
+      if (source.round !== session.round) continue;
+      const yours = isViewerSource(source, session.viewerLogin);
+      if (
+        (source.state === "done" && !source.triaged && !yours) ||
+        (source.state === "pending" && yours)
+      ) {
+        yield* repo.moveSourceToRound(session.id, source.id, updated.round);
+      }
+    }
+    return updated;
+  });
 
   /**
    * Someone else's pull request moves in two steps. Posting the pending review closes the round
@@ -1172,80 +1186,81 @@ export const make = Effect.gen(function* () {
    * you submitted and were asked again (or the head moved). Finishing needs no settled reviews:
    * the others' reviews are context, not yours to triage.
    */
-  const advanceAsReviewer = (
+  const advanceAsReviewer = Effect.fn("ReviewSessionService.advanceAsReviewer")(function* (
     session: ReviewSession,
     round: ReviewRound,
     items: ReadonlyArray<ReviewItem>,
     input: { readonly headSha: string; readonly finish: boolean },
-  ) =>
-    Effect.gen(function* () {
-      const at = yield* now;
-      if (input.finish) {
-        if (round.state !== "applied") {
-          yield* repo.upsertRound(session.id, {
-            ...round,
-            state: "applied",
-            appliedSha: session.headSha ?? (input.headSha === "" ? null : input.headSha),
-            updatedAt: at,
-          });
-        }
-        const done: ReviewSession = { ...session, phase: "done", updatedAt: at };
-        yield* repo.updateSession(done);
-        return done;
+  ) {
+    const at = yield* now;
+    if (input.finish) {
+      if (round.state !== "applied") {
+        yield* repo.upsertRound(session.id, {
+          ...round,
+          state: "applied",
+          appliedSha: session.headSha ?? (input.headSha === "" ? null : input.headSha),
+          updatedAt: at,
+        });
       }
-      if (round.state === "applied") {
-        const sources = yield* repo.listSources(session.id);
-        if (reReviewReason(session, sources) === null) {
-          return yield* fail(
-            sources.some(
-              (source) =>
-                source.round === session.round &&
-                source.state === "pending" &&
-                source.author?.toLowerCase() === session.viewerLogin?.toLowerCase(),
-            )
-              ? "Submit your pending review on GitHub first. Re-review starts after you have."
-              : "Nothing to re-review yet: wait until the author asks for your review again or pushes new commits.",
-            session.id,
-          );
-        }
-        const head = session.headSha ?? (input.headSha === "" ? null : input.headSha);
-        if (head === null) {
-          return yield* fail(
-            "The pull request's head is not known yet. Try again in a moment.",
-            session.id,
-          );
-        }
-        return yield* openNextRound(session, head, at);
-      }
-      if (round.state === "collecting") {
-        const unseen = undecidedPoints(session, items);
-        if (unseen.length > 0) {
-          return yield* fail(
-            `${unseen.join(", ")} ${unseen.length === 1 ? "needs" : "need"} a decision before the round moves on.`,
-            session.id,
-          );
-        }
-      }
-      const unapplied = reviewerUnapplied(session, items);
-      if (unapplied.length > 0) {
+      const done: ReviewSession = { ...session, phase: "done", updatedAt: at };
+      yield* repo.updateSession(done);
+      return done;
+    }
+    if (round.state === "applied") {
+      const sources = yield* repo.listSources(session.id);
+      if (reReviewReason(session, sources) === null) {
         return yield* fail(
-          `${unapplied.join(", ")}: not in your pending review yet. Add it, then record it with review_items_record_apply.`,
+          sources.some(
+            (source) =>
+              source.round === session.round &&
+              source.state === "pending" &&
+              source.author?.toLowerCase() === session.viewerLogin?.toLowerCase(),
+          )
+            ? "Submit your pending review on GitHub first. Re-review starts after you have."
+            : "Nothing to re-review yet: wait until the author asks for your review again or pushes new commits.",
           session.id,
         );
       }
-      yield* repo.upsertRound(session.id, {
-        ...round,
-        state: "applied",
-        appliedSha: input.headSha,
-        updatedAt: at,
-      });
-      const updated: ReviewSession = { ...session, updatedAt: at };
-      yield* repo.updateSession(updated);
-      return updated;
+      const head = session.headSha ?? (input.headSha === "" ? null : input.headSha);
+      if (head === null) {
+        return yield* fail(
+          "The pull request's head is not known yet. Try again in a moment.",
+          session.id,
+        );
+      }
+      return yield* openNextRound(session, head, at);
+    }
+    if (round.state === "collecting") {
+      const unseen = undecidedPoints(session, items);
+      if (unseen.length > 0) {
+        return yield* fail(
+          `${unseen.join(", ")} ${unseen.length === 1 ? "needs" : "need"} a decision before the round moves on.`,
+          session.id,
+        );
+      }
+    }
+    const unapplied = reviewerUnapplied(session, items);
+    if (unapplied.length > 0) {
+      return yield* fail(
+        `${unapplied.join(", ")}: not in your pending review yet. Add it, then record it with review_items_record_apply.`,
+        session.id,
+      );
+    }
+    yield* repo.upsertRound(session.id, {
+      ...round,
+      state: "applied",
+      appliedSha: input.headSha,
+      updatedAt: at,
     });
+    const updated: ReviewSession = { ...session, updatedAt: at };
+    yield* repo.updateSession(updated);
+    return updated;
+  });
 
-  const advanceRound: ReviewSessionService["Service"]["advanceRound"] = (input) =>
-    Effect.gen(function* () {
+  const advanceRound: ReviewSessionService["Service"]["advanceRound"] = Effect.fn(
+    "ReviewSessionService.advanceRound",
+  )(
+    function* (input) {
       const next = yield* write(
         input.sessionId,
         Effect.gen(function* () {
@@ -1314,7 +1329,9 @@ export const make = Effect.gen(function* () {
       // Files the re-requested Copilot and any review held back while the round applied.
       if (!input.finish) yield* syncQuietly(next.id);
       return yield* snapshotOf(next);
-    }).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
+    },
+    (effect, input) => effect.pipe(Effect.mapError(keepReviewErrors(input.sessionId))),
+  );
 
   const reviewChatOf = (session: ReviewSession) =>
     liveThread(session.reviewThreadId).pipe(
@@ -1332,44 +1349,48 @@ export const make = Effect.gen(function* () {
    * A new chat in the review's group on the review chat's model and modes. The server sends
    * the seed after recording its review association, so tools are available immediately.
    */
-  const launch = (session: ReviewSession, reviewChat: OrchestrationV2ThreadShell, title: string) =>
-    Effect.gen(function* () {
-      return yield* launches
-        .newThread({
-          commandId: CommandId.make(`review-chat:${yield* crypto.randomUUIDv4()}`),
-          groupId: session.groupId,
-          title,
-          modelSelection: reviewChat.modelSelection,
-          runtimeMode: reviewChat.runtimeMode,
-          interactionMode: reviewChat.interactionMode,
-          senderThreadId: session.reviewThreadId,
-          createdBy: "agent",
-          creationSource: "server",
-        })
-        .pipe(
-          Effect.mapError((error) =>
-            fail(`Could not start the chat: ${error.message}`, session.id),
-          ),
-        );
-    });
-
-  // Record the review association before dispatching the seed: the first turn can call tools.
-  const seedChat = (session: ReviewSession, threadId: ThreadId, text: string) =>
-    Effect.gen(function* () {
-      const id = yield* crypto.randomUUIDv4();
-      yield* threads.sendToThread({
-        projectId: session.projectId,
-        threadId,
-        commandId: CommandId.make(`review-seed:${id}`),
-        messageId: MessageId.make(`message:review-seed:${id}`),
-        text,
-        attachments: [],
-        mode: "queue",
+  const launch = Effect.fn("ReviewSessionService.launch")(function* (
+    session: ReviewSession,
+    reviewChat: OrchestrationV2ThreadShell,
+    title: string,
+  ) {
+    return yield* launches
+      .newThread({
+        commandId: CommandId.make(`review-chat:${yield* crypto.randomUUIDv4()}`),
+        groupId: session.groupId,
+        title,
+        modelSelection: reviewChat.modelSelection,
+        runtimeMode: reviewChat.runtimeMode,
+        interactionMode: reviewChat.interactionMode,
         senderThreadId: session.reviewThreadId,
         createdBy: "agent",
         creationSource: "server",
-      });
+      })
+      .pipe(
+        Effect.mapError((error) => fail(`Could not start the chat: ${error.message}`, session.id)),
+      );
+  });
+
+  // Record the review association before dispatching the seed: the first turn can call tools.
+  const seedChat = Effect.fn("ReviewSessionService.seedChat")(function* (
+    session: ReviewSession,
+    threadId: ThreadId,
+    text: string,
+  ) {
+    const id = yield* crypto.randomUUIDv4();
+    yield* threads.sendToThread({
+      projectId: session.projectId,
+      threadId,
+      commandId: CommandId.make(`review-seed:${id}`),
+      messageId: MessageId.make(`message:review-seed:${id}`),
+      text,
+      attachments: [],
+      mode: "queue",
+      senderThreadId: session.reviewThreadId,
+      createdBy: "agent",
+      creationSource: "server",
     });
+  });
 
   const openSideChat: ReviewSessionService["Service"]["openSideChat"] = (input) =>
     launchLock
@@ -1530,8 +1551,10 @@ export const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
 
-  const requestTurn: ReviewSessionService["Service"]["requestTurn"] = (input) =>
-    Effect.gen(function* () {
+  const requestTurn: ReviewSessionService["Service"]["requestTurn"] = Effect.fn(
+    "ReviewSessionService.requestTurn",
+  )(
+    function* (input) {
       const request = input.request;
       if (request._tag === "finish") {
         const current = yield* loadSession(input.sessionId);
@@ -1715,7 +1738,9 @@ export const make = Effect.gen(function* () {
           ),
           Effect.tapError(() => (request._tag === "apply" ? moveBack : Effect.void)),
         );
-    }).pipe(Effect.mapError(keepReviewErrors(input.sessionId)));
+    },
+    (effect, input) => effect.pipe(Effect.mapError(keepReviewErrors(input.sessionId))),
+  );
 
   return ReviewSessionService.of({
     discoverLinked,

@@ -13,6 +13,7 @@ import { useState } from "react";
 import { APP_BASE_NAME } from "../../branding";
 import { getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
@@ -182,6 +183,7 @@ export function CaptureShortcutConfig({
                   diffStyle: "unified",
                   theme: resolveDiffThemeName(resolvedTheme),
                   overflow: "wrap",
+                  preferredHighlighter: PREFERRED_HIGHLIGHTER,
                 }}
               />
             </div>

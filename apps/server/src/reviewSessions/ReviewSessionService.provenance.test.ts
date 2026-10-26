@@ -129,6 +129,7 @@ const layerTest = ReviewSessionService.layer.pipe(
         watchFingerprint: () => Effect.succeed(null),
       }),
       Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
         getInstance: () => Effect.succeed(undefined),
       }),
     ),

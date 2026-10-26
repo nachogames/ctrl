@@ -104,7 +104,7 @@ export class ThreadGroupStoreV2 extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadGroupStore/ThreadGroupStoreV2") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const encodeRow = Schema.encodeEffect(ThreadGroupDbRow);
@@ -291,12 +291,13 @@ export const make = Effect.gen(function* () {
     apply,
     get,
     list,
-    getShell: (groupId) =>
+    getShell: Effect.fn("ThreadGroupStoreV2.getShell")((groupId) =>
       selectRows({ groupId, includeDeleted: false, liveProjectsOnly: true }).pipe(
         Effect.map((rows) => Option.map(Option.fromUndefinedOr(rows[0]), toShell)),
         mapError("getShell"),
       ),
-    listShells: (options) =>
+    ),
+    listShells: Effect.fn("ThreadGroupStoreV2.listShells")((options) =>
       selectRows({
         ...(options?.projectIds === undefined ? {} : { projectIds: options.projectIds }),
         includeDeleted: false,
@@ -305,6 +306,7 @@ export const make = Effect.gen(function* () {
         Effect.map((rows) => rows.map(toShell)),
         mapError("listShells"),
       ),
+    ),
   });
 });
 

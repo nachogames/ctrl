@@ -44,6 +44,7 @@ import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import * as GroupResourceScanner from "../../../threadGroups/GroupResourceScanner.ts";
 import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
 import * as RemoteMcpServers from "../../../remoteMcp/RemoteMcpServers.ts";
+import * as DocumentText from "../../../provider/DocumentText.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -209,6 +210,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
     Effect.provide(
       Layer.mergeAll(
         NodeHttpServer.layerTest,
+        DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-worktree-mcp-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),
@@ -298,6 +300,7 @@ it.effect("proxies remote MCP tools to every agent", () =>
     Effect.provide(
       Layer.mergeAll(
         NodeHttpServer.layerTest,
+        DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-remote-mcp-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),

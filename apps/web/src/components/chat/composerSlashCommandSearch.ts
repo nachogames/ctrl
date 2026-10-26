@@ -23,11 +23,8 @@ function isMidMessageSkill(item: SlashSearchItem): boolean {
 }
 
 /**
- * Everything stays on offer. Mid-message, skills (scanned ones and commands
- * the provider reports as skills) lead, because selecting one inserts a `$`
- * mention the server dispatches from any position. A provider command that
- * only expands when it opens the message is still listed, last, with a hint:
- * it goes in as literal `/name` text.
+ * Mid-message, skills lead: picking one inserts a `$` mention the server dispatches
+ * anywhere. Commands that only expand at the message start stay listed last, with a hint.
  */
 export function slashCommandItemsForPromptPosition(
   items: ReadonlyArray<SlashSearchItem>,

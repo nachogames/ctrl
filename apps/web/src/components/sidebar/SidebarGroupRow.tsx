@@ -5,8 +5,6 @@ import type {
 import { ChevronRightIcon, LayersIcon, PlusIcon, SquarePenIcon } from "lucide-react";
 import {
   memo,
-  useCallback,
-  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -53,19 +51,16 @@ function relativeLabel(ms: number): string {
  */
 function GroupPullRequestNumber(props: { group: EnvironmentThreadGroup }) {
   const link = props.group.pullRequest;
-  const reference = useMemo(
-    () =>
-      link === null
-        ? null
-        : {
-            projectId: props.group.projectId,
-            host: link.host,
-            repository: link.repository,
-            number: link.number,
-          },
-    [link, props.group.projectId],
-  );
-  const shared = useSharedPullRequestSummary(props.group.environmentId, reference, null);
+  const reference =
+    link === null
+      ? null
+      : {
+          projectId: props.group.projectId,
+          host: link.host,
+          repository: link.repository,
+          number: link.number,
+        };
+  const shared = useSharedPullRequestSummary(props.group.environmentId, reference);
   if (link === null) return null;
   const status = link.snapshot ?? shared;
   const presentation =
@@ -122,25 +117,22 @@ function GroupTitleInput(props: {
   // Mounted only while renaming, so the draft seeds from the title once.
   const [draft, setDraft] = useState(props.title);
   const committedRef = useRef(false);
-  const handleKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLInputElement>) => {
-      event.stopPropagation();
-      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-      if (event.key === "Enter") {
-        event.preventDefault();
-        committedRef.current = true;
-        onCommit(groupKey, draft);
-      } else if (event.key === "Escape") {
-        event.preventDefault();
-        committedRef.current = true;
-        onCancel();
-      }
-    },
-    [draft, groupKey, onCancel, onCommit],
-  );
-  const handleBlur = useCallback(() => {
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    event.stopPropagation();
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      committedRef.current = true;
+      onCommit(groupKey, draft);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      committedRef.current = true;
+      onCancel();
+    }
+  };
+  const handleBlur = () => {
     if (!committedRef.current) onCommit(groupKey, draft);
-  }, [draft, groupKey, onCommit]);
+  };
   return (
     <input
       autoFocus
@@ -167,6 +159,8 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
   group: EnvironmentThreadGroup;
   members: ReadonlyArray<EnvironmentThreadShell>;
   section: SidebarGroupSection;
+  /** The sidebar's partition clock, so a snoozed group's wake label reads the same instant. */
+  snoozeNow: string;
   expanded: boolean;
   draggable: boolean;
   isRenaming: boolean;
@@ -192,7 +186,7 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
   const settleStampMs = groupSettleStampMs(group, members);
   const timeLabel =
     props.section === "snoozed" && group.snoozedUntil !== null
-      ? snoozeWakeLabel(group.snoozedUntil, { now: new Date().toISOString() })
+      ? snoozeWakeLabel(group.snoozedUntil, { now: props.snoozeNow })
       : props.section === "settled" && settleStampMs !== null
         ? relativeLabel(settleStampMs)
         : relativeLabel(newestActivityMs);
@@ -217,13 +211,10 @@ export const SidebarGroupRow = memo(function SidebarGroupRow(props: {
       onToggle(groupKey, expand);
     }
   };
-  const handleContextMenu = useCallback(
-    (event: ReactMouseEvent) => {
-      event.preventDefault();
-      onContextMenu(groupKey, { x: event.clientX, y: event.clientY });
-    },
-    [groupKey, onContextMenu],
-  );
+  const handleContextMenu = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    onContextMenu(groupKey, { x: event.clientX, y: event.clientY });
+  };
 
   const parked = props.section === "settled" || props.section === "snoozed";
   return (

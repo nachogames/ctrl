@@ -29,7 +29,7 @@ import {
   XIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { isElectron } from "~/env";
@@ -113,12 +113,7 @@ export function GroupGlanceCards(props: {
   runner: GroupScriptRunner;
 }) {
   const { group, runner } = props;
-  const project = useProject(
-    useMemo(
-      () => ({ environmentId: group.environmentId, projectId: group.projectId }),
-      [group.environmentId, group.projectId],
-    ),
-  );
+  const project = useProject({ environmentId: group.environmentId, projectId: group.projectId });
   const cwd = group.worktreePath ?? project?.workspaceRoot ?? null;
   const status = useEnvironmentQuery(
     cwd === null
@@ -139,11 +134,9 @@ export function GroupGlanceCards(props: {
   const [recreating, setRecreating] = useState(false);
   const recreate = async (groupId: ThreadGroupId) => {
     setRecreating(true);
-    try {
-      await recreateWorktree({ environmentId: group.environmentId, id: groupId });
-    } finally {
-      setRecreating(false);
-    }
+    await recreateWorktree({ environmentId: group.environmentId, id: groupId }).finally(() =>
+      setRecreating(false),
+    );
     // The worktree is back on disk: read its status again.
     status.refresh();
   };

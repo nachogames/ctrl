@@ -3,7 +3,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import type { ThreadGroupId } from "@t3tools/contracts";
-import { resolveNewestCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
+import { resolveNewestCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
 
 /**
  * What the glance cards and script runner read: a visible group as it is, or a

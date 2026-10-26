@@ -3,7 +3,6 @@ import { DEFAULT_SERVER_SETTINGS, ThreadId } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Host from "./ReviewHostService.ts";
 import * as Reviews from "./ReviewSessionService.ts";
 import * as PullRequests from "../pullRequest/PullRequestService.ts";
@@ -85,8 +84,7 @@ function harness(
         }),
         Layer.mock(Groups.ThreadGroupService)({ create: () => Effect.succeed({} as never) }),
         Layer.mock(Projects.ProjectService)({
-          getById: () =>
-            Effect.succeed(Option.some({ id: projectId, workspaceRoot: "/repo" } as never)),
+          getById: () => Effect.succeedSome({ id: projectId, workspaceRoot: "/repo" } as never),
         }),
         Layer.mock(Git.GitWorkflowService)({
           preparePullRequestThread: () =>
