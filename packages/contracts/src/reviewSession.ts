@@ -347,6 +347,13 @@ export const ReviewRequestInput = Schema.Struct({
 });
 export type ReviewRequestInput = typeof ReviewRequestInput.Type;
 
+/** "Run your review"; its chat goes in the group of `targetThreadId`, which takes the review over. */
+export const ReviewRunLocalInput = Schema.Struct({
+  sessionId: ReviewSessionId,
+  targetThreadId: Schema.optional(ThreadId),
+});
+export type ReviewRunLocalInput = typeof ReviewRunLocalInput.Type;
+
 export const ReviewSessionInput = Schema.Struct({ sessionId: ReviewSessionId });
 export type ReviewSessionInput = typeof ReviewSessionInput.Type;
 

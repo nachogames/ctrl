@@ -126,7 +126,7 @@ export function ReviewRoundCard({
   };
   const startLocal = async () => {
     setStartingLocal(true);
-    await runLocal({ environmentId, input: { sessionId } });
+    await runLocal({ environmentId, input: { sessionId, targetThreadId } });
     setStartingLocal(false);
   };
 

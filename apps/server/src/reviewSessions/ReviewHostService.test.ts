@@ -159,7 +159,8 @@ function harness(
             }),
           runLocalReview: () =>
             Effect.sync(() => {
-              assert.equal(shells.get(reviewChatId)?.worktreePath, "/isolated");
+              const reviewChat = shells.get(reviewChatId);
+              if (reviewChat) assert.equal(reviewChat.worktreePath, "/isolated");
               runs++;
               return { threadId: ThreadId.make("local") };
             }),
@@ -273,6 +274,20 @@ it.effect("hands the review to the open chat before its action runs there", () =
     ]);
     assert.deepEqual(h.groupsCreated, ["review-group:loose"]);
     assert.deepEqual(h.turns, ["triage", "apply", "triage", "triage"]);
+  }).pipe(Effect.provide(h.layer));
+});
+it.effect("runs your review in the open chat's group after it takes the review over", () => {
+  const other = ThreadGroupId.make("group:pr-6");
+  const h = harness({ chats: [chatShell(ThreadId.make("pr-6"), { groupId: other })] });
+  return Effect.gen(function* () {
+    const host = yield* Host.ReviewHostService;
+    const result = yield* host.runLocalReview({
+      sessionId: sessionFixture().id,
+      targetThreadId: ThreadId.make("pr-6"),
+    });
+    assert.deepEqual(h.moved, [{ thread: "pr-6", group: other }]);
+    assert.equal(result.threadId, "local");
+    assert.equal(h.counts().runs, 1);
   }).pipe(Effect.provide(h.layer));
 });
 it.effect("leaves the review where it is for reply rewrites and chats of other projects", () => {
