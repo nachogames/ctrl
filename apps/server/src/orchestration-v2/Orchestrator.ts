@@ -68,6 +68,7 @@ import {
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import {
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
@@ -3842,6 +3843,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection: yield* getProjectionWithPendingEvents(command.threadId, events),
         now,
         cancelQueuedDelivery: false,
+      });
+    }
+
+    if (
+      command.type === "thread.metadata.update" &&
+      command.worktreePath != null &&
+      command.worktreePath !== thread.worktreePath
+    ) {
+      yield* markWorkspaceMovedRun({
+        command,
+        events,
+        thread,
+        worktreePath: command.worktreePath,
+        branch: command.branch ?? null,
+        now,
       });
     }
 
@@ -9223,17 +9239,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       item: OrchestrationV2TurnItem,
     ): item is Extract<OrchestrationV2TurnItem, { readonly type: "run_interrupt_request" }> =>
       item.runId === runId && item.type === "run_interrupt_request";
+    const toReason = (
+      request: Extract<OrchestrationV2TurnItem, { readonly type: "run_interrupt_request" }>,
+    ): RunExecutionService.RunInterruptReason => ({
+      message: request.message,
+      ...(request.cause === undefined ? {} : { cause: request.cause }),
+    });
     const pending = (yield* Ref.get(events))
       .flatMap((event) => (event.type === "turn-item.updated" ? [event.payload] : []))
       .findLast(isRequest);
-    if (pending !== undefined) return pending.message;
+    if (pending !== undefined) return toReason(pending);
     const { turnItems } = yield* projectionStore
       .getThreadRecords(command.threadId, ["turnItems"], {
         turnItemTypes: ["run_interrupt_request"],
         turnItemRunIds: [runId],
       })
       .pipe(mapDispatchError(command));
-    return turnItems.find(isRequest)?.message;
+    const request = turnItems.find(isRequest);
+    return request === undefined ? undefined : toReason(request);
   });
 
   // A successful Stop may have no terminal event to ingest: the session or
@@ -9434,6 +9457,81 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.map(({ turnItems }) => turnItems.length > 0),
         mapDispatchError(command),
       );
+
+  // Moving a thread detaches its session mid-turn. Record why, so the run reads as a move rather
+  // than a crash, and close its open tool calls: the session that would finish them is gone.
+  const markWorkspaceMovedRun = Effect.fnUntraced(function* (input: {
+    readonly command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "thread.metadata.update" }
+    >;
+    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly thread: OrchestrationV2AppThread;
+    readonly worktreePath: string;
+    readonly branch: string | null;
+    readonly now: DateTime.Utc;
+  }) {
+    const { command, events, thread, now } = input;
+    const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
+    const run = runs.find(
+      (candidate) => candidate.status === "starting" || candidate.status === "running",
+    );
+    if (run === undefined || run.rootNodeId === null || run.providerThreadId === null) return;
+    const { turnItems } = yield* loadProjectionForCommand(command, ["turnItems"], {
+      turnItemRunIds: [run.id],
+      turnItemTypes: ["dynamic_tool", "command_execution", "run_interrupt_request"],
+    });
+    if (turnItems.some((item) => item.type === "run_interrupt_request")) return;
+    const emitEvent = emit(events, command);
+    for (const item of turnItems) {
+      if (item.type === "run_interrupt_request" || !isOrchestrationV2WorkActive(item.status)) {
+        continue;
+      }
+      const isHandoff =
+        item.type === "dynamic_tool" && resolveT3McpToolId(item.toolName) === "t3_worktree_handoff";
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: thread.id,
+        runId: run.id,
+        nodeId: item.nodeId ?? undefined,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...item,
+          status: isHandoff ? "completed" : "interrupted",
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
+    }
+    yield* emitEvent({
+      type: "turn-item.updated",
+      threadId: thread.id,
+      runId: run.id,
+      nodeId: run.rootNodeId,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-request" }),
+        threadId: thread.id,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        providerThreadId: run.providerThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: yield* nextTurnItemOrdinal({ thread, turnItems }),
+        status: "completed",
+        title: "Moved to worktree",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "run_interrupt_request",
+        message: `Moved to worktree ${input.branch ?? input.worktreePath}`,
+        cause: "workspace_moved",
+      },
+    });
+  });
 
   const markStoppedRun = Effect.fnUntraced(function* (input: {
     readonly command: Extract<

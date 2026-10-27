@@ -23,7 +23,8 @@ export const WorktreeMcpHandoffInput = Schema.Struct({
   ),
   continuationPrompt: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
-      description: "Work to resume in the worktree next turn. Omitted: thread waits.",
+      description:
+        "Work to resume in the worktree next turn. Omitted: a generic continue-the-task prompt.",
     }),
   ),
 });
