@@ -1408,3 +1408,109 @@ it.effect("dispatch records the command outcome and its duration", () =>
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("moving a running thread to a worktree records the move and closes its tool calls", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:workspace-move");
+    const providerThreadId = ProviderThreadId.make("provider-thread:workspace-move");
+    const runId = RunId.make("run:workspace-move:1");
+    const nodeId = NodeId.make("node:workspace-move:1");
+    const providerTurnId = ProviderTurnId.make("provider-turn:workspace-move:1");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-workspace-move"),
+      threadId,
+      projectId: ProjectId.make("project:workspace-move"),
+      title: "Workspace move",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* projections.apply({
+      id: EventId.make("workspace-move:run"),
+      type: "run.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId: instanceId,
+        modelSelection,
+        providerThreadId,
+        userMessageId: MessageId.make("message:workspace-move:1"),
+        rootNodeId: nodeId,
+        activeAttemptId: RunAttemptId.make("attempt:workspace-move:1"),
+        status: "running",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      },
+    });
+    const base = {
+      threadId,
+      runId,
+      nodeId,
+      providerThreadId,
+      providerTurnId,
+      nativeItemRef: null,
+      parentItemId: null,
+      status: "running",
+      title: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    } as const;
+    const handoffId = TurnItemId.make("turn-item:workspace-move:handoff");
+    const commandId = TurnItemId.make("turn-item:workspace-move:command");
+    for (const payload of [
+      {
+        ...base,
+        id: handoffId,
+        ordinal: 10,
+        type: "dynamic_tool",
+        toolName: "mcp__t3-code__t3_worktree_handoff",
+        input: { branch: "feature/move" },
+      },
+      { ...base, id: commandId, ordinal: 11, type: "command_execution", input: "sleep 5" },
+    ] as const) {
+      yield* projections.apply({
+        id: EventId.make(`workspace-move:${payload.id}`),
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload,
+      });
+    }
+
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("workspace-move:bind"),
+      threadId,
+      branch: "feature/move",
+      worktreePath: "/repo/.worktrees/feature-move",
+    });
+
+    const { turnItems } = yield* projections.getThreadProjection(threadId);
+    const statusOf = (id: TurnItemId) => turnItems.find((item) => item.id === id)?.status;
+    assert.equal(statusOf(handoffId), "completed");
+    assert.equal(statusOf(commandId), "interrupted");
+    const request = turnItems.find((item) => item.type === "run_interrupt_request");
+    assert.deepInclude(request, {
+      runId,
+      title: "Moved to worktree",
+      message: "Moved to worktree feature/move",
+      cause: "workspace_moved",
+    });
+  }).pipe(Effect.provide(layerTest)),
+);

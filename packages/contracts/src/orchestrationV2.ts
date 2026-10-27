@@ -1539,11 +1539,15 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    /** Set when the run ended because the thread moved to a worktree, not a Stop. */
+    cause: Schema.optional(Schema.Literal("workspace_moved")),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_result"),
     message: Schema.String,
+    /** Set when the run ended because the thread moved to a worktree, not a Stop. */
+    cause: Schema.optional(Schema.Literal("workspace_moved")),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2390,11 +2394,15 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    /** Set when the run ended because the thread moved to a worktree, not a Stop. */
+    cause: Schema.optional(Schema.Literal("workspace_moved")),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("run_interrupt_result"),
     message: Schema.String,
+    /** Set when the run ended because the thread moved to a worktree, not a Stop. */
+    cause: Schema.optional(Schema.Literal("workspace_moved")),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

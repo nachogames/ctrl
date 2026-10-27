@@ -370,6 +370,23 @@ const runStatus = (harness: ReturnType<typeof makeHarness>) =>
 const decodeHandoffInput = Schema.decodeUnknownEffect(WorktreeMcpHandoffInput);
 
 describe("t3_worktree_handoff", () => {
+  it.effect("queues a default continuation when the agent gives no prompt", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const result = yield* runHandoff(harness, { branch: "feature/no-prompt" });
+
+      expect(result.continuation).toEqual({ status: "scheduled", delivery: "queued" });
+      expect(harness.sendToThread).toHaveBeenCalledTimes(1);
+      expect(harness.sendToThread.mock.calls[0]?.[0]).toMatchObject({
+        mode: "queue",
+        text: WorktreeMcpService.defaultContinuationPrompt({
+          worktreePath: result.worktreePath,
+          branch: result.branch,
+        }),
+      });
+    });
+  });
+
   it.effect("reports a continuation failure without failing the handoff", () => {
     const harness = makeHarness({ continuation: "fails" });
     return Effect.gen(function* () {

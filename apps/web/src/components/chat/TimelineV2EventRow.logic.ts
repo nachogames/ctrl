@@ -3,6 +3,7 @@ import { providerErrorPresentation } from "../../session-logic";
 import {
   CheckIcon,
   CircleAlertIcon,
+  GitBranchIcon,
   GitForkIcon,
   type LucideIcon,
   MinusIcon,
@@ -35,19 +36,23 @@ export function v2EventPresentation(item: OrchestrationV2TurnItem): {
       };
     }
     case "run_interrupt_request":
-      return {
-        label: "Interrupt requested",
-        detail: item.message,
-        tone: "warning",
-        icon: CircleAlertIcon,
-      };
     case "run_interrupt_result":
-      return {
-        label: "Run interrupted",
-        detail: item.message,
-        tone: "danger",
-        icon: XIcon,
-      };
+      if (item.cause === "workspace_moved") {
+        return {
+          label: "Moved to worktree",
+          detail: item.message,
+          tone: "muted",
+          icon: GitBranchIcon,
+        };
+      }
+      return item.type === "run_interrupt_request"
+        ? {
+            label: "Interrupt requested",
+            detail: item.message,
+            tone: "warning",
+            icon: CircleAlertIcon,
+          }
+        : { label: "Run interrupted", detail: item.message, tone: "danger", icon: XIcon };
     case "handoff":
       return {
         label: "Context handoff",

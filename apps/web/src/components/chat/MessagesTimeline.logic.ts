@@ -1007,7 +1007,8 @@ function deriveTurnFolds(input: {
       entry.kind === "event" &&
       entry.projectedItem.item.runId !== null &&
       (entry.projectedItem.item.type === "run_interrupt_request" ||
-        entry.projectedItem.item.type === "run_interrupt_result")
+        entry.projectedItem.item.type === "run_interrupt_result") &&
+      entry.projectedItem.item.cause !== "workspace_moved"
     ) {
       interruptedRunIds.add(entry.projectedItem.item.runId);
     }

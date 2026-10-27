@@ -196,7 +196,12 @@ export const layer: Layer.Layer<
             .pipe(
               Effect.map(({ turnItems }) => {
                 const request = turnItems.find((item) => item.type === "run_interrupt_request");
-                return request?.type === "run_interrupt_request" ? request.message : undefined;
+                return request?.type === "run_interrupt_request"
+                  ? {
+                      message: request.message,
+                      ...(request.cause === undefined ? {} : { cause: request.cause }),
+                    }
+                  : undefined;
               }),
               // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               Effect.catchCause(() => Effect.succeed(undefined)),

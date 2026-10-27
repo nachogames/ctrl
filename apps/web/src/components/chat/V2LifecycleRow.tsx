@@ -31,6 +31,7 @@ import {
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
+  GitBranchIcon,
   BotIcon,
   ChevronRightIcon,
   ArrowRightLeftIcon,
@@ -100,6 +101,11 @@ export function V2LifecycleRow(props: {
           </span>
         </div>
       </div>
+    );
+  }
+  if (item.type === "run_interrupt_result" && item.cause === "workspace_moved") {
+    return (
+      <TimelineSystemDivider label="Moved to worktree" detail={item.message} icon={GitBranchIcon} />
     );
   }
   if (item.type === "run_interrupt_result") {

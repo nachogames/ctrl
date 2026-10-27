@@ -49,6 +49,14 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+/** The next turn's prompt when the agent handed off without saying what to resume. */
+export function defaultContinuationPrompt(input: {
+  readonly worktreePath: string;
+  readonly branch: string;
+}): string {
+  return `This thread moved to the worktree at ${input.worktreePath} on branch ${input.branch}. Continue the task from where you left off. If setting up the worktree was the whole task, confirm it is ready.`;
+}
+
 const asOperationFailed = (prefix: string) =>
   Effect.mapError((error: unknown) =>
     failure("operation_failed", `${prefix}: ${errorMessage(error)}`),
@@ -304,29 +312,30 @@ const make = Effect.gen(function* () {
         );
 
         // Queue continuation immediately after binding; detachment terminates the caller, so relaunch needs a durable message.
+        // Agents often omit the prompt, so a default one keeps the thread from stalling after the move.
         const queueContinuation: Effect.Effect<WorktreeMcpContinuationStatus, WorktreeMcpFailure> =
           Effect.suspend(() =>
-            input.continuationPrompt === undefined
-              ? Effect.succeed<WorktreeMcpContinuationStatus>({ status: "skipped" })
-              : threadManagement
-                  .sendToThread({
-                    projectId: projection.thread.projectId,
-                    commandId: ids.continuationCommandId,
-                    threadId: scope.thread.threadId,
-                    messageId: ids.continuationMessageId,
-                    text: input.continuationPrompt,
-                    attachments: [],
-                    mode: "queue",
-                    createdBy: "agent",
-                    creationSource: "mcp",
-                  })
-                  .pipe(
-                    Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
-                      status: "scheduled",
-                      delivery: sendResult.delivery,
-                    })),
-                    reportFailed("worktree handoff continuation failed to queue"),
-                  ),
+            threadManagement
+              .sendToThread({
+                projectId: projection.thread.projectId,
+                commandId: ids.continuationCommandId,
+                threadId: scope.thread.threadId,
+                messageId: ids.continuationMessageId,
+                text:
+                  input.continuationPrompt ??
+                  defaultContinuationPrompt({ worktreePath, branch: worktree.worktree.refName }),
+                attachments: [],
+                mode: "queue",
+                createdBy: "agent",
+                creationSource: "mcp",
+              })
+              .pipe(
+                Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
+                  status: "scheduled",
+                  delivery: sendResult.delivery,
+                })),
+                reportFailed("worktree handoff continuation failed to queue"),
+              ),
           );
 
         const continuation = yield* recheckAndBind.pipe(Effect.andThen(queueContinuation));
@@ -373,7 +382,7 @@ const make = Effect.gen(function* () {
           note:
             continuation.status === "scheduled"
               ? "Handoff recorded. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the queued continuation prompt then starts the next turn inside the worktree with the conversation preserved. The worktree is not removed automatically when the thread is deleted."
-              : "Handoff recorded. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the conversation continues inside the worktree when the thread receives its next message. Pass continuationPrompt to resume automatically. The worktree is not removed automatically when the thread is deleted.",
+              : "Handoff recorded, but the continuation could not be queued. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the conversation continues inside the worktree when the thread receives its next message. The worktree is not removed automatically when the thread is deleted.",
         };
         return result;
       }),

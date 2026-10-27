@@ -617,6 +617,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return "hammer";
     case "run_interrupt_request":
     case "run_interrupt_result":
+      return item.cause === "workspace_moved" ? "check" : "warning";
     case "system_notice":
       return "warning";
     case "error":
@@ -679,9 +680,9 @@ function itemSummary(
     case "checkpoint":
       return "Checkpoint captured";
     case "run_interrupt_request":
-      return "Interrupt requested";
+      return item.cause === "workspace_moved" ? "Moved to worktree" : "Interrupt requested";
     case "run_interrupt_result":
-      return "Run interrupted";
+      return item.cause === "workspace_moved" ? "Moved to worktree" : "Run interrupted";
     case "error":
       return item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error";
     case "handoff":
@@ -1191,7 +1192,9 @@ function deriveThreadFeedRunFolds(
     if (entry.type !== "activity-group") continue;
     for (const activity of entry.activities) {
       const item = activity.projectedItem.item;
-      if (item.type === "run_interrupt_result") interruptedRunIds.add(runId);
+      if (item.type === "run_interrupt_result" && item.cause !== "workspace_moved") {
+        interruptedRunIds.add(runId);
+      }
       if (
         runId === runlessKey &&
         item.type === "error" &&

@@ -570,7 +570,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
-  readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
+  readonly loadRunInterruptReason?: () => Effect.Effect<RunInterruptReason | undefined, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
@@ -621,7 +621,10 @@ export const layer: Layer.Layer<
         readonly attempt: OrchestrationV2RunAttempt;
         readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
         readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
-        readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
+        readonly loadRunInterruptReason?: () => Effect.Effect<
+          RunInterruptReason | undefined,
+          never
+        >;
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
         // Root turn snapshot written with the run when T3 ends the run itself.
         readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
@@ -1771,13 +1774,19 @@ export const layer: Layer.Layer<
  */
 export const USER_STOP_REASON = "Stopped by user";
 
+/** What a run_interrupt_request said about why the run stopped. */
+export interface RunInterruptReason {
+  readonly message: string;
+  readonly cause?: "workspace_moved";
+}
+
 export function makeInterruptResultTurnItem(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly providerThread: OrchestrationV2ProviderThread;
   /** The Stop's own reason, from its run_interrupt_request item. */
-  readonly reason: string | undefined;
+  readonly reason: RunInterruptReason | undefined;
   readonly completedAt: DateTime.Utc;
 }): OrchestrationV2TurnItem {
   return {
@@ -1802,6 +1811,7 @@ export function makeInterruptResultTurnItem(input: {
     completedAt: input.completedAt,
     updatedAt: input.completedAt,
     type: "run_interrupt_result",
-    message: input.reason ?? "Stopped by the provider",
+    message: input.reason?.message ?? "Stopped by the provider",
+    ...(input.reason?.cause === undefined ? {} : { cause: input.reason.cause }),
   };
 }
