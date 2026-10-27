@@ -83,6 +83,32 @@ jobs:
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ steps.version.outputs.version }}"
 
+      # @electron/notarize staples with a single request to Apple's ticket server, and
+      # GitHub's macOS runners sometimes lose that connection (stapler error 68, "The
+      # network connection was lost") after notarization already succeeded. Put an
+      # xcrun in front of the real one that retries only `stapler staple`.
+      - name: Retry stapling on dropped connections
+        run: |
+          set -euo pipefail
+          shim="$RUNNER_TEMP/xcrun-shim"
+          mkdir -p "$shim"
+          cat > "$shim/xcrun" <<'SHIM'
+          #!/bin/bash
+          if [[ "${1:-}" == stapler && "${2:-}" == staple ]]; then
+            for attempt in 1 2 3 4 5; do
+              status=0
+              /usr/bin/xcrun "$@" || status=$?
+              if [[ "$status" == 0 ]]; then exit 0; fi
+              if [[ "$attempt" == 5 ]]; then exit "$status"; fi
+              echo "stapler failed with $status (attempt $attempt); retrying in $((attempt * 15))s" >&2
+              sleep $((attempt * 15))
+            done
+          fi
+          exec /usr/bin/xcrun "$@"
+          SHIM
+          chmod +x "$shim/xcrun"
+          echo "$shim" >> "$GITHUB_PATH"
+
       - name: Build signed desktop artifact
         env:
           CSC_LINK: ${{ secrets.CTRL_MAC_CERT_P12_BASE64 }}
