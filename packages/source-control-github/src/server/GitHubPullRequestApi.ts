@@ -849,8 +849,7 @@ function matchesUnsortedListing(
     input.involvement === "all" ||
     (input.involvement === "authored"
       ? item.author?.login.toLowerCase() === viewer
-      : item.hasTeamReviewRequest ||
-        item.reviewRequestLogins.some((login) => login.toLowerCase() === viewer));
+      : item.reviewRequestLogins.some((login) => login.toLowerCase() === viewer));
   return matchesState && matchesInvolvement && matchesFilters(item, input.filters, input.viewer);
 }
 
@@ -876,7 +875,9 @@ function searchQuery(input: {
     ...(input.state === "closed" ? ["is:closed", "is:unmerged"] : []),
     ...(input.state === "merged" ? ["is:merged"] : []),
     ...(input.involvement === "authored" ? [`author:${input.viewer}`] : []),
-    ...(input.involvement === "reviewing" ? [`review-requested:${input.viewer}`] : []),
+    // `user-review-requested` skips requests to the viewer's teams: a team request that GitHub
+    // auto-assigns to one member should only show up for that member.
+    ...(input.involvement === "reviewing" ? [`user-review-requested:${input.viewer}`] : []),
     ...(query.length === 0 ? [] : [searchPhrase(query)]),
     ...(input.cursor === undefined ? [] : [`updated:<=${input.cursor.updatedBefore}`]),
     ...filterQualifiers(input.filters, input.viewer),
