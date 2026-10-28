@@ -1260,7 +1260,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       assert.strictEqual(
         searchQueryOfCall(0),
-        'is:pr is:closed is:unmerged review-requested:bilal "pull requests page" ' +
+        'is:pr is:closed is:unmerged user-review-requested:bilal "pull requests page" ' +
           "updated:<=2026-07-02T00:00:00Z sort:updated-desc repo:acme/web repo:pingdotgg/t3code",
       );
     }),
@@ -1783,7 +1783,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
         limit: 10,
       });
 
-      expect(batch.items.map((item) => item.number)).toEqual([1, 2]);
+      // Only requests made to this viewer directly survive, matching the search's
+      // `user-review-requested`: a team request is not the viewer's until assigned.
+      expect(batch.items.map((item) => item.number)).toEqual([1]);
       expect(searchOfCall(1)).toBeUndefined();
       assert.isFalse(batch.continues);
     }),
