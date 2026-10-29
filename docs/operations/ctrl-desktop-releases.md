@@ -14,13 +14,15 @@ git push origin ctrl-v0.1.1
 
 The version comes from the tag, not `package.json`, so upstream merges cannot move it. Each tag must be higher than the last one. Ctrl versions start at 0.1.0 so they stay ahead of upstream's 0.0.x and the mobile app does not offer upstream server updates.
 
-A desktop-only run takes about 10 minutes, and a release whose Android native code changed adds roughly half an hour for the APK. Installed apps pick it up on their next update check, or right away through the app's check-for-updates action.
+A run takes about 10 minutes. Installed apps pick it up on their next update check, or right away through the app's check-for-updates action. This tag ships the desktop app only; the phone app has its own tag (see [Android](#android)).
+
+GitHub's hosted macOS runners sometimes run out, and a job no runner picks up within about 15 minutes fails without running a step. `ctrl-release-retry.yml` re-runs such a release up to three times. A job that started and then failed is not retried.
 
 ## One-time setup
 
 Auto-update on macOS only installs a build signed by the same Developer ID as the running app. The workflow refuses to publish when any signing secret is missing.
 
-Secrets live in the `release` environment, which only accepts `ctrl-v*` tags. Pull requests, including ones from forks, and branch pushes never receive them.
+Secrets live in the `release` environment, which only accepts `ctrl-v*` and `ctrl-android-v*` tags. Pull requests, including ones from forks, and branch pushes never receive them.
 
 1. Export the **Developer ID Application** identity alone from Keychain Access (My Certificates → right-click → Export) as a `.p12` with a password.
 2. Create an App Store Connect API key with the Developer role (Users and Access → Integrations → Team Keys). Note the key ID and issuer ID, and download the `.p8`. The APNs key cannot notarize.
@@ -44,7 +46,7 @@ Releases are public because the repository is. Anyone can download the app, and 
 
 ## Android
 
-The same tag publishes the Android app from the `android` job. To ship only the phone app, push a `ctrl-android-vX.Y.Z` tag instead: it skips the desktop build, and creates a GitHub release only when it builds an APK. That release is a prerelease, never "latest", because desktop apps update from the latest release. It publishes an OTA update to the `production` channel of the Expo project `@mceachinm/ctrl`, which hosts updates only; builds happen in the workflow, not EAS Build. When native code changed, it also attaches a signed `Ctrl-<version>-android-<fingerprint>.apk` to the release.
+The phone app ships separately: push a `ctrl-android-vX.Y.Z` tag to run `.github/workflows/ctrl-android-release.yml`. Desktop and phone releases never trigger or wait on each other. It creates a GitHub release only when it builds an APK, and that release is a prerelease, never "latest", because desktop apps update from the latest release. It publishes an OTA update to the `production` channel of the Expo project `@mceachinm/ctrl`, which hosts updates only; builds happen in the workflow, not EAS Build. When native code changed, that release holds a signed `Ctrl-<version>-android-<fingerprint>.apk`.
 
 A cold start waits up to 3 seconds for a new update and opens on it, and a running app checks again when it returns after a minute away. A phone takes an OTA only when its APK has the same native fingerprint, which the workflow computes on the runner that builds and publishes. The job summary says when a release needs the new APK installed. Local builds are signed with a different key and keep `T3CODE_MOBILE_UPDATES_ENABLED=0` in `.env.local`, so install the release APK instead. The APK is arm64 only. Release builds carry no T3 Connect config, so the app offers only Ctrl's own server notifications.
 
