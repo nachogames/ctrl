@@ -25,6 +25,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "skill",
   "thread",
   "handoff",
+  "environment",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -228,6 +229,18 @@ export const HandoffContextRecord = Schema.Struct({
 });
 export type HandoffContextRecord = typeof HandoffContextRecord.Type;
 
+/**
+ * One of the user's machines (a T3 Code environment), mentioned so the agent
+ * links it or works there. Only identity travels: the agent links it by id,
+ * and the user's client supplies its addresses.
+ */
+export const EnvironmentContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("environment"),
+  environmentId: EnvironmentId,
+});
+export type EnvironmentContextRecord = typeof EnvironmentContextRecord.Type;
+
 const isJson = Schema.is(Schema.Json);
 
 /** Excludes known discriminators so malformed known records fail their own schema. */
@@ -259,6 +272,7 @@ export const KnownComposerContextRecord = Schema.Union([
   SkillContextRecord,
   ThreadContextRecord,
   HandoffContextRecord,
+  EnvironmentContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 

@@ -19,7 +19,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
-import { useCallback, useMemo } from "react";
 
 import {
   groupWithTarget,
@@ -50,8 +49,8 @@ import { newMessageId, newThreadGroupId } from "../lib/utils";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { applyThreadGroupSettlement } from "./threadGroupSettlement";
-import * as ThreadUndo from "./threadUndo";
-import { useNewThreadHandler } from "./useHandleNewThread";
+import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
+import { type NewThreadHandler, useNewThreadHandler } from "./useHandleNewThread";
 
 function failureToast(title: string, error: unknown) {
   toastManager.add(
@@ -81,6 +80,38 @@ function groupsUnavailable(environmentId: EnvironmentThreadShell["environmentId"
     description: "This environment's server does not support chat groups. Update it first.",
   });
   return true;
+}
+
+/**
+ * Opens a draft on the group's branch and worktree that joins the group on
+ * its first send. Every entry point goes through here, so the operate check
+ * lives here too.
+ */
+export async function startChatInGroup(
+  group: EnvironmentThreadGroup,
+  handleNewThread: NewThreadHandler,
+): Promise<void> {
+  if (groupsUnavailable(group.environmentId)) return;
+  if (!readEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope)) {
+    toastManager.add({
+      type: "error",
+      title: "Chat unavailable",
+      description: "This connection cannot start chats in this group.",
+    });
+    return;
+  }
+  const result = await settlePromise(() =>
+    handleNewThread(scopeProjectRef(group.environmentId, group.projectId), {
+      branch: group.branch,
+      worktreePath: group.worktreePath,
+      envMode: group.worktreePath ? "worktree" : "local",
+      startFromOrigin: false,
+      groupId: group.id,
+    }),
+  );
+  if (result._tag === "Failure") {
+    failureToast("Could not create chat", squashAtomCommandFailure(result));
+  }
 }
 
 /** The group's live chats, in group order. */
@@ -186,396 +217,342 @@ export function useThreadGroupActions() {
     reportFailure: false,
   });
 
-  const patchGroup = useCallback(
-    async (group: EnvironmentThreadGroup, patch: ThreadGroupUpdatePayload, failure: string) => {
-      const result = await updateGroup({
-        environmentId: group.environmentId,
-        input: { groupId: group.id, patch },
-      });
-      if (result._tag === "Success") return true;
-      if (!isAtomCommandInterrupted(result))
-        failureToast(failure, squashAtomCommandFailure(result));
-      return false;
-    },
-    [updateGroup],
-  );
+  const patchGroup = async (
+    group: EnvironmentThreadGroup,
+    patch: ThreadGroupUpdatePayload,
+    failure: string,
+  ) => {
+    const result = await updateGroup({
+      environmentId: group.environmentId,
+      input: { groupId: group.id, patch },
+    });
+    if (result._tag === "Success") return true;
+    if (!isAtomCommandInterrupted(result)) failureToast(failure, squashAtomCommandFailure(result));
+    return false;
+  };
 
   /** Settle or un-settle the group and its members, with one Undo that reverses both. */
-  const setGroupSettled = useCallback(
-    async (group: EnvironmentThreadGroup, settled: boolean) => {
-      const claim = ThreadUndo.begin(
-        "group-settle",
-        threadGroupKey({ environmentId: group.environmentId, groupId: group.id }),
-      );
-      const outcome = await applyThreadGroupSettlement({
-        settled,
-        now: new Date().toISOString(),
-        previousSettledAt: group.settledAt,
-        members: readGroupMembers(group),
-        settleMembers: readEnvironmentSupportsSettlement(group.environmentId),
-        patchSettledAt: (settledAt) =>
-          updateGroup({
-            environmentId: group.environmentId,
-            input: { groupId: group.id, patch: { settledAt } },
-          }),
-        setMemberSettled: (threadId, memberSettled) =>
-          memberSettled
-            ? settleThreadCommand({ environmentId: group.environmentId, input: { threadId } })
-            : unsettleThreadCommand({
-                environmentId: group.environmentId,
-                input: { threadId, reason: "user" },
-              }),
-      });
-      if (outcome.kind === "group-failed") {
-        claim.finish();
-        if (!isAtomCommandInterrupted(outcome.result)) {
-          failureToast(
-            settled ? "Failed to settle group" : "Failed to un-settle group",
-            squashAtomCommandFailure(outcome.result),
-          );
-        }
-        return;
-      }
-      const { memberFailure } = outcome;
-      if (memberFailure !== null) {
+  const setGroupSettled = async (group: EnvironmentThreadGroup, settled: boolean) => {
+    const claim = ThreadUndo.begin(
+      "group-settle",
+      threadGroupKey({ environmentId: group.environmentId, groupId: group.id }),
+    );
+    const outcome = await applyThreadGroupSettlement({
+      settled,
+      now: new Date().toISOString(),
+      previousSettledAt: group.settledAt,
+      members: readGroupMembers(group),
+      settleMembers: readEnvironmentSupportsSettlement(group.environmentId),
+      patchSettledAt: (settledAt) =>
+        updateGroup({
+          environmentId: group.environmentId,
+          input: { groupId: group.id, patch: { settledAt } },
+        }),
+      setMemberSettled: (threadId, memberSettled) =>
+        memberSettled
+          ? settleThreadCommand({ environmentId: group.environmentId, input: { threadId } })
+          : unsettleThreadCommand({
+              environmentId: group.environmentId,
+              input: { threadId, reason: "user" },
+            }),
+    });
+    if (outcome.kind === "group-failed") {
+      claim.finish();
+      if (!isAtomCommandInterrupted(outcome.result)) {
         failureToast(
-          settled
-            ? "Some chats in the group did not settle"
-            : "Some chats in the group did not un-settle",
-          squashAtomCommandFailure(memberFailure),
+          settled ? "Failed to settle group" : "Failed to un-settle group",
+          squashAtomCommandFailure(outcome.result),
         );
       }
-      showThreadUndoNotice({
-        action: settled ? "Settled" : "Un-settled",
-        subject: "group",
-        claim,
-        undo: outcome.undo,
-        failureTitle: settled ? "Failed to undo settle" : "Failed to undo un-settle",
-      });
-    },
-    [settleThreadCommand, unsettleThreadCommand, updateGroup],
-  );
-
-  /**
-   * Opens a draft on the group's branch and worktree that joins the group on
-   * its first send. Every entry point goes through here, so the operate check
-   * lives here too.
-   */
-  const newChatInGroup = useCallback(
-    async (group: EnvironmentThreadGroup) => {
-      if (groupsUnavailable(group.environmentId)) return;
-      if (!readEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope)) {
-        toastManager.add({
-          type: "error",
-          title: "Chat unavailable",
-          description: "This connection cannot start chats in this group.",
-        });
-        return;
-      }
-      const result = await settlePromise(() =>
-        handleNewThread(scopeProjectRef(group.environmentId, group.projectId), {
-          branch: group.branch,
-          worktreePath: group.worktreePath,
-          envMode: group.worktreePath ? "worktree" : "local",
-          startFromOrigin: false,
-          groupId: group.id,
-        }),
+      return;
+    }
+    const { memberFailure } = outcome;
+    if (memberFailure !== null) {
+      failureToast(
+        settled
+          ? "Some chats in the group did not settle"
+          : "Some chats in the group did not un-settle",
+        squashAtomCommandFailure(memberFailure),
       );
-      if (result._tag === "Failure") {
-        failureToast("Could not create chat", squashAtomCommandFailure(result));
-      }
-    },
-    [handleNewThread],
-  );
+    }
+    showThreadUndoNotice({
+      action: settled ? "Settled" : "Un-settled",
+      subject: "group",
+      claim,
+      undo: outcome.undo,
+      failureTitle: settled ? "Failed to undo settle" : "Failed to undo un-settle",
+    });
+  };
+
+  const newChatInGroup = (group: EnvironmentThreadGroup) =>
+    startChatInGroup(group, handleNewThread);
 
   /**
    * Moves a chat into `group`. A chat in another workspace asks first, then
    * switches to the group's branch and worktree; declining leaves it in place.
    */
-  const moveThreadIntoGroup = useCallback(
-    async (
-      thread: EnvironmentThreadShell,
-      group: Pick<EnvironmentThreadGroup, "id" | "title" | "branch" | "worktreePath">,
-    ) => {
-      if (groupsUnavailable(thread.environmentId)) return false;
-      const outcome = await moveWithWorkspaceConfirm({
-        move: (adoptGroupWorkspace) =>
-          moveThreadCommand({
-            environmentId: thread.environmentId,
-            input: {
-              threadId: thread.id,
-              groupId: group.id,
-              ...(adoptGroupWorkspace ? { adoptGroupWorkspace } : {}),
-            },
-          }),
-        failureOf: (result) =>
-          result._tag === "Failure" ? squashAtomCommandFailure(result) : undefined,
-        confirm: () => confirmWorkspaceSwitch(thread, group),
-      });
-      if (outcome.kind === "failed") toastCommandFailure("Failed to move chat", outcome.result);
-      return outcome.kind === "moved";
-    },
-    [moveThreadCommand],
-  );
-
-  /** Creates a group from `threads`; the first supplies its workspace. */
-  const createGroupWith = useCallback(
-    async (
-      threads: ReadonlyArray<EnvironmentThreadShell>,
-      ids: { readonly groupId: ThreadGroupId; readonly commandId?: CommandId } = {
-        groupId: newThreadGroupId(),
-      },
-    ) => {
-      const first = threads[0];
-      if (first === undefined || groupsUnavailable(first.environmentId)) return null;
-      const result = await createGroup({
-        environmentId: first.environmentId,
-        input: {
-          ...(ids.commandId === undefined ? {} : { commandId: ids.commandId }),
-          groupId: ids.groupId,
-          projectId: first.projectId,
-          threadIds: threads.map((thread) => thread.id),
-        },
-      });
-      if (result._tag === "Success") return result.value.group;
-      if (!isAtomCommandInterrupted(result)) {
-        failureToast("Failed to create group", squashAtomCommandFailure(result));
-      }
-      return null;
-    },
-    [createGroup],
-  );
-
-  /** The group a lone chat's "+" adds to: its own, made a group of one if it has none. */
-  const groupOfThread = useCallback(
-    async (thread: EnvironmentThreadShell): Promise<EnvironmentThreadGroup | null> => {
-      const existing =
-        thread.groupId == null
-          ? null
-          : readThreadGroup({ environmentId: thread.environmentId, groupId: thread.groupId });
-      if (existing !== null) return existing;
-      const created = await createGroupWith([thread]);
-      if (created === null) return null;
-      // The create can resolve before the group reaches the store; the
-      // returned group carries everything a new chat or move needs.
-      return (
-        readThreadGroup({ environmentId: thread.environmentId, groupId: created.id }) ??
-        presentThreadGroup(thread.environmentId, created, [])
-      );
-    },
-    [createGroupWith],
-  );
-
-  return useMemo(
-    () => ({
-      newChatInGroup,
-      /** "+" on a lone chat's row: a new chat that joins the lone chat's group. */
-      newChatWithThread: async (thread: EnvironmentThreadShell) => {
-        if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
-          toastManager.add({
-            type: "error",
-            title: "Chat unavailable",
-            description: "This connection cannot start chats in this project.",
-          });
-          return;
-        }
-        const group = await groupOfThread(thread);
-        if (group !== null) await newChatInGroup(group);
-      },
-      /**
-       * Groups chats picked together: the rest join `anchor`'s group, or the
-       * one group among them, or a new group around `anchor`.
-       */
-      groupThreads: async (
-        threads: ReadonlyArray<EnvironmentThreadShell>,
-        anchor: EnvironmentThreadShell,
-      ) => {
-        const target = resolveGroupThreadsTarget(threads, anchor);
-        if (target === null) return;
-        const group =
-          target.groupId === null
-            ? await groupOfThread(anchor)
-            : readThreadGroup({ environmentId: anchor.environmentId, groupId: target.groupId });
-        if (group === null) return;
-        for (const thread of threads) {
-          if (thread.groupId === group.id) continue;
-          if (!(await moveThreadIntoGroup(thread, group))) return;
-        }
-      },
-      moveThreadIntoGroup,
-      /** "Move to group… › <group>": the group must still exist when the menu closes. */
-      moveThreadToGroupId: async (thread: EnvironmentThreadShell, groupId: string) => {
-        const group = readThreadGroup({
-          environmentId: thread.environmentId,
-          groupId: ThreadGroupId.make(groupId),
-        });
-        if (group === null || group.projectId !== thread.projectId) {
-          toastManager.add({ type: "warning", title: "That group no longer exists" });
-          return;
-        }
-        await moveThreadIntoGroup(thread, group);
-      },
-      /**
-       * Drag onto a lone chat: group the target first (it keeps its
-       * workspace), then move the dragged chat in.
-       */
-      groupThreadWith: async (target: EnvironmentThreadShell, moved: EnvironmentThreadShell) => {
-        if (groupsUnavailable(target.environmentId)) return;
-        const groupId = newThreadGroupId();
-        const createCommandId = CommandId.make(`thread-group-create:${groupId}`);
-        await groupWithTarget({
-          needsWorkspaceSwitch: workspacesDiffer(moved, target),
-          // The group takes the target's workspace and, before a rename, its branch as title.
-          confirm: () =>
-            confirmWorkspaceSwitch(moved, {
-              title: `“${target.title}”`,
-              branch: target.branch,
-              worktreePath: target.worktreePath,
-            }),
-          create: () => createGroupWith([target], { groupId, commandId: createCommandId }),
-          move: async (group, adoptGroupWorkspace) => {
-            const result = await moveThreadCommand({
-              environmentId: moved.environmentId,
-              input: {
-                threadId: moved.id,
-                groupId: group.id,
-                ...(adoptGroupWorkspace ? { adoptGroupWorkspace } : {}),
-              },
-            });
-            toastCommandFailure("Failed to move chat", result);
-            return result._tag === "Success";
-          },
-          deleteGroup: async (group) => {
-            const result = await deleteGroup({
-              environmentId: target.environmentId,
-              input: { groupId: group.id, commandId: CommandId.make(`${createCommandId}:undo`) },
-            });
-            toastCommandFailure("Failed to remove the new group", result);
-            return result._tag === "Success";
-          },
-        });
-      },
-      removeThreadFromGroup: async (thread: EnvironmentThreadShell) => {
-        const result = await moveThreadCommand({
-          environmentId: thread.environmentId,
-          input: { threadId: thread.id, groupId: null },
-        });
-        toastCommandFailure("Failed to remove chat from group", result);
-      },
-      /**
-       * Asks the chat's own agent to write the handoff summary: the fixed
-       * prompt goes through the normal send path and the agent calls
-       * `t3_group_handoff`, which creates the group when needed.
-       */
-      handOffThread: async (thread: EnvironmentThreadShell) => {
-        // Without groups the agent has no t3_group_handoff, so the prompt would waste a turn.
-        if (groupsUnavailable(thread.environmentId)) return;
-        if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
-          toastManager.add({
-            type: "error",
-            title: "Handoff unavailable",
-            description: "This connection cannot send messages to this chat.",
-          });
-          return;
-        }
-        if (!offersHandOff(thread)) return;
-        if (!canHandOffThread(thread)) {
-          toastManager.add({ type: "info", title: `${THREAD_HANDOFF_BUSY_HINT}, then hand off` });
-          return;
-        }
-        const result = await startTurn({
+  const moveThreadIntoGroup = async (
+    thread: EnvironmentThreadShell,
+    group: Pick<EnvironmentThreadGroup, "id" | "title" | "branch" | "worktreePath">,
+  ) => {
+    if (groupsUnavailable(thread.environmentId)) return false;
+    const outcome = await moveWithWorkspaceConfirm({
+      move: (adoptGroupWorkspace) =>
+        moveThreadCommand({
           environmentId: thread.environmentId,
           input: {
             threadId: thread.id,
-            message: {
-              messageId: newMessageId(),
-              role: "user",
-              text: THREAD_HANDOFF_PROMPT,
-              attachments: [],
-            },
-            runtimeMode: thread.runtimeMode,
-            interactionMode: thread.interactionMode,
-            // A turn that started meanwhile is not steered: the prompt waits for it.
-            dispatchMode: "queue",
+            groupId: group.id,
+            ...(adoptGroupWorkspace ? { adoptGroupWorkspace } : {}),
           },
+        }),
+      failureOf: (result) =>
+        result._tag === "Failure" ? squashAtomCommandFailure(result) : undefined,
+      confirm: () => confirmWorkspaceSwitch(thread, group),
+    });
+    if (outcome.kind === "failed") toastCommandFailure("Failed to move chat", outcome.result);
+    return outcome.kind === "moved";
+  };
+
+  /** Creates a group from `threads`; the first supplies its workspace. */
+  const createGroupWith = async (
+    threads: ReadonlyArray<EnvironmentThreadShell>,
+    ids: { readonly groupId: ThreadGroupId; readonly commandId?: CommandId } = {
+      groupId: newThreadGroupId(),
+    },
+  ) => {
+    const first = threads[0];
+    if (first === undefined || groupsUnavailable(first.environmentId)) return null;
+    const result = await createGroup({
+      environmentId: first.environmentId,
+      input: {
+        ...(ids.commandId === undefined ? {} : { commandId: ids.commandId }),
+        groupId: ids.groupId,
+        projectId: first.projectId,
+        threadIds: threads.map((thread) => thread.id),
+      },
+    });
+    if (result._tag === "Success") return result.value.group;
+    if (!isAtomCommandInterrupted(result)) {
+      failureToast("Failed to create group", squashAtomCommandFailure(result));
+    }
+    return null;
+  };
+
+  /** The group a lone chat's "+" adds to: its own, made a group of one if it has none. */
+  const groupOfThread = async (
+    thread: EnvironmentThreadShell,
+  ): Promise<EnvironmentThreadGroup | null> => {
+    const existing =
+      thread.groupId == null
+        ? null
+        : readThreadGroup({ environmentId: thread.environmentId, groupId: thread.groupId });
+    if (existing !== null) return existing;
+    const created = await createGroupWith([thread]);
+    if (created === null) return null;
+    // The create can resolve before the group reaches the store; the
+    // returned group carries everything a new chat or move needs.
+    return (
+      readThreadGroup({ environmentId: thread.environmentId, groupId: created.id }) ??
+      presentThreadGroup(thread.environmentId, created, [])
+    );
+  };
+
+  return {
+    newChatInGroup,
+    /** "+" on a lone chat's row: a new chat that joins the lone chat's group. */
+    newChatWithThread: async (thread: EnvironmentThreadShell) => {
+      if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
+        toastManager.add({
+          type: "error",
+          title: "Chat unavailable",
+          description: "This connection cannot start chats in this project.",
         });
-        toastCommandFailure("Could not hand off", result);
-      },
-      recreateWorktree: async (group: Pick<EnvironmentThreadGroup, "environmentId" | "id">) => {
-        const result = await recreateWorktreeCommand({
-          environmentId: group.environmentId,
-          input: { groupId: group.id },
-        });
-        toastCommandFailure("Failed to recreate worktree", result);
-      },
-      pinGroup: (group: EnvironmentThreadGroup) =>
-        patchGroup(group, { pinnedAt: new Date().toISOString() }, "Failed to pin group"),
-      unpinGroup: (group: EnvironmentThreadGroup) =>
-        patchGroup(group, { pinnedAt: null }, "Failed to unpin group"),
-      snoozeGroup: (group: EnvironmentThreadGroup, snoozedUntil: string) =>
-        patchGroup(group, { snoozedUntil }, "Failed to snooze group"),
-      unsnoozeGroup: (group: EnvironmentThreadGroup) =>
-        patchGroup(group, { snoozedUntil: null }, "Failed to wake group"),
-      settleGroup: (group: EnvironmentThreadGroup) => setGroupSettled(group, true),
-      unsettleGroup: (group: EnvironmentThreadGroup) => setGroupSettled(group, false),
-      renameGroup: async (group: EnvironmentThreadGroup, title: string) => {
-        const trimmed = title.trim();
-        if (trimmed.length === 0) {
-          toastManager.add({ type: "warning", title: "Group title cannot be empty" });
-          return;
-        }
-        if (trimmed === group.title) return;
-        await patchGroup(group, { title: trimmed }, "Failed to rename group");
-      },
-      ungroup: async (group: EnvironmentThreadGroup) => {
-        const api = readLocalApi();
-        if (!api) return;
-        const confirmed = await settlePromise(() =>
-          api.dialogs.confirm(`Ungroup “${group.title}”? Its chats stay where they are.`, {
-            variant: "destructive",
+        return;
+      }
+      const group = await groupOfThread(thread);
+      if (group !== null) await newChatInGroup(group);
+    },
+    /**
+     * Groups chats picked together: the rest join `anchor`'s group, or the
+     * one group among them, or a new group around `anchor`.
+     */
+    groupThreads: async (
+      threads: ReadonlyArray<EnvironmentThreadShell>,
+      anchor: EnvironmentThreadShell,
+    ) => {
+      const target = resolveGroupThreadsTarget(threads, anchor);
+      if (target === null) return;
+      const group =
+        target.groupId === null
+          ? await groupOfThread(anchor)
+          : readThreadGroup({ environmentId: anchor.environmentId, groupId: target.groupId });
+      if (group === null) return;
+      for (const thread of threads) {
+        if (thread.groupId === group.id) continue;
+        if (!(await moveThreadIntoGroup(thread, group))) return;
+      }
+    },
+    moveThreadIntoGroup,
+    /** "Move to group… › <group>": the group must still exist when the menu closes. */
+    moveThreadToGroupId: async (thread: EnvironmentThreadShell, groupId: string) => {
+      const group = readThreadGroup({
+        environmentId: thread.environmentId,
+        groupId: ThreadGroupId.make(groupId),
+      });
+      if (group === null || group.projectId !== thread.projectId) {
+        toastManager.add({ type: "warning", title: "That group no longer exists" });
+        return;
+      }
+      await moveThreadIntoGroup(thread, group);
+    },
+    /**
+     * Drag onto a lone chat: group the target first (it keeps its
+     * workspace), then move the dragged chat in.
+     */
+    groupThreadWith: async (target: EnvironmentThreadShell, moved: EnvironmentThreadShell) => {
+      if (groupsUnavailable(target.environmentId)) return;
+      const groupId = newThreadGroupId();
+      const createCommandId = CommandId.make(`thread-group-create:${groupId}`);
+      await groupWithTarget({
+        needsWorkspaceSwitch: workspacesDiffer(moved, target),
+        // The group takes the target's workspace and, before a rename, its branch as title.
+        confirm: () =>
+          confirmWorkspaceSwitch(moved, {
+            title: `“${target.title}”`,
+            branch: target.branch,
+            worktreePath: target.worktreePath,
           }),
-        );
-        if (confirmed._tag === "Failure" || !confirmed.value) return;
-        const result = await deleteGroup({
-          environmentId: group.environmentId,
-          input: { groupId: group.id },
+        create: () => createGroupWith([target], { groupId, commandId: createCommandId }),
+        move: async (group, adoptGroupWorkspace) => {
+          const result = await moveThreadCommand({
+            environmentId: moved.environmentId,
+            input: {
+              threadId: moved.id,
+              groupId: group.id,
+              ...(adoptGroupWorkspace ? { adoptGroupWorkspace } : {}),
+            },
+          });
+          toastCommandFailure("Failed to move chat", result);
+          return result._tag === "Success";
+        },
+        deleteGroup: async (group) => {
+          const result = await deleteGroup({
+            environmentId: target.environmentId,
+            input: { groupId: group.id, commandId: CommandId.make(`${createCommandId}:undo`) },
+          });
+          toastCommandFailure("Failed to remove the new group", result);
+          return result._tag === "Success";
+        },
+      });
+    },
+    removeThreadFromGroup: async (thread: EnvironmentThreadShell) => {
+      const result = await moveThreadCommand({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, groupId: null },
+      });
+      toastCommandFailure("Failed to remove chat from group", result);
+    },
+    /**
+     * Asks the chat's own agent to write the handoff summary: the fixed
+     * prompt goes through the normal send path and the agent calls
+     * `t3_group_handoff`, which creates the group when needed.
+     */
+    handOffThread: async (thread: EnvironmentThreadShell) => {
+      // Without groups the agent has no t3_group_handoff, so the prompt would waste a turn.
+      if (groupsUnavailable(thread.environmentId)) return;
+      if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
+        toastManager.add({
+          type: "error",
+          title: "Handoff unavailable",
+          description: "This connection cannot send messages to this chat.",
         });
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          failureToast("Failed to ungroup", squashAtomCommandFailure(result));
-        }
-      },
-      /**
-       * Opens the Group surface beside one of the group's chats: `threadId`
-       * when given (callers pass the open chat when it is a member), else the
-       * most recently active member, navigating there first.
-       */
-      openGroupPanel: (group: EnvironmentThreadGroup, threadId?: ThreadId) => {
-        const target =
-          threadId ??
-          readGroupMembers(group).toSorted(
-            (left, right) => sidebarActivityMs(right) - sidebarActivityMs(left),
-          )[0]?.id;
-        if (target === undefined) return;
-        const ref = scopeThreadRef(group.environmentId, target);
-        useRightPanelStore.getState().openGroup(ref);
-        void router.navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(ref),
-        });
-      },
-    }),
-    [
-      createGroupWith,
-      deleteGroup,
-      groupOfThread,
-      moveThreadCommand,
-      moveThreadIntoGroup,
-      newChatInGroup,
-      patchGroup,
-      recreateWorktreeCommand,
-      router,
-      setGroupSettled,
-      startTurn,
-    ],
-  );
+        return;
+      }
+      if (!offersHandOff(thread)) return;
+      if (!canHandOffThread(thread)) {
+        toastManager.add({ type: "info", title: `${THREAD_HANDOFF_BUSY_HINT}, then hand off` });
+        return;
+      }
+      const result = await startTurn({
+        environmentId: thread.environmentId,
+        input: {
+          threadId: thread.id,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: THREAD_HANDOFF_PROMPT,
+            attachments: [],
+          },
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          // A turn that started meanwhile is not steered: the prompt waits for it.
+          dispatchMode: "queue",
+        },
+      });
+      toastCommandFailure("Could not hand off", result);
+    },
+    recreateWorktree: async (group: Pick<EnvironmentThreadGroup, "environmentId" | "id">) => {
+      const result = await recreateWorktreeCommand({
+        environmentId: group.environmentId,
+        input: { groupId: group.id },
+      });
+      toastCommandFailure("Failed to recreate worktree", result);
+    },
+    pinGroup: (group: EnvironmentThreadGroup) =>
+      patchGroup(group, { pinnedAt: new Date().toISOString() }, "Failed to pin group"),
+    unpinGroup: (group: EnvironmentThreadGroup) =>
+      patchGroup(group, { pinnedAt: null }, "Failed to unpin group"),
+    snoozeGroup: (group: EnvironmentThreadGroup, snoozedUntil: string) =>
+      patchGroup(group, { snoozedUntil }, "Failed to snooze group"),
+    unsnoozeGroup: (group: EnvironmentThreadGroup) =>
+      patchGroup(group, { snoozedUntil: null }, "Failed to wake group"),
+    settleGroup: (group: EnvironmentThreadGroup) => setGroupSettled(group, true),
+    unsettleGroup: (group: EnvironmentThreadGroup) => setGroupSettled(group, false),
+    renameGroup: async (group: EnvironmentThreadGroup, title: string) => {
+      const trimmed = title.trim();
+      if (trimmed.length === 0) {
+        toastManager.add({ type: "warning", title: "Group title cannot be empty" });
+        return;
+      }
+      if (trimmed === group.title) return;
+      await patchGroup(group, { title: trimmed }, "Failed to rename group");
+    },
+    ungroup: async (group: EnvironmentThreadGroup) => {
+      const api = readLocalApi();
+      if (!api) return;
+      const confirmed = await settlePromise(() =>
+        api.dialogs.confirm(`Ungroup “${group.title}”? Its chats stay where they are.`, {
+          variant: "destructive",
+        }),
+      );
+      if (confirmed._tag === "Failure" || !confirmed.value) return;
+      const result = await deleteGroup({
+        environmentId: group.environmentId,
+        input: { groupId: group.id },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        failureToast("Failed to ungroup", squashAtomCommandFailure(result));
+      }
+    },
+    /**
+     * Opens the Group surface beside one of the group's chats: `threadId`
+     * when given (callers pass the open chat when it is a member), else the
+     * most recently active member, navigating there first.
+     */
+    openGroupPanel: (group: EnvironmentThreadGroup, threadId?: ThreadId) => {
+      const target =
+        threadId ??
+        readGroupMembers(group).toSorted(
+          (left, right) => sidebarActivityMs(right) - sidebarActivityMs(left),
+        )[0]?.id;
+      if (target === undefined) return;
+      const ref = scopeThreadRef(group.environmentId, target);
+      useRightPanelStore.getState().openGroup(ref);
+      void router.navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(ref),
+      });
+    },
+  };
 }

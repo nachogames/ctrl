@@ -31,12 +31,7 @@ import {
 } from "../ui/menu";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import {
-  ComposerControl,
-  ComposerControlChevron,
-  ComposerControlIcon,
-  type ComposerControlSize,
-} from "./ComposerControl";
+import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
 import { cursorMcpServerAction, cursorMcpServersNeedingAction } from "./cursorMcpSignIn";
 import { useComposerMenuState } from "./useComposerMenuState";
@@ -131,6 +126,7 @@ export function useCursorMcpStatus(input: {
     remember(key, result.value);
     return true;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the server's Cursor MCP status for this folder, retrying on a timer until connected
   useEffect(() => {
     if (folderKey === null) return;
     const recent = recentChecks.get(folderKey);
@@ -319,7 +315,6 @@ export function ComposerCursorMcpControl(props: {
         <span data-composer-control-label className="sr-only sm:not-sr-only">
           MCP
         </span>
-        <ComposerControlChevron size={props.size} />
       </MenuTrigger>
       <MenuPopup align="start" {...menuProps}>
         <CursorMcpMenuContent mcp={props.mcp} />

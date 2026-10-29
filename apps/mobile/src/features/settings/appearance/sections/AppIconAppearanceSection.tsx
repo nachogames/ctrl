@@ -8,7 +8,7 @@ import { AppIconMark } from "../../../../components/AppIconMark";
 import { AppText as Text } from "../../../../components/ui/AppText";
 import { resolveAppIconPreference } from "../../../../lib/appIconPreference";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../../state/preferences";
-import { SettingsChoiceRow } from "../../components/SettingsChoiceRow";
+import { ListChoiceRow as SettingsChoiceRow } from "../../../../components/ui/ListChoiceRow";
 import { SettingsSection } from "../../components/SettingsSection";
 
 export function AppIconAppearanceSection() {

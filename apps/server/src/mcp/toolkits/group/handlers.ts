@@ -478,6 +478,8 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
           title: yield* readTitle(context, result.threadId),
         };
       }),
+    // Groups belong to this environment; a linked caller works through its own link.
+    { refused: "start chats in this environment's groups" },
   ),
   t3_group_handoff: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
