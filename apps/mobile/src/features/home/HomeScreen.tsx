@@ -14,7 +14,6 @@ import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/co
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { planGroupMemberReorder } from "@t3tools/client-runtime/state/thread-sort";
 import { AsyncResult } from "effect/reactivity";
-import { useFocusEffect } from "@react-navigation/native";
 import { use, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import {
   Alert,
@@ -55,6 +54,7 @@ import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatches";
 import { useThreadListV2 } from "../threads/useThreadListV2";
+import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/server";
@@ -350,6 +350,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const listRef = useRef<LegendListRef>(null);
   const searchMode = workspace?.state.tabs.threads.searchMode;
   const restoredOffset = workspace?.state.tabs.threads.scrollOffset;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the thread list's saved scroll offset through the list ref when search goes back to resting
   useEffect(() => {
     if (searchMode !== "resting" || restoredOffset === undefined) return;
     listRef.current?.scrollToOffset({
@@ -367,6 +368,7 @@ export function HomeScreen(props: HomeScreenProps) {
   };
   // Status-bar, accessibility and programmatic scrolls bypass the gate; activate visible rows after settling.
   const activationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the row activation timer on unmount
   useEffect(() => () => clearTimeout(activationTimerRef.current), []);
   const handleListScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     onFabScroll?.(event);
@@ -468,21 +470,14 @@ export function HomeScreen(props: HomeScreenProps) {
     toggleWorkingShelf,
     byProject,
   } = useThreadListV2ShelfPreferences();
-  // Keep time in state; the compiler would cache a render-time new Date().
-  const [now, setNow] = useState(() => new Date().toISOString());
-  const nowMinute = now.slice(0, 16);
-  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
-  useFocusEffect(() => {
-    setNow(new Date().toISOString());
-    const id = setInterval(() => setNow(new Date().toISOString()), 60_000);
-    return () => clearInterval(id);
-  });
+  const now = useThreadListNow(props.threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
     providersByEnvironmentId,
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    snoozePresetsByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds,
@@ -490,7 +485,7 @@ export function HomeScreen(props: HomeScreenProps) {
     titleRegenerationEnvironmentIds,
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
-  const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
+  const pendingOrder = usePendingThreadOrder();
   const {
     layout: threadListV2Layout,
     items: threadListV2Items,
@@ -518,19 +513,6 @@ export function HomeScreen(props: HomeScreenProps) {
     settledShelfExpanded,
     selectedThreadKey,
   });
-  const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
-  useEffect(() => {
-    if (nextSnoozeWakeAt === null) return;
-    const wakeAtMs = Date.parse(nextSnoozeWakeAt);
-    if (Number.isNaN(wakeAtMs)) return;
-    const delayMs = Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647);
-    const id = setTimeout(() => {
-      setNow(new Date().toISOString());
-      bumpSnoozeWakeTick((tick) => tick + 1);
-    }, delayMs);
-    return () => clearTimeout(id);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- snoozeWakeTick re-arms clamped timers even when the wake date exceeds 32-bit setTimeout and stays unchanged.
-  }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const threadGroups = useAtomValue(environmentThreadGroups.threadGroupsAtom);
   const groupByThreadKey = new Map<
     string,
@@ -748,6 +730,7 @@ export function HomeScreen(props: HomeScreenProps) {
     threadByItemKey,
     homeSections,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors committed drag and order state into the ref that native gesture callbacks read
   useEffect(() => {
     latest.current = {
       projectDrag,
@@ -896,19 +879,19 @@ export function HomeScreen(props: HomeScreenProps) {
     setArrangeMode(false);
   };
   // The thread menu's Arrange threads opens Edit mode while the list is grouped.
-  // oxlint-disable-next-line t3code/react-effect-budget -- publishes Home's mount state to an app-wide atom and clears it on unmount.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes Home's mount state to an app-wide atom and clears it on unmount.
   useEffect(() => {
     appAtomRegistry.set(homeArrangesInPlaceAtom, sectionedByProject);
     return () => appAtomRegistry.set(homeArrangesInPlaceAtom, false);
   }, [sectionedByProject]);
   const arrangeRequested = useAtomValue(threadArrangementOpenAtom) && sectionedByProject;
   if (arrangeRequested && !editRequested) setArrangeMode(true);
-  // oxlint-disable-next-line t3code/react-effect-budget -- consumes a one-shot request from another screen's menu after render picks it up.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- consumes a one-shot request from another screen's menu after render picks it up.
   useEffect(() => {
     if (arrangeRequested) appAtomRegistry.set(threadArrangementOpenAtom, false);
   }, [arrangeRequested]);
   // Android back leaves Edit mode, like Done.
-  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes to the hardware back button only while editing.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the hardware back button only while editing.
   useEffect(() => {
     if (!arrangeMode || Platform.OS !== "android") return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -942,7 +925,7 @@ export function HomeScreen(props: HomeScreenProps) {
 
   const shortcutItems = homeListItems.filter(isThreadListV2ListItem);
   useThreadJumpShortcuts(shortcutItems, selectThread);
-  // oxlint-disable-next-line t3code/react-effect-budget -- swipe rows activate after the list commits, as upstream does for its flat list.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(homeListItems);
   }, [activateVisibleRows, swipeEnabled, homeListItems]);
@@ -1126,6 +1109,7 @@ export function HomeScreen(props: HomeScreenProps) {
         settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
         onSettleThread={handleSettleThread}
         snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
+        snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
         reorderSupported={

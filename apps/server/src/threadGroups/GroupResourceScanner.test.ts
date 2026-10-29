@@ -138,6 +138,7 @@ const makeLayer = (input: {
         }),
         Layer.mock(PortScanner.PortDiscovery)({
           listListeners: Effect.succeed(input.listeners ?? listeners),
+          trackAgent: () => () => {},
         }),
         Layer.mock(DockerScanner.DockerScanner)({
           listContainers: input.listContainers ?? Effect.succeed([]),

@@ -8,7 +8,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { MOBILE_APP_BASE_NAME } from "../../lib/mobileBranding";
 import { useDeadlinePassed } from "../../lib/clock";
 import {
   type AppUpdateCheckState,
@@ -24,7 +23,7 @@ export function SettingsAboutRouteScreen() {
   const insets = useSafeAreaInsets();
 
   return (
-    <SettingsScreen title={`About ${MOBILE_APP_BASE_NAME}`}>
+    <SettingsScreen title="About">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}

@@ -40,7 +40,7 @@ export const CURSOR_CLI_INSTALL_COMMAND = "curl https://cursor.com/install -fsS 
 const LIST_TIMEOUT = Duration.seconds(60);
 // Sign-in waits for the user to finish in the browser.
 const SIGN_IN_TIMEOUT = Duration.minutes(5);
-// oxlint-disable-next-line no-control-regex -- strips the CLI's ANSI color codes.
+// Strips the CLI's ANSI color codes.
 const ANSI_PATTERN = /\u001b\[[0-9;]*[A-Za-z]/g;
 // `cursor-agent mcp login` sometimes stops after receiving the OAuth code and
 // asks to be run again to finish the token exchange. It can print that hint
@@ -196,13 +196,10 @@ const normalizedAuthEntry = (entry: JsonObject): JsonObject =>
   "tokens" in entry || "clientInfo" in entry ? entry : { tokens: entry };
 
 /**
- * Before Cursor first opens `folder`, gives it the newest saved sign-in for each
- * server in `~/.cursor/mcp.json` from any folder Cursor has saved one for, so a
- * sign-in anywhere reaches every Cursor thread. Servers that the folder's own
- * `.cursor/mcp.json` defines are skipped, so a project cannot claim a user-level
- * server's name and receive its tokens. Sign-ins stay in this user's Cursor data
- * directory. Does nothing once the folder is loaded: Cursor would not read the
- * change until restart, and its own copy may be newer.
+ * Before Cursor first opens `folder`, copies in the newest saved sign-in for each `~/.cursor/mcp.json`
+ * server from any folder, so one sign-in reaches every Cursor thread. Servers the folder's own
+ * `.cursor/mcp.json` defines are skipped so a project cannot claim a user server's tokens. No-op once
+ * loaded: Cursor would not reread it until restart, and its own copy may be newer.
  */
 export const shareCursorMcpSignIns = Effect.fn("CursorMcpServers.shareSignIns")(function* (
   folder: string,
@@ -299,12 +296,8 @@ export const cursorMcpServerIconUrl = Effect.fn("CursorMcpServers.iconUrl")(func
   serverUrl: string,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
-  let host: string;
-  try {
-    host = new URL(serverUrl).host;
-  } catch {
-    return null;
-  }
+  if (!URL.canParse(serverUrl)) return null;
+  const host = new URL(serverUrl).host;
   const cached = iconUrlsByHost.get(host);
   if (cached !== undefined) return cached;
   const labels = host.split(".");
@@ -602,8 +595,12 @@ const make = Effect.gen(function* () {
   return CursorMcpServers.of({
     status,
     signIn,
-    saveServer: (input) => editUserConfig((config) => saveCursorMcpEntry(config, input)),
-    removeServer: (name) => editUserConfig((config) => removeCursorMcpEntry(config, name)),
+    saveServer: Effect.fn("CursorMcpServers.saveServer")((input) =>
+      editUserConfig((config) => saveCursorMcpEntry(config, input)),
+    ),
+    removeServer: Effect.fn("CursorMcpServers.removeServer")((name) =>
+      editUserConfig((config) => removeCursorMcpEntry(config, name)),
+    ),
   });
 });
 

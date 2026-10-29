@@ -45,6 +45,10 @@ import * as GroupResourceScanner from "../../../threadGroups/GroupResourceScanne
 import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
 import * as RemoteMcpServers from "../../../remoteMcp/RemoteMcpServers.ts";
 import * as DocumentText from "../../../provider/DocumentText.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -73,6 +77,10 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(ThreadGroupStore.ThreadGroupStoreV2)({}),
   Layer.mock(GroupResourceScanner.GroupResourceScanner)({}),
   Layer.mock(ReviewSessionService.ReviewSessionService)({}),
+  Layer.mock(PeerForwarding.PeerForwarding)({}),
+  Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+  Layer.mock(PeerLinks.PeerLinks)({}),
+  Layer.mock(RemoteDelegation.RemoteDelegation)({}),
   Layer.mock(RemoteMcpServers.RemoteMcpServers)({
     tools: () => [
       {

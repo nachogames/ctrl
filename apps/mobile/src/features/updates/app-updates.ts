@@ -416,7 +416,7 @@ function defaultOnNextBackground(apply: () => void, includeCurrent: boolean): vo
   }
 }
 
-export const DEFERRED_INSTALL_PROMPT_AFTER_MS = 30 * 60 * 1000;
+const DEFERRED_INSTALL_PROMPT_AFTER_MS = 30 * 60 * 1000;
 
 /** iOS inactive blips, including the app switcher, leave this timer running. */
 function defaultOnForegroundStay(apply: () => void): void {
@@ -466,29 +466,10 @@ function isAppUpdateUnavailableError(error: unknown): boolean {
   return typeof code === "string" && UPDATE_CHECK_UNAVAILABLE_ERROR_CODES.has(code);
 }
 
-export function createAppUpdateLaunchCheck(
-  client: AppUpdateClient = Updates,
-): () => Promise<void> | undefined {
-  let started = false;
+// Ctrl: a minute away, not fifteen, so returning soon after a release picks it up.
+const FOREGROUND_APP_UPDATE_RECHECK_AFTER_MS = 60 * 1000;
 
-  return () => {
-    if (started || !isAppUpdateCheckAvailable(client)) return undefined;
-    started = true;
-    return runAppUpdateCheck({ client });
-  };
-}
-
-export const checkForAppUpdateOnLaunch = createAppUpdateLaunchCheck();
-
-/**
- * The app can stay resident for days, so a launch-only check misses updates
- * published while it was in memory. A minute away is long enough that quick
- * app switches stay quiet, short enough that coming back to the app soon after
- * a release picks it up; the check itself is one small manifest request.
- */
-export const FOREGROUND_APP_UPDATE_RECHECK_AFTER_MS = 60 * 1000;
-
-export function shouldRecheckAppUpdateOnForeground(
+function shouldRecheckAppUpdateOnForeground(
   backgroundedAtMs: number | null,
   activeAtMs: number,
   pendingInstall: boolean,
@@ -500,31 +481,30 @@ export function shouldRecheckAppUpdateOnForeground(
   );
 }
 
-export function createAppUpdateForegroundRecheck(
+/**
+ * App-lifetime update checks: one at launch, then again when the app returns
+ * from a long stay in the background.
+ */
+export function installAppUpdateChecks(
   client: AppUpdateClient = Updates,
   deferral: AppUpdateDeferral = appUpdateDeferral,
 ): () => void {
-  let started = false;
-
-  return () => {
-    if (started || !isAppUpdateCheckAvailable(client)) return;
-    started = true;
-    let backgroundedAtMs: number | null = null;
-    AppState.addEventListener("change", (state) => {
-      if (state === "background") {
-        backgroundedAtMs = Date.now();
-        return;
-      }
-      if (state !== "active") return;
-      const shouldCheck = shouldRecheckAppUpdateOnForeground(
-        backgroundedAtMs,
-        Date.now(),
-        deferral.pendingInstall,
-      );
-      backgroundedAtMs = null;
-      if (shouldCheck) void runAppUpdateCheck({ client, deferral });
-    });
-  };
+  if (!isAppUpdateCheckAvailable(client)) return () => undefined;
+  void runAppUpdateCheck({ client, deferral });
+  let backgroundedAtMs: number | null = null;
+  const subscription = AppState.addEventListener("change", (state) => {
+    if (state === "background") {
+      backgroundedAtMs = Date.now();
+      return;
+    }
+    if (state !== "active") return;
+    const shouldCheck = shouldRecheckAppUpdateOnForeground(
+      backgroundedAtMs,
+      Date.now(),
+      deferral.pendingInstall,
+    );
+    backgroundedAtMs = null;
+    if (shouldCheck) void runAppUpdateCheck({ client, deferral });
+  });
+  return () => subscription.remove();
 }
-
-export const startAppUpdateForegroundRecheck = createAppUpdateForegroundRecheck();
