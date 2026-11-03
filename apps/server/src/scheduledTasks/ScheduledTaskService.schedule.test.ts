@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -233,4 +234,89 @@ it.effect(
         expect(yield* Deferred.await(launched)).toBe(created.task.title);
       }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+const localTime = (day: number, hour: number) =>
+  DateTime.makeZonedUnsafe(
+    { year: 2026, month: 11, day, hour, minute: 0, second: 0, millisecond: 0 },
+    { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+  );
+
+const isoUtc = (dateTime: DateTime.DateTime) => DateTime.formatIso(DateTime.toUtc(dateTime));
+
+// November 2026: Sun 1, Mon 2, Thu 5, Mon 9. The task runs Mon + Thu at 09:00.
+it.effect.each([
+  { name: "one missed slot", wakeAt: localTime(2, 15), expectedNext: localTime(5, 9) },
+  {
+    name: "several missed slots, the last one just past",
+    wakeAt: localTime(5, 10),
+    expectedNext: localTime(9, 9),
+  },
+])("runs a fixed-time task once after $name and aims at the next slot", (testCase) =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(DateTime.toEpochMillis(localTime(1, 8)));
+    // Capture the task poll so the test runs it at the wake time, with no ticks in between.
+    const polls = yield* Ref.make(new Map<string, Effect.Effect<void>>());
+    const launches = yield* Ref.make(0);
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.succeed(Scheduler.Scheduler)(
+        Scheduler.Scheduler.of({
+          register: (name, runDueWork) =>
+            Effect.context<Effect.Services<typeof runDueWork>>().pipe(
+              Effect.flatMap((context) =>
+                Ref.update(polls, (current) =>
+                  new Map(current).set(
+                    name,
+                    runDueWork.pipe(Effect.provideContext(context), Effect.orDie),
+                  ),
+                ),
+              ),
+            ),
+        }),
+      ),
+      ManagedPolicy.layerTest(),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        launch: () =>
+          Ref.update(launches, (count) => count + 1).pipe(
+            Effect.as({ threadId: "thread-catch-up", resumed: false } as never),
+          ),
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const created = yield* service.upsert(
+        yield* decodeUpsertInput({
+          title: "Sync",
+          prompt: "Sync with upstream.",
+          enabled: true,
+          schedule: { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 4] },
+          projectId: "project-catch-up",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+      );
+      expect(created.task.nextRunAt).toBe(isoUtc(localTime(2, 9)));
+
+      yield* TestClock.setTime(DateTime.toEpochMillis(testCase.wakeAt));
+      const poll = (yield* Ref.get(polls)).get("scheduled-tasks") ?? Effect.die("no task poll");
+      yield* poll;
+      expect(yield* Ref.get(launches)).toBe(1);
+      const [task] = (yield* service.list()).tasks;
+      expect(task?.runCount).toBe(1);
+      expect(task?.nextRunAt).toBe(isoUtc(testCase.expectedNext));
+
+      // The missed slots do not queue up behind the catch-up run.
+      yield* poll;
+      expect(yield* Ref.get(launches)).toBe(1);
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
