@@ -226,7 +226,12 @@ import {
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { replySpeaker } from "../../speech/replySpeaker";
-import { useReplySpeaking, useVoiceMode, voiceUnavailableReason } from "../../speech/voiceMode";
+import {
+  useReplySpeaking,
+  useSpokenCaption,
+  useVoiceMode,
+  voiceUnavailableReason,
+} from "../../speech/voiceMode";
 import { CONVERSATION_LISTEN_TIMEOUT_MS, VoiceConversation } from "../../speech/voiceConversation";
 import { askVoiceFront, useFrontCaption } from "../../speech/voiceFront";
 import { NO_SPEECH_DETECTED_MESSAGE } from "@t3tools/client-runtime/voice-input";
@@ -1068,14 +1073,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         dictationInsertedRangeRef.current = null;
         const transcript = promptRef.current.trim();
         setLocalVoiceHeard(transcript);
+        replySpeaker.clearCaption();
         conversation.turnSent();
         submitComposerStable();
         // The thread gets the message either way; the front voice answers at once alongside it.
-        if (activeThreadId !== null && transcript.length > 0)
+        // A draft's first sentence uses the id the thread is created with.
+        if (transcript.length > 0)
           askVoiceFront({
             registry: atomRegistry,
             environmentId,
-            threadId: activeThreadId,
+            threadId: activeThreadId ?? routeThreadRef.threadId,
             transcript: transcript.slice(0, VOICE_FRONT_MAX_TRANSCRIPT_LENGTH),
             endOfSpeechAt: endOfTurnAtRef.current,
           });
@@ -1317,6 +1324,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // However the conversation ends, its live voice session on the environment closes with it.
   const conversationActive = conversationState.active;
   const dictationLevel = dictation.level;
+  // The reply being read replaces the quick voice's words once it starts.
+  const spokenCaption = useSpokenCaption();
+  const localVoiceReply = spokenCaption || frontCaption;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this composer's conversation with localVoice, which the shared voice strip reads, until it ends
   useEffect(() => {
     if (!conversationActive) return;
@@ -1344,10 +1354,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ...(localVoiceHeard
           ? [{ role: "user" as const, text: localVoiceHeard, final: false }]
           : []),
-        ...(frontCaption ? [{ role: "assistant" as const, text: frontCaption, final: true }] : []),
+        ...(localVoiceReply
+          ? [{ role: "assistant" as const, text: localVoiceReply, final: true }]
+          : []),
       ],
     });
-  }, [conversationActive, frontCaption, localVoiceHeard, localVoiceMuted]);
+  }, [conversationActive, localVoiceHeard, localVoiceMuted, localVoiceReply]);
   const wasConversationActive = useRef(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the environment's live voice session however the conversation ended
   useEffect(() => {

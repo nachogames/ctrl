@@ -10,6 +10,8 @@ interface Pending {
   readonly environmentId: EnvironmentId;
   readonly messageId: string;
   readonly text: string;
+  /** The front voice's own words, which it captions itself. */
+  readonly front: boolean;
 }
 
 /**
@@ -60,6 +62,8 @@ class ReplySpeaker {
   #firstAudio = new Map<string, (at: number) => void>();
   /** Audio streams still sending chunks; speech counts as going on between them. */
   #openStreams = new Set<string>();
+  /** The agent reply being read so far, for a caption; the front voice captions its own words. */
+  #caption = { messageId: "", text: "" };
 
   readonly subscribe = (listener: () => void) => {
     this.#listeners.add(listener);
@@ -69,6 +73,16 @@ class ReplySpeaker {
   readonly isSpeaking = () => this.#speaking;
 
   readonly frontMode = () => this.#front;
+
+  /** The sentences of the latest agent reply read so far. */
+  readonly spokenCaption = () => this.#caption.text;
+
+  /** A new voice turn went out; the last reply's caption is old news. */
+  clearCaption() {
+    if (this.#caption.text === "") return;
+    this.#caption = { messageId: "", text: "" };
+    this.#notify();
+  }
 
   #notify() {
     for (const listener of this.#listeners) listener();
@@ -158,6 +172,7 @@ class ReplySpeaker {
         environmentId: input.environmentId,
         messageId: input.messageId,
         text,
+        front: input.front === true,
       });
     }
     entry.queued = Math.max(entry.queued, opening.sentences.length);
@@ -277,6 +292,13 @@ class ReplySpeaker {
         };
         this.#sources.add(source);
         source.start(start);
+        if (!next.front) {
+          this.#caption =
+            this.#caption.messageId === next.messageId
+              ? { messageId: next.messageId, text: `${this.#caption.text} ${next.text}` }
+              : { messageId: next.messageId, text: next.text };
+          this.#notify();
+        }
       }
     } finally {
       this.#pumping = false;

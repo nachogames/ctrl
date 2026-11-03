@@ -7,7 +7,8 @@ their questions, approve their requests, rename, settle, snooze or archive them.
 ## Start Shift
 
 Shift runs in the desktop app. Open **Settings → Shift**, choose a model and turn
-it on. Shift then sits at the top of the sidebar. Open it from there, from the
+on the switch. Change the model there at any time, or with the model picker in
+Shift's composer; the conversation carries over. Shift then sits at the top of the sidebar. Open it from there, from the
 command palette, or with its keyboard shortcut.
 
 Shift always runs in full access. It can approve requests in your other threads,
@@ -63,7 +64,7 @@ that is offline, expired, or slow to answer is left out, and the voice says so.
 **Settings → Shift → Instructions** opens Shift's `AGENTS.md`. Add standing
 instructions below T3 Code's section. Shift can also keep notes in its folder.
 
-**Start fresh** gives Shift a new thread with the same model. The old thread
+**New Shift chat** gives Shift a clean conversation with the same model. The old thread
 stays in your history, and its notes and instructions carry over.
 
 Turning Shift off stops it from acting. Its thread stays in your history.

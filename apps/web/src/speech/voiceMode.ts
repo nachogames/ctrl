@@ -17,6 +17,11 @@ export function useReplySpeaking() {
   return useSyncExternalStore(replySpeaker.subscribe, replySpeaker.isSpeaking);
 }
 
+/** The agent reply read aloud so far, for the voice strip's caption. */
+export function useSpokenCaption() {
+  return useSyncExternalStore(replySpeaker.subscribe, replySpeaker.spokenCaption);
+}
+
 /**
  * What voice needs that is missing in a thread without Codex voice, as a hint
  * naming where to turn it on; null when dictation and spoken replies are ready.
