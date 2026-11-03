@@ -159,6 +159,7 @@ import {
 } from "../../voice/voiceMode";
 import { localVoice } from "../../speech/localVoice";
 import { ComposerVoiceButton, VoiceModeStrip } from "./VoiceModeStrip";
+import { VoiceEnginePicker } from "./VoiceEnginePicker";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -3982,6 +3983,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     disabledReason={voiceDisabledReason}
                     onToggle={toggleVoice}
                   />
+                  {voiceEngine === "local" && voiceUnavailable === null ? (
+                    <VoiceEnginePicker environmentId={environmentId} />
+                  ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

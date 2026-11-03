@@ -248,6 +248,9 @@ it is listening or speaking, the last things you and it said, and buttons to mut
   **Spoken replies** both on in **Settings → Devices**; until then the button says what is
   missing. Your words go out when you stop speaking for a moment, and the microphone listens
   again once a reply starts being read, so you can answer or talk over it.
+  The arrow next to the waveform picks the quick voice that answers first: **Gemini Live**,
+  **Local** (LM Studio), or **Off** for only the agent's reply. It is the machine's
+  **Front voice** setting below.
 
 A pause mid-sentence keeps the microphone listening for up to about two seconds; a finished
 sentence goes out in about half a second. That judgement comes from a small turn model (about
