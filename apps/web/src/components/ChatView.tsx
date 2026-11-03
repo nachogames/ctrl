@@ -3479,7 +3479,6 @@ export default function ChatView(props: ChatViewProps) {
                   key={`${environmentId}:${threadId}`}
                   environmentId={environmentId}
                   threadId={threadId}
-                  messages={timelineMessages}
                 />
               ) : null}
               <WorkspaceMutationIdContext value={workspaceMutationId}>

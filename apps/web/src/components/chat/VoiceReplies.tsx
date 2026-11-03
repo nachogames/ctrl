@@ -1,12 +1,14 @@
 import { RegistryContext } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { use, useEffect, useRef, useSyncExternalStore } from "react";
 
 import { replySpeaker } from "~/speech/replySpeaker";
 import { useVoiceMode } from "~/speech/voiceMode";
 import { useDictationEnvironmentId } from "~/state/dictation";
+import { useThreadVisibleTurnItems } from "~/state/entities";
 import { useSpeechState } from "~/state/speech";
-import type { ChatMessage } from "~/types";
 
 /** A message first seen this recently, without streaming, still counts as a new reply. */
 const FRESH_REPLY_MS = 60_000;
@@ -19,7 +21,6 @@ const FRESH_REPLY_MS = 60_000;
 export function VoiceReplies(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly messages: ReadonlyArray<ChatMessage>;
 }) {
   const registry = use(RegistryContext);
   const [voiceMode] = useVoiceMode();
@@ -30,6 +31,7 @@ export function VoiceReplies(props: {
   const activeKey = useRef<string | null>(null);
   // Replies held while the front voice answers are fed again once it decides.
   const frontMode = useSyncExternalStore(replySpeaker.subscribe, replySpeaker.frontMode);
+  const items = useThreadVisibleTurnItems(scopeThreadRef(props.environmentId, props.threadId));
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- silences the reply speaker's audio when voice replies turn off
   useEffect(() => {
@@ -41,7 +43,19 @@ export function VoiceReplies(props: {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- feeds newly arrived replies into the reply speaker's audio queue
   useEffect(() => {
-    const assistant = props.messages.filter((message) => message.role === "assistant");
+    // The thread's own replies, from its turn items: the chat view's message list holds no assistant text.
+    const assistant = items.flatMap(({ item }) =>
+      item.type === "assistant_message"
+        ? [
+            {
+              id: item.messageId,
+              text: item.text,
+              streaming: item.streaming,
+              updatedAtMs: DateTime.toEpochMillis(item.updatedAt),
+            },
+          ]
+        : [],
+    );
     const key = `${props.environmentId}:${props.threadId}`;
     if (!active) {
       activeKey.current = null;
@@ -59,7 +73,7 @@ export function VoiceReplies(props: {
       if (
         replySpeaker.isNew(message.id) &&
         !message.streaming &&
-        Date.now() - Date.parse(message.createdAt) > FRESH_REPLY_MS
+        Date.now() - message.updatedAtMs > FRESH_REPLY_MS
       ) {
         replySpeaker.markHeard([message.id]);
         continue;
@@ -72,7 +86,7 @@ export function VoiceReplies(props: {
         streaming: message.streaming,
       });
     }
-  }, [active, frontMode, props.environmentId, props.threadId, props.messages, registry]);
+  }, [active, frontMode, items, props.environmentId, props.threadId, registry]);
 
   return null;
 }
