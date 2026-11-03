@@ -87,6 +87,7 @@ const CODEX_PRESENTATION = {
   showInteractionModeToggle: true,
   supportsInventory: true,
   reportsContextWindow: true,
+  supportsVoice: true,
 } as const;
 
 export interface CodexAppServerProviderSnapshot {

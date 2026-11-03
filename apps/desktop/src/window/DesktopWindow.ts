@@ -36,9 +36,9 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
+import { installMainWindowPermissionHandlers } from "./MainWindowPermissions.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
-import { installMainWindowPermissions } from "./MainWindowPermissions.ts";
 
 const TITLEBAR_HEIGHT = 40;
 // Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
@@ -419,10 +419,13 @@ export const make = Effect.gen(function* () {
 
     pendingMainReveals.set(window, Effect.void);
     yield* rendererHistory.register(window.webContents, { surface: "main" });
-    installMainWindowPermissions(window.webContents, environment.platform);
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }
+    installMainWindowPermissionHandlers(window.webContents.session, {
+      appUrl: applicationUrl,
+      platform: environment.platform,
+    });
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;

@@ -2952,7 +2952,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         NSCameraUsageDescription:
           "Ctrl lets commands run by terminals and coding agents use the camera.",
         NSMicrophoneUsageDescription:
-          "Ctrl records your voice while you dictate a message, and lets commands run by terminals and coding agents use the microphone.",
+          "Ctrl records your voice while you dictate a message or talk with Codex, and lets commands run by terminals and coding agents use the microphone.",
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [

@@ -117,6 +117,8 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "composer.branch",
   /** Hold to dictate into the composer; releasing the shortcut transcribes. */
   "composer.dictate",
+  "voice.toggle",
+  "voice.toggleMute",
   "chat.new",
   "chat.newLocal",
   "chat.newWithoutProject",

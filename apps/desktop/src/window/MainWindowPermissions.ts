@@ -1,27 +1,77 @@
 import * as Electron from "electron";
 
+export type MediaPermissionDecision = "grant" | "deny" | "ask-microphone";
+
+/** Whether `url` belongs to the app shell served from `appUrl` (e.g. `t3code://app/`). */
+export function isAppUrl(url: string | undefined, appUrl: string): boolean {
+  if (!url) return false;
+  // Custom schemes have an opaque WHATWG origin, so compare the serialized prefix.
+  const appOrigin = appUrl.endsWith("/") ? appUrl.slice(0, -1) : appUrl;
+  return url === appOrigin || url.startsWith(`${appOrigin}/`);
+}
+
 /**
- * Grants every request, as a session without a handler does, except macOS
- * microphone capture, which asks the OS first so dictation gets the system
- * prompt instead of silence.
+ * Media requests come from the app shell (voice conversations use the
+ * microphone; preview tab recording routes `getDisplayMedia` through the same
+ * permission). Frames from any other origin never get media. On macOS the
+ * microphone also needs the system's consent, asked for on first use.
  */
-export function installMainWindowPermissions(
-  webContents: Electron.WebContents,
-  platform: NodeJS.Platform,
+export function decideMainWindowMediaRequest(input: {
+  readonly requestingUrl: string;
+  readonly appUrl: string;
+  readonly mediaTypes: ReadonlyArray<"audio" | "video">;
+  readonly platform: NodeJS.Platform;
+  readonly microphoneStatus: () => string;
+}): MediaPermissionDecision {
+  if (!isAppUrl(input.requestingUrl, input.appUrl)) return "deny";
+  if (!input.mediaTypes.includes("audio") || input.platform !== "darwin") return "grant";
+  return input.microphoneStatus() === "granted" ? "grant" : "ask-microphone";
+}
+
+export function isMainWindowPermissionAllowed(
+  permission: string,
+  origin: string | undefined,
+  appUrl: string,
+  media?: { readonly platform: NodeJS.Platform; readonly microphoneStatus: () => string },
+): boolean {
+  return permission === "media"
+    ? isAppUrl(origin, appUrl) &&
+        (media?.platform !== "darwin" || media.microphoneStatus() !== "not-determined")
+    : permission !== "deprecated-sync-clipboard-read";
+}
+
+/**
+ * Installs the main window session's permission handlers. Only `media` is
+ * decided here. Synchronous clipboard reads keep Electron's default denial.
+ */
+export function installMainWindowPermissionHandlers(
+  session: Electron.Session,
+  options: { readonly appUrl: string; readonly platform: NodeJS.Platform },
 ): void {
-  webContents.session.setPermissionRequestHandler((requester, permission, callback, details) => {
-    const wantsMicrophone =
-      platform === "darwin" &&
-      permission === "media" &&
-      requester === webContents &&
-      "mediaTypes" in details &&
-      details.mediaTypes?.includes("audio") === true;
-    if (!wantsMicrophone) {
-      callback(true);
+  session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    if (permission !== "media") {
+      callback(isMainWindowPermissionAllowed(permission, details.requestingUrl, options.appUrl));
       return;
     }
-    void Electron.systemPreferences
-      .askForMediaAccess("microphone")
-      .then(callback, () => callback(false));
+    const decision = decideMainWindowMediaRequest({
+      requestingUrl: details.requestingUrl,
+      appUrl: options.appUrl,
+      mediaTypes: "mediaTypes" in details ? (details.mediaTypes ?? []) : [],
+      platform: options.platform,
+      microphoneStatus: () => Electron.systemPreferences.getMediaAccessStatus("microphone"),
+    });
+    if (decision !== "ask-microphone") {
+      callback(decision === "grant");
+      return;
+    }
+    Electron.systemPreferences.askForMediaAccess("microphone").then(callback, () => {
+      callback(false);
+    });
   });
+  session.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
+    isMainWindowPermissionAllowed(permission, requestingOrigin, options.appUrl, {
+      platform: options.platform,
+      microphoneStatus: () => Electron.systemPreferences.getMediaAccessStatus("microphone"),
+    }),
+  );
 }
