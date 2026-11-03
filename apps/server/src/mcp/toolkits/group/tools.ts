@@ -37,13 +37,12 @@ const groupTool = {
 };
 
 const groupIdParameter = Schema.optional(ThreadGroupId).annotate({
-  description: "The group. Omit it for the group your own chat is in.",
+  description: "Omit for your own chat's group.",
 });
 const clientRequestId = Schema.optional(
   TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
 ).annotate({
-  description:
-    "Idempotency key. Reuse it when retrying a call whose result was lost, so the change happens once.",
+  description: "Idempotency key: reuse it on a retry so the change happens once.",
 });
 
 const GroupResult = Schema.Struct({ group: OrchestrationThreadGroupShell });
@@ -62,7 +61,7 @@ const GroupReadTool = Tool.make("t3_group_read", {
   ...groupTool,
   dependencies: [...groupTool.dependencies, GroupResourceScanner.GroupResourceScanner],
   description:
-    'Read a chat group: its title, goal, branch, worktree, pull request, last handoff, its chats (oldest first, with handoff links and which one is you), its ticket links, and what is running for it right now: local servers started by its chats or from its worktree, its worktree\'s docker compose containers, and resources registered by hand (source "registered", never health-checked). Omit groupId to read the group your chat is in; when your chat is in no group it is a group of one, and the result is { group: null, threadIds: [your chat] }. Chats in one group share a project and a workspace and work toward one goal.',
+    "Read a chat group: title, goal, branch, worktree, pull request, last handoff, its chats (oldest first, with handoff links and isCaller), ticket links, and what runs for it now: servers its chats or worktree started, its worktree's docker compose containers, and hand-registered resources (source \"registered\", never health-checked). With your chat in no group the result is { group: null, threadIds: [your chat] }. A group's chats work toward one goal in one project.",
   parameters: Schema.Struct({ groupId: groupIdParameter }),
   success: Schema.Union([
     Schema.Struct({
@@ -81,26 +80,22 @@ const GroupReadTool = Tool.make("t3_group_read", {
 const GroupCreateTool = Tool.make("t3_group_create", {
   ...groupTool,
   description:
-    "Group chats that work toward one goal, for example a planning chat and the build chat it launched. Your own chat is always included: call it with no threadIds to group just your chat, or with threadIds: [buildThreadId] to group your chat with the build chat in one call (pass includeCaller: false to leave your chat out). The first listed chat supplies the group's branch, worktree, pull request and default title (your chat does when you list none), and the group belongs to that chat's project; every chat must be in that project. Chats may work in different worktrees: each keeps its own unless adoptGroupWorkspace is true, which switches every other chat to the first chat's worktree and branch (each must be idle with no uncommitted changes, and that worktree must exist). A chat already in another group moves to this one. Use t3_group_move_thread to add a chat to an existing group.",
+    "Group chats working toward one goal, such as a planning chat and the build chat it launched. No threadIds groups just your chat; threadIds: [id] groups your chat with those (includeCaller: false leaves yours out). The first listed chat (yours when none) gives the group its project, branch, worktree, pull request and default title; every chat must be in that project. Each chat keeps its own worktree unless adoptGroupWorkspace; then each other chat must be idle with no uncommitted changes. A chat in another group moves here. To add to an existing group, use t3_group_move_thread.",
   parameters: Schema.Struct({
     threadIds: Schema.optional(Schema.Array(ThreadId).check(Schema.isMinLength(1))).annotate({
-      description:
-        "Chats to group, first one supplying the workspace. Your chat is added after them unless includeCaller is false. Defaults to [your chat].",
+      description: "The first supplies the workspace; your chat is added after them.",
     }),
     includeCaller: Schema.optional(Schema.Boolean).annotate({
-      description:
-        "Whether your own chat joins the group when you pass threadIds. Defaults to true. Ignored outside a T3 chat.",
+      description: "Defaults to true.",
     }),
     title: Schema.optional(TrimmedNonEmptyString).annotate({
-      description:
-        "Group title. Defaults to the first chat's title, else its branch; with a goal, a title is then generated from the goal.",
+      description: "Defaults to the first chat's title or branch, or one generated from goal.",
     }),
     goal: Schema.optional(TrimmedNonEmptyString).annotate({
-      description: "One or two sentences on what the group is working toward.",
+      description: "One or two sentences.",
     }),
     adoptGroupWorkspace: Schema.optional(Schema.Boolean).annotate({
-      description:
-        "Move every other chat onto the first chat's worktree and branch. Defaults to false: each chat keeps its own workspace.",
+      description: "Move every other chat onto the first chat's worktree and branch.",
     }),
     clientRequestId,
   }),
@@ -112,7 +107,7 @@ const GroupCreateTool = Tool.make("t3_group_create", {
 const GroupUpdateTool = Tool.make("t3_group_update", {
   ...groupTool,
   description:
-    "Rename a chat group, set or clear its goal (goal: null clears it), link or unlink tickets, pin or unpin it, or settle or unsettle it. Omit groupId for the group your chat is in. When your chat is in no group, setting a goal or adding links creates a group of your chat first; anything else needs a group. Omitted fields stay as they are. settled: true settles the group and every chat in it that is not settled yet (your own chat settles when your turn ends; a chat that is running, waiting on a question, or running in broader modes than yours stays as it is and is listed in unchangedChats). settled: false unsettles the group and its settled chats.",
+    "Rename a chat group, set or clear (null) its goal, link or unlink tickets, pin, or settle it. Omitted fields stay. With your chat in no group, a goal or new links first make a group of your chat; other changes need a group. settled: true settles the group and its chats (yours when your turn ends; a chat running, waiting on a question, or in broader modes than yours stays and is listed in unchangedChats); false unsettles them.",
   parameters: Schema.Struct({
     groupId: groupIdParameter,
     title: Schema.optional(TrimmedNonEmptyString),
@@ -135,7 +130,7 @@ const GroupUpdateTool = Tool.make("t3_group_update", {
       }),
     ).annotate({
       description:
-        "Ticket links on the group. add takes http(s) URLs: a Linear issue shows as its key and a GitHub issue as #N unless you pass label; a URL the group already links is skipped. remove takes link ids or URLs.",
+        "add: http(s) URLs (Linear issues show their key, GitHub issues #N, unless label); linked URLs are skipped. remove: link ids or URLs.",
     }),
     clientRequestId,
   }),
@@ -152,11 +147,11 @@ const GroupUpdateTool = Tool.make("t3_group_update", {
 const GroupNewThreadTool = Tool.make("t3_group_new_thread", {
   ...groupTool,
   description:
-    "Start a new chat in a group, in the group's worktree and branch (the project root when the group has no worktree), with prompt as its first message. Omit groupId for the group your chat is in. The model and runtime and interaction modes default to your own chat's; the new chat may not run with broader modes than yours. Omit title to have one generated from the prompt. Returns the new chat's threadId; follow it with t3_thread_read or t3_thread_wait.",
+    "Start a new chat in a group, in its worktree and branch (else the project root), with prompt as its first message. Model and modes default to yours and may not be broader. Omit title to generate one. Follow the returned threadId with t3_thread_read or t3_thread_wait.",
   parameters: Schema.Struct({
     groupId: groupIdParameter,
     prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
-      description: "The new chat's first message: the whole task.",
+      description: "The whole task.",
     }),
     title: Schema.optional(TrimmedNonEmptyString),
     modelSelection: Schema.optional(ModelSelection),
@@ -182,18 +177,18 @@ const GroupNewThreadTool = Tool.make("t3_group_new_thread", {
 const GroupHandoffTool = Tool.make("t3_group_handoff", {
   ...groupTool,
   description:
-    "Hand your chat off to a new chat that continues the work, when this chat has grown long or the next phase deserves a fresh start. Write summary for the new chat: the goal, what is done, decisions made, what is left, and where to look. The new chat starts in your chat's group (one is created from your chat's workspace when it has none), with your model and modes, and sees your summary as its starting context; it can read this chat with t3_thread_read. Afterwards your chat is linked to the new one and settles when your turn ends, unless auto-settle is off for it. Stop working once this succeeds.",
+    "Hand your chat off to a new chat that continues the work, when this one has grown long or the next phase deserves a fresh start. The new chat starts in your group (made from your workspace if you have none) with your model and modes, starts from your summary, and can read this chat with t3_thread_read. Your chat is linked to it and settles when your turn ends, unless auto-settle is off. Stop working once this succeeds.",
   parameters: Schema.Struct({
     summary: Schema.String.check(
       Schema.isMaxLength(ThreadGroupLaunchService.HANDOFF_SUMMARY_MAX_CHARS),
     ).annotate({
-      description: `The handoff summary the new chat starts from, at most ${ThreadGroupLaunchService.HANDOFF_SUMMARY_MAX_CHARS} characters.`,
+      description: `The goal, what is done, decisions, what is left, and where to look. At most ${ThreadGroupLaunchService.HANDOFF_SUMMARY_MAX_CHARS} characters.`,
     }),
     title: Schema.optional(TrimmedNonEmptyString).annotate({
-      description: 'Title of the new chat. Defaults to "Continue: <your chat\'s title>".',
+      description: 'Defaults to "Continue: <your title>".',
     }),
     prompt: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(120_000))).annotate({
-      description: `Visible first message of the new chat. Defaults to "${ThreadGroupLaunchService.HANDOFF_DEFAULT_PROMPT}"`,
+      description: `The new chat's visible first message. Defaults to "${ThreadGroupLaunchService.HANDOFF_DEFAULT_PROMPT}"`,
     }),
     clientRequestId,
   }),
@@ -214,11 +209,11 @@ const GroupHandoffTool = Tool.make("t3_group_handoff", {
 const GroupMoveThreadTool = Tool.make("t3_group_move_thread", {
   ...groupTool,
   description:
-    "Move a chat into a group, or out of its group with groupId: null (it keeps its branch and worktree). Omit threadId to move your own chat. The chat and group must be in the same project. A chat working in a different worktree than the group fails with invalid_request unless adoptGroupWorkspace is true, which switches the chat to the group's worktree and branch; that needs the chat to be idle and the group's worktree to exist. A group left with no chats is removed.",
+    "Move a chat (omit threadId for yours) into a group of its project, or out with groupId: null (it keeps its branch and worktree). A chat in another worktree than the group's fails unless adoptGroupWorkspace, which switches the idle chat to the group's worktree and branch. A group left with no chats is removed.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     groupId: Schema.NullOr(ThreadGroupId).annotate({
-      description: "The group to move the chat into, or null to take it out of its group.",
+      description: "null takes the chat out of its group.",
     }),
     adoptGroupWorkspace: Schema.optional(Schema.Boolean),
     clientRequestId,
@@ -234,7 +229,7 @@ const GroupMoveThreadTool = Tool.make("t3_group_move_thread", {
 const GroupResourceTool = Tool.make("t3_group_resource", {
   ...groupTool,
   description:
-    'Register a running resource on a group, such as a dev server or a container you started, so the user and the group\'s other chats can find it; or remove one. Omit groupId for the group your chat is in. action "add" needs name, and kind defaults to "other"; pass url when it has one. id is generated for add unless you pass one; action "remove" needs the id and succeeds with removed: false when the id is not there. Registered resources are shown as registered, never health-checked, so remove one when you stop it. When you start a server for the group, such as a dev server or an API, register it with a clear name ("Web app", "API") and its http://localhost:<port> url: the Group panel then shows that name instead of the process name.',
+    'Register a resource you started, such as a dev server or container, on a group so the user and its other chats can find it, or remove one. When you start a server for the group, add it with a clear name ("Web app", "API") and its http://localhost:<port> url; the Group panel shows that name. Registered resources are never health-checked: remove one when you stop it. add needs name (kind defaults to "other", id is generated unless given); remove needs id and returns removed: false when absent.',
   parameters: Schema.Struct({
     groupId: groupIdParameter,
     action: Schema.Literals(["add", "remove"]),

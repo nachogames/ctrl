@@ -122,6 +122,10 @@ pnpm mcp-tool-use --cases mcp-tool-use/cases/threads-vs-tasks.ndjson --samples 3
 
 These cases measure routing decisions with simulated tools, not delivered child work. The original PR's paid baseline found Sonnet starting a background native Agent for `tt-background-agent`; the routing fix is stacked separately in #27139. Historical model results and the unresolved top-level reviewer re-check wording are recorded in #27138.
 
+## Review session cases
+
+`cases/review-sessions.ndjson` checks Ctrl's review trigger: a review request groups the chat and opens `review_session_open` with the PR's url and head, an existing GitHub review is triaged rather than rerun, a merged PR gets no session, and ordinary code work that mentions reviews uses none of it. `review_session_open` answers with the real brief from `reviewBrief.ts`.
+
 ## Where T3's text lives
 
 - `packages/provider-core/src/server/runtimeInstructions.ts`

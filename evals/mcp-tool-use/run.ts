@@ -17,7 +17,11 @@ import {
   DeviceOperationError,
   DeviceSummary,
   OrchestratorMcpTaskRole,
+  ProjectId,
   ProviderInstanceId,
+  ReviewSessionId,
+  ThreadGroupId,
+  type ReviewSession,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -46,10 +50,12 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
+import { reviewBrief } from "../../apps/server/src/reviewSessions/reviewBrief.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
+import { GroupToolkit } from "../../apps/server/src/mcp/toolkits/group/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
@@ -59,6 +65,7 @@ import {
   CHILD_PULL_REQUEST_REPORT_NEXT,
   PullRequestsToolkit,
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
+import { ReviewToolkit } from "../../apps/server/src/mcp/toolkits/review/tools.ts";
 import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.ts";
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
 import {
@@ -392,6 +399,8 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
+  GroupToolkit,
+  ReviewToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -964,6 +973,9 @@ const PROVIDERS = [
   { providerInstanceId: "muse", models: ["muse-wonder-full", "muse-wonder"].map(codexModel) },
   { providerInstanceId: "grok", models: ["grok-4.7"].map(codexModel) },
 ];
+/** The thread a case runs in, as T3's group and review tools report it. */
+const EVAL_THREAD_ID = "00000000-0000-4000-8000-0000000000aa";
+const EVAL_NOW = "2026-11-03T10:00:00.000Z";
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const DEFAULT_THREAD = {
   title: "Fix the flaky reconnect test",
@@ -1174,6 +1186,35 @@ export const t3Default = (
         htmlRender: { attachmentId: "att-1", title: input.title ?? "Visual", height: 560 },
         message: HTML_RENDERED,
       };
+    case "t3_group_read":
+      return { group: null, threadIds: [EVAL_THREAD_ID] };
+    case "t3_group_create":
+      return { group: { id: "group-1", title: "Review", threadIds: [EVAL_THREAD_ID] } };
+    case "review_session_open": {
+      const { host, repository, number, url } = pr();
+      const session: ReviewSession = {
+        id: ReviewSessionId.make("review-1"),
+        projectId: ProjectId.make("project-1"),
+        pullRequest: { host, repository, number },
+        url,
+        groupId: ThreadGroupId.make("group-1"),
+        reviewThreadId: ThreadId.make(EVAL_THREAD_ID),
+        phase: "self-review",
+        round: 1,
+        headSha: typeof input.headSha === "string" ? input.headSha : null,
+        nextNumber: 1,
+        createdAt: EVAL_NOW,
+        updatedAt: EVAL_NOW,
+      };
+      return {
+        session,
+        rounds: [],
+        sources: [],
+        items: [],
+        created: true,
+        brief: reviewBrief(session),
+      };
+    }
     case "preview_status":
       return {
         available: false,
