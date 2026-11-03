@@ -8,6 +8,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
 import * as NodeOS from "node:os";
+import * as NodeTimersPromises from "node:timers/promises";
 import * as NodePath from "node:path";
 import {
   query,
@@ -240,7 +241,13 @@ export const runClaudeCodeSample = async (sample: ClaudeCodeSample) => {
     if (input.hook_event_name !== "PreToolUse" || !isRecord(input.tool_input)) return allow();
     const toolInput = input.tool_input;
     if (typeof toolInput.command === "string") {
-      const output = await sample.shell(input.tool_name, toolInput);
+      // Fail closed: if the simulator fails, the real command must not run instead.
+      // The race ends before the hook's own 600s timeout, whose outcome Claude Code decides.
+      const output = await Promise.race([
+        sample.shell(input.tool_name, toolInput).catch(() => undefined),
+        NodeTimersPromises.setTimeout(540_000, undefined, { ref: false }),
+      ]);
+      if (output === undefined) return deny("The shell simulator failed; nothing ran.");
       const code = EXIT.exec(output)?.[1];
       const body = output.replace(EXIT, "");
       const file = NodePath.join(outputs, `${outputCount++}.txt`);
