@@ -179,6 +179,7 @@ import {
   isWindowsPlatform,
   newProjectId,
 } from "../lib/utils";
+import { shiftEnvironmentIdAtom, shiftThreadIdAtom } from "../state/shiftEnvironment";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
 import { resolveThreadVoiceAvailability } from "../voice/voiceAvailability";
@@ -260,11 +261,7 @@ import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
-import {
-  primaryServerConfigAtom,
-  primaryServerKeybindingsAtom,
-  primaryServerSettingsAtom,
-} from "../state/server";
+import { primaryServerConfigAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -483,10 +480,9 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const homeThreadId = useAtomValue(
-    primaryServerSettingsAtom,
-    (settings) => settings.home.threadId,
-  );
+  // Open Shift goes to the machine this device uses Shift from.
+  const shiftEnvironmentId = useAtomValue(shiftEnvironmentIdAtom);
+  const shiftThreadId = useAtomValue(shiftThreadIdAtom);
   const homeWorkspaceRoot = useAtomValue(
     primaryServerConfigAtom,
     (config) => config?.homeWorkspaceRoot ?? null,
@@ -1752,7 +1748,7 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
-  if (primaryEnvironmentId !== null && homeThreadId !== null) {
+  if (shiftEnvironmentId !== null && shiftThreadId !== null) {
     actionItems.push({
       kind: "action",
       value: "action:home",
@@ -1763,7 +1759,7 @@ function OpenCommandPaletteDialog(props: {
       run: async () => {
         await navigate({
           to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(scopeThreadRef(primaryEnvironmentId, homeThreadId)),
+          params: buildThreadRouteParams(scopeThreadRef(shiftEnvironmentId, shiftThreadId)),
         });
       },
     });

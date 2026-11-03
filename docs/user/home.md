@@ -56,6 +56,12 @@ stays connected to them. Threads Shift starts there are watched for it, and you
 can ask it to watch any thread there. On macOS, closing the window keeps Shift
 listening until you quit.
 
+To use another machine's Shift from this one, such as your main laptop's from a
+work laptop, connect to that machine, then pick it under **Settings → Shift →
+Use Shift from**. The choice is per device. The pinned Shift row, its shortcut
+and **Open Shift** then open that machine's Shift, which thinks and talks there:
+its model, its Codex sign-in for voice, and its tools. The row names the machine.
+
 In voice mode, Shift's quick voice also answers about threads on your linked machines. A machine
 that is offline, expired, or slow to answer is left out, and the voice says so.
 

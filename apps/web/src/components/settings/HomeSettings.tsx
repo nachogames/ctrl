@@ -9,6 +9,7 @@ import {
   CommandId,
   type EnvironmentId,
   type ModelSelection,
+  type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
 import { createModelSelection, modelSelectionCommandType } from "@t3tools/shared/model";
@@ -16,23 +17,25 @@ import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { useOpenInPreferredEditor } from "../../editorPreferences";
-import { isElectron } from "../../env";
-import { usePrimarySettings } from "../../hooks/useSettings";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
 } from "../../modelSelection";
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import { useThreadShell } from "../../state/entities";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { homeEnvironment } from "../../state/home";
 import { orchestrationEnvironment } from "../../state/orchestration";
-import { primaryServerConfigAtom, primaryServerProvidersAtom } from "../../state/server";
+import { environmentPresentations } from "../../state/presentation";
+import { serverEnvironment } from "../../state/server";
+import { shiftEnvironmentIdAtom, useShiftEnvironmentChoice } from "../../state/shiftEnvironment";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { randomUUID } from "~/lib/utils";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import {
@@ -43,26 +46,78 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
+const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+const EMPTY_EDITORS: ReadonlyArray<never> = [];
+
 const HOME_DESCRIPTION =
   "An agent that can act across all your projects and linked machines. It can answer questions and approve requests for you.";
 
-/** Settings page for Home. Only a desktop app's own server can run it. */
+/**
+ * Settings page for Home. Each device picks the machine it uses Shift from:
+ * this one, or another connected desktop app's server. The rest of the page
+ * manages that machine's Shift.
+ */
 export function HomeSettings() {
-  const environmentId = usePrimaryEnvironmentId();
-  const homeWorkspaceRoot = useAtomValue(
-    primaryServerConfigAtom,
-    (config) => config?.homeWorkspaceRoot ?? null,
-  );
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { environments } = useEnvironments();
+  const shiftEnvironmentId = useAtomValue(shiftEnvironmentIdAtom);
+  const [, setChoice] = useShiftEnvironmentChoice();
+  // Only a desktop app's own server runs Shift; it reports its Shift folder.
+  const machines = environments
+    .filter((environment) => environment.serverConfig?.homeWorkspaceRoot)
+    .toSorted(
+      (left, right) =>
+        Number(right.environmentId === primaryEnvironmentId) -
+        Number(left.environmentId === primaryEnvironmentId),
+    );
+  const machine = machines.find((candidate) => candidate.environmentId === shiftEnvironmentId);
+  const homeWorkspaceRoot = machine?.serverConfig?.homeWorkspaceRoot ?? null;
+  const machineLabel = (environmentId: EnvironmentId, label: string) =>
+    environmentId === primaryEnvironmentId ? `${label} (this machine)` : label;
   return (
     <SettingsPageContainer>
       <SettingsSection title="Shift">
-        {!isElectron || environmentId === null || homeWorkspaceRoot === null ? (
+        {machine === undefined || homeWorkspaceRoot === null ? (
           <SettingsRow
             {...searchableSetting("home")}
             description="Shift runs in the desktop app."
           />
         ) : (
-          <HomeRows environmentId={environmentId} homeWorkspaceRoot={homeWorkspaceRoot} />
+          <>
+            {machines.length > 1 ? (
+              <SettingsRow
+                title="Use Shift from"
+                description="The machine whose Shift this device opens. It thinks and talks there."
+                control={
+                  <Select
+                    value={machine.environmentId}
+                    onValueChange={(value) => {
+                      if (value === null) return;
+                      setChoice(value === primaryEnvironmentId ? null : (value as EnvironmentId));
+                    }}
+                  >
+                    <SelectTrigger aria-label="Use Shift from" className="min-w-48" size="xs">
+                      <SelectValue>
+                        {machineLabel(machine.environmentId, machine.label)}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {machines.map((candidate) => (
+                        <SelectItem key={candidate.environmentId} value={candidate.environmentId}>
+                          {machineLabel(candidate.environmentId, candidate.label)}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                }
+              />
+            ) : null}
+            <HomeRows
+              key={machine.environmentId}
+              environmentId={machine.environmentId}
+              homeWorkspaceRoot={homeWorkspaceRoot}
+            />
+          </>
         )}
       </SettingsSection>
     </SettingsPageContainer>
@@ -93,13 +148,16 @@ function useNavigateToThread() {
  */
 function HomeRows(props: { environmentId: EnvironmentId; homeWorkspaceRoot: string }) {
   const { environmentId, homeWorkspaceRoot } = props;
-  const settings = usePrimarySettings();
+  const settings = useEnvironmentSettings(environmentId);
   const threadId = settings.home.threadId;
   const thread = useThreadShell(threadId === null ? null : scopeThreadRef(environmentId, threadId));
-  const providers = useAtomValue(primaryServerProvidersAtom);
+  const providers = useAtomValue(
+    environmentPresentations.providersByEnvironmentAtom,
+    (byEnvironment) => byEnvironment.get(environmentId) ?? EMPTY_PROVIDERS,
+  );
   const availableEditors = useAtomValue(
-    primaryServerConfigAtom,
-    (config) => config?.availableEditors ?? [],
+    serverEnvironment.configValueAtom(environmentId),
+    (config) => config?.availableEditors ?? EMPTY_EDITORS,
   );
   const enable = useAtomCommand(homeEnvironment.enable, { reportFailure: false });
   const disable = useAtomCommand(homeEnvironment.disable, { reportFailure: false });

@@ -169,12 +169,10 @@ import {
   useQuietThreadShells,
   useThreadShell,
 } from "../state/entities";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/presentation";
 import { environmentPresentations } from "../state/presentation";
-import {
-  primaryServerConfigAtom,
-  primaryServerKeybindingsAtom,
-  primaryServerSettingsAtom,
-} from "../state/server";
+import { shiftEnvironmentIdAtom, shiftThreadIdAtom } from "../state/shiftEnvironment";
+import { primaryServerConfigAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -476,10 +474,17 @@ const HOME_ROW_STATUS: Record<
  */
 const SidebarHomeRow = memo(function SidebarHomeRow(props: {
   threadRef: ScopedThreadRef;
+  /** Shift runs on a machine other than this one; the row names it. */
+  onAnotherMachine: boolean;
   isActive: boolean;
   onActivate: (threadRef: ScopedThreadRef) => void;
 }) {
   const { isActive, onActivate, threadRef } = props;
+  const presentation = useAtomValue(
+    environmentPresentations.presentationAtom(threadRef.environmentId),
+  );
+  const machine =
+    props.onAnotherMachine && presentation ? environmentDisplayLabel(presentation) : null;
   const thread = useThreadShell(threadRef);
   const localLastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
@@ -503,7 +508,9 @@ const SidebarHomeRow = memo(function SidebarHomeRow(props: {
       <div
         role="button"
         tabIndex={0}
-        aria-label={topStatus ? `Shift, ${topStatus.label}` : "Shift"}
+        aria-label={[machine ? `Shift on ${machine}` : "Shift", topStatus?.label]
+          .filter(Boolean)
+          .join(", ")}
         aria-current={isActive ? "page" : undefined}
         data-testid="sidebar-home-row"
         className={cn(
@@ -520,7 +527,10 @@ const SidebarHomeRow = memo(function SidebarHomeRow(props: {
         }}
       >
         <ShiftKeyIcon aria-hidden className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">Shift</span>
+        <span className="min-w-0 flex-1 truncate">
+          Shift
+          {machine ? <span className="ms-1.5 text-muted-foreground">{machine}</span> : null}
+        </span>
         {topStatus ? (
           <span
             className={cn(
@@ -1556,15 +1566,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const homeThreadId = useAtomValue(
-    primaryServerSettingsAtom,
-    (settings) => settings.home.threadId,
-  );
-  // The current Home thread lives on the primary environment and gets its own
-  // fixed row; older Home threads stay in the normal lists.
+  // The current Home thread of the machine this device uses Shift from gets its
+  // own fixed row; older Home threads stay in the normal lists.
+  const shiftEnvironmentId = useAtomValue(shiftEnvironmentIdAtom);
+  const homeThreadId = useAtomValue(shiftThreadIdAtom);
   const homeThreadRef =
-    primaryEnvironmentId !== null && homeThreadId !== null
-      ? scopeThreadRef(primaryEnvironmentId, homeThreadId)
+    shiftEnvironmentId !== null && homeThreadId !== null
+      ? scopeThreadRef(shiftEnvironmentId, homeThreadId)
       : null;
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   // A machine filter flip drops the selection: rows selected under the old
@@ -4634,6 +4642,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           <SidebarHomeRow
                             key="home"
                             threadRef={homeThreadRef}
+                            onAnotherMachine={homeThreadRef.environmentId !== primaryEnvironmentId}
                             isActive={routeThreadKey === scopedThreadKey(homeThreadRef)}
                             onActivate={navigateToThread}
                           />

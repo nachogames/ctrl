@@ -13,8 +13,7 @@ import { toastManager } from "../components/ui/toast";
 import { getThemeSnapshot, setAppearanceMode } from "../hooks/useTheme";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
-import { serverEnvironment } from "../state/server";
+import { shiftEnvironmentIdAtom, shiftThreadIdAtom } from "../state/shiftEnvironment";
 import { type CommandHandler, type CommandScopeOptions, registerCommands } from "./dispatcher";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
@@ -96,13 +95,11 @@ export function installCommandPaletteCommands(
         dispatchCommandPalette({ _tag: "SetOpen", open: false });
         void router.navigate({ to: "/usage" });
       },
-      // Shift lives on this desktop's own server; with it off the key does nothing.
+      // Opens the Shift of the machine this device uses it from; with it off the key does nothing.
       "home.open": (event) => {
-        const environmentId = appAtomRegistry.get(primaryEnvironmentIdAtom);
-        if (environmentId === null) return false;
-        const homeThreadId = appAtomRegistry.get(serverEnvironment.settingsValueAtom(environmentId))
-          ?.home.threadId;
-        if (homeThreadId == null) return false;
+        const environmentId = appAtomRegistry.get(shiftEnvironmentIdAtom);
+        const homeThreadId = appAtomRegistry.get(shiftThreadIdAtom);
+        if (environmentId === null || homeThreadId === null) return false;
         consume(event);
         dispatchCommandPalette({ _tag: "SetOpen", open: false });
         void router.navigate({

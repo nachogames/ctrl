@@ -36,9 +36,8 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 
-import { isElectron } from "../../env";
+import { environmentPresentations } from "../../state/presentation";
 import { cn } from "../../lib/utils";
-import { primaryServerConfigAtom } from "../../state/server";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import {
@@ -139,10 +138,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
-  // Only a desktop app's own server can run Home.
-  const canRunHome = useAtomValue(
-    primaryServerConfigAtom,
-    (config) => isElectron && config?.homeWorkspaceRoot != null,
+  // Only a desktop app's own server can run Home; this device may use any connected one's.
+  const canRunHome = useAtomValue(environmentPresentations.presentationsAtom, (presentations) =>
+    [...presentations.values()].some(
+      (presentation) => presentation.serverConfig?.homeWorkspaceRoot,
+    ),
   );
   const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
     ...group,
