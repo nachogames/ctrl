@@ -75,6 +75,13 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.reviewSessionsRunLocalReview]: AuthOrchestrationOperateScope,
   [WS_METHODS.reviewSessionsDiscussInSideChat]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
+  // Turning a plugin on runs its code on the host, like changing a setting would.
+  [WS_METHODS.pluginsSetEnabled]: AuthSettingsWriteScope,
+  [WS_METHODS.pluginsReload]: AuthSettingsWriteScope,
+  // Each reaches plugin code, which may act on the host.
+  [WS_METHODS.pluginsBandPress]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pluginsViewCall]: AuthOrchestrationOperateScope,
+  [WS_METHODS.pluginsCommandRun]: AuthOrchestrationOperateScope,
   // Each edits Cursor's MCP config or its saved sign-ins on this machine.
   [WS_METHODS.cursorMcpSignIn]: AuthProvidersManageScope,
   [WS_METHODS.cursorMcpSaveServer]: AuthProvidersManageScope,

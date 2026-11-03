@@ -82,6 +82,8 @@ import {
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
+import * as PluginHandlers from "./toolkits/plugins/handlers.ts";
+import { PluginToolkit } from "./toolkits/plugins/tools.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import { requestUrl } from "../requestUrl.ts";
 
@@ -1231,6 +1233,8 @@ export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentHandlers.layer,
 );
 
+const layerPluginToolkit = toolkitRegistration(PluginToolkit, PluginHandlers.layer);
+
 export const layerPullRequestsToolkit = toolkitRegistration(
   PullRequestsToolkit,
   PullRequestsHandlers.layer,
@@ -1295,6 +1299,7 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerPluginToolkit,
 );
 
 // Remote MCP tools depend on what an admin connected, so the context budget leaves them out.

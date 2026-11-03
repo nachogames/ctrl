@@ -59,6 +59,8 @@ export const BUILT_IN_MCP_TOOL_NAMES: ReadonlyArray<string> = [
   "t3_group_resource",
   "t3_group_update",
   "t3_pending_request",
+  "t3_plugin_list",
+  "t3_plugin_reload",
   "t3_preview_close",
   "t3_preview_list",
   "t3_project_clone",

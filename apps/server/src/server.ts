@@ -111,6 +111,8 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as DirectPush from "./push/DirectPush.ts";
+import * as ClaudeModUi from "./plugins/ClaudeModUi.ts";
+import * as PluginHost from "./plugins/PluginHost.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ManagedLimits from "./policy/managedLimits.ts";
@@ -644,6 +646,7 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   DirectPush.layer,
+  PluginHost.layerEvents,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,
@@ -719,6 +722,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       CodexInstallation.CodexInstallation.layer,
     ),
   ),
+  // Below the provider registry: the Claude query runner draws mod UI into the plugin surfaces.
+  Layer.provideMerge(PluginHost.layer.pipe(Layer.provideMerge(ClaudeModUi.layerWithStore))),
 );
 
 const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(

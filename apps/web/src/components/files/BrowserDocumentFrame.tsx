@@ -181,6 +181,11 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onContentHeight?: (height: number) => void;
+  /**
+   * Receives every message this frame's page posts, with a way to answer it.
+   * A plugin view's `t3` bridge talks to its panel this way.
+   */
+  readonly onFrameMessage?: (data: unknown, reply: (message: unknown) => void) => void;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
 }) {
@@ -278,6 +283,7 @@ export function HtmlRenderDocument(props: {
   // focus by script, so this blocks opens on load, though not a page that waits for the
   // reader's next input.
   const onFrameMessage = useEffectEvent((frame: HTMLIFrameElement, event: MessageEvent) => {
+    props.onFrameMessage?.(event.data, (message) => frame.contentWindow?.postMessage(message, "*"));
     const height = readHtmlRenderContentHeight(event.data);
     if (height !== undefined) {
       props.onContentHeight?.(height);

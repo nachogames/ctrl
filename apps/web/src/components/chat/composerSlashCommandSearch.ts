@@ -10,7 +10,7 @@ import { scoreProviderSkill } from "../../providerSkillSearch";
 
 type SlashSearchItem = Extract<
   ComposerCommandItem,
-  { type: "slash-command" | "provider-slash-command" | "skill" }
+  { type: "slash-command" | "provider-slash-command" | "plugin-command" | "skill" }
 >;
 
 export const PROMPT_START_ONLY_HINT = "Works at the start of a message";
@@ -35,8 +35,12 @@ export function slashCommandItemsForPromptPosition(
     return [...items];
   }
   const skills = items.filter(isMidMessageSkill);
+  // Built-in and plugin commands act on the composer or the app, so they work anywhere;
+  // `/side` and `/btw` work only at the message start.
   const builtIns = items.filter(
-    (item) => item.type === "slash-command" && item.command !== "side" && item.command !== "btw",
+    (item) =>
+      (item.type === "slash-command" && item.command !== "side" && item.command !== "btw") ||
+      item.type === "plugin-command",
   );
   const startOnly = items.flatMap((item) =>
     item.type === "provider-slash-command" && !isMidMessageSkill(item)
@@ -122,7 +126,9 @@ export function searchSlashCommandItems(
             ? `0\u0000${item.command}`
             : item.type === "provider-slash-command"
               ? `1\u0000${item.command.name}\u0000${item.provider}`
-              : `2\u0000${item.skill.name}\u0000${item.provider}`,
+              : item.type === "plugin-command"
+                ? `2\u0000${item.command.name}\u0000${item.pluginId}`
+                : `3\u0000${item.skill.name}\u0000${item.provider}`,
       },
       Number.POSITIVE_INFINITY,
     );

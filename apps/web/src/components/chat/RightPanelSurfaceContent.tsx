@@ -1,3 +1,4 @@
+import { PluginViewPanel } from "../plugins/PluginViewPanel";
 import type {
   EditorId,
   EnvironmentId,
@@ -171,6 +172,15 @@ export function RightPanelSurfaceContent(props: {
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
     case "group":
       return <GroupPanel threadRef={threadRef} surface={surface} />;
+    case "plugin":
+      return (
+        <PluginViewPanel
+          key={surface.id}
+          environmentId={threadRef.environmentId}
+          threadRef={threadRef}
+          surface={surface}
+        />
+      );
     case "side-chat":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (

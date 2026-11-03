@@ -67,6 +67,7 @@ export * from "./previewAutomation.ts";
 export * from "./previewCapture.ts";
 export * from "./usage.ts";
 export * from "./scheduledTask.ts";
+export * from "./plugins.ts";
 export * from "./reviewSession.ts";
 export * from "./cursorMcp.ts";
 export * from "./worktreeMcp.ts";

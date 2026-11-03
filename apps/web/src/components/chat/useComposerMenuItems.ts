@@ -37,6 +37,7 @@ import {
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { pluginEnvironment } from "~/state/plugins";
 import { useComposerPathSearch, useDebouncedValue, useThreadSearch } from "~/state/queries";
 import {
   matchesPullRequestQuery,
@@ -184,6 +185,22 @@ export function useComposerMenuItems({
       ? []
       : composerPullRequestsFromLinks(threadPullRequests ?? [], pullRequestProjectId);
 
+  const plugins = useEnvironmentQuery(pluginEnvironment.snapshot({ environmentId, input: {} })).data
+    ?.plugins;
+  const pluginCommandItems = (plugins ?? [])
+    .filter((plugin) => plugin.enabled && plugin.state !== "error")
+    .flatMap((plugin) =>
+      plugin.commands.map((command) => ({
+        id: `plugin-command:${plugin.id}:${command.name}`,
+        type: "plugin-command" as const,
+        pluginId: plugin.id,
+        pluginName: plugin.name,
+        command,
+        label: `/${command.name}`,
+        description: command.description || plugin.name,
+      })),
+    );
+
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -292,7 +309,12 @@ export function useComposerMenuItems({
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
-        [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
+        [
+          ...builtInSlashCommandItems,
+          ...pluginCommandItems,
+          ...visibleProviderSlashCommandItems,
+          ...skillItems,
+        ],
         composerTrigger.rangeStart === 0,
       );
       return searchSlashCommandItems(slashCommandItems, query);

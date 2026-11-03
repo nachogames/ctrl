@@ -234,6 +234,8 @@ import { observeResize } from "~/lib/observeResize";
 
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 import { toastManager } from "../ui/toast";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { pluginEnvironment } from "~/state/plugins";
 import { BuildingIcon, PlayIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { useManagedPolicy } from "../../state/managedPolicy";
@@ -1854,6 +1856,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const { onUsageLimitsCommand } = props;
+  const runPluginCommand = useAtomCommand(pluginEnvironment.runCommand, {
+    label: "Run plugin command",
+  });
   const onSelectComposerItem = (item: ComposerCommandItem) => {
     if (composerSelectLockRef.current) return;
     composerSelectLockRef.current = true;
@@ -1935,6 +1940,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (applied) {
         setComposerHighlightedItemId(null);
       }
+      return;
+    }
+    if (item.type === "plugin-command") {
+      // A prompt command puts its text in the composer; any other runs in the plugin now.
+      const replacement = item.command.prompt ?? "";
+      const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+      });
+      if (!applied) return;
+      setComposerHighlightedItemId(null);
+      if (item.command.prompt !== undefined) return;
+      if (activeThreadId === null) {
+        toastManager.add({
+          type: "info",
+          title: `/${item.command.name} needs a thread`,
+          description: "Send a first message, then run it again.",
+        });
+        return;
+      }
+      void runPluginCommand({
+        environmentId,
+        input: {
+          pluginId: item.pluginId,
+          command: item.command.name,
+          threadId: activeThreadId,
+          args: "",
+        },
+      });
       return;
     }
     if (item.type === "skill") {

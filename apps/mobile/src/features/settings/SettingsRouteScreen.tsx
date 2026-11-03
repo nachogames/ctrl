@@ -265,6 +265,15 @@ function useSettingsIndexSections(): SettingsListSection[] {
         serverPage("SettingsProviderAccounts", "person.crop.circle", "Providers"),
         serverPage("SettingsThreads", "text.bubble", "Threads"),
         page("SettingsScheduledTasks", "clock", "Scheduled tasks"),
+        // Plugin views, bands and toasts draw only on web and desktop so far.
+        {
+          id: "plugins",
+          icon: "square.grid.2x2",
+          label: "Plugins",
+          value: "Not supported on mobile yet. Use web or desktop.",
+          valuePosition: "below",
+          disabled: true,
+        },
       ],
     },
     {

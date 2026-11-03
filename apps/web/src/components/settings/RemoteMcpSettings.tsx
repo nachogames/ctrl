@@ -23,6 +23,7 @@ import { RemoteMcpDuplicateCheck } from "./RemoteMcpDuplicateCheck";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
+import { PluginSettings } from "./PluginSettings";
 
 const AUTH_MODE_LABELS: Record<RemoteMcpAuthMode, string> = {
   oauth: "Sign in (OAuth)",
@@ -83,6 +84,7 @@ export function ToolsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <RemoteMcpSettings />
+      <PluginSettings />
     </SettingsPageContainer>
   );
 }

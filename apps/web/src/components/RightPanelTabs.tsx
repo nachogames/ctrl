@@ -44,6 +44,7 @@ import {
   Files,
   Globe2,
   LayersIcon,
+  Puzzle,
   MessagesSquare,
   Plus,
   TerminalSquare,
@@ -106,6 +107,23 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 
+export interface PluginViewLauncher {
+  readonly key: string;
+  readonly label: string;
+  readonly onClick: () => void;
+}
+
+/** Launcher rows for plugin views: always available, no letter shortcut. */
+const pluginViewActions = (views: ReadonlyArray<PluginViewLauncher> | undefined) =>
+  (views ?? []).map((view) => ({
+    label: view.label,
+    icon: Puzzle,
+    shortcut: "",
+    available: true,
+    disabledReason: "",
+    onClick: view.onClick,
+  }));
+
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
@@ -144,6 +162,8 @@ export interface RightPanelTabsProps {
   onAddDevice: () => void;
   /** Opens the routed chat's Group surface; absent where there is no routed chat. */
   onAddGroup?: () => void;
+  /** Views local plugins offer, each opened as its own tab. */
+  pluginViews?: ReadonlyArray<PluginViewLauncher>;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -314,7 +334,7 @@ function SurfaceMenuItem(props: {
       aria-keyshortcuts={props.shortcut}
     >
       {props.children}
-      <MenuShortcut>{props.shortcut}</MenuShortcut>
+      {props.shortcut === "" ? null : <MenuShortcut>{props.shortcut}</MenuShortcut>}
     </MenuItem>
   );
   if (props.available || !props.disabledReason) return item;
@@ -332,6 +352,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequests: () => void;
   onAddDevice: () => void;
   onAddGroup: () => void;
+  pluginViews: ReadonlyArray<PluginViewLauncher> | undefined;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -426,6 +447,7 @@ function RightPanelEmptyState(props: {
           },
         ]
       : []),
+    ...pluginViewActions(props.pluginViews),
   ].filter(isListedSurfaceAction);
 
   type SurfaceAction = (typeof actions)[number];
@@ -533,7 +555,7 @@ function RightPanelEmptyState(props: {
                   >
                     {action.label}
                   </span>
-                  <Kbd>{action.shortcut}</Kbd>
+                  {action.shortcut === "" ? null : <Kbd>{action.shortcut}</Kbd>}
                 </button>
                 {action.label === "Browser" && props.browserProfiles.length > 1 ? (
                   <Menu>
@@ -574,7 +596,7 @@ function RightPanelEmptyState(props: {
                   >
                     {actionIcon(action, "size-4")}
                     <span className="min-w-0 flex-1 truncate">{action.label}</span>
-                    <Kbd>{action.shortcut}</Kbd>
+                    {action.shortcut === "" ? null : <Kbd>{action.shortcut}</Kbd>}
                   </div>
                 }
               />
@@ -602,6 +624,8 @@ function surfaceTitle(
   switch (surface.kind) {
     case "group":
       return groupTitle ?? "Group";
+    case "plugin":
+      return surface.title;
     case "diff":
       return "Diff";
     case "files":
@@ -713,6 +737,8 @@ function SurfaceIcon({
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "group":
       return <LayersIcon className="size-3 shrink-0" />;
+    case "plugin":
+      return <Puzzle className="size-3 shrink-0" />;
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "device":
@@ -1199,6 +1225,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           },
         ]
       : []),
+    ...pluginViewActions(props.pluginViews),
   ].filter(isListedSurfaceAction);
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1579,6 +1606,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
             onAddGroup={props.onAddGroup ?? noop}
+            pluginViews={props.pluginViews}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}

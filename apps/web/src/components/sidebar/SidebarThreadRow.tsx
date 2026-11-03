@@ -1,3 +1,4 @@
+import { SidebarPluginStatus } from "../plugins/SidebarPluginStatus";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -1077,6 +1078,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onOpenPullRequest={handlePrClick}
       />
     ) : null;
+  const pluginStatus = (
+    <SidebarPluginStatus environmentId={threadRef.environmentId} threadId={threadRef.threadId} />
+  );
   const terminalStatusIcon = (
     <ThreadTerminalStatusButton
       threadRef={threadRef}
@@ -1171,6 +1175,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       ) : (
         <span className="flex-1" />
       )}
+      {pluginStatus}
       {terminalStatusIcon}
       {prBadge}
       {diff ? (
@@ -1234,6 +1239,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           {title}
           {multiline ? titleLineIcons : null}
           {pinIndicator}
+          {multiline && !metaLineEmpty ? null : pluginStatus}
           {multiline ? null : terminalStatusIcon}
           {isRegeneratingTitle ? (
             <span role="status" className="sr-only">
@@ -1642,6 +1648,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   Regenerating title
                 </span>
               ) : null}
+              {metaLineEmpty ? pluginStatus : null}
               {titleLineIcons}
             </div>
             {metaLine}

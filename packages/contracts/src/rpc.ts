@@ -383,6 +383,20 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import {
+  PluginBandPressInput,
+  PluginBandsSnapshot,
+  PluginBandsSubscribeInput,
+  PluginCommandRunInput,
+  PluginError,
+  PluginSetEnabledInput,
+  PluginsSnapshot,
+  PluginsSubscribeInput,
+  PluginViewCallInput,
+  PluginViewCallResult,
+  PluginViewReadInput,
+  PluginViewReadResult,
+} from "./plugins.ts";
+import {
   RemoteMcpAddInput,
   RemoteMcpAuthorizeInput,
   RemoteMcpAuthorizeResult,
@@ -595,6 +609,15 @@ export const WS_METHODS = {
   remoteMcpAuthorize: "remoteMcp.authorize",
   remoteMcpReconnect: "remoteMcp.reconnect",
   remoteMcpRemove: "remoteMcp.remove",
+  // Ctrl: local plugins and Claude Code mod UI.
+  pluginsSubscribe: "plugins.subscribe",
+  pluginsBandsSubscribe: "plugins.bands.subscribe",
+  pluginsBandPress: "plugins.bands.press",
+  pluginsViewRead: "plugins.view.read",
+  pluginsViewCall: "plugins.view.call",
+  pluginsCommandRun: "plugins.command.run",
+  pluginsSetEnabled: "plugins.setEnabled",
+  pluginsReload: "plugins.reload",
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
@@ -2241,6 +2264,67 @@ export const WsReviewSessionsRpcGroup = RpcGroup.make(
   WsReviewSessionsDiscussInSideChatRpc,
 ).middleware(RpcScopeAuthorization);
 
+const PluginRpcError = Schema.Union([PluginError, EnvironmentAuthorizationError]);
+
+/** Plugins, their state and what they show across threads: one snapshot, then one per change. */
+const WsPluginsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSubscribe, {
+  payload: PluginsSubscribeInput,
+  success: PluginsSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+/** The bands plugins and Claude Code mods draw above one thread's composer. */
+const WsPluginsBandsSubscribeRpc = Rpc.make(WS_METHODS.pluginsBandsSubscribe, {
+  payload: PluginBandsSubscribeInput,
+  success: PluginBandsSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsPluginsBandPressRpc = Rpc.make(WS_METHODS.pluginsBandPress, {
+  payload: PluginBandPressInput,
+  error: PluginRpcError,
+});
+
+const WsPluginsViewReadRpc = Rpc.make(WS_METHODS.pluginsViewRead, {
+  payload: PluginViewReadInput,
+  success: PluginViewReadResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsViewCallRpc = Rpc.make(WS_METHODS.pluginsViewCall, {
+  payload: PluginViewCallInput,
+  success: PluginViewCallResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsCommandRunRpc = Rpc.make(WS_METHODS.pluginsCommandRun, {
+  payload: PluginCommandRunInput,
+  error: PluginRpcError,
+});
+
+const WsPluginsSetEnabledRpc = Rpc.make(WS_METHODS.pluginsSetEnabled, {
+  payload: PluginSetEnabledInput,
+  error: PluginRpcError,
+});
+
+const WsPluginsReloadRpc = Rpc.make(WS_METHODS.pluginsReload, {
+  payload: Schema.Struct({}),
+  error: PluginRpcError,
+});
+
+export const WsPluginsRpcGroup = RpcGroup.make(
+  WsPluginsSubscribeRpc,
+  WsPluginsBandsSubscribeRpc,
+  WsPluginsBandPressRpc,
+  WsPluginsViewReadRpc,
+  WsPluginsViewCallRpc,
+  WsPluginsCommandRunRpc,
+  WsPluginsSetEnabledRpc,
+  WsPluginsReloadRpc,
+).middleware(RpcScopeAuthorization);
+
 /**
  * RPCs Ctrl adds on top of T3 Code, kept out of `WsBaseRpcGroup` so it stays the
  * size upstream typechecks: that group's handler layer sits at TypeScript's
@@ -2486,4 +2570,5 @@ export const WsRpcGroup = WsBaseRpcGroup.merge(
   WsReviewSessionsRpcGroup,
   WsCtrlRpcGroup,
   WsCursorMcpRpcGroup,
+  WsPluginsRpcGroup,
 );

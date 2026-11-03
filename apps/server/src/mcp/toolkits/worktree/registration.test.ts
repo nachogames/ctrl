@@ -42,6 +42,7 @@ import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import * as GroupResourceScanner from "../../../threadGroups/GroupResourceScanner.ts";
+import * as PluginHost from "../../../plugins/PluginHost.ts";
 import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
 import * as RemoteMcpServers from "../../../remoteMcp/RemoteMcpServers.ts";
 import * as DocumentText from "../../../provider/DocumentText.ts";
@@ -79,6 +80,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(ThreadGroupStore.ThreadGroupStoreV2)({}),
   Layer.mock(GroupResourceScanner.GroupResourceScanner)({}),
   Layer.mock(ReviewSessionService.ReviewSessionService)({}),
+  Layer.mock(PluginHost.PluginHost)({ pluginsDir: "/unused" }),
   Layer.mock(PeerForwarding.PeerForwarding)({}),
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
   Layer.mock(PeerLinks.PeerLinks)({}),

@@ -228,6 +228,9 @@ import { collectInlineContextIds } from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
+import { pluginEnvironment } from "../state/plugins";
+import { PluginThreadBand } from "./plugins/PluginThreadBand";
+import type { PluginViewLauncher } from "./RightPanelTabs";
 import { useEnvironmentScope } from "~/state/session";
 import {
   primaryServerAvailableEditorsAtom,
@@ -2814,6 +2817,28 @@ export default function ChatView(props: ChatViewProps) {
   // A delegated task is a remote thread's subagent.
   const isSubagentThread =
     activeThread?.lineage.relationshipToParent === "subagent" || delegatedFrom !== null;
+  const pluginPlugins = useEnvironmentQuery(
+    activeThreadRef
+      ? pluginEnvironment.snapshot({ environmentId: activeThreadRef.environmentId, input: {} })
+      : null,
+  ).data?.plugins;
+  const pluginViewLaunchers: ReadonlyArray<PluginViewLauncher> =
+    !activeThreadRef || !pluginPlugins
+      ? []
+      : pluginPlugins
+          .filter((plugin) => plugin.state !== "disabled" && plugin.state !== "error")
+          .flatMap((plugin) =>
+            plugin.views.map((view) => ({
+              key: `${plugin.id}:${view.id}`,
+              label: view.title,
+              onClick: () =>
+                useRightPanelStore.getState().openPluginView(activeThreadRef, {
+                  pluginId: plugin.id,
+                  viewId: view.id,
+                  title: view.title,
+                }),
+            })),
+          );
   // Side chats do not nest or start from subagents, and older servers would fork a listed thread.
   const sideChatsOffered =
     !embedded &&
@@ -3636,6 +3661,12 @@ export default function ChatView(props: ChatViewProps) {
                               }
                             />
                           ) : null}
+                          {!composerMounted || routeKind === "draft" || !activeThreadRef ? null : (
+                            <PluginThreadBand
+                              environmentId={activeThreadRef.environmentId}
+                              threadId={activeThreadRef.threadId}
+                            />
+                          )}
                           {!composerMounted ? null : (
                             <ChatComposer
                               canOperateThread={canOperateThread}
@@ -4057,6 +4088,7 @@ export default function ChatView(props: ChatViewProps) {
           groupAvailable={groupSurfaceAvailable}
           groupTitle={activeVisibleGroup?.title ?? null}
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
+          pluginViews={pluginViewLaunchers}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
           diffAvailable={isServerThread && isGitRepo}

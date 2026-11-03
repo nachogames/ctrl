@@ -103,6 +103,7 @@ import {
   WsCtrlRpcGroup,
   WsCursorMcpRpcGroup,
   WsReviewSessionsRpcGroup,
+  WsPluginsRpcGroup,
   WsRpcGroup,
   CursorMcpOperationError,
   type CursorMcpFolderInput,
@@ -244,6 +245,7 @@ import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as DirectPush from "./push/DirectPush.ts";
+import * as PluginHost from "./plugins/PluginHost.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
@@ -636,6 +638,7 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 const ServerWsBaseRpcGroup = WsBaseRpcGroup.middleware(RpcInstrumentation);
 const ServerReviewSessionsRpcGroup = WsReviewSessionsRpcGroup.middleware(RpcInstrumentation);
+const ServerPluginsRpcGroup = WsPluginsRpcGroup.middleware(RpcInstrumentation);
 const ServerCtrlRpcGroup = WsCtrlRpcGroup.middleware(RpcInstrumentation);
 const ServerCursorMcpRpcGroup = WsCursorMcpRpcGroup.middleware(RpcInstrumentation);
 
@@ -1360,6 +1363,23 @@ const layerReviewSessionsRpc = ServerReviewSessionsRpcGroup.toLayer(
       [WS_METHODS.reviewSessionsRequest]: (input) => reviewHost.request(input),
       [WS_METHODS.reviewSessionsRunLocalReview]: (input) => reviewHost.runLocalReview(input),
       [WS_METHODS.reviewSessionsDiscussInSideChat]: (input) => reviewSessions.openSideChat(input),
+    });
+  }),
+);
+
+const layerPluginsRpc = ServerPluginsRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const plugins = yield* PluginHost.PluginHost;
+    return ServerPluginsRpcGroup.of({
+      [WS_METHODS.pluginsSubscribe]: (_input) => plugins.subscribe,
+      [WS_METHODS.pluginsBandsSubscribe]: (input) => plugins.subscribeBands(input.threadId),
+      [WS_METHODS.pluginsBandPress]: (input) => plugins.press(input),
+      [WS_METHODS.pluginsViewRead]: (input) => plugins.readView(input.pluginId, input.viewId),
+      [WS_METHODS.pluginsViewCall]: (input) =>
+        plugins.callView(input).pipe(Effect.map((value) => ({ value }))),
+      [WS_METHODS.pluginsCommandRun]: (input) => plugins.runCommand(input),
+      [WS_METHODS.pluginsSetEnabled]: (input) => plugins.setEnabled(input.pluginId, input.enabled),
+      [WS_METHODS.pluginsReload]: (_input) => Effect.asVoid(plugins.reload),
     });
   }),
 );
@@ -3733,6 +3753,7 @@ export const layer = Layer.unwrap(
               layerReviewSessionsRpc,
               layerCtrlRpc,
               layerCursorMcpRpc.pipe(Layer.provide(CursorMcpServers.layer)),
+              layerPluginsRpc,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.

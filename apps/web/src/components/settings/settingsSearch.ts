@@ -893,6 +893,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["simulator support xcode android studio sdk avd runtime"],
   },
   {
+    id: "plugins",
+    title: "Plugins",
+    to: "/settings/tools",
+    targetId: "plugins",
+    searchTerms: ["extensions mods claude code mods views status toast band slash commands"],
+  },
+  {
     id: "browser-profiles",
     title: "Browser profiles",
     to: "/settings/browser",
