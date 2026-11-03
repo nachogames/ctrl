@@ -52,8 +52,8 @@ const PLUGIN_COMMAND_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 /**
  * One entry of `commands`: a `/name` in the composer menu. A command with a
- * `prompt` puts that text in the composer; one without calls the plugin's
- * `commands` handler with the rest of the line.
+ * `prompt` puts that text in the composer; one without runs the plugin's
+ * command handler as soon as it is picked, with empty `args` for now.
  */
 export const PluginCommandDeclaration = Schema.Struct({
   name: Schema.String.check(Schema.isMaxLength(32), Schema.isPattern(PLUGIN_COMMAND_NAME_PATTERN)),

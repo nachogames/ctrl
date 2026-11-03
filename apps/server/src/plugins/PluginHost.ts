@@ -261,6 +261,7 @@ const make = Effect.gen(function* () {
   const claudeModUi = yield* ClaudeModUi.ClaudeModUi;
   const pluginsDir = NodePath.join(config.baseDir, PLUGINS_DIR_NAME);
   const enabledStatePath = NodePath.join(config.stateDir, "plugins.json");
+  const pluginDataRoot = NodePath.join(config.stateDir, "plugin-data");
   const services = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(services);
 
@@ -331,7 +332,6 @@ const make = Effect.gen(function* () {
     const source = sourceOf(record);
     switch (message.t) {
       case "ready":
-        record.crashes = [];
         return setState(record, "running", null);
       case "fatal":
         appendLog(record, String(message.error));
@@ -428,8 +428,11 @@ const make = Effect.gen(function* () {
       const entryPath = resolveInside(record.scanned.dir, manifest.entry);
       if (entryPath === null)
         return setState(record, "error", `entry ${manifest.entry} is missing.`);
+      // Outside the watched plugins folder: a write there would reload the plugin.
+      const dataDir = NodePath.join(pluginDataRoot, encodeURIComponent(manifest.id));
       let processHandle: NodeChildProcess.ChildProcess;
       try {
+        NodeFS.mkdirSync(dataDir, { recursive: true });
         processHandle = NodeChildProcess.spawn(process.execPath, ["-e", PLUGIN_RUNNER_SOURCE], {
           cwd: record.scanned.dir,
           stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -443,6 +446,7 @@ const make = Effect.gen(function* () {
               name: manifest.name,
               version: manifest.version,
               dir: record.scanned.dir,
+              dataDir,
             }),
           },
         });

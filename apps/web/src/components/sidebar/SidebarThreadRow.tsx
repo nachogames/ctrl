@@ -1239,7 +1239,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           {title}
           {multiline ? titleLineIcons : null}
           {pinIndicator}
-          {pluginStatus}
+          {multiline && !metaLineEmpty ? null : pluginStatus}
           {multiline ? null : terminalStatusIcon}
           {isRegeneratingTitle ? (
             <span role="status" className="sr-only">
@@ -1648,6 +1648,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   Regenerating title
                 </span>
               ) : null}
+              {metaLineEmpty ? pluginStatus : null}
               {titleLineIcons}
             </div>
             {metaLine}

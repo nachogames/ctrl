@@ -18,7 +18,8 @@ can call `t3_plugin_list`, which returns the plugins folder and a guide to writi
 
 A plugin is a folder in `plugins` inside your Ctrl home folder (`~/.ctrl/plugins` for the
 desktop app). Ctrl watches the folder. When a plugin is added or a file changes, Ctrl loads it
-again. You do not need to restart Ctrl.
+again. You do not need to restart Ctrl. For the same reason, a plugin keeps files it writes in
+`ctx.plugin.dataDir`, not in its own folder.
 
 Settings → Tools → Plugins lists each plugin, shows why one failed to load, and turns it on
 or off.
