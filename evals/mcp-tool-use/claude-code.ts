@@ -328,7 +328,8 @@ export const runClaudeCodeSample = async (sample: ClaudeCodeSample) => {
       }
     }
   } catch (error) {
-    if (!abort.signal.aborted) throw error;
+    // The SDK throws after a max-turns result; an API run grades that as running out of steps.
+    if (!abort.signal.aborted && stopReason !== "max_steps") throw error;
   } finally {
     session.close();
   }
