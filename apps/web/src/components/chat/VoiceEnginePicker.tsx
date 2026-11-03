@@ -11,6 +11,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import {
   Menu,
+  MenuGroup,
   MenuGroupLabel,
   MenuPopup,
   MenuRadioGroup,
@@ -90,24 +91,26 @@ export function VoiceEnginePicker(props: { readonly environmentId: EnvironmentId
         <ChevronUpIcon aria-hidden />
       </MenuTrigger>
       <MenuPopup side="top" align="end" className="max-w-64" {...composerFloatingLayerProps}>
-        <MenuGroupLabel>Quick voice</MenuGroupLabel>
-        <MenuRadioGroup
-          aria-label="Quick voice"
-          value={value}
-          onValueChange={(next: string) => void choose(next as QuickVoice)}
-        >
-          {CHOICES.map((choice) => (
-            <MenuRadioItem key={choice.id} value={choice.id} closeOnClick>
-              <span className="flex items-center gap-3">
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate">{choice.label}</span>
-                  <span className="text-muted-foreground text-xs">{choice.description}</span>
+        <MenuGroup>
+          <MenuGroupLabel>Quick voice</MenuGroupLabel>
+          <MenuRadioGroup
+            aria-label="Quick voice"
+            value={value}
+            onValueChange={(next: string) => void choose(next as QuickVoice)}
+          >
+            {CHOICES.map((choice) => (
+              <MenuRadioItem key={choice.id} value={choice.id} closeOnClick>
+                <span className="flex items-center gap-3">
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate">{choice.label}</span>
+                    <span className="text-muted-foreground text-xs">{choice.description}</span>
+                  </span>
+                  <MenuRadioItemIndicator />
                 </span>
-                <MenuRadioItemIndicator />
-              </span>
-            </MenuRadioItem>
-          ))}
-        </MenuRadioGroup>
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
       </MenuPopup>
     </Menu>
   );
