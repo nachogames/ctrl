@@ -74,6 +74,12 @@ import {
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
+import {
+  makeSandbox,
+  runClaudeCodeSample,
+  startMcpServer,
+  structuredAnswer,
+} from "./claude-code.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
 import {
   AGENT_DEVICE_SHELL,
@@ -879,6 +885,26 @@ const loadTools = (tools: Array<ApiTool>, id: string, found: ReadonlyArray<ApiTo
   return { type: "tool_result", tool_use_id: id, content };
 };
 
+/** The user's message as T3 sends it: with its composer, side-chat or delegation context. */
+const promptText = (testCase: McpToolUseCase) => {
+  const { sideChat, role, delegateRole } = testCase.setup;
+  const userText =
+    testCase.promptContext === undefined
+      ? testCase.prompt
+      : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+  const prompt =
+    sideChat === undefined
+      ? userText
+      : withInlineContext(
+          makeSideChatContext({
+            parentThreadId: ThreadId.make(sideChat.parentThreadId),
+            digest: sideChat.digest,
+          }),
+          userText,
+        );
+  return role === "delegated-child" ? taskPrompt({ task: prompt, role: delegateRole }) : prompt;
+};
+
 /** Messages for a case: reminders, context, prior turns with real tool blocks, then the prompt. */
 export const buildMessages = (sample: Sample) => {
   const { testCase, base, tools } = sample;
@@ -888,7 +914,7 @@ export const buildMessages = (sample: Sample) => {
     if (last?.role !== role) messages.push({ role, content: blocks });
     else messages[messages.length - 1] = { role, content: [...last.content, ...blocks] };
   };
-  const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
+  const { role, context, priorTurns = [] } = testCase.setup;
   const native = role === "native-subagent";
   const notes = [
     native
@@ -931,23 +957,7 @@ export const buildMessages = (sample: Sample) => {
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
-  const userText =
-    testCase.promptContext === undefined
-      ? testCase.prompt
-      : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
-  const sideChat = testCase.setup.sideChat;
-  const prompt =
-    sideChat === undefined
-      ? userText
-      : withInlineContext(
-          makeSideChatContext({
-            parentThreadId: ThreadId.make(sideChat.parentThreadId),
-            digest: sideChat.digest,
-          }),
-          userText,
-        );
-  const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+  push("user", text(promptText(testCase)));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));
@@ -1336,6 +1346,7 @@ const SHELL_REPLY_SCHEMA = {
   additionalProperties: false,
 };
 const decodeShellReply = Schema.decodeUnknownOption(Schema.fromJsonString(ShellReply));
+const isShellReply = Schema.is(ShellReply);
 
 const callText = ({ tool, input }: Omit<ShellEntry, "output">) =>
   `<call>${tool} ${valueText(input)}</call>`;
@@ -1400,6 +1411,8 @@ export const mockOutput = (sample: Sample, command: string) =>
 
 type Config = {
   readonly apiKey: string;
+  /** Set when samples run through Claude Code on the signed-in subscription. */
+  readonly claudeCode?: Awaited<ReturnType<typeof startMcpServer>>;
   readonly model: Model;
   readonly proxy?: { readonly url: string; readonly headers: Readonly<Record<string, string>> };
   readonly effort: string;
@@ -1424,6 +1437,19 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
 ) {
   const command = call.tool === "Bash" && isRecord(call.input) ? call.input.command : undefined;
   let output = typeof command === "string" ? cannedOutput(sample, command) : undefined;
+  if (output === undefined && config.claudeCode !== undefined) {
+    const body = shellRequest(sample, call, config.shellModel);
+    const answer = yield* Effect.promise(() =>
+      structuredAnswer({
+        model: body.model,
+        system: body.system,
+        prompt: body.messages[0]!.content.map((block) => valueText(block.text)).join("\n\n"),
+        schema: SHELL_REPLY_SCHEMA,
+      }),
+    );
+    for (const key of USAGE_KEYS) sample.shellUsage[key] += answer.usage[key];
+    output = isShellReply(answer.value) ? answer.value.output.trim() : answer.text.trim();
+  }
   if (output === undefined) {
     const body = shellRequest(sample, call, config.shellModel);
     const response = yield* callModel(
@@ -1981,6 +2007,95 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   };
 }, Effect.scoped);
 
+/** Cases Claude Code cannot replay: it starts each sample fresh, from the user's message. */
+export const claudeCodeSkips = (testCase: McpToolUseCase) =>
+  (testCase.setup.priorTurns ?? []).length > 0 || testCase.setup.role === "native-subagent";
+
+/**
+ * Runs one sample in the real Claude Code with T3's Claude options, as a T3 thread runs. T3 tools
+ * answer as in an API run; shell commands print the simulator's output and never run.
+ */
+const runSampleClaudeCode = Effect.fn("evaluateMcpToolUse.runSampleClaudeCode")(function* (
+  testCase: McpToolUseCase,
+  config: Config & { readonly claudeCode: Awaited<ReturnType<typeof startMcpServer>> },
+  base: Base,
+  spent: { readonly usage: Usage; readonly shellUsage: Usage },
+) {
+  const world = testCase.setup.world;
+  const files = Object.fromEntries(
+    Object.entries(isRecord(world?.files) ? world.files : {}).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+  const sandbox = yield* Effect.acquireRelease(
+    Effect.promise(() => makeSandbox(files)),
+    (made) => Effect.promise(made.dispose),
+  );
+  const environment = { ...base.environment, cwd: sandbox.cwd };
+  const sample = {
+    ...makeSample(testCase, { ...base, environment }),
+    shellUsage: spent.shellUsage,
+  };
+  // Claude Code loads deferred tools itself, so every tool counts as loaded here.
+  sample.tools.push(...base.deferred);
+  yield* withDevices(sample);
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<HttpClient.HttpClient>());
+  const calls: Array<Call> = [];
+  const notes = [testCase.setup.context].flatMap((note) => (note ? [note] : []));
+  const prompt = [gitStatus(testCase), ...notes]
+    .map((value) => `<system-reminder>\n${value}\n</system-reminder>`)
+    .concat(promptText(testCase))
+    .join("\n\n");
+  const extra = (testCase.maxSteps ?? config.maxSteps) - config.maxSteps;
+  const run = yield* Effect.tryPromise(() =>
+    runClaudeCodeSample({
+      t3Options: claudeQueryOptions(config.model, world?.deviceAgentAccess !== false),
+      model: config.model,
+      effort: config.effort,
+      maxTurns: config.maxSteps + extra,
+      prompt,
+      sandbox,
+      mcp: config.claudeCode,
+      tools: base.t3.map((tool) => ({
+        name: tool.name.slice(T3_PREFIX.length),
+        description: valueText(tool.description),
+        inputSchema: tool.input_schema,
+      })),
+      callT3: (name, input) =>
+        runPromise(
+          answerToolCall(sample, config, {
+            type: "tool_use",
+            id: "mcp",
+            name: `${T3_PREFIX}${name}`,
+            input,
+          }),
+        ).then((block) => ({ text: valueText(block.content), isError: block.is_error === true })),
+      shell: (tool, input) =>
+        runPromise(simulate(sample, config, { tool: tool === "Monitor" ? "Bash" : tool, input })),
+      onCall: (step, id, name, input) =>
+        calls.push(recordedCall(step, { type: "tool_use", id, name, input })),
+      onResult: (id, output, isError) =>
+        settle(
+          calls.find((call) => call.id === id),
+          { type: "tool_result", content: output, is_error: isError },
+        ),
+      settled: () => failedEarly(testCase.expect, { calls, text: "", stopReason: "tool_use" }),
+    }),
+  );
+  for (const key of USAGE_KEYS) spent.usage[key] += run.usage[key];
+  return {
+    calls,
+    text: run.text,
+    stopReason: run.stopReason,
+    finalText: run.finalText,
+    linked: [...sample.linked],
+    ...(sample.devices ? { launchers: [...sample.devices.launchers] } : {}),
+    usage: spent.usage,
+    shellUsage: sample.shellUsage,
+    transcript: run.transcript,
+  };
+}, Effect.scoped);
+
 type ResultRow = Pick<McpToolUseCase, "id" | "kind" | "pattern"> & {
   readonly role: string;
   readonly pass: boolean;
@@ -2013,7 +2128,13 @@ const spend = (usages: ReadonlyArray<Usage>, model: PricedModel | undefined) => 
 /** Markdown report. With a baseline, each case shows its earlier pass rate and the change. */
 export const summarize = (
   rows: Array<ResultRow>,
-  options: { readonly header: string; readonly shellModel: PricedModel; readonly model: Model },
+  options: {
+    readonly header: string;
+    readonly shellModel: PricedModel;
+    readonly model: Model;
+    /** Claude Code ran with its own prompt, so no captured identity line was replaced. */
+    readonly claudeCode?: boolean;
+  },
   before?: Map<string, number>,
 ) => {
   const codex = isCodex(options.model);
@@ -2066,7 +2187,9 @@ export const summarize = (
       ? [
           "- Code-mode tools use case mocks and a simulated machine. Native subagent prompts and asynchronous notifications are approximate.",
         ]
-      : [identityNote]),
+      : options.claudeCode
+        ? []
+        : [identityNote]),
     ...(rows.some((row) => row.role === "native-subagent") ? [nativeNote] : []),
     "",
     ...table("Cases", (row) => row.id, before !== undefined),
@@ -2088,7 +2211,8 @@ const Flags = Schema.Struct({
   baseline: Schema.optional(Schema.String),
   case: Schema.optional(Schema.Array(Schema.String)),
   samples: Schema.optional(PositiveInt),
-  concurrency: PositiveInt,
+  concurrency: Schema.optional(PositiveInt),
+  harness: Schema.Literals(["api", "claude-code"]),
   "max-steps": Schema.optional(PositiveInt),
   effort: Schema.optional(Schema.Literals(EFFORTS)),
   "shell-model": Schema.Literals(Object.keys(PRICES) as Array<PricedModel>),
@@ -2125,8 +2249,10 @@ const main = Effect.gen(function* () {
       case: { ...string, multiple: true },
       // Unset: 2 samples per case, and a 3rd when those 2 disagree.
       samples: string,
-      // Samples in flight at once, across all cases.
-      concurrency: { ...string, default: "8" },
+      // Samples in flight at once, across all cases. Unset: 8, or 3 through Claude Code.
+      concurrency: string,
+      // claude-code runs each sample in the real Claude Code on the signed-in subscription.
+      harness: { ...string, default: "api" },
       // Unset: 6 for Claude, 10 for Codex, whose code-mode cells take more steps.
       "max-steps": string,
       effort: string,
@@ -2165,12 +2291,23 @@ const main = Effect.gen(function* () {
   const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase))).flat();
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
+  const claudeCode = flags.harness === "claude-code";
+  if (codex && claudeCode) {
+    return yield* Effect.die(new Error("--harness claude-code runs Claude models only."));
+  }
   const harness = codex ? "codex" : "claude";
-  const selected = cases.filter(
+  const matching = cases.filter(
     ({ id, setup }) =>
       (wanted === undefined || wanted.includes(id)) &&
       (setup.harness === undefined || setup.harness === harness),
   );
+  const skipped = claudeCode ? matching.filter(claudeCodeSkips).map(({ id }) => id) : [];
+  if (skipped.length > 0) {
+    yield* Effect.logWarning(
+      `Claude Code cannot replay prior turns; skipped ${skipped.join(", ")}.`,
+    );
+  }
+  const selected = matching.filter(({ id }) => !skipped.includes(id));
   if (selected.length === 0) return yield* Effect.die(new Error("No case matches --case."));
   // Trimmed captures without user data ship beside the cases. `--template` also takes a raw
   // CLIProxyAPI capture.
@@ -2249,13 +2386,19 @@ const main = Effect.gen(function* () {
   }
   const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
   const out = flags.out;
-  if ((!apiKey && !codex) || out === undefined) {
+  if ((!apiKey && !codex && !claudeCode) || out === undefined) {
     const message =
-      "Set ANTHROPIC_API_KEY and pass --out <directory>. ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are never used.";
+      "Set ANTHROPIC_API_KEY (or pass --harness claude-code) and pass --out <directory>. ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are never used.";
     return yield* Effect.die(new Error(message));
   }
+  const mcp = claudeCode
+    ? yield* Effect.acquireRelease(Effect.promise(startMcpServer), (server) =>
+        Effect.promise(server.close),
+      )
+    : undefined;
   const config: Config = {
-    apiKey,
+    apiKey: claudeCode ? "" : apiKey,
+    ...(mcp === undefined ? {} : { claudeCode: mcp }),
     model: flags.model,
     ...(codex ? { proxy: proxyConfig() } : {}),
     effort,
@@ -2277,7 +2420,8 @@ const main = Effect.gen(function* () {
       encoding: "utf8",
     }).trim(),
   ).pipe(Effect.orElseSucceed(() => "unknown"));
-  const inFlight = yield* Semaphore.make(flags.concurrency);
+  const concurrency = flags.concurrency ?? (claudeCode ? 3 : 8);
+  const inFlight = yield* Semaphore.make(concurrency);
   const runOne = (testCase: McpToolUseCase) => {
     const { id, kind, pattern } = testCase;
     const identity = { id, kind, pattern, role: testCase.setup.role };
@@ -2285,7 +2429,11 @@ const main = Effect.gen(function* () {
     const privateValues = [config.apiKey, ...Object.values(config.proxy?.headers ?? {})]
       .flatMap((value) => [value, value.replace(/^Bearer /i, "")])
       .filter(Boolean);
-    return runSample(testCase, config, baseFor(testCase), usage).pipe(
+    return (
+      mcp === undefined
+        ? runSample(testCase, config, baseFor(testCase), usage)
+        : runSampleClaudeCode(testCase, { ...config, claudeCode: mcp }, baseFor(testCase), usage)
+    ).pipe(
       inFlight.withPermits(1),
       Effect.matchCause({
         // Not graded: a sample that errors is left out of pass rates, with its tokens so far.
@@ -2339,10 +2487,12 @@ const main = Effect.gen(function* () {
           return regressions.length > budget ? Effect.fail(testCase.id) : Effect.void;
         }),
       ),
-    { concurrency: flags.concurrency, discard: true },
+    { concurrency, discard: true },
   ).pipe(Effect.ignore);
   const samples = flags.samples === undefined ? "2-3 (adaptive)" : flags.samples;
-  const header = `Commit \`${commit}\`, ${flags.model} at ${effort} effort, user instructions ${flags["user-instructions"]}, ${samples} samples per case, template \`${path.basename(templatePath)}\``;
+  const header = claudeCode
+    ? `Commit \`${commit}\`, ${flags.model} at ${effort} effort in Claude Code on the subscription (costs below are API list-price equivalents, not charges), ${samples} samples per case`
+    : `Commit \`${commit}\`, ${flags.model} at ${effort} effort, user instructions ${flags["user-instructions"]}, ${samples} samples per case, template \`${path.basename(templatePath)}\``;
   const finished = new Set(rows.map((row) => row.id)).size;
   const stopped =
     regressions.length === 0
@@ -2356,6 +2506,7 @@ const main = Effect.gen(function* () {
       header: [header, t3ContextReport(flags.model), ...stopped].join("\n"),
       shellModel: config.shellModel,
       model: config.model,
+      claudeCode,
     },
     flags.baseline === undefined ? undefined : baseline,
   );
@@ -2368,6 +2519,7 @@ const main = Effect.gen(function* () {
 
 if (import.meta.main) {
   main.pipe(
+    Effect.scoped,
     Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer)),
     NodeRuntime.runMain,
   );

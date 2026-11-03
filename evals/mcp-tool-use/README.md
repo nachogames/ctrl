@@ -14,10 +14,24 @@ pnpm mcp-tool-use --model claude-opus-5-5 --out runs/opus
 
 - `ANTHROPIC_API_KEY` in the repo root `.env` pays for Claude models and the Haiku shell simulator.
 - Codex models (`gpt-*` in `MODELS` in `run.ts`) go through a CLIProxyAPI server, set up as the `vibeproxy` model provider in `~/.codex/config.toml`. Keep the proxy under about 12 samples in flight across all runs.
-- Flags: `--case <ids>`, `--cases <file.ndjson>`, `--samples <n>` (default 2, and a 3rd when the first 2 disagree), `--concurrency <n>` (samples in flight, default 8), `--max-steps <n>`, `--effort <level>`, `--dry-run` (prints request bodies, no model calls), and `--context` (prints the size of T3's text and schemas, no key needed).
+- Flags: `--case <ids>`, `--cases <file.ndjson>`, `--samples <n>` (default 2, and a 3rd when the first 2 disagree), `--concurrency <n>` (samples in flight, default 8, or 3 with Claude Code), `--harness <api|claude-code>` (see below), `--max-steps <n>`, `--effort <level>`, `--dry-run` (prints request bodies, no model calls), and `--context` (prints the size of T3's text and schemas, no key needed).
 - `--baseline <results.jsonl> --stop-on-regression` stops as soon as a case that passed every baseline sample fails. Use it to test one copy change against a baseline run.
 - Cost: the existing non-device suite costs about $9 on Sonnet and $17 on Opus. The 16 device cases at 3 samples each cost about $5.70–5.90 on Opus and $2.90–3.40 on Sonnet (main's text–#25661), including the Haiku shell simulator; dry runs cost $0. Results record token costs for the agent and shell simulator. Codex proxy charges are outside that total; only its shell simulator is priced here, about $0.60–0.70 for the device cases.
 - A rate limit or overload (429, 529 or another 5xx) is retried with backoff for up to about 4 minutes. A sample that still fails gets an `error` in `results.jsonl`, is left out of every pass rate, and is listed in the summary; the tokens it spent still count toward the cost.
+
+## Run on a Claude subscription
+
+`--harness claude-code` runs each sample in the real Claude Code through the Agent SDK, with T3's Claude options, as a T3 thread runs. It signs in with the Claude subscription of whoever runs it, so it needs no API key and charges nothing beyond the subscription's usage limits. The summary still prices tokens at API rates, as an estimate.
+
+```sh
+cd evals
+node mcp-tool-use/run.ts --harness claude-code --cases mcp-tool-use/cases/review-sessions.ndjson --samples 3 --out runs/cc
+```
+
+- It uses the `claude` on your `PATH`, or `CLAUDE_CODE_BIN`. Your own settings, CLAUDE.md, plugins, skills, hooks and MCP servers stay out.
+- T3 tools answer from a local MCP server with the same results as an API run. Shell commands never run: each one prints the simulator's output, and the simulator also runs on the subscription. File tools read and edit the case's `world.files` in a temporary sandbox.
+- Claude Code starts every sample fresh, so cases with `priorTurns` and `native-subagent` cases are skipped. Claude models only. Default concurrency is 3.
+- Its prompt is Claude Code's own, not the trimmed template, so compare its scores only with another `--harness claude-code` run: the same cases on the old text and on the new.
 
 ## Add a case
 
@@ -124,7 +138,7 @@ These cases measure routing decisions with simulated tools, not delivered child 
 
 ## Review session cases
 
-`cases/review-sessions.ndjson` checks Ctrl's review trigger: a review request groups the chat and opens `review_session_open` with the PR's url and head, an existing GitHub review is triaged rather than rerun, a merged PR gets no session, and ordinary code work that mentions reviews uses none of it. `review_session_open` answers with the real brief from `reviewBrief.ts`.
+`cases/review-sessions.ndjson` checks Ctrl's review trigger: a review request links the PR, groups the chat, opens `review_session_open` with the PR's url and head and starts the local review; an existing GitHub review is triaged rather than rerun; a merged PR gets no session; and ordinary code work that mentions reviews uses none of it. `review_session_open` answers with the real brief from `reviewBrief.ts`.
 
 ## Where T3's text lives
 
