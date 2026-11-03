@@ -31,6 +31,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "group",
+  "plugin",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -91,7 +92,9 @@ export type RightPanelSurface =
    * The routed chat's group. `section` asks the panel to scroll that section into view
    * when the surface is opened for it; each `openGroup` writes a fresh descriptor.
    */
-  | { id: "group"; kind: "group"; section: GroupPanelSection | null };
+  | { id: "group"; kind: "group"; section: GroupPanelSection | null }
+  /** A local plugin's view; the title is the manifest's, kept so a closed tab can reopen. */
+  | { id: `plugin:${string}`; kind: "plugin"; pluginId: string; viewId: string; title: string };
 
 export type GroupPanelSection = "header" | "workspace" | "chats" | "running" | "handoff";
 
@@ -155,7 +158,7 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "plugin">,
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
@@ -175,6 +178,10 @@ interface RightPanelStoreState {
   ) => void;
   /** Opens (or re-targets) the Group surface, optionally scrolled to one section. */
   openGroup: (ref: ScopedThreadRef, options?: { section?: GroupPanelSection | null }) => void;
+  openPluginView: (
+    ref: ScopedThreadRef,
+    view: { pluginId: string; viewId: string; title: string },
+  ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -202,7 +209,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "plugin">,
   ) => void;
   setThreadPanelOpen: (
     ref: ScopedThreadRef,
@@ -225,7 +232,7 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "plugin">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -273,6 +280,20 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   resourceId: terminalId,
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
+});
+
+export type PluginViewSurface = Extract<RightPanelSurface, { kind: "plugin" }>;
+
+export const pluginViewSurface = (view: {
+  pluginId: string;
+  viewId: string;
+  title: string;
+}): PluginViewSurface => ({
+  id: `plugin:${encodeURIComponent(view.pluginId)}:${encodeURIComponent(view.viewId)}`,
+  kind: "plugin",
+  pluginId: view.pluginId,
+  viewId: view.viewId,
+  title: view.title,
 });
 
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
@@ -488,6 +509,13 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     if (!RIGHT_PANEL_KINDS.some((known) => known === kind)) return [];
                     if (surface.kind === "group") {
                       return [{ id: "group", kind: "group", section: null }];
+                    }
+                    if (surface.kind === "plugin") {
+                      return typeof surface.pluginId === "string" &&
+                        typeof surface.viewId === "string" &&
+                        typeof surface.title === "string"
+                        ? [pluginViewSurface(surface)]
+                        : [];
                     }
                     if (surface.kind === "file") {
                       const revealLine =
@@ -738,6 +766,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               surfaces: next.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
             };
           }),
+        ),
+      openPluginView: (ref, view) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, pluginViewSurface(view)),
+          ),
         ),
       openFile: (ref, requestedPath, line) =>
         set((state) =>

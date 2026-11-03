@@ -124,6 +124,11 @@ export function HtmlRenderDocument(props: {
   readonly threadRef?: ScopedThreadRef | undefined;
   /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
   readonly onContentHeight?: (height: number) => void;
+  /**
+   * Receives every other message this frame's page posts, with a way to answer
+   * it. A plugin view's `t3` bridge talks to its panel this way.
+   */
+  readonly onFrameMessage?: (data: unknown, reply: (message: unknown) => void) => void;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -265,6 +270,20 @@ export function HtmlRenderDocument(props: {
     window.addEventListener("message", replayKey);
     return () => window.removeEventListener("message", replayKey);
   }, []);
+  const onFrameMessage = useEffectEvent((data: unknown) => {
+    props.onFrameMessage?.(data, (message) =>
+      frameRef.current?.contentWindow?.postMessage(message, "*"),
+    );
+  });
+  const relaysMessages = props.onFrameMessage !== undefined;
+  useEffect(() => {
+    if (!relaysMessages) return;
+    const relay = (event: MessageEvent) => {
+      if (event.source === frameRef.current?.contentWindow) onFrameMessage(event.data);
+    };
+    window.addEventListener("message", relay);
+    return () => window.removeEventListener("message", relay);
+  }, [relaysMessages]);
   const { onContentHeight } = props;
   // A page posts its height once per change, so listen from the commit that
   // inserts the frame; a passive effect could run after a fast page's first post.

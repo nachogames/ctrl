@@ -112,6 +112,8 @@ export const PluginSummary = Schema.Struct({
   dir: Schema.String,
   enabled: Schema.Boolean,
   state: PluginState,
+  /** Goes up each time the host reloads the plugin's files. */
+  revision: Schema.Number,
   error: Schema.optionalKey(Schema.String),
   views: Schema.Array(Schema.Struct({ id: Schema.String, title: Schema.String })),
   commands: Schema.Array(PluginCommandDeclaration),
@@ -244,6 +246,8 @@ export type PluginBandPressInput = typeof PluginBandPressInput.Type;
 export const PluginViewReadInput = Schema.Struct({
   pluginId: Schema.String,
   viewId: Schema.String,
+  /** The plugin's revision the client saw; a new one reads the page afresh. */
+  revision: Schema.optionalKey(Schema.Number),
 });
 export const PluginViewReadResult = Schema.Struct({
   title: Schema.String,

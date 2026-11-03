@@ -287,6 +287,10 @@
       "types": "./src/state/reviewSessions.ts",
       "default": "./src/state/reviewSessions.ts"
     },
+    "./state/plugins": {
+      "types": "./src/state/plugins.ts",
+      "default": "./src/state/plugins.ts"
+    },
     "./state/thread-inbox": {
       "types": "./src/state/threadInbox.ts",
       "default": "./src/state/threadInbox.ts"

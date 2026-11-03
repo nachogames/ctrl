@@ -419,6 +419,10 @@ import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnect
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
+import { pluginEnvironment } from "../state/plugins";
+import { PluginThreadBand } from "./plugins/PluginThreadBand";
+import { PluginViewPanel } from "./plugins/PluginViewPanel";
+import type { PluginViewLauncher } from "./RightPanelTabs";
 import { useEnvironmentScope } from "~/state/session";
 import {
   environmentServerConfigsAtom,
@@ -5565,6 +5569,28 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !groupSurfaceAvailable) return;
     useRightPanelStore.getState().openGroup(activeThreadRef);
   }, [activeThreadRef, groupSurfaceAvailable]);
+  const pluginPlugins = useEnvironmentQuery(
+    activeThreadRef
+      ? pluginEnvironment.snapshot({ environmentId: activeThreadRef.environmentId, input: {} })
+      : null,
+  ).data?.plugins;
+  const pluginViewLaunchers = useMemo((): ReadonlyArray<PluginViewLauncher> => {
+    if (!activeThreadRef || !pluginPlugins) return [];
+    return pluginPlugins
+      .filter((plugin) => plugin.state !== "disabled" && plugin.state !== "error")
+      .flatMap((plugin) =>
+        plugin.views.map((view) => ({
+          key: `${plugin.id}:${view.id}`,
+          label: view.title,
+          onClick: () =>
+            useRightPanelStore.getState().openPluginView(activeThreadRef, {
+              pluginId: plugin.id,
+              viewId: view.id,
+              title: view.title,
+            }),
+        })),
+      );
+  }, [activeThreadRef, pluginPlugins]);
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );
@@ -11332,6 +11358,13 @@ export default function ChatView(props: ChatViewProps) {
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "group" ? (
       <GroupPanel threadRef={activeThreadRef} surface={renderedRightPanelSurface} />
+    ) : renderedRightPanelSurface?.kind === "plugin" && activeThreadRef ? (
+      <PluginViewPanel
+        key={renderedRightPanelSurface.id}
+        environmentId={activeThreadRef.environmentId}
+        threadRef={activeThreadRef}
+        surface={renderedRightPanelSurface}
+      />
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
@@ -11871,6 +11904,12 @@ export default function ChatView(props: ChatViewProps) {
                               }
                             />
                           ) : null}
+                          {!composerMounted || routeKind === "draft" || !activeThreadRef ? null : (
+                            <PluginThreadBand
+                              environmentId={activeThreadRef.environmentId}
+                              threadId={activeThreadRef.threadId}
+                            />
+                          )}
                           {!composerMounted ? null : (
                             <ChatComposer
                               canOperateThread={canOperateThread}
@@ -12240,6 +12279,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurface}
           onAddDevice={addDeviceSurface}
           onAddGroup={addGroupSurface}
+          pluginViews={pluginViewLaunchers}
           groupAvailable={groupSurfaceAvailable}
           groupTitle={activeVisibleGroup?.title ?? null}
           browserAvailable={canOperatePreview && browserAvailable}
@@ -12302,6 +12342,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequests={addPullRequestsSurface}
             onAddDevice={addDeviceSurface}
             onAddGroup={addGroupSurface}
+            pluginViews={pluginViewLaunchers}
             groupAvailable={groupSurfaceAvailable}
             groupTitle={activeVisibleGroup?.title ?? null}
             browserAvailable={canOperatePreview && browserAvailable}

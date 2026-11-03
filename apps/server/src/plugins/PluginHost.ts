@@ -135,6 +135,7 @@ interface RunningChild {
 
 interface PluginRecord {
   scanned: ScannedPlugin;
+  revision: number;
   state: PluginSummary["state"];
   error: string | null;
   child: RunningChild | null;
@@ -301,6 +302,7 @@ const make = Effect.gen(function* () {
       dir: record.scanned.dir,
       enabled: !disabled.has(idOf(record)),
       state: record.state,
+      revision: record.revision,
       ...(record.error === null ? {} : { error: record.error }),
       views: (manifest?.views ?? []).map((view) => ({ id: view.id, title: view.title })),
       commands: manifest?.commands ?? [],
@@ -598,6 +600,7 @@ const make = Effect.gen(function* () {
         if (existing !== undefined) yield* stopChild(existing);
         const record: PluginRecord = {
           scanned: scannedPlugin,
+          revision: (existing?.revision ?? 0) + 1,
           state: "starting",
           error: null,
           child: null,

@@ -272,6 +272,7 @@ import {
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { pluginEnvironment } from "~/state/plugins";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
@@ -2720,6 +2721,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [pullRequestProjectId, threadPullRequests],
   );
 
+  const plugins = useEnvironmentQuery(pluginEnvironment.snapshot({ environmentId, input: {} })).data
+    ?.plugins;
+  const pluginCommandItems = useMemo(
+    () =>
+      (plugins ?? [])
+        .filter((plugin) => plugin.enabled && plugin.state !== "error")
+        .flatMap((plugin) =>
+          plugin.commands.map((command) => ({
+            id: `plugin-command:${plugin.id}:${command.name}`,
+            type: "plugin-command" as const,
+            pluginId: plugin.id,
+            pluginName: plugin.name,
+            command,
+            label: `/${command.name}`,
+            description: command.description || plugin.name,
+          })),
+        ),
+    [plugins],
+  );
+  const runPluginCommand = useAtomCommand(pluginEnvironment.runCommand, {
+    label: "Run plugin command",
+  });
+
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -2801,7 +2825,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
-        [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
+        [
+          ...builtInSlashCommandItems,
+          ...pluginCommandItems,
+          ...visibleProviderSlashCommandItems,
+          ...skillItems,
+        ],
         composerTrigger.rangeStart === 0,
       );
       return searchSlashCommandItems(slashCommandItems, query);
@@ -2888,6 +2917,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestProjectId,
     pullRequestRepository,
     pullRequestTriggerNumber,
+    pluginCommandItems,
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
@@ -4191,6 +4221,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
+      if (item.type === "plugin-command") {
+        // A prompt command puts its text in the composer; any other runs in the plugin now.
+        const replacement = item.command.prompt ?? "";
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, replacement, {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (!applied) return;
+        setComposerHighlightedItemId(null);
+        if (item.command.prompt !== undefined) return;
+        if (activeThreadId === null) {
+          toastManager.add({
+            type: "info",
+            title: `/${item.command.name} needs a thread`,
+            description: "Send a first message, then run it again.",
+          });
+          return;
+        }
+        void runPluginCommand({
+          environmentId,
+          input: {
+            pluginId: item.pluginId,
+            command: item.command.name,
+            threadId: activeThreadId,
+            args: "",
+          },
+        });
+        return;
+      }
       if (item.type === "skill") {
         const replacement = `$${item.skill.name} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
@@ -4266,15 +4324,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     },
     [
+      activeThreadId,
       addComposerDraftReviewComment,
       addComposerDraftThreadContexts,
       applyPromptReplacement,
       attachmentDraftTarget,
       composerDraftTarget,
+      environmentId,
       handleInteractionModeChange,
       planModeUiEnabled,
       onUsageLimitsCommand,
       resolveActiveComposerTrigger,
+      runPluginCommand,
     ],
   );
 

@@ -166,6 +166,14 @@ function SettingsIndexSections() {
 
       <SettingsSection title="Automations">
         <SettingsRow icon="clock" label="Scheduled tasks" target="SettingsScheduledTasks" />
+        {/* Plugin views, bands and toasts draw only on web and desktop so far. */}
+        <SettingsRow
+          disabled
+          icon="square.grid.2x2"
+          label="Plugins"
+          value="Not supported on mobile yet. Use web or desktop."
+          valuePosition="below"
+        />
       </SettingsSection>
 
       <SettingsSection title="Projects & threads">

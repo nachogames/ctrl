@@ -74,12 +74,14 @@ export class PluginUiStore extends Context.Service<PluginUiStore, PluginUiStoreS
   "t3/plugins/PluginUiStore",
 ) {}
 
+// oxlint-disable-next-line no-control-regex -- plugin text arrives styled for a terminal.
+const ANSI_SEQUENCE = /\u001b\[[0-9;?]*[A-Za-z]/g;
+// oxlint-disable-next-line no-control-regex -- control characters are what this strips.
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]+/g;
+
 /** One plain line: no control characters or ANSI styling, cut to `max`. */
 export const plainLine = (value: string, max: number): string => {
-  // oxlint-disable-next-line no-control-regex -- stripping terminal styling is the point.
-  const clean = value
-    .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "")
-    .replace(/[\u0000-\u001f\u007f]+/g, " ");
+  const clean = value.replace(ANSI_SEQUENCE, "").replace(CONTROL_CHARACTERS, " ");
   const trimmed = clean.trim();
   return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 };

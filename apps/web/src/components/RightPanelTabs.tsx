@@ -34,6 +34,7 @@ import {
   Files,
   Globe2,
   LayersIcon,
+  Puzzle,
   Plus,
   TerminalSquare,
 } from "lucide-react";
@@ -96,6 +97,23 @@ import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 
+export interface PluginViewLauncher {
+  readonly key: string;
+  readonly label: string;
+  readonly onClick: () => void;
+}
+
+/** Launcher rows for plugin views: always available, no letter shortcut. */
+const pluginViewActions = (views: ReadonlyArray<PluginViewLauncher> | undefined) =>
+  (views ?? []).map((view) => ({
+    label: view.label,
+    icon: Puzzle,
+    shortcut: "",
+    available: true,
+    disabledReason: "",
+    onClick: view.onClick,
+  }));
+
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
@@ -146,6 +164,8 @@ interface RightPanelTabsProps {
   onAddDevice: () => void;
   /** Opens the routed chat's Group surface; absent where there is no routed chat. */
   onAddGroup?: () => void;
+  /** Views local plugins offer, each opened as its own tab. */
+  pluginViews?: ReadonlyArray<PluginViewLauncher>;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -326,7 +346,7 @@ function SurfaceMenuItem(props: {
       aria-keyshortcuts={props.shortcut}
     >
       {props.children}
-      <MenuShortcut>{props.shortcut}</MenuShortcut>
+      {props.shortcut === "" ? null : <MenuShortcut>{props.shortcut}</MenuShortcut>}
     </MenuItem>
   );
   if (props.available || !props.disabledReason) return item;
@@ -351,6 +371,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequests: () => void;
   onAddDevice: () => void;
   onAddGroup: () => void;
+  pluginViews: ReadonlyArray<PluginViewLauncher> | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -429,6 +450,7 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.group,
       onClick: props.onAddGroup,
     },
+    ...pluginViewActions(props.pluginViews),
   ].filter(isListedSurfaceAction);
 
   type SurfaceAction = (typeof actions)[number];
@@ -556,7 +578,7 @@ function RightPanelEmptyState(props: {
                   >
                     {action.label}
                   </span>
-                  <Kbd>{action.shortcut}</Kbd>
+                  {action.shortcut === "" ? null : <Kbd>{action.shortcut}</Kbd>}
                 </button>
                 {/*
                   Same choice the tab bar's "+" menu offers: the row opens the
@@ -602,7 +624,7 @@ function RightPanelEmptyState(props: {
                   >
                     {actionIcon(action, "size-4")}
                     <span className="min-w-0 flex-1 truncate">{action.label}</span>
-                    <Kbd>{action.shortcut}</Kbd>
+                    {action.shortcut === "" ? null : <Kbd>{action.shortcut}</Kbd>}
                   </div>
                 }
               />
@@ -630,6 +652,8 @@ function surfaceTitle(
   switch (surface.kind) {
     case "group":
       return groupTitle ?? "Group";
+    case "plugin":
+      return surface.title;
     case "diff":
       return "Diff";
     case "files":
@@ -732,6 +756,8 @@ function SurfaceIcon({
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "group":
       return <LayersIcon className="size-3 shrink-0" />;
+    case "plugin":
+      return <Puzzle className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -1030,6 +1056,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.group,
       onClick: props.onAddGroup ?? noop,
     },
+    ...pluginViewActions(props.pluginViews),
   ].filter(isListedSurfaceAction);
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1524,6 +1551,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
             onAddGroup={props.onAddGroup ?? noop}
+            pluginViews={props.pluginViews}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}

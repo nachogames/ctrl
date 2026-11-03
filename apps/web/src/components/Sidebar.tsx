@@ -1,3 +1,4 @@
+import { SidebarPluginStatus } from "./plugins/SidebarPluginStatus";
 import { ENVIRONMENT_PICKER_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import { EnvironmentBatteryIndicator } from "./EnvironmentBatteryIndicator";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
@@ -1781,6 +1782,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         onOpenPullRequest={handlePrClick}
       />
     ) : null;
+  const pluginStatus = (
+    <SidebarPluginStatus environmentId={threadRef.environmentId} threadId={threadRef.threadId} />
+  );
   const terminalStatusIcon = (
     <ThreadTerminalStatusButton
       threadRef={threadRef}
@@ -1885,6 +1889,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         {draftIndicator}
         {title}
         {pinIndicator}
+        {pluginStatus}
         {terminalStatusIcon}
         {isRegeneratingTitle ? (
           <span role="status" className="sr-only">
@@ -2286,6 +2291,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              {pluginStatus}
               {terminalStatusIcon}
               {prBadge}
               {diff ? (

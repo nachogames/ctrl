@@ -4,6 +4,7 @@ import {
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
 import {
+  type PluginCommandDeclaration,
   type ProjectEntry,
   type ProviderDriverKind,
   type PullRequestContextMetadata,
@@ -17,6 +18,7 @@ import {
   FolderIcon,
   MessagesSquareIcon,
   PackageIcon,
+  PuzzleIcon,
   SettingsIcon,
   UserRoundIcon,
   type LucideIcon,
@@ -56,6 +58,16 @@ export type ComposerCommandItem =
       description: string;
       /** Muted note on where the command works, e.g. only at the message start. */
       hint?: string;
+    }
+  | {
+      id: string;
+      /** A `/name` a local plugin declares. */
+      type: "plugin-command";
+      pluginId: string;
+      pluginName: string;
+      command: PluginCommandDeclaration;
+      label: string;
+      description: string;
     }
   | {
       id: string;
@@ -199,6 +211,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
         />
+      ) : null}
+      {props.item.type === "plugin-command" ? (
+        <PuzzleIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
       {props.item.type === "thread" ? (
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
