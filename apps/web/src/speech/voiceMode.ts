@@ -1,15 +1,25 @@
-import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
 
-import { useLocalStorage } from "../hooks/useLocalStorage";
 import { replySpeaker } from "./replySpeaker";
 
-// The key predates voice in every thread; kept so a saved choice carries over.
-const VOICE_MODE_KEY = "t3code:shift-voice-mode";
+// Voice mode is a running conversation, so it is never saved: a reload or a
+// restart starts with it off instead of reading replies with no strip to stop it.
+let voiceModeOn = false;
+const voiceModeListeners = new Set<() => void>();
+const subscribeVoiceMode = (listener: () => void) => {
+  voiceModeListeners.add(listener);
+  return () => void voiceModeListeners.delete(listener);
+};
+const readVoiceMode = () => voiceModeOn;
+const setVoiceModeOn = (on: boolean) => {
+  if (voiceModeOn === on) return;
+  voiceModeOn = on;
+  for (const listener of voiceModeListeners) listener();
+};
 
-/** Voice mode on this device, for every thread: dictation sends, and replies are read aloud. */
-export function useVoiceMode() {
-  return useLocalStorage(VOICE_MODE_KEY, false, Schema.Boolean);
+/** Voice mode in this window: dictation sends, and replies are read aloud. */
+export function useVoiceMode(): readonly [boolean, (on: boolean) => void] {
+  return [useSyncExternalStore(subscribeVoiceMode, readVoiceMode), setVoiceModeOn];
 }
 
 /** True while a reply is being read aloud. */

@@ -1326,6 +1326,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
   // However the conversation ends, its live voice session on the environment closes with it.
   const conversationActive = conversationState.active;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ends this composer's conversation and window-wide voice mode when the composer goes away
+  useEffect(
+    () => () => {
+      if (!conversation.active) return;
+      conversation.end();
+      setVoiceMode(false);
+    },
+    [conversation, setVoiceMode],
+  );
   const dictationLevel = dictation.level;
   // The reply being read replaces the quick voice's words once it starts.
   const spokenCaption = useSpokenCaption();
