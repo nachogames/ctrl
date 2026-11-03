@@ -106,9 +106,9 @@ export class ThreadGroupLaunchService extends Context.Service<
       input: ThreadGroupNewThreadInput,
     ) => Effect.Effect<ThreadGroupNewThreadResult, ThreadGroupLaunchServiceError>;
     /**
-     * Hands a chat off to a new chat in its group, creating the group if needed,
-     * then settles the source unless auto-settle is off. Every step commits under
-     * an id derived from `commandId`, so a retry replays instead of relaunching.
+     * Hands a chat off to a new chat in its group (made from the chat's workspace if needed),
+     * links them, records the handoff, then settles the source unless auto-settle is off.
+     * Every step commits under an id derived from `commandId`, so a retry replays.
      */
     readonly handoff: (
       input: ThreadGroupHandoffInput,

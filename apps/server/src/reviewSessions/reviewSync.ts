@@ -92,10 +92,10 @@ function reviewComments(
 }
 
 /**
- * What one GitHub read changes about a session's sources; idempotent. New sources join the
- * current round unless it is being applied, then wait for the next. On someone else's PR the
- * viewer's own reviews always join the current round, a pending one as `pending`. The PR
- * author's reviews stay unless they are Ctrl apply summaries or reply-only.
+ * Idempotent plan of what one GitHub read changes. New reviews join the current round, or the
+ * next while it is applied; known sources keep round and triage. Author reviews stay unless Ctrl
+ * apply summaries or reply-only. On others' PRs the viewer's reviews file now, even while held,
+ * and a pending one files as `pending`.
  */
 export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
   const { read, sessionRound, now } = input;

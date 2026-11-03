@@ -1,7 +1,7 @@
 /**
- * `ask_user` lets a Cursor agent ask the user a structured question. The SDK
- * declines its own clarifying-question tool in local runs, so this host tool
- * (`local.customTools`) stands in and becomes an ordinary `user_input` request.
+ * `ask_user`: the Cursor SDK declines its own question tool in local runs, so the adapter offers
+ * this one (`local.customTools`). A call becomes an ordinary `user_input` request.
+ * @module askUserTool
  */
 import type { SDKCustomToolResult, SDKJsonValue } from "@cursor/sdk";
 import type {

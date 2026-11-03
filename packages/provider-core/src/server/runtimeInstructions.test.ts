@@ -7,16 +7,17 @@ describe("buildRuntimeInstructions", () => {
     "routes PR reviews through persistent sessions for %s without project skills",
     (harness) => {
       const instructions = buildRuntimeInstructions({ harness });
-      assert.include(instructions, "no repository-installed review-pr skill is required");
+      assert.include(instructions, "with no review-pr skill");
+      assert.include(instructions, "gh pr view --json url,headRefOid,state (skip a closed PR)");
+      // Only here does a review's link beat the linking block's "skip PRs you only review".
+      assert.include(instructions, "link it with link_pull_request: a review links its PR");
       assert.include(instructions, "call t3_group_create with no arguments");
-      assert.include(instructions, "review_session_open with url and headSha");
-      assert.include(instructions, "do not create a duplicate review");
-      assert.include(instructions, "any ordinary chat in that group may read, import, annotate");
-      assert.include(instructions, "A different session.reviewThreadId is not a write restriction");
-      assert.notInclude(instructions, "continue there only when authorized");
-      assert.include(instructions, "triage the imported feedback");
-      assert.include(instructions, "Questions do not change decisions");
-      assert.include(instructions, "If review tools are unavailable");
+      assert.include(instructions, "call review_session_open and follow the brief it returns");
+      assert.include(instructions, "keeps to that role");
+      assert.include(instructions, "If the review tools are unavailable");
+      // The loop's rules live in the brief review_session_open returns (reviewBrief.ts).
+      assert.notInclude(instructions, "Questions do not change decisions");
+      assert.notInclude(instructions, "review_items_import");
     },
   );
 

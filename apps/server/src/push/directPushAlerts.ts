@@ -16,9 +16,9 @@ const ALERTS: Partial<Record<AgentAwarenessPhase, DirectPushAlertKind>> = {
 };
 
 /**
- * The alert a thread's new awareness state is worth, or null. With
- * `previousPhase` undefined (unseen since start), a finished run counts only
- * when this process finished it, so a restart does not replay completions.
+ * The alert a thread's new awareness state is worth, or null. With `previousPhase` undefined
+ * (unseen since startup), a finished run counts only if this process finished it, so a restart
+ * does not replay old completions. Each device then filters by its own `alertOn`.
  */
 export function alertKind(input: {
   readonly state: AgentAwarenessState | null;
