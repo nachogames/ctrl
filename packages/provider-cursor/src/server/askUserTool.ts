@@ -1,11 +1,6 @@
 /**
- * The `ask_user` tool lets a Cursor agent ask the user a structured question.
- *
- * The Cursor Agent SDK declines its own clarifying-question tool in local
- * runs, so the adapter offers this host tool instead (`local.customTools`).
- * Its call becomes an ordinary `user_input` runtime request: the question card
- * in the chat, the waiting state in the sidebar, and the phone alert.
- *
+ * `ask_user`: the Cursor SDK declines its own question tool in local runs, so the adapter offers
+ * this one (`local.customTools`). A call becomes an ordinary `user_input` request.
  * @module askUserTool
  */
 import type { SDKCustomToolResult, SDKJsonValue } from "@cursor/sdk";
@@ -16,7 +11,7 @@ import type {
 
 export const ASK_USER_TOOL_NAME = "ask_user";
 /** The MCP server the SDK exposes host tools under. */
-export const CURSOR_CUSTOM_TOOLS_PROVIDER = "custom-user-tools";
+const CURSOR_CUSTOM_TOOLS_PROVIDER = "custom-user-tools";
 
 export const ASK_USER_TOOL_DESCRIPTION =
   "Ask the user one or more questions and wait for their answers. Use it whenever you need " +

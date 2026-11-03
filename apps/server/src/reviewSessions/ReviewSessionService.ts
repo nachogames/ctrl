@@ -361,7 +361,7 @@ const namesOf = (names: ReadonlyArray<string>) => {
     : `${unique.slice(0, -1).join(", ")} and ${unique[unique.length - 1]}`;
 };
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const repo = yield* ReviewSessions.ReviewSessionRepository;
   const changes = yield* ReviewSessionChanges.ReviewSessionChanges;

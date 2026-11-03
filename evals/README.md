@@ -18,6 +18,8 @@ Write or run an eval when a change affects what a model sees or does: agent inst
 
 Each eval's README lists its models, flags, and cost. Start with one case and one sample to check the setup.
 
+`mcp-tool-use` can also run on a Claude subscription instead of an API key: see [Run on a Claude subscription](mcp-tool-use/README.md#run-on-a-claude-subscription).
+
 Evals call paid models, so CI does not run them. CI typechecks this package and runs the graders' unit tests.
 
 ## The shape of an eval

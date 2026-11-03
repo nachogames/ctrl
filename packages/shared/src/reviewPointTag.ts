@@ -1,5 +1,5 @@
 /** Longest label a point tag carries; the chip and the tag stay one short line. */
-export const REVIEW_POINT_LABEL_MAX = 40;
+const REVIEW_POINT_LABEL_MAX = 40;
 
 const TAG_PATTERN = /^\[#(\d{1,5}) ([^\]\n]{1,40})\]\n/;
 

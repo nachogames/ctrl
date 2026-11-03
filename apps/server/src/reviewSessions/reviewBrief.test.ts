@@ -46,6 +46,21 @@ describe("reviewBrief", () => {
     expect(brief).toContain("review_session_read's stack");
     expect(brief).toContain("You never mark a point viewed");
   });
+
+  // The provider instructions only point here, so the brief carries the rules they dropped.
+  it("carries the review rules the provider instructions leave out", () => {
+    const brief = reviewBrief(sessionFixture());
+    expect(brief).toContain("A different session.reviewThreadId only identifies where");
+    expect(brief).toContain("Continue here without creating a duplicate review");
+    expect(brief).toContain('A question ("why #2?") never decides anything');
+    expect(brief).toContain("link_pull_request");
+    expect(brief).toContain(
+      "start one with review_local_review_start when the user asked for a review",
+    );
+    expect(brief).toContain("repository's own review and verification instructions");
+    expect(brief).toContain("wait for the user's go-ahead");
+    expect(brief).toContain("never rerun it just to fill the list");
+  });
 });
 
 it("publishes inline findings before fixing, then replies and resolves their saved threads", () => {

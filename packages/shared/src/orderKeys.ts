@@ -2,9 +2,9 @@
 // A move writes ONE key to ONE row, so neighbors (possibly on other servers)
 // are never touched and every client converges on the same order. Shared by
 // the server and the clients.
-export const PIN_ORDER_DIGITS = "abcdefghijklmnopqrstuvwxyz";
+const PIN_ORDER_DIGITS = "abcdefghijklmnopqrstuvwxyz";
 
-export function isValidPinOrderKey(key: string): boolean {
+function isValidPinOrderKey(key: string): boolean {
   if (key.length === 0) return false;
   for (const char of key) {
     if (!PIN_ORDER_DIGITS.includes(char)) return false;
@@ -16,7 +16,7 @@ export function isValidPinOrderKey(key: string): boolean {
 
 /** Midpoint of two digit strings interpreted as fractions in (0, 1).
     "" stands for the open bound on either side. Requires a < b. */
-export function pinOrderMidpoint(a: string, b: string): string {
+function pinOrderMidpoint(a: string, b: string): string {
   if (b !== "" && a >= b) throw new Error("pinOrderMidpoint: bounds out of order");
   if (b !== "") {
     // Recurse past the longest common prefix ("a" pads the shorter side).

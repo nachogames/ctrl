@@ -163,13 +163,7 @@ export function getLatestThreadForProject<
   return latest;
 }
 
-export {
-  PIN_ORDER_DIGITS,
-  generateSpreadPinOrderKeys,
-  isValidPinOrderKey,
-  pinOrderKeyBetween,
-  pinOrderMidpoint,
-} from "@t3tools/shared/orderKeys";
+export { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/orderKeys";
 
 export function planPinnedReorder(input: {
   readonly orderedIds: readonly string[];

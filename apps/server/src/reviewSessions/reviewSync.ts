@@ -17,7 +17,7 @@ export const isCopilotLogin = (login: string | null | undefined): boolean =>
   login !== null && login !== undefined && COPILOT_LOGIN.test(login);
 
 /** The hidden marker Ctrl puts on every comment it writes for a review session. */
-export const ctrlReviewMarker = (sessionId: string) => `ctrl-review:${sessionId}:`;
+const ctrlReviewMarker = (sessionId: string) => `ctrl-review:${sessionId}:`;
 
 const VERDICTS: Record<string, ReviewVerdict> = {
   APPROVED: "approved",
@@ -26,7 +26,7 @@ const VERDICTS: Record<string, ReviewVerdict> = {
 };
 
 /** A reviewer asked in a round who has not reviewed yet. */
-export const requestSourceId = (round: number, login: string) => `request:${round}:${login}`;
+const requestSourceId = (round: number, login: string) => `request:${round}:${login}`;
 
 export interface ReviewSyncInput {
   /** The session the markers name; null for the pre-session history read. */
@@ -92,15 +92,10 @@ function reviewComments(
 }
 
 /**
- * What one GitHub read changes about a session's sources. Idempotent: a read that matches what
- * is stored plans nothing. New reviews and requests join the current round, except while it is
- * being applied; then they wait, and the first read after the round advances files them in the
- * next one. A known source keeps its round and triage mark. Reviews by the pull request's
- * author are retained unless they are Ctrl apply summaries or reply-only reviews.
- *
- * On someone else's pull request the viewer's own reviews always file into the current round,
- * even while it is held, and their pending review files as `pending`: it is the review this
- * round is building.
+ * Idempotent plan of what one GitHub read changes. New reviews join the current round, or the
+ * next while it is applied; known sources keep round and triage. Author reviews stay unless Ctrl
+ * apply summaries or reply-only. On others' PRs the viewer's reviews file now, even while held,
+ * and a pending one files as `pending`.
  */
 export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
   const { read, sessionRound, now } = input;

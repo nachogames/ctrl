@@ -152,7 +152,7 @@ export function glanceCards(input: GlanceInput): ReadonlyArray<GlanceCard> {
 const changesLabel = (count: number) => `${count} ${count === 1 ? "change" : "changes"}`;
 
 /** How many ticket chips the compact row shows before folding the rest into "+N". */
-export const COMPACT_TICKET_CHIPS = 2;
+const COMPACT_TICKET_CHIPS = 2;
 
 /** The chips the compact row shows, and how many fold into its "+N". */
 export function compactTicketChips(

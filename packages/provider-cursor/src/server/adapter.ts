@@ -226,7 +226,7 @@ export function cursorRuntimeAgentPolicy(
 const MCP_APPROVAL_ARGS_LIMIT = 600;
 
 /** The approval card's text for one MCP call, with its arguments abbreviated. */
-export function mcpApprovalPrompt(call: CursorMcpCall): string {
+function mcpApprovalPrompt(call: CursorMcpCall): string {
   const args = call.input.trim();
   const shown =
     args === "" || args === "{}"

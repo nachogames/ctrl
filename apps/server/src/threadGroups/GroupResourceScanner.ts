@@ -72,7 +72,7 @@ export const listenersNeedingCwd = (
       );
 
 /** The group's servers among `listeners`, in listener order. */
-export const attributeServers = (
+const attributeServers = (
   listeners: ReadonlyArray<DiscoveredLocalServer>,
   scope: GroupAttributionScope,
   cwdByPid: ReadonlyMap<number, string>,
@@ -109,7 +109,7 @@ export const attributeServers = (
  * The group's containers among `containers`. Their `workingDir` must already
  * be resolved the same way as the worktree root.
  */
-export const attributeContainers = (
+const attributeContainers = (
   containers: ReadonlyArray<DockerScanner.DockerContainer>,
   worktreeRoot: string | null,
 ): ReadonlyArray<ThreadGroupRunningResource> =>
@@ -138,7 +138,7 @@ export const attributeContainers = (
 
 export type TerminalCommand = Pick<TerminalSummary, "label" | "hasRunningSubprocess">;
 
-export const terminalKey = (terminal: { readonly threadId: string; readonly terminalId: string }) =>
+const terminalKey = (terminal: { readonly threadId: string; readonly terminalId: string }) =>
   `${terminal.threadId}\u0000${terminal.terminalId}`;
 
 const JS_RUNTIMES = new Set(["node", "bun", "deno"]);
@@ -245,7 +245,7 @@ export const mergeGroupResources = (input: {
 };
 
 /** How often a watched group rescans. Docker has no events, so this is its poll. */
-export const RESOURCE_RESCAN_INTERVAL = Duration.seconds(5);
+const RESOURCE_RESCAN_INTERVAL = Duration.seconds(5);
 
 const resourceKey = (resource: ThreadGroupRunningResource) =>
   JSON.stringify([
