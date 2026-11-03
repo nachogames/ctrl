@@ -149,15 +149,17 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindin
 import { isEditableFocused } from "../../lib/editableFocus";
 import { resolveVoiceAvailability } from "../../voice/voiceAvailability";
 import {
-  clearVoiceAfterFirstTurn,
-  startVoiceAfterFirstTurn,
   toggleThreadVoice,
   useVoicePhaseFor,
   VOICE_STARTER_MESSAGE,
   voiceMode as codexVoiceMode,
-  waitsForVoiceAfterFirstTurn,
 } from "../../voice/voiceMode";
 import { localVoice } from "../../speech/localVoice";
+import {
+  clearVoiceAfterFirstTurn,
+  startVoiceAfterFirstTurn,
+  voiceAfterFirstTurnStatus,
+} from "../../voice/voiceAfterFirstTurn";
 import { ComposerVoiceButton, VoiceModeStrip } from "./VoiceModeStrip";
 import { VoiceEnginePicker } from "./VoiceEnginePicker";
 import {
@@ -1190,8 +1192,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- connects Codex voice once the turn started for it has given the thread a session
   useEffect(() => {
-    if (!waitsForVoiceAfterFirstTurn(routeThreadRef)) return;
-    if (voiceAvailability.kind !== "ready" || phase === "running") return;
+    if (voiceAfterFirstTurnStatus(routeThreadRef, phase) !== "ready") return;
+    if (voiceAvailability.kind !== "ready") return;
     clearVoiceAfterFirstTurn(routeThreadRef);
     toggleThreadVoice(routeThreadRef, voiceAvailability);
   }, [phase, routeThreadRef, voiceAvailability]);

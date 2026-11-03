@@ -154,21 +154,3 @@ voiceMode.subscribe((state) => {
 
 /** The first message a thread sends when voice starts it, so Codex has a session to talk in. */
 export const VOICE_STARTER_MESSAGE = "Starting a voice conversation. Reply with one word: Ready.";
-
-// Threads whose voice waits for their first turn, by thread key. A draft keeps
-// its thread id when it is sent, so the key survives the draft becoming a thread.
-const voiceAfterFirstTurn = new Set<string>();
-
-/** Starts voice on `target` once its first turn has given it a session. */
-export function startVoiceAfterFirstTurn(target: VoiceSessionTarget) {
-  voiceAfterFirstTurn.add(`${target.environmentId}:${target.threadId}`);
-}
-
-/** Whether `target` is waiting to start voice after its first turn. */
-export function waitsForVoiceAfterFirstTurn(target: VoiceSessionTarget): boolean {
-  return voiceAfterFirstTurn.has(`${target.environmentId}:${target.threadId}`);
-}
-
-export function clearVoiceAfterFirstTurn(target: VoiceSessionTarget) {
-  voiceAfterFirstTurn.delete(`${target.environmentId}:${target.threadId}`);
-}
