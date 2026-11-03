@@ -3983,7 +3983,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     disabledReason={voiceDisabledReason}
                     onToggle={toggleVoice}
                   />
-                  {voiceEngine === "local" && voiceUnavailable === null ? (
+                  {voiceEngine === "local" ? (
                     <VoiceEnginePicker environmentId={environmentId} />
                   ) : null}
                   <ComposerFooterPrimaryActions
