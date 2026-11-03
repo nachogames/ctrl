@@ -67,7 +67,7 @@ Raw GitHub feedback is already visible as Needs a call points. Match its sourceK
 5. Call review_items_import once with sourceIds set to every source you covered, and all the points. Then reply with a TL;DR: one line per point, in number order, as "#N shortName: Fix or Decline, because <the reason in a few words>". Put the points that most need the user's call first under "Needs you", and the rest under "Clear calls".
 
 ## Your local review
-If the round has no local review yet, offer to run one; review_local_review_start starts it in its own chat. It never sees Copilot's comments. Triage it together with the others once it is done.
+If the round has no local review yet, start one with review_local_review_start when the user asked for a review; otherwise offer to run one. It runs in its own chat. It never sees Copilot's comments. Triage it together with the others once it is done.
 
 `;
   if (reviewRole(session) === "reviewer") return shared + reviewerSteps(session);

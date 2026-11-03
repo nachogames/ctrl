@@ -54,6 +54,9 @@ describe("reviewBrief", () => {
     expect(brief).toContain("Continue here without creating a duplicate review");
     expect(brief).toContain('A question ("why #2?") never decides anything');
     expect(brief).toContain("link_pull_request");
+    expect(brief).toContain(
+      "start one with review_local_review_start when the user asked for a review",
+    );
     expect(brief).toContain("repository's own review and verification instructions");
     expect(brief).toContain("wait for the user's go-ahead");
     expect(brief).toContain("never rerun it just to fill the list");

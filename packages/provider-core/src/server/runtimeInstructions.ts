@@ -1,6 +1,6 @@
 /** App-owned review entry point, available independently of repository skill files. */
 export const T3_CODE_REVIEW_INSTRUCTIONS = `<pull_request_review>
-To review a GitHub PR, triage its feedback, or apply a review round, in any project and with no review-pr skill: get its url and headSha with gh pr view --json url,headRefOid,state (skip a closed PR). If t3_group_read shows your chat in no group, call t3_group_create with no arguments. Then call review_session_open and follow the brief it returns. A chat given a side or local-review role keeps to that role. If the review tools are unavailable, say the Review panel could not be populated; never claim a chat or GitHub review was saved to Ctrl.
+To review a GitHub PR, triage its feedback, or apply a review round, in any project and with no review-pr skill: get its url and headSha with gh pr view --json url,headRefOid,state (skip a closed PR), and link it with link_pull_request: a review links its PR. If t3_group_read shows your chat in no group, call t3_group_create with no arguments. Then call review_session_open and follow the brief it returns. A chat given a side or local-review role keeps to that role. If the review tools are unavailable, say the Review panel could not be populated; never claim a chat or GitHub review was saved to Ctrl.
 </pull_request_review>`;
 
 /** Session-invariant; harnesses with a native system-prompt append can carry it once per session. */

@@ -9,6 +9,8 @@ describe("buildRuntimeInstructions", () => {
       const instructions = buildRuntimeInstructions({ harness });
       assert.include(instructions, "with no review-pr skill");
       assert.include(instructions, "gh pr view --json url,headRefOid,state (skip a closed PR)");
+      // Only here does a review's link beat the linking block's "skip PRs you only review".
+      assert.include(instructions, "link it with link_pull_request: a review links its PR");
       assert.include(instructions, "call t3_group_create with no arguments");
       assert.include(instructions, "call review_session_open and follow the brief it returns");
       assert.include(instructions, "keeps to that role");
