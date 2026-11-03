@@ -1178,7 +1178,7 @@ const registerRemoteTools = Effect.fn("McpHttpServer.registerRemoteTools")(funct
   );
 });
 
-export const layerRemoteMcpTools = Layer.effectDiscard(registerRemoteTools());
+const layerRemoteMcpTools = Layer.effectDiscard(registerRemoteTools());
 
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
@@ -1224,9 +1224,9 @@ const layerEnvironmentToolkit = toolkitRegistration(
 
 export const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
-export const layerGroupToolkit = toolkitRegistration(GroupToolkit, GroupHandlers.layer);
+const layerGroupToolkit = toolkitRegistration(GroupToolkit, GroupHandlers.layer);
 
-export const layerReviewToolkit = toolkitRegistration(ReviewToolkit, ReviewHandlers.layer);
+const layerReviewToolkit = toolkitRegistration(ReviewToolkit, ReviewHandlers.layer);
 
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,

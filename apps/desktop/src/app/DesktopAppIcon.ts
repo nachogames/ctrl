@@ -16,12 +16,12 @@ type RuntimeDesign = Exclude<AppIcon, "solid">;
 type RuntimeExt = "ico" | "png";
 
 /** Packaged builds stage runtime designs here (scripts/build-desktop-artifact.ts). */
-export function resolvePackagedAppIconResource(design: RuntimeDesign, ext: RuntimeExt): string {
+function resolvePackagedAppIconResource(design: RuntimeDesign, ext: RuntimeExt): string {
   return `app-icons/${design}/icon.${ext}`;
 }
 
 /** Unpackaged runs read the exports in assets/<brand>/ (scripts/lib/brand-assets.ts naming). */
-export function resolveSourceTreeAppIconFile(
+function resolveSourceTreeAppIconFile(
   brand: "dev" | "prod",
   design: RuntimeDesign,
   ext: RuntimeExt,
@@ -71,7 +71,7 @@ export class DesktopAppIcon extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopAppIcon") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronApp = yield* ElectronApp.ElectronApp;

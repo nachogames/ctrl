@@ -137,7 +137,7 @@ export function observeScan(
   };
 }
 
-export function stoppedLabel(stoppedAt: number, now: number): string {
+function stoppedLabel(stoppedAt: number, now: number): string {
   const seconds = Math.floor((now - stoppedAt) / 1000);
   return seconds < 5 ? "stopped just now" : `stopped ${seconds - (seconds % 5)}s ago`;
 }

@@ -269,7 +269,7 @@ export class ThreadGroupService extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadGroupService") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;

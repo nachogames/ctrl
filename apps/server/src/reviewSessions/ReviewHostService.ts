@@ -64,7 +64,7 @@ export class ReviewHostService extends Context.Service<
   }
 >()("t3/reviewSessions/ReviewHostService") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const threads = yield* Threads.ThreadManagementService;
   const groups = yield* Groups.ThreadGroupService;

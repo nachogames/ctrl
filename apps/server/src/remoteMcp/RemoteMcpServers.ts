@@ -186,7 +186,7 @@ export const invalidAddInput = (input: RemoteMcpAddInput): string | undefined =>
   return undefined;
 };
 
-export const callbackUrl = (callbackOrigin: string) => {
+const callbackUrl = (callbackOrigin: string) => {
   const origin = new URL(callbackOrigin);
   if (origin.protocol !== "http:" && origin.protocol !== "https:") {
     throw new Error("The callback origin must be http or https.");

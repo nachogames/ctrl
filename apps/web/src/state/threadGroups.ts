@@ -14,7 +14,7 @@ import { liveDraftGroup, type DraftGroupTarget } from "../lib/draftGroupLaunch";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { threadEnvironment } from "./threads";
 
-export const environmentThreadGroups = createEnvironmentThreadGroupAtoms({
+const environmentThreadGroups = createEnvironmentThreadGroupAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: threadEnvironment.snapshotAtom,
 });

@@ -6,7 +6,7 @@ import {
 import type { AgentAwarenessPhase, AgentAwarenessState } from "@t3tools/shared/agentAwareness";
 
 /** A finished run older than this is history, not news. Matches the relay. */
-export const TERMINAL_ALERT_FRESHNESS_MS = 2 * 60_000;
+const TERMINAL_ALERT_FRESHNESS_MS = 2 * 60_000;
 
 const ALERTS: Partial<Record<AgentAwarenessPhase, DirectPushAlertKind>> = {
   waiting_for_approval: "approval",
@@ -16,11 +16,9 @@ const ALERTS: Partial<Record<AgentAwarenessPhase, DirectPushAlertKind>> = {
 };
 
 /**
- * The kind of alert a thread's new awareness state is worth, or null when it
- * should not buzz any phone. `previousPhase` is undefined when this process
- * has not seen the thread since it started; a finished run then only counts
- * when this process finished it, so restarting the server does not replay
- * old completions. Each device then filters by its own `alertOn` choice.
+ * The alert a thread's new awareness state is worth, or null. With `previousPhase` undefined
+ * (unseen since startup), a finished run counts only if this process finished it, so a restart
+ * does not replay old completions. Each device then filters by its own `alertOn`.
  */
 export function alertKind(input: {
   readonly state: AgentAwarenessState | null;

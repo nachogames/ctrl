@@ -258,7 +258,7 @@ export type ClaudeCapabilitiesProbe = {
  * commands — from built-in commands such as `/compact` that only run when
  * they open a message. Without it every command is treated as built-in.
  */
-export function parseClaudeInitializationCommands(
+function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
   skillNames?: ReadonlySet<string>,
 ): ReadonlyArray<ServerProviderSlashCommand> {

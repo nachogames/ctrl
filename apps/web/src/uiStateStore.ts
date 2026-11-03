@@ -363,10 +363,7 @@ function setSidebarProjectScopeKeys(state: UiState, projectKeys: readonly string
   };
 }
 
-export function setSidebarEnvironmentScopeId(
-  state: UiState,
-  environmentId: string | null,
-): UiState {
+function setSidebarEnvironmentScopeId(state: UiState, environmentId: string | null): UiState {
   const nextId = sanitizeOptionalKey(environmentId);
   if (state.sidebarEnvironmentScopeId === nextId) {
     return state;
