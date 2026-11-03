@@ -2,7 +2,7 @@
 
 # Ctrl
 
-Ctrl is a control surface for the coding agents on your machine (Claude Code, Codex, Cursor, Grok Build, OpenCode and Google Antigravity), with web, desktop and mobile clients.
+Ctrl is a control surface for the coding agents on your machine (Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity and fx), with web, desktop and mobile clients.
 
 > [!NOTE]
 > **Ctrl is a personal fork of [T3 Code](https://github.com/pingdotgg/t3code).** Nearly everything here is the T3 team's work: Theo, Julius and every T3 Code contributor built the app, the server and the clients this fork stands on. Thank you. Ctrl adds a few features of its own (listed below) and tracks upstream closely. If you want the real thing, with support and the mobile apps in the stores, use [T3 Code](https://t3.codes). Bugs that also happen in T3 Code belong [upstream](https://github.com/pingdotgg/t3code/issues). T3 Code's MIT license and copyright notice are kept unchanged in [LICENSE](LICENSE).
@@ -62,7 +62,7 @@ Download the latest build from [Ctrl releases](https://github.com/nachogames/ctr
 There are no Windows, Linux or iOS builds. Build those from source (see the end of this page).
 
 > [!WARNING]
-> Ctrl, like T3 Code, supports Codex, Claude, Cursor, Grok Build, OpenCode, and Antigravity. Install and authenticate at least one provider before use:
+> Ctrl, like T3 Code, supports Codex, Claude, Cursor, Grok Build, OpenCode, Antigravity, and fx. Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
 > - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
@@ -70,6 +70,7 @@ There are no Windows, Linux or iOS builds. Build those from source (see the end 
 > - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 > - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
+> - fx: install [fx](https://fx.sh) and run `fx login` on the machine running the T3 Code server ([setup guide](./docs/user/providers-fx.md))
 
 ### Official T3 Code
 

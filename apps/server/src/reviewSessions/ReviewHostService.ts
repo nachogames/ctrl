@@ -17,7 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -72,7 +72,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitWorkflow.GitWorkflowService;
   const settings = yield* Settings.ServerSettingsService;
   const reviews = yield* Reviews.ReviewSessionService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const lock = yield* Semaphore.make(1);
   const failure = (cause: unknown) =>
     isReviewSessionError(cause)
@@ -115,7 +115,7 @@ export const make = Effect.gen(function* () {
     if (thread.groupId != null) return thread.groupId;
     const groupId = ThreadGroupId.make(`review-group:${thread.id}`);
     yield* groups.create({
-      commandId: CommandId.make(`review-group:${yield* crypto.randomUUIDv4()}`),
+      commandId: CommandId.make(`review-group:${yield* random.uuidV4()}`),
       groupId,
       projectId: thread.projectId,
       threadIds: [thread.id],
@@ -179,7 +179,7 @@ export const make = Effect.gen(function* () {
       );
       // An archived or deleted review chat keeps its id; the new one needs another.
       const id =
-        existing === null ? stableId : ThreadId.make(`${stableId}:${yield* crypto.randomUUIDv4()}`);
+        existing === null ? stableId : ThreadId.make(`${stableId}:${yield* random.uuidV4()}`);
       const modelSelection = resolved.defaultModelSelection ??
         previous?.modelSelection ?? {
           instanceId: ProviderInstanceId.make("codex"),
@@ -215,7 +215,7 @@ export const make = Effect.gen(function* () {
       // group creation and start the independent reviewer in the project root.
       yield* threads.dispatch({
         type: "thread.metadata.update",
-        commandId: CommandId.make(`review-checkout:${yield* crypto.randomUUIDv4()}`),
+        commandId: CommandId.make(`review-checkout:${yield* random.uuidV4()}`),
         threadId: id,
         expectedEmpty: true,
         worktreePath: prepared.worktreePath,
@@ -230,7 +230,7 @@ export const make = Effect.gen(function* () {
       thread = created;
       yield* threads.dispatch({
         type: "thread.pull-request.link",
-        commandId: CommandId.make(`review-link:${yield* crypto.randomUUIDv4()}`),
+        commandId: CommandId.make(`review-link:${yield* random.uuidV4()}`),
         threadId: id,
         ...key,
         url: detail.url,

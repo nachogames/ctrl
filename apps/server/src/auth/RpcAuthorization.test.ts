@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ReviewSessionId,
+  SecretProviderId,
   ThreadId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -260,6 +261,30 @@ describe("settings mutation authorization", () => {
       );
       for (const providerInstanceMutation of providerMutations) {
         yield* client[WS_METHODS.serverUpdateSettings]({ patch: {}, providerInstanceMutation });
+      }
+      expect(handled).toBe(providerMutations.length);
+      yield* client[WS_METHODS.serverUpdateSettings]({
+        patch: {},
+        providerInstanceMutation: {
+          operation: "upsert",
+          instanceId: ProviderInstanceId.make("codex_work"),
+          instance: {
+            driver: ProviderDriverKind.make("codex"),
+            environment: [
+              {
+                name: "OPENAI_API_KEY",
+                sensitive: true,
+                value: {
+                  provider: SecretProviderId.make("personal"),
+                  reference: "op://Private/OpenAI/credential",
+                },
+              },
+            ],
+          },
+        },
+      });
+      expect(handled).toBe(providerMutations.length + 1);
+      for (const providerInstanceMutation of providerMutations) {
         expect(
           yield* client[WS_METHODS.serverUpdateSettings]({
             patch: { defaultRuntimeMode: "full-access" },
@@ -267,11 +292,11 @@ describe("settings mutation authorization", () => {
           }).pipe(Effect.flip),
         ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
       }
-      expect(handled).toBe(providerMutations.length);
+      expect(handled).toBe(providerMutations.length + 1);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("requires provider permission for provider mutations", () =>
+  it.effect("does not let a settings grant create or remove providers or secret providers", () =>
     Effect.gen(function* () {
       let handled = false;
       const client = yield* RpcTest.makeClient(group).pipe(
@@ -295,6 +320,11 @@ describe("settings mutation authorization", () => {
           }).pipe(Effect.flip),
         ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
       }
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: { secretProviders: { [SecretProviderId.make("personal")]: null } },
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
       expect(handled).toBe(false);
     }).pipe(Effect.scoped),
   );

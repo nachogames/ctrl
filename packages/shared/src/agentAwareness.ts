@@ -1,8 +1,9 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2ThreadShell,
-  Project,
-  ThreadId,
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type OrchestrationV2ThreadShell,
+  type Project,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -60,7 +61,7 @@ export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
   const { thread } = input;
-  if (thread.lineage.relationshipToParent === "subagent") return null;
+  if (!isListedThreadLineage(thread.lineage)) return null;
   const phase = resolveThreadAwarenessPhaseV2(thread);
   if (phase === null) {
     return null;
@@ -116,20 +117,11 @@ export function threadAwarenessInPhaseV2(
  * through their parent.
  */
 export function threadQuestionPhaseV2(
-  thread: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest"> &
-    Partial<Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "status">>,
+  thread: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest">,
 ): Extract<AgentAwarenessPhase, "waiting_for_input" | "waiting_for_approval"> | null {
-  const runStatus = thread.activityRunStatus ?? thread.status;
-  if (
-    thread.pendingRuntimeRequest?.kind === "user_input" &&
-    (thread.pendingRuntimeRequest.blocking !== false ||
-      !(runStatus === "preparing" || runStatus === "starting" || runStatus === "running"))
-  ) {
-    return "waiting_for_input";
-  }
+  if (thread.pendingRuntimeRequest?.kind === "user_input") return "waiting_for_input";
   if (
     thread.pendingRuntimeRequest !== null &&
-    thread.pendingRuntimeRequest.kind !== "user_input" &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
   ) {
     return "waiting_for_approval";

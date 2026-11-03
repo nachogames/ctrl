@@ -37,7 +37,7 @@ import { parseReviewPointTag } from "@t3tools/shared/reviewPointTag";
 import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
 import { normalizeThreadPullRequestKey } from "../sourceControl/threadPullRequests.ts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -369,7 +369,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const groups = yield* ThreadGroupService.ThreadGroupService;
   const discoveryLock = yield* Semaphore.make(1);
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const writeLock = yield* Semaphore.make(1);
   const launches = yield* ThreadGroupLaunchService.ThreadGroupLaunchService;
   const providers = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
@@ -567,7 +567,7 @@ export const make = Effect.gen(function* () {
             }
             const at = yield* now;
             const session: ReviewSession = {
-              id: ReviewSessionId.make(`review:${yield* crypto.randomUUIDv4()}`),
+              id: ReviewSessionId.make(`review:${yield* random.uuidV4()}`),
               projectId: input.projectId,
               pullRequest: key,
               url: input.url,
@@ -621,7 +621,7 @@ export const make = Effect.gen(function* () {
         const groupId = shell.groupId ?? ThreadGroupId.make(`review-group:${shell.id}`);
         if (shell.groupId == null)
           yield* groups.create({
-            commandId: CommandId.make(`review-group:${shell.id}:${yield* crypto.randomUUIDv4()}`),
+            commandId: CommandId.make(`review-group:${shell.id}:${yield* random.uuidV4()}`),
             groupId,
             projectId: shell.projectId,
             threadIds: [shell.id],
@@ -1382,7 +1382,7 @@ export const make = Effect.gen(function* () {
   ) {
     return yield* launches
       .newThread({
-        commandId: CommandId.make(`review-chat:${yield* crypto.randomUUIDv4()}`),
+        commandId: CommandId.make(`review-chat:${yield* random.uuidV4()}`),
         groupId: session.groupId,
         title,
         modelSelection: reviewChat.modelSelection,
@@ -1403,7 +1403,7 @@ export const make = Effect.gen(function* () {
     threadId: ThreadId,
     text: string,
   ) {
-    const id = yield* crypto.randomUUIDv4();
+    const id = yield* random.uuidV4();
     yield* threads.sendToThread({
       projectId: session.projectId,
       threadId,
@@ -1491,7 +1491,7 @@ export const make = Effect.gen(function* () {
             reviewChat,
             `Your review · round ${session.round}`,
           );
-          const sourceId = `local:${yield* crypto.randomUUIDv4()}`;
+          const sourceId = `local:${yield* random.uuidV4()}`;
           yield* write(
             session.id,
             Effect.gen(function* () {
@@ -1773,7 +1773,7 @@ export const make = Effect.gen(function* () {
           }
         }),
       );
-      const id = yield* crypto.randomUUIDv4();
+      const id = yield* random.uuidV4();
       yield* threads
         .sendToThread({
           projectId: session.projectId,

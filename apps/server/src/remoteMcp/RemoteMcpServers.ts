@@ -25,9 +25,9 @@ import {
 } from "@t3tools/contracts/remoteMcp";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -196,7 +196,8 @@ export const callbackUrl = (callbackOrigin: string) => {
 
 export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const changes = yield* PubSub.sliding<void>(1);
   const toolChangesHub = yield* PubSub.sliding<void>(1);
   const servers = new Map<string, LiveServer>();
@@ -210,9 +211,7 @@ export const make = Effect.gen(function* () {
   };
 
   const sha256 = (text: string) =>
-    runPromise(
-      crypto.digest("SHA-256", new TextEncoder().encode(text)).pipe(Effect.map(Hex.encode)),
-    );
+    runPromise(digest.digestHex(Digest.sha256, new TextEncoder().encode(text)));
 
   const reindexTools = () => {
     const next = new Map<string, ProxiedTool>();
@@ -545,10 +544,7 @@ export const make = Effect.gen(function* () {
       try: () => callbackUrl(input.callbackOrigin),
       catch: (error) => remoteError(describe(error), input.id),
     });
-    const state = yield* crypto.randomBytes(32).pipe(
-      Effect.map((bytes) => Buffer.from(bytes).toString("base64url")),
-      Effect.mapError((error) => remoteError(describe(error), input.id)),
-    );
+    const state = Buffer.from(yield* random.randomBytes(32)).toString("base64url");
     const expiresAt = (yield* Clock.currentTimeMillis) + PENDING_AUTHORIZATION_TTL_MS;
     return yield* promise(input.id, async () => {
       server.stored.oauth = {
