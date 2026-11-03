@@ -275,12 +275,17 @@ export const reviewFindingTitle = (summary: string): string =>
 
 export interface ReviewHistoryRound {
   readonly number: number;
+  /** The commit this round's reviews looked at; null while nothing on it has finished. */
+  readonly commitSha: string | null;
   readonly sources: ReadonlyArray<ReviewSource>;
   readonly items: ReadonlyArray<ReviewItem>;
 }
 
-/** Completed Copilot passes anchor history. Retries join the next pass; other reviewers
- * join the matching commit, or the most recent pass when no commit matches. */
+/**
+ * One round per reviewed commit, in the order the commits were first reviewed, whether the
+ * review came from GitHub or ran in Ctrl. A failed run joins the next finished review; a
+ * review still requested or running joins the latest round.
+ */
 export function reviewHistoryRounds(
   sources: ReadonlyArray<ReviewSource>,
   items: ReadonlyArray<ReviewItem>,
@@ -289,36 +294,37 @@ export function reviewHistoryRounds(
   const ordered = [...sources].sort(
     (a, b) => time(a).localeCompare(time(b)) || a.id.localeCompare(b.id),
   );
-  const anchors = ordered.filter(
-    (source) => source.kind === "copilot" && source.state === "done" && !source.failed,
-  );
-  const groups: ReviewSource[][] = Array.from({ length: Math.max(1, anchors.length) }, () => []);
+  const groups: Array<{ commitSha: string | null; sources: ReviewSource[] }> = [];
+  let waiting: ReviewSource[] = [];
   for (const source of ordered) {
-    let index = anchors.findIndex((anchor) => anchor.id === source.id);
-    if (index < 0 && source.failed)
-      index = anchors.findIndex((anchor) => time(anchor) >= time(source));
-    if (index < 0 && !source.failed && source.commitSha !== null) {
-      const matches = anchors
-        .map((anchor, i) => ({ anchor, i }))
-        .filter(({ anchor }) => anchor.commitSha === source.commitSha);
-      const preceding = matches.filter(({ anchor }) => time(anchor) <= time(source));
-      index = (preceding.at(-1) ?? matches[0])?.i ?? -1;
+    if (source.state !== "done" || source.failed || source.commitSha === null) {
+      waiting.push(source);
+      continue;
     }
-    if (index < 0) index = anchors.findLastIndex((anchor) => time(anchor) <= time(source));
-    groups[Math.max(0, index)]!.push(source);
+    let group = groups.find((candidate) => candidate.commitSha === source.commitSha);
+    if (group === undefined) {
+      group = { commitSha: source.commitSha, sources: [] };
+      groups.push(group);
+    }
+    group.sources.push(...waiting, source);
+    waiting = [];
   }
-  return groups
-    .map((group, index) => {
-      const ids = new Set(group.map((source) => source.id));
-      return {
-        number: index + 1,
-        sources: group,
-        items: items.filter(
-          (item) => !isReviewOverview(item) && item.sourceIds.some((id) => ids.has(id)),
-        ),
-      };
-    })
-    .filter((group) => group.sources.length > 0);
+  if (waiting.length > 0) {
+    const last = groups.at(-1);
+    if (last === undefined) groups.push({ commitSha: null, sources: waiting });
+    else last.sources.push(...waiting);
+  }
+  return groups.map((group, index) => {
+    const ids = new Set(group.sources.map((source) => source.id));
+    return {
+      number: index + 1,
+      commitSha: group.commitSha,
+      sources: group.sources,
+      items: items.filter(
+        (item) => !isReviewOverview(item) && item.sourceIds.some((id) => ids.has(id)),
+      ),
+    };
+  });
 }
 
 /** Resolution comes from GitHub, independently of decisions or whether Ctrl applied them. */

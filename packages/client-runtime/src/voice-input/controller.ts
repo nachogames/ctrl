@@ -25,10 +25,6 @@ export function voiceInputBlocksSubmission(state: VoiceInputState): boolean {
   );
 }
 
-export function voiceInputFreezesEditor(state: VoiceInputState): boolean {
-  return voiceInputBlocksSubmission(state);
-}
-
 export type VoiceDraftSnapshot = {
   readonly ownerKey: string;
   readonly text: string;
@@ -119,11 +115,10 @@ export function resolveTranscriptCommit(
   const isEmptySelection = captured.selection.start === captured.selection.end;
   const normalizedLocale = locale.replaceAll("_", "-").toLowerCase();
   const usesEnglishSpacing = normalizedLocale === "en" || normalizedLocale.startsWith("en-");
-  // Models transcribe each recording as its own sentence. Fit that sentence to
-  // where it lands: capitalize at the start of the draft, a line, or a
-  // sentence; mid-sentence, drop the leading capital (English only, where
-  // nouns are not capitalized). Drop a final period when the sentence goes on.
-  // A first word with other capitals ("iOS") or "I" is kept as spoken.
+  // Models transcribe each recording as its own sentence; fit it to where it
+  // lands. Capitalize at a draft, line, or sentence start; mid-sentence drop the
+  // leading capital (English only) unless the word is "I" or has other capitals
+  // ("iOS"). Drop a final period when the sentence goes on.
   const atSentenceStart = /(^|[.!?]\s*|\n\s*)$/.test(
     captured.text.slice(0, captured.selection.start),
   );

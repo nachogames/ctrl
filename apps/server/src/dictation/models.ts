@@ -362,11 +362,10 @@ export const vadModel = {
 };
 
 /**
- * Smart Turn v3.2 (Pipecat, BSD-2-Clause) for hands-free voice: from the
- * last 8 s of audio it judges whether the user finished their turn or only
- * paused. sherpa-onnx cannot run an arbitrary ONNX graph, so it runs on
- * onnxruntime-web's single-threaded WebAssembly build (MIT), fetched as two
- * pinned files rather than the 113 MB native onnxruntime-node package.
+ * Smart Turn v3.2 (Pipecat, BSD-2-Clause): judges from the last 8 s of audio
+ * whether the user finished their turn. sherpa-onnx cannot run arbitrary ONNX,
+ * so it runs on onnxruntime-web's single-threaded WASM build (MIT): two pinned
+ * files instead of the 113 MB native onnxruntime-node package.
  */
 export const turnModel = {
   directory: "smart-turn-v3.2",

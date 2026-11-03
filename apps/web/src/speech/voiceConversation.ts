@@ -11,15 +11,10 @@ export interface ConversationSnapshot {
 }
 
 /**
- * Hands-free conversation for one composer while voice mode is on. Talk
- * starts it; each turn ends on its own when the environment hears the user
- * stop, and is sent. The microphone then closes until a reply starts being
- * read, and reopens for it, so speaking over the reply interrupts it and
- * listening carries on once it finishes. A turn that gets no reply read
- * (the thread finished silently) also reopens the microphone. `end` stops it.
- *
- * It decides; the composer acts. `sync` runs after every render with what the
- * composer sees and returns "listen" when dictation should start.
+ * Hands-free conversation for one composer in voice mode. Each turn ends when
+ * the environment hears the user stop; the mic then closes until a reply starts
+ * being read, so speaking over it interrupts. It decides, the composer acts:
+ * `sync` runs after every render and returns "listen" when dictation should start.
  */
 export class VoiceConversation {
   #active = false;

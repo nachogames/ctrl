@@ -16,11 +16,7 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
 } from "../../modelSelection";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
+import { deriveProviderInstanceEntries, providerInstanceEntriesFor } from "../../providerInstances";
 import { useThreadShell } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { homeEnvironment } from "../../state/home";
@@ -28,7 +24,7 @@ import { primaryServerConfigAtom, primaryServerProvidersAtom } from "../../state
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { getTriggerDisplayModelLabel } from "../chat/providerIconUtils";
+import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import {
@@ -97,9 +93,7 @@ function HomeOffRows({ environmentId }: { environmentId: EnvironmentId }) {
   const [picked, setPicked] = useState<ModelSelection | null>(null);
   const [pending, setPending] = useState(false);
 
-  const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
-  );
+  const entries = providerInstanceEntriesFor(providers, settings, null);
   const usable = (instanceId: string) =>
     entries.some((entry) => entry.instanceId === instanceId && entry.enabled && entry.isAvailable);
   // Start from the default model for new threads, else the first usable provider.
@@ -194,7 +188,7 @@ function HomeOnRows(props: {
     modelSelection === null
       ? null
       : model
-        ? getTriggerDisplayModelLabel(model)
+        ? getTriggerDisplayModelName(model, modelEntry?.driverKind)
         : modelSelection.model;
 
   const runStartFresh = async () => {

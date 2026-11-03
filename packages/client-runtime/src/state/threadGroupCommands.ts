@@ -1,5 +1,5 @@
 import { type ScopedThreadGroupRef, type ScopedThreadRef, WS_METHODS } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -33,7 +33,7 @@ export type {
 } from "../operations/commands.ts";
 
 export function createThreadGroupEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | SecureRandom.SecureRandom | R, E>,
 ) {
   const scheduler = createAtomCommandScheduler();
   // Commands for one group, or moves of one thread, run in order.

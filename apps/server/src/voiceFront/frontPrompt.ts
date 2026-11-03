@@ -40,7 +40,7 @@ const snippet = (text: string, length = SNIPPET_LENGTH) => {
   return flat.length > length ? `${flat.slice(0, length - 1)}…` : flat;
 };
 
-export function ago(fromMs: number, nowMs: number): string {
+function ago(fromMs: number, nowMs: number): string {
   const minutes = Math.max(0, Math.round((nowMs - fromMs) / 60_000));
   if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes} min ago`;
@@ -148,7 +148,7 @@ Rules:
 }
 
 /** The instructions for one kind of thread. Exported for tests. */
-export function systemPrompt(kind: FrontContext["kind"]): string {
+function systemPrompt(kind: FrontContext["kind"]): string {
   return `${sharedRules(kind)}
 - Begin with exactly one tag.
 - [answered]: you fully answer from the context. Use it for greetings, small talk, and questions about what threads are doing, what finished, or what needs the user; answer those yourself from the context.
@@ -247,7 +247,7 @@ export function parseFrontOutput(raw: string): {
 }
 
 /** Drops markdown and stray tags a small model may still emit. */
-export function speakable(text: string): string {
+function speakable(text: string): string {
   return (
     text
       .replace(/\[(?:answered|handoff)\]/gi, "")

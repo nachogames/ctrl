@@ -1,12 +1,8 @@
 /**
- * Apple's on-device speech recognition, run through the `ctrl-apple-speech`
- * helper in `native/apple-speech`. One helper process per dictation session:
- * it is ready in about 300 ms, which the client covers while the user starts
- * speaking, so there is no warm pool to manage.
- *
- * The helper is found at `T3CODE_APPLE_SPEECH_PATH` (the packaged desktop app
- * sets it to the copy in its resources), or built from source with `swiftc`
- * on first use in a checkout, into the gitignored `native/apple-speech/.build`.
+ * Apple's on-device speech recognition through the `ctrl-apple-speech` helper,
+ * one process per session (ready in ~300 ms, so no warm pool). The helper is at
+ * `T3CODE_APPLE_SPEECH_PATH` in the packaged app, or built with `swiftc` on first
+ * use in a checkout into the gitignored `native/apple-speech/.build`.
  */
 import { DictationError, type DictationFinishResult } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -145,24 +141,26 @@ export const makeWithBinary = Effect.fnUntraced(function* (
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const spawn = (args: ReadonlyArray<string>, scope: Scope.Scope) =>
-    Effect.gen(function* () {
-      const executable = yield* binary;
-      return yield* spawner
-        .spawn(
-          ChildProcess.make(executable, [...args], {
-            stdin: { stream: "pipe", endOnDone: false },
-            stdout: "pipe",
-            stderr: "pipe",
-            killSignal: "SIGTERM",
-            forceKillAfter: Duration.seconds(2),
-          }),
-        )
-        .pipe(
-          Scope.provide(scope),
-          Effect.mapError((cause) => failed("Could not start Apple speech recognition.", cause)),
-        );
-    });
+  const spawn = Effect.fn("AppleSpeech.spawn")(function* (
+    args: ReadonlyArray<string>,
+    scope: Scope.Scope,
+  ) {
+    const executable = yield* binary;
+    return yield* spawner
+      .spawn(
+        ChildProcess.make(executable, [...args], {
+          stdin: { stream: "pipe", endOnDone: false },
+          stdout: "pipe",
+          stderr: "pipe",
+          killSignal: "SIGTERM",
+          forceKillAfter: Duration.seconds(2),
+        }),
+      )
+      .pipe(
+        Scope.provide(scope),
+        Effect.mapError((cause) => failed("Could not start Apple speech recognition.", cause)),
+      );
+  });
 
   const events = (handle: ChildProcessSpawner.ChildProcessHandle) =>
     handle.stdout.pipe(
@@ -367,9 +365,9 @@ export const layer = Layer.effect(
         message: "Apple speech recognition needs a Mac.",
       });
       return AppleSpeech.of({
-        probe: () => Effect.succeed(unavailable(null)),
-        install: () => Effect.fail(missing),
-        open: () => Effect.fail(missing),
+        probe: Effect.fn("AppleSpeech.probe")(() => Effect.succeed(unavailable(null))),
+        install: Effect.fn("AppleSpeech.install")(() => Effect.fail(missing)),
+        open: Effect.fn("AppleSpeech.open")(() => Effect.fail(missing)),
       });
     }
     const context = yield* Effect.context<
@@ -384,10 +382,12 @@ export const layer = Layer.effect(
 export const layerUnavailable = Layer.succeed(
   AppleSpeech,
   AppleSpeech.of({
-    probe: () => Effect.succeed(unavailable(null)),
-    install: () =>
+    probe: Effect.fn("AppleSpeech.probe")(() => Effect.succeed(unavailable(null))),
+    install: Effect.fn("AppleSpeech.install")(() =>
       Effect.fail(new DictationError({ reason: "unsupported-platform", message: "Unavailable." })),
-    open: () =>
+    ),
+    open: Effect.fn("AppleSpeech.open")(() =>
       Effect.fail(new DictationError({ reason: "unsupported-platform", message: "Unavailable." })),
+    ),
   }),
 );

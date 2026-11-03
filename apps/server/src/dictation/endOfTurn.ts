@@ -35,14 +35,10 @@ export interface TurnState {
 export type TurnCheck = (pause: number) => void;
 
 /**
- * Decides when a hands-free turn ends from per-frame voice activity, on the
- * recording's own clock (milliseconds of audio heard), so timing does not
- * depend on how the frames were delivered. The turn ends once, and stays ended.
- *
- * Without `check` a pause of `silenceMs` ends it. With `check`, a pause of
- * `checkAfterMs` asks the semantic turn model once; a "finished" verdict ends
- * the turn if the user is still quiet, and otherwise the turn ends after
- * `maxSilenceMs` of silence, which also covers a verdict that never comes.
+ * Ends a hands-free turn from per-frame voice activity, timed on the recording's
+ * own clock so frame delivery does not matter. Once ended it stays ended. With
+ * `check`, a `checkAfterMs` pause asks the turn model once and a "finished" verdict
+ * ends a still-quiet turn; `maxSilenceMs` (`silenceMs` without `check`) is the cap.
  */
 export function createTurnDetector(options?: {
   readonly silenceMs?: number;
@@ -110,7 +106,7 @@ export const BARGE_IN_VAD_THRESHOLD = 0.8;
  * playing reply. On top of Silero's own 250 ms minimum, so a cough or a burst
  * of echo while the canceller adapts does not cut the reply off.
  */
-export const BARGE_IN_MIN_SPEECH_MS = 200;
+const BARGE_IN_MIN_SPEECH_MS = 200;
 
 /** One frame from the voice activity detector. */
 export interface VoiceActivityFrame {
@@ -121,11 +117,9 @@ export interface VoiceActivityFrame {
 }
 
 /**
- * Decides which frames count as the user speaking while a spoken reply may be
- * echoing into the microphone. Without playback every detected frame counts.
- * During playback only a run of confident frames lasting
- * `BARGE_IN_MIN_SPEECH_MS` counts; once one has, the user is talking and the
- * gate stays open for the rest of the session.
+ * Decides which frames count as user speech while a spoken reply may echo into
+ * the mic. During playback only a confident run of `BARGE_IN_MIN_SPEECH_MS`
+ * counts; after one has, or with no playback, every detected frame counts.
  */
 export function createBargeInGate(options?: { readonly minSpeechMs?: number }) {
   const minSpeechMs = options?.minSpeechMs ?? BARGE_IN_MIN_SPEECH_MS;

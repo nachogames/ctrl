@@ -1,16 +1,10 @@
-import {
-  EnvironmentId,
-  HomeWatch,
-  OrchestratorMcpEnvironmentTarget,
-  OrchestratorMcpFailure,
-  ThreadId,
-} from "@t3tools/contracts";
+import { EnvironmentId, HomeWatch, OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
-import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
-import { homeRoutingDependencies } from "../../homeRouting.ts";
+import * as FleetService from "../../../home/FleetService.ts";
+import * as HomeService from "../../../home/HomeService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
@@ -19,41 +13,24 @@ const shared = {
   dependencies: [
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
-    ServerEnvironment.ServerEnvironment,
-    ...homeRoutingDependencies,
+    HomeService.HomeService,
+    FleetService.FleetService,
   ],
 };
-
-const EnvironmentListTool = Tool.make("t3_environment_list", {
-  ...shared,
-  description:
-    "List the environments this thread can act in. Other threads see only their own environment. Shift sees every environment the user's desktop app is connected to; relayConnected is false when no desktop window is open to relay calls to them.",
-  success: Schema.Struct({
-    currentEnvironmentId: EnvironmentId,
-    relayConnected: Schema.Boolean,
-    environments: Schema.Array(
-      Schema.Struct({
-        environmentId: EnvironmentId,
-        label: Schema.String,
-        connected: Schema.Boolean,
-        current: Schema.Boolean,
-      }),
-    ),
-  }),
-})
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
 
 const ThreadWatchTool = Tool.make("t3_thread_watch", {
   ...shared,
   description:
-    "Shift only. Choose which threads wake Shift. watch/unwatch one thread (threadId, optional environmentId), or watch_all/unwatch_all for every thread in every environment. Threads Shift launches are already watched. A watch ends when its thread is settled or archived. Returns what Shift now watches.",
+    "Shift only. Choose which threads wake Shift. watch/unwatch one thread (threadId, optional environmentId), or watch_all/unwatch_all for every thread in every environment the desktop app is connected to. Threads Shift launches are already watched. A watch ends when its thread is settled or archived. Returns what Shift now watches.",
   parameters: Schema.Struct({
     action: Schema.Literals(["watch", "unwatch", "watch_all", "unwatch_all"]),
-    environmentId: OrchestratorMcpEnvironmentTarget,
+    // Not a linked-environment target: the watch is kept here, whichever machine the thread is on.
+    environmentId: Schema.optional(
+      EnvironmentId.annotate({ description: "The thread's environment. Omit for this one." }),
+    ),
     threadId: Schema.optional(ThreadId),
   }),
   success: Schema.Struct({ watchAll: Schema.Boolean, watches: Schema.Array(HomeWatch) }),
 }).annotate(Tool.Destructive, false);
 
-export const HomeToolkit = Toolkit.make(EnvironmentListTool, ThreadWatchTool);
+export const HomeToolkit = Toolkit.make(ThreadWatchTool);

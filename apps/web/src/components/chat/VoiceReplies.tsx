@@ -31,12 +31,15 @@ export function VoiceReplies(props: {
   // Replies held while the front voice answers are fed again once it decides.
   const frontMode = useSyncExternalStore(replySpeaker.subscribe, replySpeaker.frontMode);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- silences the reply speaker's audio when voice replies turn off
   useEffect(() => {
     if (!active) replySpeaker.stop();
   }, [active]);
   // Mounted per thread (keyed by ChatView), so leaving the thread stops reading it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- silences the reply speaker's audio when the thread unmounts
   useEffect(() => () => replySpeaker.stop(), []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- feeds newly arrived replies into the reply speaker's audio queue
   useEffect(() => {
     const assistant = props.messages.filter((message) => message.role === "assistant");
     const key = `${props.environmentId}:${props.threadId}`;

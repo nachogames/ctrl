@@ -9,6 +9,8 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import * as ProcessRunner from "../processRunner.ts";
 
 /**
@@ -83,7 +85,7 @@ const readLinuxBattery = Effect.gen(function* () {
 });
 
 const readBattery = Effect.gen(function* () {
-  switch (process.platform) {
+  switch (yield* HostProcess.Platform) {
     case "darwin":
       return yield* readDarwinBattery.pipe(Effect.orElseSucceed(() => null));
     case "linux":
@@ -97,7 +99,7 @@ function sameBattery(left: HostBattery | null, right: HostBattery | null): boole
   return left?.percent === right?.percent && left?.pluggedIn === right?.pluggedIn;
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const services = yield* Effect.context<ProcessRunner.ProcessRunner | FileSystem.FileSystem>();
   const read = readBattery.pipe(Effect.provideContext(services));
   const initial = yield* read;

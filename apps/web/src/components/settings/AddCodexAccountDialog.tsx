@@ -7,7 +7,7 @@ import {
   type EnvironmentId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -18,7 +18,11 @@ import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
+import { MultipleAccountsNote } from "./MultipleAccountsNote";
 import { SettingsRow } from "./settingsLayout";
+import { ProviderInventoryList } from "./ProviderInventorySection";
+
+const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 export function AddCodexAccountDialog({
   environmentId,
@@ -42,17 +46,19 @@ export function AddCodexAccountDialog({
   const [instanceId, setInstanceId] = useState<ProviderInstanceId | null>(null);
   const [pending, setPending] = useState(false);
   const provider = providers?.find((candidate) => candidate.instanceId === instanceId);
+  // Closes itself once the new account connects; the owner unmounts it after
+  // the close animation.
   const connected = usesChatGptSharing(provider);
-  const closeAfterConnection = useEffectEvent(onClose);
-  useEffect(() => {
-    if (connected) closeAfterConnection();
-  }, [connected]);
+  // Saving a switch rebuilds the provider and briefly clears its auth status.
+  const [showInventory, setShowInventory] = useState(false);
+  if (!showInventory && connected && provider?.supportsInventory) setShowInventory(true);
+  const closeOnConnection = connected && !provider?.supportsInventory;
+  const instance = instanceId ? settings.providerInstances?.[instanceId] : undefined;
 
   const createAccount = async () => {
     if (pending || !name.trim() || !readEnvironmentScope(environmentId, AuthProvidersManageScope))
       return;
     setPending(true);
-    // The ID is routing identity; the name is editable and need not be unique.
     const id = ProviderInstanceId.make(`codex_${randomUUID()}`);
     const result = await update({
       environmentId,
@@ -61,7 +67,7 @@ export function AddCodexAccountDialog({
           providerInstances: {
             ...settings.providerInstances,
             [id]: {
-              driver: ProviderDriverKind.make("codex"),
+              driver: CODEX_DRIVER_KIND,
               displayName,
               enabled: true,
               config: { enabled: true, setupMode: "managed" },
@@ -71,31 +77,44 @@ export function AddCodexAccountDialog({
       },
     });
     if (result._tag === "Success") {
-      if (onAccountCreated) {
-        onAccountCreated(id, displayName);
-        onClose();
-      } else {
-        setInstanceId(id);
-      }
+      onAccountCreated?.(id, displayName);
+      setInstanceId(id);
     }
     setPending(false);
   };
 
   return (
     <Dialog
-      open={!connected}
+      open={!closeOnConnection}
       onOpenChange={(open) => {
         if (!open) onClose();
+      }}
+      onOpenChangeComplete={(open) => {
+        if (!open && closeOnConnection) onClose();
       }}
     >
       <WizardPopup size="wide">
         <WizardHeader
           title={instanceId ? displayName : "Add ChatGPT account"}
-          description="Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page."
+          description={
+            showInventory
+              ? "Choose which connectors, plugins and skills this account uses in T3."
+              : "Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page."
+          }
         />
         <WizardPanel>
           {instanceId ? (
-            provider?.setup ? (
+            showInventory && instance ? (
+              <div className="max-h-96 overflow-y-auto">
+                <ProviderInventoryList
+                  environmentId={environmentId}
+                  instanceId={instanceId}
+                  driver={instance.driver}
+                  disabled={instance.disabledInventory}
+                  readOnly={!canManageProviders}
+                />
+              </div>
+            ) : provider?.setup ? (
               renderSetup(instanceId, provider)
             ) : (
               <SettingsRow title="Codex runtime" description="Preparing managed setup." />
@@ -103,6 +122,7 @@ export function AddCodexAccountDialog({
           ) : (
             <form
               id="add-codex-account"
+              className="grid gap-3"
               onSubmit={(event) => {
                 event.preventDefault();
                 void createAccount();
@@ -121,13 +141,14 @@ export function AddCodexAccountDialog({
                   />
                 }
               />
+              <MultipleAccountsNote environmentId={environmentId} driver={CODEX_DRIVER_KIND} />
             </form>
           )}
         </WizardPanel>
         <WizardFooter>
           {instanceId ? (
-            <Button variant="outline" onClick={onClose}>
-              Finish later
+            <Button variant={showInventory ? "default" : "outline"} onClick={onClose}>
+              {showInventory ? "Done" : "Finish later"}
             </Button>
           ) : (
             <>

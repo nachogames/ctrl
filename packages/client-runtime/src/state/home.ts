@@ -2,21 +2,14 @@ import { WS_METHODS } from "@t3tools/contracts";
 import type { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import {
-  createAtomCommandScheduler,
-  createEnvironmentRpcCommand,
-  createEnvironmentRpcSubscriptionAtomFamily,
-} from "./runtime.ts";
+import { createAtomCommandScheduler, createEnvironmentRpcCommand } from "./runtime.ts";
 
-/**
- * Home, the fleet-wide agent thread a desktop hub runs, and the relay the
- * desktop renderer provides for its calls to other environments.
- */
+/** Home, the agent thread a desktop-hosted server runs, and the watch reports its renderer sends. */
 export function createHomeEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   const lifecycleScheduler = createAtomCommandScheduler();
-  const relayScheduler = createAtomCommandScheduler();
+  const reportScheduler = createAtomCommandScheduler();
   const serialPerEnvironment = {
     mode: "serial" as const,
     key: ({ environmentId }: { environmentId: string }) => environmentId,
@@ -40,31 +33,10 @@ export function createHomeEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: serialPerEnvironment,
     }),
-    /** Requests the hub sends this renderer to run elsewhere. Disposed with its owner. */
-    relayRequests: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:home:relay-requests",
-      tag: WS_METHODS.fleetConnect,
-      idleTtlMs: 0,
-    }),
-    relayRespond: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:home:relay-respond",
-      tag: WS_METHODS.fleetRespond,
-      scheduler: relayScheduler,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.requestId]),
-      },
-    }),
-    /** Runs one Home operation on the environment it names. */
-    invoke: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:home:invoke",
-      tag: WS_METHODS.fleetInvoke,
-      scheduler: relayScheduler,
-    }),
     reportWatchEvents: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:home:report-watch-events",
-      tag: WS_METHODS.fleetReportWatchEvents,
-      scheduler: relayScheduler,
+      tag: WS_METHODS.homeReportWatchEvents,
+      scheduler: reportScheduler,
       concurrency: serialPerEnvironment,
     }),
   };

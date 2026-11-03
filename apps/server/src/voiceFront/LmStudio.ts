@@ -56,7 +56,7 @@ export function checkModel(
   return { sizeBytes: entry.sizeBytes };
 }
 
-export const formatGigabytes = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+const formatGigabytes = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 
 /** True for endpoints on this machine, the only ones Ctrl starts a server for. */
 export function isLocalEndpoint(endpoint: string): boolean {

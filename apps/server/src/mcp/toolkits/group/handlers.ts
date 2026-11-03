@@ -10,8 +10,8 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { groupLinkLabel } from "@t3tools/shared/threadGroups";
-import { resolveNewestCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
-import * as Crypto from "effect/Crypto";
+import { resolveNewestCurrentPullRequestLink } from "../../../sourceControl/threadPullRequests.ts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -80,9 +80,8 @@ const commandIdFor = (operation: string, clientRequestId: string | undefined) =>
 /** A random id, or one derived from the command so a retried create replays. */
 const newGroupId = (commandId: CommandId, clientRequestId: string | undefined) =>
   clientRequestId === undefined
-    ? Crypto.Crypto.pipe(
-        Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-        Effect.orDie,
+    ? SecureRandom.SecureRandom.pipe(
+        Effect.flatMap((random) => random.uuidV4()),
         Effect.map((uuid) => ThreadGroupId.make(`group:${uuid}`)),
       )
     : Effect.succeed(ThreadGroupId.make(`group:${commandId}`));
@@ -139,12 +138,11 @@ const readMembers = Effect.fn("mcp.group.readMembers")(function* (
   context: Caller,
   group: OrchestrationThreadGroupShell,
 ) {
-  const active = yield* context.threads
-    .listProjectThreads({ projectId: group.projectId, includeSubagents: false })
-    .pipe(Effect.mapError(unavailable));
-  const archive = yield* context.threads
-    .getShellSnapshot({ location: "archive" })
-    .pipe(Effect.mapError(unavailable));
+  const active = yield* context.threads.listProjectThreads({
+    projectId: group.projectId,
+    includeSubagents: false,
+  });
+  const archive = yield* context.threads.getShellSnapshot({ location: "archive" });
   const byId = new Map<ThreadId, OrchestrationV2ThreadShell>();
   for (const thread of [...active, ...archive.archivedThreads]) {
     if (
@@ -161,7 +159,7 @@ const readMembers = Effect.fn("mcp.group.readMembers")(function* (
     (left, right) =>
       DateTime.toEpochMillis(left.createdAt) - DateTime.toEpochMillis(right.createdAt),
   );
-});
+}, Effect.mapError(unavailable));
 
 /**
  * Settles or unsettles every live chat of the group that is not already so.
@@ -390,10 +388,7 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
         let group: OrchestrationThreadGroupShell | undefined;
         if (input.links !== undefined) {
           const ids = yield* Effect.forEach(adds, () =>
-            Crypto.Crypto.pipe(
-              Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-              Effect.orDie,
-            ),
+            SecureRandom.SecureRandom.pipe(Effect.flatMap((random) => random.uuidV4())),
           );
           const service = yield* ThreadGroup.ThreadGroupService;
           group = yield* service
@@ -479,6 +474,8 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
           title: yield* readTitle(context, result.threadId),
         };
       }),
+    // Groups belong to this environment; a linked caller works through its own link.
+    { refused: "start chats in this environment's groups" },
   ),
   t3_group_handoff: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
@@ -547,9 +544,8 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
         const resource: ThreadGroupManualResource = {
           id:
             input.id ??
-            `res:${yield* Crypto.Crypto.pipe(
-              Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-              Effect.orDie,
+            `res:${yield* SecureRandom.SecureRandom.pipe(
+              Effect.flatMap((random) => random.uuidV4()),
             )}`,
           name: input.name,
           url: input.url ?? null,

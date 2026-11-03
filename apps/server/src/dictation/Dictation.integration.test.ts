@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { DictationModelId } from "@t3tools/contracts";
@@ -31,6 +32,7 @@ const model = candidate;
 const home = process.env.T3_DICTATION_E2E_HOME;
 
 /** Run explicitly with the spike model directory. Runtime + tokens use real HTTP; ONNX bytes stream from the verified cache. */
+// oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- opt-in run that downloads the runtime and transcribes real audio; minutes are its real cost
 it.live.skipIf(!fixture)(
   "installs and transcribes through the real native runtime",
   () =>
@@ -127,6 +129,7 @@ it.live.skipIf(!fixture)(
           recordingSeconds: number;
           startMs: number;
         }[] = [];
+        // oxlint-disable-next-line t3code/no-polling-loop-in-tests -- fixed count of benchmark runs, each awaiting its own finish
         for (let run = 0; run < (model === "whisper-turbo" ? 4 : 3); run++) {
           if (model === "whisper-turbo" && run === 1)
             yield* settings.updateSettings({ dictation: { language: "en" } });
@@ -142,13 +145,14 @@ it.live.skipIf(!fixture)(
           const { sessionId } = yield* service.start({});
           const startMs = (yield* Clock.currentTimeMillis) - beforeStart;
           let chunkCount = 0;
+          // oxlint-disable-next-line t3code/no-polling-loop-in-tests -- fixed-length chunk feed of the recording, not a wait for a condition
           for (let offset = 0; offset < recording.length; offset += 3200) {
             yield* service.append({
               sessionId,
               seq: chunkCount++,
               pcm: recording.subarray(offset, offset + 3200).toString("base64"),
             });
-            // Pace the recording as a microphone would, so background decoding overlaps speech.
+            // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- paces the real native runtime like a microphone so background decoding overlaps speech, which the timings measure
             yield* Effect.sleep("100 millis");
           }
           const beforeFinish = yield* Clock.currentTimeMillis;
@@ -179,7 +183,7 @@ it.live.skipIf(!fixture)(
         );
       }).pipe(Effect.provide(layer), Effect.scoped);
     }).pipe(
-      Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer)),
       Effect.scoped,
     ),
   { timeout: 900_000 },

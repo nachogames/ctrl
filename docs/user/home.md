@@ -1,7 +1,7 @@
 # Shift
 
-Shift is an agent that works across all of your projects and every machine your
-desktop app is connected to. Ask it to start threads, check on them, answer
+Shift is an agent that works across all of your projects, on this machine and on
+the machines you link to it. Ask it to start threads, check on them, answer
 their questions, approve their requests, rename, settle, snooze or archive them.
 
 ## Start Shift
@@ -30,7 +30,7 @@ so choose a model you trust with that.
 
 Shift can listen and answer out loud, all on your machine at no cost:
 
-1. In **Settings → Integrations**, turn on **Dictation** and **Spoken replies**.
+1. In **Settings → Devices**, turn on **Dictation** and **Spoken replies**.
    Spoken replies download a local voice model the first time, and so does
    dictation except on a Mac with macOS 26 or later. Pick a voice under
    **Reply voice**; the play button next to each voice plays a sample.
@@ -46,12 +46,22 @@ see [voice mode](./composer.md#voice-mode).
 
 ## Other machines
 
-Shift reaches your other machines through the desktop app's own connections.
-Keep the app running: on macOS, closing the window keeps Shift connected until
-you quit. When the app is not running, Shift can only act on this machine.
+Shift works on your other machines through
+[linked environments](./remote-access.md#link-another-environment). Turn on
+**Linked environments** in **Settings → Labs** on both machines, then link the
+other machine from the one running Shift. Links last 30 days.
 
-In voice mode, Shift's quick voice answers about threads on every connected machine while the
-desktop app runs. A machine that is offline or slow to answer is left out, and the voice says so.
+On a linked machine Shift can do what the link's access allows, like any agent
+there. It cannot approve requests there, and it reaches that machine even when
+the desktop app is closed.
+
+Shift hears about threads on other machines through the desktop app, which
+stays connected to them. Threads Shift starts there are watched for it, and you
+can ask it to watch any thread there. On macOS, closing the window keeps Shift
+listening until you quit.
+
+In voice mode, Shift's quick voice also answers about threads on your linked machines. A machine
+that is offline, expired, or slow to answer is left out, and the voice says so.
 
 ## Instructions and fresh starts
 

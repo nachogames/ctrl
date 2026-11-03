@@ -1,15 +1,8 @@
 /**
- * One Gemini Live connection for one thread's hands-free conversation.
- *
- * It hears each turn through a speech gate, so only speech (and a little
- * around it) is sent and billed, and marks the turn with activityStart and
- * activityEnd from Ctrl's own end-of-turn detector. Gemini's answer for the
- * turn lands on a `LiveTurn`, which buffers it until the front's reply stream
- * reads it. A GoAway reconnects at the next quiet moment with the latest
- * resumption handle; any send while disconnected reconnects first.
- *
- * Plain callbacks rather than Effect, because the socket is callback-driven;
- * `GeminiLive` owns sessions and supplies the effects through the options.
+ * One Gemini Live connection for one thread's hands-free conversation. Only
+ * gated speech is sent (and billed), turns are marked by Ctrl's own end-of-turn
+ * detector, and a GoAway reconnects at the next quiet moment. Plain callbacks,
+ * not Effect, because the socket is callback-driven; `GeminiLive` owns sessions.
  */
 import type { GeminiLiveModel } from "@t3tools/contracts";
 
@@ -50,7 +43,7 @@ const isTerminal = (event: TurnEvent) =>
   event.type === "interrupted" || event.type === "done" || event.type === "failed";
 
 /** A claimed turn older than this is someone else's, from a turn whose reply was never asked for. */
-export const TURN_CLAIM_WINDOW_MS = 20_000;
+const TURN_CLAIM_WINDOW_MS = 20_000;
 /** Messages held while connecting; about a minute of 100 ms audio chunks. */
 const MAX_QUEUED_MESSAGES = 600;
 

@@ -57,7 +57,9 @@ export function sortSettledThreads<T extends SettledThreadTimestampInput & { rea
     })
     .sort(
       (left, right) =>
-        right.timestampMs - left.timestampMs || left.thread.id.localeCompare(right.thread.id),
+        right.timestampMs - left.timestampMs ||
+        // Plain order, as the server pages ties (ids mix upper and lower case).
+        (left.thread.id < right.thread.id ? -1 : left.thread.id > right.thread.id ? 1 : 0),
     )
     .map(({ thread }) => thread);
 }
@@ -112,7 +114,7 @@ export function getThreadSortTimestamp(
   return getLatestUserMessageTimestamp(thread);
 }
 
-export function activeThreadAnchorTimestampMs(thread: {
+function activeThreadAnchorTimestampMs(thread: {
   readonly createdAt: string;
   readonly unsettledAt?: string | null | undefined;
 }): number {
@@ -161,13 +163,7 @@ export function getLatestThreadForProject<
   return latest;
 }
 
-export {
-  PIN_ORDER_DIGITS,
-  generateSpreadPinOrderKeys,
-  isValidPinOrderKey,
-  pinOrderKeyBetween,
-  pinOrderMidpoint,
-} from "@t3tools/shared/orderKeys";
+export { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/orderKeys";
 
 export function planPinnedReorder(input: {
   readonly orderedIds: readonly string[];
@@ -272,19 +268,20 @@ export function sortActiveThreadsByOrderKey<
   });
 }
 
-export function planPinnedMove(input: {
+/**
+ * Order keys for a reorder inside a group: the Pinned rule, over the group's
+ * chats. Write them in the returned order, which runs bottom-up: keyless chats
+ * sort above keyed ones in a group, so each write lands in its planned place
+ * and a failure partway leaves the asked-for order, not a reshuffle.
+ */
+export function planGroupMemberReorder(input: {
+  /** Member ids in the order after the move. */
   readonly orderedIds: readonly string[];
   readonly keysById: ReadonlyMap<string, string | null | undefined>;
   readonly movedId: string;
-  readonly direction: "up" | "down";
-}): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> | null {
-  const { orderedIds, keysById, movedId, direction } = input;
-  const from = orderedIds.indexOf(movedId);
-  if (from === -1) return null;
-  const to = direction === "up" ? from - 1 : from + 1;
-  if (to < 0 || to >= orderedIds.length) return null;
-  const newOrder = [...orderedIds];
-  newOrder.splice(from, 1);
-  newOrder.splice(to, 0, movedId);
-  return planPinnedReorder({ orderedIds: newOrder, keysById, movedId });
+}): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> {
+  const position = new Map(input.orderedIds.map((id, index) => [id, index]));
+  return [...planPinnedReorder(input)].sort(
+    (left, right) => (position.get(right.id) ?? -1) - (position.get(left.id) ?? -1),
+  );
 }

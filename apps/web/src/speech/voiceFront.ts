@@ -68,16 +68,10 @@ export function useFrontCaption() {
 }
 
 /**
- * Asks the environment's front voice for a quick spoken reply to a voice turn
- * that was just sent, and reads it aloud as it streams in: text through the
- * local voice, or Gemini's own audio as it arrives. The agent's reply
- * waits until the front decides; if the front fully answered, that reply is
- * not read. Any failure (front voice off, LM Studio down) just lets the
- * agent's reply be read as usual; on another machine with no quick voice set
- * up, the user is told so once.
- *
- * `endOfSpeechAt` is the `performance.now()` of the end of the user's turn,
- * for the latency log.
+ * Asks the environment's front voice for a quick spoken reply to a just-sent
+ * voice turn and plays it as it streams. The agent's reply waits for the verdict
+ * and is skipped if the front fully answered; any front failure falls back to
+ * reading it. `endOfSpeechAt` is `performance.now()` at turn end, for latency logs.
  */
 export function askVoiceFront(input: {
   readonly registry: AtomRegistry.AtomRegistry;

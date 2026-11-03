@@ -1,16 +1,8 @@
 /**
- * VoiceFront - answers a voice turn at once with a small local model.
- *
- * Calls LM Studio's OpenAI-compatible server on this machine with the one
- * model the settings name, after checking that model's size, and always with
- * a just-in-time idle TTL so LM Studio unloads it when voice goes quiet. It
- * never loads or unloads a model itself. If the server is down it starts it
- * with `lms server start`.
- *
- * With the Gemini engine selected, a turn's reply is Gemini's spoken answer
- * from `GeminiLive`, and the local model answers only when Gemini cannot.
- *
- * @module VoiceFront
+ * VoiceFront - answers a voice turn at once with the one LM Studio model the
+ * settings name, size-checked and always with an idle TTL so LM Studio unloads
+ * it. It never loads or unloads models itself, but starts a stopped server.
+ * With the Gemini engine, Gemini's spoken answer wins and this is the fallback.
  */
 import {
   type ThreadId,
@@ -56,7 +48,7 @@ const MAX_REPLY_TOKENS = 90;
 /** A size check stays good this long, so turns do not each run `lms ls`. */
 const SIZE_CHECK_TTL_MS = 60_000;
 /** Longest wait for Gemini's first word before the local front answers instead. */
-export const GEMINI_FIRST_AUDIO_TIMEOUT_MS = 8_000;
+const GEMINI_FIRST_AUDIO_TIMEOUT_MS = 8_000;
 
 export class VoiceFront extends Context.Service<
   VoiceFront,

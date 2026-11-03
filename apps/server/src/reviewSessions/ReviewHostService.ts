@@ -6,13 +6,18 @@ import {
   ReviewSessionError,
   ThreadGroupId,
   ThreadId,
+  type OrchestrationV2ThreadShell,
   type ReviewHostInput,
   type ReviewHostResult,
+  type ReviewRequestInput,
+  type ReviewRunLocalInput,
+  type ReviewSession,
+  type ReviewSessionSnapshot,
   type ReviewThreadResult,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -30,6 +35,16 @@ import { itemGithubState, planReviewSync, rawReviewItems } from "./reviewSync.ts
 
 const isReviewSessionError = Schema.is(ReviewSessionError);
 
+/** Whether this round already has your own review running or done. */
+const hasLocalReview = (snapshot: ReviewSessionSnapshot) =>
+  snapshot.sources.some(
+    (source) =>
+      source.kind === "local" &&
+      source.round === snapshot.session.round &&
+      source.threadId !== null &&
+      (source.state === "reviewing" || source.state === "done"),
+  );
+
 export class ReviewHostService extends Context.Service<
   ReviewHostService,
   {
@@ -37,10 +52,19 @@ export class ReviewHostService extends Context.Service<
     readonly start: (
       input: ReviewHostInput,
     ) => Effect.Effect<ReviewThreadResult, ReviewSessionError>;
+    /**
+     * A review action from the panel. It runs in the open chat, which takes the review over first;
+     * a review whose chats are all gone gets its own Review chat first.
+     */
+    readonly request: (input: ReviewRequestInput) => Effect.Effect<void, ReviewSessionError>;
+    /** "Run your review" from the panel; its chat goes in the open chat's group, which takes the review over. */
+    readonly runLocalReview: (
+      input: ReviewRunLocalInput,
+    ) => Effect.Effect<ReviewThreadResult, ReviewSessionError>;
   }
 >()("t3/reviewSessions/ReviewHostService") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const threads = yield* Threads.ThreadManagementService;
   const groups = yield* Groups.ThreadGroupService;
@@ -48,7 +72,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitWorkflow.GitWorkflowService;
   const settings = yield* Settings.ServerSettingsService;
   const reviews = yield* Reviews.ReviewSessionService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const lock = yield* Semaphore.make(1);
   const failure = (cause: unknown) =>
     isReviewSessionError(cause)
@@ -58,155 +82,177 @@ export const make = Effect.gen(function* () {
           cause,
         });
 
-  const read: ReviewHostService["Service"]["read"] = (input) =>
-    Effect.gen(function* () {
-      const data = yield* pullRequests.reviewRound(input);
-      if (data === null) return { viewerLogin: null, sources: [], items: [], comments: {} };
-      const plan = planReviewSync({
-        sessionRound: 1,
-        roundState: "collecting",
-        existing: [],
-        read: data,
-        now: DateTime.formatIso(yield* DateTime.now),
-      });
-      return {
+  const read: ReviewHostService["Service"]["read"] = Effect.fn("ReviewHostService.read")(function* (
+    input,
+  ) {
+    const data = yield* pullRequests.reviewRound(input);
+    if (data === null) return { viewerLogin: null, sources: [], items: [], comments: {} };
+    const plan = planReviewSync({
+      sessionRound: 1,
+      roundState: "collecting",
+      existing: [],
+      read: data,
+      now: DateTime.formatIso(yield* DateTime.now),
+    });
+    return {
+      viewerLogin: data.viewerLogin,
+      sources: plan.upserts.map(({ source }) => source),
+      items: rawReviewItems({ round: 1, nextNumber: 1 }, [], plan.upserts, {
         viewerLogin: data.viewerLogin,
-        sources: plan.upserts.map(({ source }) => source),
-        items: rawReviewItems({ round: 1, nextNumber: 1 }, [], plan.upserts, {
-          viewerLogin: data.viewerLogin,
-        }).map((item) => ({
-          ...item,
-          githubState: itemGithubState(item.githubThreadIds, plan.threads),
-        })),
-        comments: Object.fromEntries(
-          plan.upserts.map(({ source, comments }) => [source.id, comments ?? []]),
-        ),
-      };
-    }).pipe(Effect.mapError(failure));
+      }).map((item) => ({
+        ...item,
+        githubState: itemGithubState(item.githubThreadIds, plan.threads),
+      })),
+      comments: Object.fromEntries(
+        plan.upserts.map(({ source, comments }) => [source.id, comments ?? []]),
+      ),
+    };
+  }, Effect.mapError(failure));
+
+  const groupOf = Effect.fn("ReviewHostService.groupOf")(function* (
+    thread: OrchestrationV2ThreadShell,
+  ) {
+    if (thread.groupId != null) return thread.groupId;
+    const groupId = ThreadGroupId.make(`review-group:${thread.id}`);
+    yield* groups.create({
+      commandId: CommandId.make(`review-group:${yield* random.uuidV4()}`),
+      groupId,
+      projectId: thread.projectId,
+      threadIds: [thread.id],
+      title: thread.title,
+    });
+    return groupId;
+  });
+
+  const openPullRequest = Effect.fn("ReviewHostService.openPullRequest")(function* (
+    input: ReviewHostInput,
+  ) {
+    const detail = yield* pullRequests.summary(input);
+    if (detail.state !== "open")
+      return yield* new ReviewSessionError({
+        message: "Only open pull requests can start a review.",
+        cause: null,
+      });
+    const key = {
+      host: new URL(detail.url).host.toLowerCase(),
+      repository: detail.repository.toLowerCase(),
+      number: detail.number,
+    };
+    return { detail, key };
+  });
+
+  /**
+   * The pull request's own "Review #N" chat, in its own group and checkout. Chats that worked on
+   * the PR are never picked: the review runs beside them, not inside their group.
+   */
+  const ensureReviewChat = Effect.fn("ReviewHostService.ensureReviewChat")(function* (
+    input: ReviewHostInput,
+  ) {
+    const { detail, key } = yield* openPullRequest(input);
+    // Stable identity makes retries reuse a prepared review chat, even after a server restart.
+    const stableId = ThreadId.make(
+      `pr-review:${input.projectId}:${key.host}:${key.repository}:${key.number}`,
+    );
+    const existing = yield* threads.getThreadShell(stableId);
+    let thread =
+      existing !== null && existing.deletedAt === null && existing.archivedAt === null
+        ? existing
+        : null;
+    if (thread === null) {
+      const found = yield* projects.getById(input.projectId);
+      if (Option.isNone(found))
+        return yield* new ReviewSessionError({
+          message: "The registered project is no longer available.",
+          cause: null,
+        });
+      const project = found.value;
+      const resolved = resolveProjectSettings(
+        yield* settings.getSettings,
+        project.id,
+        project,
+      ).settings;
+      const snapshot = yield* threads.getShellSnapshot();
+      const previous = snapshot.threads.find(
+        (candidate) =>
+          candidate.projectId === project.id &&
+          candidate.lineage.relationshipToParent !== "subagent",
+      );
+      // An archived or deleted review chat keeps its id; the new one needs another.
+      const id =
+        existing === null ? stableId : ThreadId.make(`${stableId}:${yield* random.uuidV4()}`);
+      const modelSelection = resolved.defaultModelSelection ??
+        previous?.modelSelection ?? {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: DEFAULT_MODEL,
+        };
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`review-create:${id}`),
+        threadId: id,
+        projectId: project.id,
+        title: `Review #${detail.number}: ${detail.title}`,
+        modelSelection,
+        runtimeMode: resolved.defaultRuntimeMode,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "server",
+      });
+      const prepared = yield* git.preparePullRequestThread({
+        cwd: project.workspaceRoot,
+        reference: detail.url,
+        mode: "worktree",
+        threadId: id,
+      });
+      if (!prepared.isOnPullRequestHead || prepared.worktreePath === null)
+        return yield* new ReviewSessionError({
+          message:
+            "The review checkout is not on the current PR head. Update its checkout before reviewing.",
+          cause: null,
+        });
+      // Bind synchronously: ThreadLaunch's background preparation may otherwise race
+      // group creation and start the independent reviewer in the project root.
+      yield* threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(`review-checkout:${yield* random.uuidV4()}`),
+        threadId: id,
+        expectedEmpty: true,
+        worktreePath: prepared.worktreePath,
+        branch: prepared.branch,
+      });
+      const created = yield* threads.getThreadShell(id);
+      if (created === null)
+        return yield* new ReviewSessionError({
+          message: "The review chat could not be found.",
+          cause: null,
+        });
+      thread = created;
+      yield* threads.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make(`review-link:${yield* random.uuidV4()}`),
+        threadId: id,
+        ...key,
+        url: detail.url,
+        source: "manual",
+      });
+    }
+    return { thread, groupId: yield* groupOf(thread), detail, key };
+  });
 
   const start: ReviewHostService["Service"]["start"] = (input) =>
     lock
       .withPermits(1)(
         Effect.gen(function* () {
-          const detail = yield* pullRequests.summary(input);
-          if (detail.state !== "open")
-            return yield* new ReviewSessionError({
-              message: "Only open pull requests can start a review.",
-              cause: null,
-            });
-          const key = {
-            host: new URL(detail.url).host.toLowerCase(),
-            repository: detail.repository.toLowerCase(),
-            number: detail.number,
-          };
-          const snapshot = yield* threads.getShellSnapshot();
-          const linked = snapshot.threads.filter(
-            (thread) =>
-              thread.archivedAt === null &&
-              thread.lineage.relationshipToParent !== "subagent" &&
-              (thread.pullRequests ?? []).some(
-                (link) =>
-                  link.host === key.host &&
-                  link.repository.toLowerCase() === key.repository &&
-                  link.number === key.number &&
-                  link.source !== "stack-dismissed",
-              ),
-          );
-          const groupKeys = new Set(linked.map((thread) => thread.groupId ?? thread.id));
-          if (groupKeys.size > 1)
-            return yield* new ReviewSessionError({
-              message: "Choose the review group before starting your review.",
-              cause: null,
-            });
-          let thread = linked[0];
-          if (thread === undefined) {
-            const found = yield* projects.getById(input.projectId);
-            if (Option.isNone(found))
-              return yield* new ReviewSessionError({
-                message: "The registered project is no longer available.",
-                cause: null,
-              });
-            const project = found.value;
-            const resolved = resolveProjectSettings(
-              yield* settings.getSettings,
-              project.id,
-              project,
-            ).settings;
-            const previous = snapshot.threads.find(
-              (candidate) =>
-                candidate.projectId === project.id &&
-                candidate.lineage.relationshipToParent !== "subagent",
-            );
-            // Stable identity makes retries reuse a prepared review chat, even after a server restart.
-            const id = ThreadId.make(
-              `pr-review:${project.id}:${key.host}:${key.repository}:${key.number}`,
-            );
-            const modelSelection = resolved.defaultModelSelection ??
-              previous?.modelSelection ?? {
-                instanceId: ProviderInstanceId.make("codex"),
-                model: DEFAULT_MODEL,
-              };
-            yield* threads.dispatch({
-              type: "thread.create",
-              commandId: CommandId.make(`review-create:${id}`),
-              threadId: id,
-              projectId: project.id,
-              title: `Review #${detail.number}: ${detail.title}`,
-              modelSelection,
-              runtimeMode: resolved.defaultRuntimeMode,
-              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-              branch: null,
-              worktreePath: null,
-              createdBy: "user",
-              creationSource: "server",
-            });
-            const prepared = yield* git.preparePullRequestThread({
-              cwd: project.workspaceRoot,
-              reference: detail.url,
-              mode: "worktree",
-              threadId: id,
-            });
-            if (!prepared.isOnPullRequestHead || prepared.worktreePath === null)
-              return yield* new ReviewSessionError({
-                message:
-                  "The review checkout is not on the current PR head. Update its checkout before reviewing.",
-                cause: null,
-              });
-            // Bind synchronously: ThreadLaunch's background preparation may otherwise race
-            // group creation and start the independent reviewer in the project root.
-            yield* threads.dispatch({
-              type: "thread.metadata.update",
-              commandId: CommandId.make(`review-checkout:${yield* crypto.randomUUIDv4()}`),
-              threadId: id,
-              expectedEmpty: true,
-              worktreePath: prepared.worktreePath,
-              branch: prepared.branch,
-            });
-            const created = yield* threads.getThreadShell(id);
-            if (created === null)
-              return yield* new ReviewSessionError({
-                message: "The review chat could not be found.",
-                cause: null,
-              });
-            thread = created;
-            yield* threads.dispatch({
-              type: "thread.pull-request.link",
-              commandId: CommandId.make(`review-link:${yield* crypto.randomUUIDv4()}`),
-              threadId: id,
-              ...key,
-              url: detail.url,
-              source: "manual",
-            });
+          const { key } = yield* openPullRequest(input);
+          // A review already running its own review stays where it is, even in a group it was
+          // moved to; Run your review then just opens it.
+          const live = yield* reviews.findSessionForPullRequest(key);
+          if (live !== null && (yield* reviews.hasLiveReviewChat(live.id))) {
+            if (hasLocalReview(yield* reviews.read(live.id)))
+              return { threadId: live.reviewThreadId };
           }
-          const groupId = thread.groupId ?? ThreadGroupId.make(`review-group:${thread.id}`);
-          if (thread.groupId == null)
-            yield* groups.create({
-              commandId: CommandId.make(`review-group:${yield* crypto.randomUUIDv4()}`),
-              groupId,
-              projectId: thread.projectId,
-              threadIds: [thread.id],
-              title: thread.title,
-            });
+          const { thread, groupId, detail } = yield* ensureReviewChat(input);
           const { snapshot: opened } = yield* reviews.open({
             key,
             url: detail.url,
@@ -215,21 +261,94 @@ export const make = Effect.gen(function* () {
             reviewThreadId: thread.id,
             headSha: null,
           });
-          if (
-            !opened.sources.some(
-              (source) =>
-                source.kind === "local" &&
-                source.round === opened.session.round &&
-                source.threadId !== null &&
-                (source.state === "reviewing" || source.state === "done"),
-            )
-          ) {
+          if (!hasLocalReview(opened))
             yield* reviews.runLocalReview({ sessionId: opened.session.id });
-          }
           return { threadId: opened.session.reviewThreadId };
         }),
       )
       .pipe(Effect.mapError(failure));
-  return ReviewHostService.of({ read, start });
+
+  /**
+   * The chat beside the panel that a review action runs in: any live chat of the review's project.
+   * It takes the review over first, so the action never lands in a chat the user is not looking at.
+   */
+  const besideChat = Effect.fn("ReviewHostService.besideChat")(function* (
+    threadId: ThreadId | undefined,
+    session: ReviewSession,
+  ) {
+    if (threadId === undefined || session.phase === "done") return null;
+    const shell = yield* threads.getThreadShell(threadId);
+    if (
+      shell === null ||
+      shell.deletedAt !== null ||
+      shell.archivedAt !== null ||
+      shell.projectId !== session.projectId ||
+      shell.lineage.relationshipToParent === "subagent"
+    )
+      return null;
+    return shell;
+  });
+
+  const takeOver = Effect.fn("ReviewHostService.takeOver")(function* (
+    session: ReviewSession,
+    chat: OrchestrationV2ThreadShell,
+  ) {
+    yield* reviews.moveToChat({
+      sessionId: session.id,
+      threadId: chat.id,
+      groupId: yield* groupOf(chat),
+    });
+  });
+
+  const request: ReviewHostService["Service"]["request"] = (input) =>
+    lock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const { session } = yield* reviews.read(input.sessionId);
+          const beside =
+            input.request._tag === "rewrite-reply" || input.request._tag === "finish"
+              ? null
+              : yield* besideChat(input.targetThreadId, session);
+          if (beside !== null) {
+            yield* takeOver(session, beside);
+            return;
+          }
+          if (yield* reviews.hasLiveReviewChat(input.sessionId)) return;
+          const { thread, groupId } = yield* ensureReviewChat({
+            projectId: session.projectId,
+            host: session.pullRequest.host,
+            repository: session.pullRequest.repository,
+            number: session.pullRequest.number,
+          });
+          yield* reviews.open({
+            key: session.pullRequest,
+            url: session.url,
+            projectId: thread.projectId,
+            groupId,
+            reviewThreadId: thread.id,
+            headSha: null,
+          });
+        }),
+      )
+      .pipe(
+        Effect.flatMap(() => reviews.requestTurn(input)),
+        Effect.mapError(failure),
+      );
+
+  const runLocalReview: ReviewHostService["Service"]["runLocalReview"] = (input) =>
+    lock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const { session } = yield* reviews.read(input.sessionId);
+          const beside = yield* besideChat(input.targetThreadId, session);
+          if (beside !== null) yield* takeOver(session, beside);
+        }),
+      )
+      .pipe(
+        Effect.flatMap(() => reviews.runLocalReview({ sessionId: input.sessionId })),
+        Effect.mapError(failure),
+      );
+
+  return ReviewHostService.of({ read, start, request, runLocalReview });
 });
 export const layer = Layer.effect(ReviewHostService, make);

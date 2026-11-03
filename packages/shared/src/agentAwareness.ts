@@ -1,8 +1,9 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2ThreadShell,
-  Project,
-  ThreadId,
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type OrchestrationV2ThreadShell,
+  type Project,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -45,9 +46,11 @@ export interface ProjectThreadAwarenessV2Input {
     | "activityRunStatus"
     | "id"
     | "lineage"
+    | "latestRunStopRequested"
     | "modelSelection"
     | "pendingBackgroundTasks"
     | "pendingRuntimeRequest"
+    | "settledOverride"
     | "status"
     | "title"
     | "updatedAt"
@@ -57,9 +60,22 @@ export interface ProjectThreadAwarenessV2Input {
 export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
-  if (input.thread.lineage.relationshipToParent === "subagent") return null;
-  const phase = resolveThreadAwarenessPhaseV2(input.thread);
-  return phase === null ? null : threadAwarenessInPhaseV2({ ...input, phase });
+  const { thread } = input;
+  if (!isListedThreadLineage(thread.lineage)) return null;
+  const phase = resolveThreadAwarenessPhaseV2(thread);
+  if (phase === null) {
+    return null;
+  }
+  if (phase === "completed" && thread.latestRunStopRequested === true) return null;
+  // Resolve the phase first so live or waiting work stays visible after settlement.
+  if (
+    thread.settledOverride === "settled" &&
+    (phase === "completed" || phase === "failed") &&
+    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+  ) {
+    return null;
+  }
+  return threadAwarenessInPhaseV2({ ...input, phase });
 }
 
 /**
@@ -103,9 +119,7 @@ export function threadAwarenessInPhaseV2(
 export function threadQuestionPhaseV2(
   thread: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest">,
 ): Extract<AgentAwarenessPhase, "waiting_for_input" | "waiting_for_approval"> | null {
-  if (thread.pendingRuntimeRequest?.kind === "user_input") {
-    return "waiting_for_input";
-  }
+  if (thread.pendingRuntimeRequest?.kind === "user_input") return "waiting_for_input";
   if (
     thread.pendingRuntimeRequest !== null &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"

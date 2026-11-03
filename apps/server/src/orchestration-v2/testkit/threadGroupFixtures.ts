@@ -10,7 +10,7 @@ import {
 
 import type { UnsequencedThreadGroupEvent } from "../../persistence/OrchestrationEventStore.ts";
 
-export const fixtureAt = "2026-10-10T00:00:00.000Z";
+const fixtureAt = "2026-10-10T00:00:00.000Z";
 
 export const pullRequestLink: ThreadPullRequestLink = {
   host: "github.com",

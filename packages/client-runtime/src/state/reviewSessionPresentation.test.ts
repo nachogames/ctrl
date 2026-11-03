@@ -220,7 +220,7 @@ describe("GitHub review rounds", () => {
     );
     expect(reviewResolutionLabel(refreshed[3]!.items)).toBe("All resolved · 1/1");
   });
-  it("keeps retries with the next completed pass and repeated reviews on the same commit distinct", () => {
+  it("keeps every review of one commit in one round, with a failed retry", () => {
     const rounds = reviewHistoryRounds(
       [
         pass("r1", 11),
@@ -231,8 +231,7 @@ describe("GitHub review rounds", () => {
       [],
     );
     expect(rounds.map((round) => round.sources.map((source) => source.id))).toEqual([
-      ["r1"],
-      ["retry", "local", "r2"],
+      ["r1", "retry", "local", "r2"],
     ]);
     expect(reviewResolutionLabel([item(1, { githubState: "outdated" })])).toBe(
       "1 open · 0 resolved",

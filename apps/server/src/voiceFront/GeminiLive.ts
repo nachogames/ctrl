@@ -1,14 +1,8 @@
 /**
- * GeminiLive - the optional Gemini Live engine of the front voice.
- *
- * Holds one live session per thread in hands-free voice mode, fed from the
- * dictation path as the user speaks, and meters what each turn costs from
- * Gemini's own usage reports. Month-to-date spend is kept in the state
- * directory; at the monthly cap, with no key, or when Gemini fails, the local
- * front answers instead and the user hears why once. The API key lives in the
- * server secret store and never leaves the environment.
- *
- * @module GeminiLive
+ * GeminiLive - the optional Gemini Live engine of the front voice: one live
+ * session per hands-free thread, metered from Gemini's usage reports. At the
+ * monthly cap, with no key, or on failure, the local front answers and the user
+ * hears why once. The API key stays in the server secret store.
  */
 import {
   isHomeThreadId,
@@ -49,9 +43,9 @@ import * as VoiceFrontContext from "./VoiceFrontContext.ts";
 export const GEMINI_KEY_SECRET = "voice-front-gemini-api-key";
 export const SPEND_FILE_NAME = "voice-front-spend.json";
 /** A session this long without audio or messages closes, even if the client never said it ended. */
-export const SESSION_IDLE_MS = 120_000;
+const SESSION_IDLE_MS = 120_000;
 /** After Gemini refused a session, new ones wait this long, unless the key or model changes. */
-export const FAILURE_RETRY_MS = 120_000;
+const FAILURE_RETRY_MS = 120_000;
 
 /** Why the local front answers a turn the user meant for Gemini. */
 export type FallbackReason = "capped" | "no-key" | "failed";
@@ -63,7 +57,7 @@ const NOTICES: Record<FallbackReason, (capUsd: number) => string> = {
   failed: () => "Gemini isn't answering, so the local voice is taking over.",
 };
 
-export const formatUsd = (usd: number) => `$${usd.toFixed(2)}`;
+const formatUsd = (usd: number) => `$${usd.toFixed(2)}`;
 
 /** Opens WebSockets to Gemini; the default uses Node's WebSocket, tests a fake. */
 export class LiveSocketOpener extends Context.Service<
@@ -261,24 +255,23 @@ export const make = Effect.gen(function* () {
     return yield* openSession(threadId, current, key.value);
   });
 
-  const handle = (event: Dictation.VoiceAudioEvent) =>
-    Effect.gen(function* () {
-      if (event._tag === "audio") {
-        let target = routes.get(event.sessionId);
-        if (target === undefined) {
-          target = yield* route(event.threadId);
-          routes.set(event.sessionId, target);
-        }
-        target?.audio(event.sessionId, event.samples, event.speech);
-        return;
+  const handle = Effect.fnUntraced(function* (event: Dictation.VoiceAudioEvent) {
+    if (event._tag === "audio") {
+      let target = routes.get(event.sessionId);
+      if (target === undefined) {
+        target = yield* route(event.threadId);
+        routes.set(event.sessionId, target);
       }
-      const target = routes.get(event.sessionId);
-      if (event._tag === "endOfTurn") target?.endOfTurn(event.sessionId);
-      else {
-        target?.cancel(event.sessionId);
-        routes.delete(event.sessionId);
-      }
-    });
+      target?.audio(event.sessionId, event.samples, event.speech);
+      return;
+    }
+    const target = routes.get(event.sessionId);
+    if (event._tag === "endOfTurn") target?.endOfTurn(event.sessionId);
+    else {
+      target?.cancel(event.sessionId);
+      routes.delete(event.sessionId);
+    }
+  });
 
   yield* dictation.voiceAudio.pipe(
     Stream.runForEach((event) =>
@@ -319,26 +312,24 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const notice = (reason: FallbackReason) =>
-    Effect.gen(function* () {
-      if (shownNotices.has(reason)) return null;
-      shownNotices.add(reason);
-      const current = yield* readSettings;
-      return NOTICES[reason](current?.monthlyCapUsd ?? 0);
-    });
+  const notice = Effect.fn("GeminiLive.notice")(function* (reason: FallbackReason) {
+    if (shownNotices.has(reason)) return null;
+    shownNotices.add(reason);
+    const current = yield* readSettings;
+    return NOTICES[reason](current?.monthlyCapUsd ?? 0);
+  });
 
   const fallback = (notice: string | null): ClaimResult => ({ _tag: "fallback", notice });
-  const claim = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const current = yield* readSettings;
-      const nowMs = yield* Clock.currentTimeMillis;
-      if (current && monthSpend(nowMs) >= current.monthlyCapUsd)
-        return fallback(yield* notice("capped"));
-      const turn = sessions.get(threadId)?.session.claim() ?? null;
-      if (turn) return { _tag: "turn", turn } satisfies ClaimResult as ClaimResult;
-      if (Option.isNone(yield* readKey)) return fallback(yield* notice("no-key"));
-      return fallback(problem ? yield* notice("failed") : null);
-    });
+  const claim = Effect.fn("GeminiLive.claim")(function* (threadId: ThreadId) {
+    const current = yield* readSettings;
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (current && monthSpend(nowMs) >= current.monthlyCapUsd)
+      return fallback(yield* notice("capped"));
+    const turn = sessions.get(threadId)?.session.claim() ?? null;
+    if (turn) return { _tag: "turn", turn } satisfies ClaimResult as ClaimResult;
+    if (Option.isNone(yield* readKey)) return fallback(yield* notice("no-key"));
+    return fallback(problem ? yield* notice("failed") : null);
+  });
 
   const status = Effect.gen(function* () {
     const current = yield* readSettings;
@@ -384,5 +375,5 @@ export const make = Effect.gen(function* () {
   return GeminiLive.of({ status, setKey, claim, notice, end });
 });
 
-export const layerWithoutSocket = Layer.effect(GeminiLive, make);
+const layerWithoutSocket = Layer.effect(GeminiLive, make);
 export const layer = layerWithoutSocket.pipe(Layer.provide(layerWebSocketOpener));

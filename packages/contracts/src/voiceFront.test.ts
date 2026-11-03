@@ -3,9 +3,11 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { mergeVoiceFrontReplies, VoiceFrontSettings } from "./voiceFront.ts";
 
+const decodeVoiceFrontSettings = Schema.decodeSync(VoiceFrontSettings);
+
 describe("voice front settings", () => {
   it("keep the local engine by default, with a $10 Gemini cap", () => {
-    const settings = Schema.decodeSync(VoiceFrontSettings)({});
+    const settings = decodeVoiceFrontSettings({});
     expect(settings.engine).toBe("local");
     expect(settings.geminiModel).toBe("gemini-3.1-flash-live-preview");
     expect(settings.monthlyCapUsd).toBe(10);

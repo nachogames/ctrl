@@ -1,7 +1,7 @@
 # Shift
 
 Shift is one agent thread per desktop install that acts with the user's reach
-across every project and connected environment. User guide:
+across every project here, and as a linked agent on every linked environment. User guide:
 [Shift](../user/home.md).
 
 Upstream T3 Code calls this feature Home. Ctrl shows it as Shift but keeps
@@ -18,11 +18,11 @@ upstream merges stay cheap.
 - The grant is "this thread is `home.threadId`", read on every MCP call in
   `mcp/homeRouting.ts`. Turning Shift off or starting fresh revokes the old
   thread's reach at once, then holds its queue (`queue.hold`, under the
-  orchestrator's thread lock) and interrupts its active run. Fleet operations
-  check the grant again right before they act. No credential carries it.
+  orchestrator's thread lock) and interrupts its active run. `FleetService`
+  operations check the grant again right before they act. No credential carries it.
 - Shift threads are always full-access. The MCP mode check stops a caller from
   acting on a thread broader than itself, and approvals need the widest mode.
-  Every change Shift makes, local or relayed, is checked on the hub with
+  Every change Shift makes here is checked on the hub with
   `readHomeChangeCaller`: a live Shift run in full-access/default mode. A user
   who switches Shift to plan mode makes it read-only everywhere.
 - Shift never launches into its own folder. That folder's AGENTS.md tells the
@@ -32,29 +32,20 @@ upstream merges stay cheap.
 
 ## Reaching other environments
 
-Every server runs `FleetService`, which executes a fixed set of operations with
-the user's reach: no calling-project limit, no deletes. Shift's tools call it in
-process for the hub, and through `fleet.invoke` everywhere else.
+Here, Shift's tool calls run like any agent's, plus what only Shift may do:
+answer approvals and organize any thread (`FleetService`, through
+`routeHome` in `mcp/homeRouting.ts`), list every project by default, and never
+launch into its own folder.
 
-The hub cannot call other servers itself. The credentials it would need live in
-the desktop renderer: T3 Connect tokens are bound to a non-extractable renderer
-key, SSH sessions mint per connect, and desktop sessions lack `access:write` to
-mint narrower ones. So the renderer relays: it registers on the hub with
-`fleet.connect` and its current list of environments, runs each request with
-`fleet.invoke` over its existing connection, and answers with `fleet.respond`
-(`home/FleetBroker.ts`). The newest registration wins.
+Elsewhere, Shift uses upstream's linked environments: a tool call that names a
+linked `environmentId` is forwarded server to server (`McpToolAccess.routed`),
+and the other machine applies the link's access. Shift has no extra reach
+there, so it cannot approve requests on another machine. Linked environments
+replaced an earlier relay through the desktop renderer, which needed the window
+open and duplicated upstream's forwarding.
 
-Consequences:
-
-- Shift reaches other environments only while a desktop renderer is alive. On
-  macOS the window hides instead of closing while Shift is on.
-- `fleet.invoke` needs only `orchestration:operate`, which already grants
-  everything it does. Older peers without it fail with `environment_unavailable`.
-- Results cross the relay untyped and are decoded on the hub per operation
-  (`FleetResults`), so the renderer stays a dumb pipe.
-
-A hub credential per peer would let Shift run headless. It needs a relay-side
-"peer mint" for T3 Connect and a pairing step for the rest.
+Home's services are read with `Effect.serviceOption`, so upstream's toolkits
+and tests build without them; where they are absent, no caller is Shift.
 
 ## Watches
 
@@ -65,7 +56,7 @@ reason `launched`.
 The renderer evaluates watches, because it already streams thread shells from
 every environment. It uses the same transitions as desktop notifications
 (`components/home/homeWatch.ts`), batches events briefly, and reports them with
-`fleet.reportWatchEvents`. `HomeService.report` drops unwatched events, ends
+`home.reportWatchEvents`. `HomeService.report` drops unwatched events, ends
 watches on settle or archive, and sends one message into Shift's thread with
 `mode: "auto"`, which steers an active turn or queues behind it.
 
@@ -76,8 +67,12 @@ everything may already hold a silent baseline for a thread when its launch
 watch arrives, so a launch watch added while the app runs compares the thread
 with an empty state the first time it sees it.
 
-The hub picks the id of every thread Shift launches, with the
+The hub picks the id of every thread Shift launches here, with the
 `home-launched:` prefix, and saves the launch watch before the launch starts.
+A launch on a linked machine is forwarded before Shift's handler runs, and only
+that machine picks the id, so `HomeForwardedLaunches` saves the watch when the
+launch returns (`mcp/ForwardedCalls.ts`). Those threads lack the prefix, so
+clients may notify for them until the watch reaches them.
 While Shift is on, clients skip notifications for prefixed threads. The prefix
 travels with the thread, so this does not depend on settings reaching the
 client before the thread does; separate streams give no such order.

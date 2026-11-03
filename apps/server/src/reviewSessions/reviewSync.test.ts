@@ -17,6 +17,7 @@ import {
   planReviewSync,
   rawReviewItems,
   repairUnknownLocalSources,
+  reviewReopenReason,
   shouldSyncReview,
 } from "./reviewSync.ts";
 
@@ -166,6 +167,30 @@ describe("planReviewSync", () => {
   });
 });
 
+describe("rawReviewItems", () => {
+  it("numbers a reviewer's inline comments but not the summary in their review body", () => {
+    const plan = planReviewSync({
+      sessionRound: 1,
+      roundState: "collecting",
+      existing: [],
+      now: at,
+      read: reviewRoundRead({
+        reviews: [
+          githubReview("PRR_dan", "dan", {
+            state: "CHANGES_REQUESTED",
+            body: "A couple of things to fix before this lands, see the comments.",
+          }),
+        ],
+        threads: [githubThread("T1", [threadComment("PRR_dan", "This leaks the listener.")])],
+      }),
+    });
+    const items = rawReviewItems({ round: 1, nextNumber: 1 }, [], plan.upserts);
+    expect(items.map((item) => [item.sourceKeys, item.sources])).toEqual([
+      [["gh:T1"], ["human:dan"]],
+    ]);
+  });
+});
+
 describe("itemGithubState", () => {
   it("is resolved only when every known thread is", () => {
     const threads = new Map([
@@ -220,5 +245,42 @@ describe("the local review's raw findings", () => {
     expect(repaired.map((item) => [item.sources, item.draftReply])).toEqual([
       [["local-review"], null],
     ]);
+  });
+});
+
+describe("reviewReopenReason", () => {
+  const finished = {
+    headSha: "abc123",
+    updatedAt: "2026-10-13T12:00:00.000Z",
+    authorLogin: "august",
+    viewerLogin: "nach",
+  };
+  it("brings a review back when you are asked again, even with nothing pushed", () => {
+    expect(
+      reviewReopenReason(finished, reviewRoundRead({ pendingReviewers: [actor("Nach")] })),
+    ).toBe("requested");
+  });
+  it("does not bring it back for the request you finished under", () => {
+    expect(
+      reviewReopenReason(
+        { ...finished, viewerRequested: true },
+        reviewRoundRead({ pendingReviewers: [actor("nach")] }),
+      ),
+    ).toBeNull();
+  });
+  it("brings a review back when commits land after it finished", () => {
+    expect(reviewReopenReason(finished, reviewRoundRead({ headSha: "def456" }))).toBe(
+      "new-commits",
+    );
+  });
+  it("brings your own pull request back when someone reviews it later, not for old reviews", () => {
+    const own = { ...finished, authorLogin: "nach" };
+    const later = githubReview("R2", "dan", { submittedAt: "2026-10-14T09:00:00.000Z" });
+    const earlier = githubReview("R1", "dan", { submittedAt: "2026-10-12T09:00:00.000Z" });
+    expect(reviewReopenReason(own, reviewRoundRead({ reviews: [later] }))).toBe("new-review");
+    expect(reviewReopenReason(own, reviewRoundRead({ reviews: [earlier] }))).toBeNull();
+  });
+  it("leaves it finished when GitHub has nothing new", () => {
+    expect(reviewReopenReason(finished, reviewRoundRead())).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import {
   DICTATION_MAX_SECONDS,
   DICTATION_SAMPLE_RATE,
@@ -59,7 +59,7 @@ export function resolveActiveEngine(
 }
 
 /** Apple's probe as client state. Assets macOS is mid-way through fetching read as not installed. */
-export function appleEngineState(probe: AppleSpeech.AppleProbe): DictationAppleEngineState {
+function appleEngineState(probe: AppleSpeech.AppleProbe): DictationAppleEngineState {
   return {
     available: probe.available,
     unavailableReason: probe.reason,
@@ -76,7 +76,7 @@ export function appleEngineState(probe: AppleSpeech.AppleProbe): DictationAppleE
 }
 
 /** Whether a client can start a session on this state right now. */
-export function isReady(state: DictationState): boolean {
+function isReady(state: DictationState): boolean {
   if (!state.supported || state.settings.engine !== "local") return false;
   if (state.activeEngine === "apple")
     return state.apple.available && state.apple.assets._tag === "installed";
@@ -187,7 +187,7 @@ export class Dictation extends Context.Service<
 >()("t3/dictation/Dictation") {}
 
 const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const scope = yield* Effect.scope;
   const settings = yield* ServerSettings.ServerSettingsService;
   const artifacts = yield* DictationArtifacts.DictationArtifacts;
@@ -550,18 +550,17 @@ const make = Effect.gen(function* () {
         // Retired recognizers must release their handle before their files are deleted.
         yield* native.withPermit(artifacts.remove(input.model)).pipe(
           Effect.catchTags({
-            DictationError: (error) =>
-              Effect.gen(function* () {
-                const snapshot = yield* artifacts.inspect.pipe(Effect.orElseSucceed(() => null));
-                yield* progress(
-                  input.model,
-                  snapshot?.models.get(input.model) ?? {
-                    _tag: "failed",
-                    message: "Could not remove dictation files.",
-                  },
-                );
-                return yield* error;
-              }),
+            DictationError: Effect.fn("Dictation.removeFailed")(function* (error) {
+              const snapshot = yield* artifacts.inspect.pipe(Effect.orElseSucceed(() => null));
+              yield* progress(
+                input.model,
+                snapshot?.models.get(input.model) ?? {
+                  _tag: "failed",
+                  message: "Could not remove dictation files.",
+                },
+              );
+              return yield* error;
+            }),
           }),
         );
       }).pipe(Effect.uninterruptible),
@@ -572,46 +571,47 @@ const make = Effect.gen(function* () {
    * Starts loading the selected model in the background unless it is already
    * loaded or loading, and counts as use for the 30 minute idle unload.
    */
-  const ensureLoaded = (current: DictationState) =>
-    Effect.gen(function* (): Effect.fn.Return<LoadedModel, DictationError> {
-      lastModelUse = yield* Clock.currentTimeMillis;
-      if (loaded?.error) yield* unload();
-      if (!loaded) {
-        const slot: LoadedModel = {
-          model: current.settings.localModel,
-          loading: null,
-          recognizer: null,
-          error: null,
-          retired: false,
-        };
-        loaded = slot;
-        slot.loading = yield* native
-          .withPermit(
-            Effect.gen(function* () {
-              if (slot.retired) return;
-              const recognizer = yield* recognizers
-                .load(slot.model, current.settings.language)
-                .pipe(Effect.uninterruptible);
-              if (slot.retired) {
-                yield* recognizer.release;
-                return;
-              }
-              slot.recognizer = recognizer;
-              yield* update((current) => ({ ...current, loadedModel: slot.model }));
-            }),
-          )
-          .pipe(
-            Effect.catchTags({
-              DictationError: (error) =>
-                Effect.sync(() => {
-                  slot.error = error;
-                }),
-            }),
-            Effect.forkIn(scope),
-          );
-      }
-      return loaded;
-    });
+  const ensureLoaded = Effect.fn("Dictation.ensureLoaded")(function* (
+    current: DictationState,
+  ): Effect.fn.Return<LoadedModel, DictationError> {
+    lastModelUse = yield* Clock.currentTimeMillis;
+    if (loaded?.error) yield* unload();
+    if (!loaded) {
+      const slot: LoadedModel = {
+        model: current.settings.localModel,
+        loading: null,
+        recognizer: null,
+        error: null,
+        retired: false,
+      };
+      loaded = slot;
+      slot.loading = yield* native
+        .withPermit(
+          Effect.gen(function* () {
+            if (slot.retired) return;
+            const recognizer = yield* recognizers
+              .load(slot.model, current.settings.language)
+              .pipe(Effect.uninterruptible);
+            if (slot.retired) {
+              yield* recognizer.release;
+              return;
+            }
+            slot.recognizer = recognizer;
+            yield* update((current) => ({ ...current, loadedModel: slot.model }));
+          }),
+        )
+        .pipe(
+          Effect.catchTags({
+            DictationError: (error) =>
+              Effect.sync(() => {
+                slot.error = error;
+              }),
+          }),
+          Effect.forkIn(scope),
+        );
+    }
+    return loaded;
+  });
 
   /**
    * Best-effort warm-up for a client that is about to dictate, e.g. when its
@@ -665,7 +665,7 @@ const make = Effect.gen(function* () {
     const useApple = current.activeEngine === "apple";
     const model = useApple ? null : yield* ensureLoaded(current);
     const id = DictationSessionId.make(
-      yield* crypto.randomUUIDv4().pipe(
+      yield* crypto.uuidV4().pipe(
         Effect.mapError(
           (cause) =>
             new DictationError({

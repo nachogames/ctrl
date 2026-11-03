@@ -1,7 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as FleetBroker from "./FleetBroker.ts";
 import * as FleetService from "./FleetService.ts";
 import * as HomeService from "./HomeService.ts";
 
@@ -12,5 +11,4 @@ export const notHomeLayer = Layer.mergeAll(
     isHome: () => Effect.succeed(false),
   }),
   Layer.mock(FleetService.FleetService)({}),
-  Layer.mock(FleetBroker.FleetBroker)({}),
 );

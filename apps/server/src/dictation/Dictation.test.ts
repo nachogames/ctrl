@@ -1251,6 +1251,7 @@ const silenceUntilEnd = Effect.fnUntraced(function* (
   append: (seconds: number, value: number) => Effect.Effect<{ endOfTurn: boolean }, DictationError>,
   limit: number,
 ) {
+  // oxlint-disable-next-line t3code/no-polling-loop-in-tests -- bounded chunk feed whose count is the assertion; one yield per chunk stands in for the network time a forked verdict takes
   for (let index = 1; index <= limit; index++) {
     const result = yield* append(0.1, 0);
     if (result.endOfTurn) return index;

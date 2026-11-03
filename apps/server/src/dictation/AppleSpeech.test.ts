@@ -1,6 +1,5 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -86,7 +85,7 @@ const fakeSpawner = (
 
 const service = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
   AppleSpeech.makeWithBinary(Effect.succeed("/fake/ctrl-apple-speech")).pipe(
-    Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
   );
 
 it("frames payloads with a kind byte and little-endian length", () => {

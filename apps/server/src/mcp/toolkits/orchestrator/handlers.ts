@@ -1,10 +1,11 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-
-import { callerIsHome, routeHome } from "../../homeRouting.ts";
 import { OrchestratorToolkit } from "./tools.ts";
+import * as Effect from "effect/Effect";
 
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import { callerIsHome } from "../../homeRouting.ts";
 import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -16,15 +17,7 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      const local = yield* service.capabilities(scope);
-      if (input.environmentId === undefined || input.environmentId === scope.environmentId) {
-        return local;
-      }
-      const remote = yield* routeHome(input.environmentId, "capabilities", input);
-      return Option.match(remote, {
-        onNone: () => local,
-        onSome: ({ providers }) => ({ ...local, providers }),
-      });
+      return yield* service.capabilities(scope, input);
     }),
   ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>
@@ -68,27 +61,68 @@ const handlers = {
         );
       }),
   ),
-  schedule_task: McpToolAccess.startsThreads(
-    () => ({}),
-    (input) =>
-      Effect.gen(function* () {
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        return yield* service.scheduleTask(scope, input);
-      }),
+  t3_background_wait: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const { scope, threads } = yield* readCaller();
+      const caller = yield* McpInvocationContext.requireThreadScope(scope, "t3_background_wait");
+      return yield* threads
+        .awaitBackgroundTasks({
+          threadId: caller.thread.threadId,
+          taskIds: input.taskIds,
+          awaited: input.waiting ?? true,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorMcpFailure({
+                code: cause.reason === "unsupported" ? "invalid_request" : "orchestration_error",
+                message: cause.message,
+              }),
+          ),
+        );
+    }),
+  ),
+  schedule_task: McpToolAccess.either(
+    (input) => input.scheduledTaskId === undefined,
+    McpToolAccess.startsThreads(
+      () => ({}),
+      ({ prompt, schedule, ...input }) =>
+        Effect.gen(function* () {
+          if (prompt === undefined || schedule === undefined) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "A new scheduled task needs `prompt` and `schedule`.",
+            });
+          }
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service.scheduleTask(scope, { ...input, prompt, schedule });
+        }),
+      // A scheduled run starts long after its caller, with nothing to carry the link.
+      { refused: "schedule tasks in this environment" },
+    ),
+    McpToolAccess.writes(
+      ({ scheduledTaskId, prompt, title, schedule, enabled, bindToCurrentThread }) =>
+        Effect.gen(function* () {
+          if (scheduledTaskId === undefined) return yield* Effect.die("unreachable");
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service.updateScheduledTask(scope, {
+            scheduledTaskId,
+            prompt,
+            title,
+            schedule,
+            enabled,
+            bindToCurrentThread,
+          });
+        }),
+    ),
   ),
   list_scheduled_tasks: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.listScheduledTasks(scope, input);
-    }),
-  ),
-  update_scheduled_task: McpToolAccess.writes((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.updateScheduledTask(scope, input);
     }),
   ),
   delete_scheduled_task: McpToolAccess.writes((input) =>
@@ -107,7 +141,7 @@ const handlers = {
   ),
   create_threads: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      // These threads share the caller's folder, and Home's folder makes them act as Home.
+      // These threads share the caller's folder, and Shift's folder makes them act as Shift.
       if (yield* callerIsHome())
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
@@ -120,17 +154,16 @@ const handlers = {
   ),
   t3_thread_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const routed = yield* routeHome(input.environmentId, "threads.list", input);
-      if (Option.isSome(routed)) return routed.value;
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.listThreads(scope, input);
+      // Shift's own folder is no project to list, so it lists every project by default.
+      const allProjects =
+        input.allProjects ?? (input.projectId === undefined && (yield* callerIsHome()));
+      return yield* service.listThreads(scope, { ...input, allProjects });
     }),
   ),
   t3_thread_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const routed = yield* routeHome(input.environmentId, "threads.read", input);
-      if (Option.isSome(routed)) return routed.value;
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.readThread(scope, input);
@@ -141,25 +174,6 @@ const handlers = {
     (input) =>
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
-        const threadId = input.threadId ?? scope.thread?.threadId;
-        if (input.action === "rename" && input.title !== undefined && threadId !== undefined) {
-          const routed = yield* routeHome(input.environmentId, "threads.rename", {
-            threadId,
-            title: input.title,
-            ...(input.clientRequestId === undefined
-              ? {}
-              : { clientRequestId: input.clientRequestId }),
-          });
-          if (Option.isSome(routed)) return routed.value;
-        } else if (
-          input.environmentId !== undefined &&
-          input.environmentId !== scope.environmentId
-        ) {
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: "Only renaming a named thread works in another environment.",
-          });
-        }
         const service = yield* ThreadMetadataMcpService.ThreadMetadataMcpService;
         return yield* service.update(scope, input);
       }),
@@ -168,8 +182,6 @@ const handlers = {
     (input) => [input.threadId],
     (input) =>
       Effect.gen(function* () {
-        const routed = yield* routeHome(input.environmentId, "threads.send", input);
-        if (Option.isSome(routed)) return routed.value;
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         return yield* service.sendToThread(scope, input);
@@ -182,12 +194,40 @@ const handlers = {
       return yield* service.waitForThread(scope, input);
     }),
   ),
+  t3_environment_links: McpToolAccess.reads(() =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const forwarding = yield* PeerForwarding.PeerForwarding;
+      return yield* forwarding.links(scope);
+    }),
+  ),
+  // A link lets every agent here reach the other environment, so it is an
+  // environment setting: full access, and never for linked work.
+  t3_environment_link: McpToolAccess.writesEnvironment((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const requests = yield* PeerLinkRequests.PeerLinkRequests;
+      return yield* requests.request(scope, input);
+    }),
+  ),
+  t3_environment_unlink: McpToolAccess.writesEnvironment(({ environmentId }) =>
+    Effect.gen(function* () {
+      const links = yield* PeerLinks.PeerLinks;
+      const removed = yield* links
+        .unlink(environmentId)
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        );
+      return { environmentId, removed };
+    }),
+  ),
   t3_thread_interrupt: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     (input) =>
       Effect.gen(function* () {
-        const routed = yield* routeHome(input.environmentId, "threads.interrupt", input);
-        if (Option.isSome(routed)) return routed.value;
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         return yield* service.interruptThread(scope, input);

@@ -1,10 +1,4 @@
-import {
-  type EnvironmentId,
-  type FleetEnvironment,
-  type FleetResult,
-  isHomeThreadId,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { isHomeThreadId, type PeerLinkSummary, type ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -14,8 +8,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as FleetBroker from "../home/FleetBroker.ts";
+import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { OrchestratorToolkit } from "../mcp/toolkits/orchestrator/tools.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import {
   type FrontContext,
   RECENT_MESSAGE_LIMIT,
@@ -54,7 +51,8 @@ const empty: FrontContext = { kind: "thread", title: "this thread", threads: [],
 
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
-  const fleet = yield* FleetBroker.FleetBroker;
+  const forwarding = yield* PeerForwarding.PeerForwarding;
+  const peerLinks = yield* PeerLinks.PeerLinks;
   const environment = yield* ServerEnvironment.ServerEnvironment;
 
   /** The last few user and agent messages, from the thread's latest runs only. */
@@ -94,43 +92,54 @@ const make = Effect.gen(function* () {
       .map((shell) => ({ shell, updatedAtMs: DateTime.toEpochMillis(shell.updatedAt) }));
   });
 
-  /** One other machine's open threads, or None when it did not answer in time. */
+  /** One linked machine's open threads, or None when it did not answer in time. */
   const machineThreads = (
-    target: FleetEnvironment,
-    actor: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
+    scope: McpInvocationContext.McpThreadInvocationScope,
+    link: PeerLinkSummary,
   ) =>
-    fleet
-      .invoke(target.environmentId, {
-        actor,
-        request: {
-          op: "threads.list",
-          input: { settled: false, includeSubagents: false, limit: SNAPSHOT_THREAD_LIMIT },
-        },
+    forwarding
+      .call(scope, OrchestratorToolkit.tools.t3_thread_list, link.environmentId, {
+        allProjects: true,
+        settled: false,
+        includeSubagents: false,
+        limit: SNAPSHOT_THREAD_LIMIT,
       })
       .pipe(
-        Effect.map((result) => (result as FleetResult<"threads.list">).threads),
+        Effect.map((result) => result.threads),
         Effect.timeoutOption(REMOTE_THREADS_TIMEOUT),
         Effect.catchCause(() => Effect.succeedNone),
       );
 
   /**
-   * Open threads on the user's other machines, through the desktop window
-   * that relays Shift's calls. Every machine is asked at once; one that is
-   * offline or slow is left out and named, never waited on past the timeout.
+   * Open threads on the user's linked machines, asked as Shift's thread, the
+   * way Shift's own tools reach them. Every machine is asked at once; one that
+   * is offline, expired, or slow is left out and named, never waited on past
+   * the timeout.
    */
   const otherMachines = Effect.fnUntraced(function* (homeThreadId: ThreadId, nowMs: number) {
-    const reach = yield* fleet.reach;
-    if (!reach.hostConnected) return noRemoteThreads;
-    const here = (yield* environment.getDescriptor).environmentId;
-    const targets = reach.environments.filter((target) => target.environmentId !== here);
+    if (!(yield* peerLinks.enabled)) return noRemoteThreads;
+    const targets = yield* peerLinks.list;
     if (targets.length === 0) return noRemoteThreads;
+    const home = yield* threads.getThreadShell(homeThreadId);
+    if (home === null) return noRemoteThreads;
+    const scope: McpInvocationContext.McpThreadInvocationScope = {
+      environmentId: (yield* environment.getDescriptor).environmentId,
+      requestNamespace: `voice-front:${homeThreadId}`,
+      thread: {
+        threadId: homeThreadId,
+        providerSessionId: `voice-front:${homeThreadId}`,
+        providerInstanceId: home.modelSelection.instanceId,
+      },
+      client: undefined,
+      capabilities: new Set(["orchestration"]),
+      issuedAt: 0,
+    };
     const answers = yield* Effect.forEach(
       targets,
       (target) =>
-        (target.connected
-          ? machineThreads(target, { environmentId: here, threadId: homeThreadId })
-          : Effect.succeedNone
-        ).pipe(Effect.map((items) => ({ target, items }))),
+        (target.status === "expired" ? Effect.succeedNone : machineThreads(scope, target)).pipe(
+          Effect.map((items) => ({ target, items })),
+        ),
       { concurrency: "unbounded" },
     );
     const lines: DatedLine[] = [];
@@ -154,8 +163,8 @@ const make = Effect.gen(function* () {
     };
   });
 
-  const load = (threadId: ThreadId) =>
-    Effect.gen(function* () {
+  const load = Effect.fn("VoiceFrontContext.load")(
+    function* (threadId: ThreadId) {
       const nowMs = yield* Clock.currentTimeMillis;
       if (isHomeThreadId(threadId)) {
         const { messages, local, remote } = yield* Effect.all(
@@ -194,15 +203,15 @@ const make = Effect.gen(function* () {
         threads: shell ? [threadLine(shell, DateTime.toEpochMillis(shell.updatedAt), nowMs)] : [],
         messages,
       };
-    }).pipe(
-      // A thread the front cannot read still gets an answer, just without context.
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Could not load the front voice's thread context.").pipe(
-          Effect.annotateLogs({ cause: String(cause) }),
-          Effect.as(empty),
-        ),
+    },
+    // A thread the front cannot read still gets an answer, just without context.
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not load the front voice's thread context.").pipe(
+        Effect.annotateLogs({ cause: String(cause) }),
+        Effect.as(empty),
       ),
-    );
+    ),
+  );
 
   return VoiceFrontContext.of({ load });
 });

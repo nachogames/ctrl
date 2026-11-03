@@ -2,7 +2,7 @@
  * Short spoken acknowledgements for voice turns the agent takes on, so the
  * user hears something at once instead of silence while it works.
  */
-export const ACK_PHRASES = ["On it.", "Checking.", "Got it.", "Okay, looking.", "Sure, one sec."];
+const ACK_PHRASES = ["On it.", "Checking.", "Got it.", "Okay, looking.", "Sure, one sec."];
 
 /**
  * Whether a turn the agent takes on needs an acknowledgement, given what the

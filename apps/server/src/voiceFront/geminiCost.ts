@@ -11,7 +11,7 @@ const LIVE_PRICES = {
   output: { TEXT: 4.5, AUDIO: 12.0 },
 } as const;
 
-export const GEMINI_LIVE_PRICES_PER_MILLION: Record<GeminiLiveModel, typeof LIVE_PRICES> = {
+const GEMINI_LIVE_PRICES_PER_MILLION: Record<GeminiLiveModel, typeof LIVE_PRICES> = {
   "gemini-3.1-flash-live-preview": LIVE_PRICES,
   "gemini-3.8-live": LIVE_PRICES,
 };

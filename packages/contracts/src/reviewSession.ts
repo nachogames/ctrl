@@ -280,13 +280,14 @@ export type ReviewSessionSnapshot = typeof ReviewSessionSnapshot.Type;
 
 /** The review of one pull request in the group of `threadId`. */
 export const ReviewSessionSubscribeInput = Schema.Struct({
-  threadId: ThreadId,
+  /** The chat beside the tab; it starts a review when the pull request has none. */
+  threadId: Schema.optional(ThreadId),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
 });
 export type ReviewSessionSubscribeInput = typeof ReviewSessionSubscribeInput.Type;
 
-/** The latest review of that pull request in the group, or null when there is none. */
+/** The pull request's review, or null when there is none. */
 export const ReviewSessionSubscribeResult = Schema.Struct({
   snapshot: Schema.NullOr(ReviewSessionSnapshot),
 });
@@ -346,6 +347,13 @@ export const ReviewRequestInput = Schema.Struct({
 });
 export type ReviewRequestInput = typeof ReviewRequestInput.Type;
 
+/** "Run your review"; its chat goes in the group of `targetThreadId`, which takes the review over. */
+export const ReviewRunLocalInput = Schema.Struct({
+  sessionId: ReviewSessionId,
+  targetThreadId: Schema.optional(ThreadId),
+});
+export type ReviewRunLocalInput = typeof ReviewRunLocalInput.Type;
+
 export const ReviewSessionInput = Schema.Struct({ sessionId: ReviewSessionId });
 export type ReviewSessionInput = typeof ReviewSessionInput.Type;
 
@@ -366,12 +374,11 @@ export class ReviewSessionError extends Schema.TaggedError<ReviewSessionError>()
 ) {}
 
 /**
- * Older imports numbered a whole Copilot overview (`gh-review:<id>`); retain those records but
- * never treat them as work. A finding taken out of a review body has its own
- * `gh-review:<id>#<slug>` key and is an ordinary point.
+ * Older imports numbered a whole review body (`gh-review:<id>`), Copilot's or a person's, as a
+ * point; retain those records but never treat them as work. A finding taken out of a review body
+ * has its own `gh-review:<id>#<slug>` key and is an ordinary point.
  */
-export const isReviewOverview = (item: Pick<ReviewItem, "sources" | "sourceKeys">): boolean =>
-  item.sources.includes("copilot") &&
+export const isReviewOverview = (item: Pick<ReviewItem, "sourceKeys">): boolean =>
   item.sourceKeys.length > 0 &&
   item.sourceKeys.every((key) => key.startsWith("gh-review:") && !key.includes("#"));
 

@@ -106,11 +106,9 @@ export class ThreadGroupLaunchService extends Context.Service<
       input: ThreadGroupNewThreadInput,
     ) => Effect.Effect<ThreadGroupNewThreadResult, ThreadGroupLaunchServiceError>;
     /**
-     * Hands a chat off to a new chat in its group, creating the group from the
-     * chat's workspace when it has none. Links the two chats, records the
-     * group's last handoff, then settles the source unless auto-settle is off
-     * for it. Every step commits under an id derived from `commandId`, so a
-     * retry replays instead of launching again.
+     * Hands a chat off to a new chat in its group, creating the group if needed,
+     * then settles the source unless auto-settle is off. Every step commits under
+     * an id derived from `commandId`, so a retry replays instead of relaunching.
      */
     readonly handoff: (
       input: ThreadGroupHandoffInput,
@@ -134,7 +132,7 @@ const workspaceOf = (
         ...(group.branch === null ? {} : { branch: group.branch }),
       };
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const groupService = yield* ThreadGroupService.ThreadGroupService;
   const groups = yield* ThreadGroupStore.ThreadGroupStoreV2;
   const launcher = yield* ThreadLaunch.ThreadLaunchService;

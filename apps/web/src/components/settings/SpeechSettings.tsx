@@ -83,6 +83,7 @@ export function SpeechSettingsSection() {
   const locked = !canConfigure || projectScope || environmentId === null || unsupported;
   const downloadBytes = state?.model.downloadBytes;
   // Leaving settings silences a preview.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops voice preview audio when settings unmount
   useEffect(() => () => voicePreview.stop(), []);
 
   return (

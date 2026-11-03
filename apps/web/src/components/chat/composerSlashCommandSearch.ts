@@ -10,7 +10,7 @@ import { scoreProviderSkill } from "../../providerSkillSearch";
 
 type SlashSearchItem = Extract<
   ComposerCommandItem,
-  { type: "slash-command" | "provider-slash-command" | "skill" }
+  { type: "slash-command" | "provider-slash-command" | "plugin-command" | "skill" }
 >;
 
 export const PROMPT_START_ONLY_HINT = "Works at the start of a message";
@@ -23,11 +23,9 @@ function isMidMessageSkill(item: SlashSearchItem): boolean {
 }
 
 /**
- * Everything stays on offer. Mid-message, skills (scanned ones and commands
- * the provider reports as skills) lead, because selecting one inserts a `$`
- * mention the server dispatches from any position. A provider command that
- * only expands when it opens the message is still listed, last, with a hint:
- * it goes in as literal `/name` text.
+ * Mid-message, skills lead: picking one inserts a `$` mention the server dispatches
+ * anywhere. Commands that only expand at the message start stay listed last, with a hint.
+ * `/side` and `/btw` work only at the message start, so they are left out.
  */
 export function slashCommandItemsForPromptPosition(
   items: ReadonlyArray<SlashSearchItem>,
@@ -37,7 +35,13 @@ export function slashCommandItemsForPromptPosition(
     return [...items];
   }
   const skills = items.filter(isMidMessageSkill);
-  const builtIns = items.filter((item) => item.type === "slash-command");
+  // Built-in and plugin commands act on the composer or the app, so they work anywhere;
+  // `/side` and `/btw` work only at the message start.
+  const builtIns = items.filter(
+    (item) =>
+      (item.type === "slash-command" && item.command !== "side" && item.command !== "btw") ||
+      item.type === "plugin-command",
+  );
   const startOnly = items.flatMap((item) =>
     item.type === "provider-slash-command" && !isMidMessageSkill(item)
       ? [{ ...item, hint: PROMPT_START_ONLY_HINT }]
@@ -122,7 +126,9 @@ export function searchSlashCommandItems(
             ? `0\u0000${item.command}`
             : item.type === "provider-slash-command"
               ? `1\u0000${item.command.name}\u0000${item.provider}`
-              : `2\u0000${item.skill.name}\u0000${item.provider}`,
+              : item.type === "plugin-command"
+                ? `2\u0000${item.command.name}\u0000${item.pluginId}`
+                : `3\u0000${item.skill.name}\u0000${item.provider}`,
       },
       Number.POSITIVE_INFINITY,
     );

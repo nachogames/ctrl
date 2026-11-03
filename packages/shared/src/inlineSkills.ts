@@ -2,29 +2,19 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 
 export type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
 
-function titleCaseWords(value: string): string {
-  const words: string[] = [];
-  for (const segment of value.split(/[\s:_-]+/)) {
-    if (segment.length === 0) continue;
-    words.push(segment.charAt(0).toUpperCase() + segment.slice(1));
-  }
-  return words.join(" ");
-}
-
 export function formatProviderSkillDisplayName(
   skill: Pick<ServerProviderSkill, "name" | "displayName">,
 ): string {
-  const displayName = skill.displayName?.trim();
-  if (displayName) {
-    return displayName;
-  }
-  return titleCaseWords(skill.name);
+  return skill.displayName?.trim() || skill.name;
 }
 
 const SKILL_TOKEN_REGEX =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
-export function* matchInlineSkills(text: string, skills: readonly InlineSkill[]) {
+export function* matchInlineSkills<Skill extends InlineSkill>(
+  text: string,
+  skills: readonly Skill[],
+) {
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const name = match[2] ?? "";
     const skill = skills.find((candidate) => candidate.name === name);
@@ -79,12 +69,9 @@ function closestSpokenSkill<T extends InlineSkill>(spoken: string, skills: reado
 }
 
 /**
- * Turns spoken skill references in a dictated transcript into `$name` tokens,
- * which the composer renders as skill chips. Only phrases anchored by the word
- * "skill" ("the review skill", "skill review") or "dollar" ("dollar review")
- * are rewritten, so ordinary words that happen to name a skill stay text. A
- * leading "the" is folded into the token, and punctuation touching the
- * rewritten phrase is dropped so the token still parses.
+ * Turns spoken skill references in a dictated transcript into `$name` tokens.
+ * Only phrases anchored by "skill" ("the review skill", "skill review") or
+ * "dollar" ("dollar review") are rewritten, so ordinary words stay text.
  */
 export function replaceSpokenSkills(text: string, skills: readonly InlineSkill[]): string {
   if (skills.length === 0) return text;

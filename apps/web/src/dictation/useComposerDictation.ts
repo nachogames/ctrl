@@ -115,6 +115,7 @@ export function useComposerDictation(input: {
   const { state: environmentState } = useDictationState(environmentId);
   const modelLoaded = environmentState?.loadedModel != null;
   const latest = useRef({ ...input, environmentId, modelLoaded });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed inputs to a ref the dictation controller reads from its callbacks
   useLayoutEffect(() => {
     latest.current = { ...input, environmentId, modelLoaded };
   });
@@ -127,21 +128,25 @@ export function useComposerDictation(input: {
   );
 
   const ownerKey = useRef(input.ownerKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the dictation controller its owner changed so it drops the old recording
   useEffect(() => {
     if (ownerKey.current === input.ownerKey) return;
     ownerKey.current = input.ownerKey;
     controller.ownerChanged();
   }, [controller, input.ownerKey]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- disposes the dictation controller and its microphone on unmount
   useEffect(() => () => controller.dispose(), [controller]);
 
   // The editor is enabled again by the time this parent effect runs.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- calls onCommitted after the commit renders, once the editor is enabled again
   useEffect(() => {
     if (state.phase !== "idle" || !committed.current) return;
     committed.current = false;
     latest.current.onCommitted();
   }, [state.phase]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- shows the error toast and resets the dictation controller
   useEffect(() => {
     if (state.phase !== "error" || state.error === null) return;
     if (!latest.current.quietError?.(state.error))

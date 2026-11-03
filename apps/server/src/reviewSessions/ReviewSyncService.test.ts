@@ -362,3 +362,114 @@ it.effect(
     }).pipe(Effect.provide(makeSyncLayer(harness)));
   },
 );
+
+it.effect("ends a review when its pull request is merged", () => {
+  const harness: SyncHarness = { read: reviewRoundRead(), state: "merged" };
+  return Effect.gen(function* () {
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const sync = yield* ReviewSyncService.ReviewSyncService;
+    const session = sessionFixture();
+    yield* repo.insertSession(session);
+    yield* repo.upsertRound(session.id, roundFixture(1));
+    assert.isTrue(yield* sync.syncSession(session.id));
+    const [stored] = yield* repo.listFinishedSessions("1970-01-01T00:00:00.000Z");
+    assert.equal(stored?.id, session.id);
+    assert.isFalse(yield* sync.syncSession(session.id));
+  }).pipe(Effect.provide(makeSyncLayer(harness)));
+});
+
+it.effect("brings a finished review back when you are asked again after approving", () => {
+  const harness: SyncHarness = {
+    read: reviewRoundRead({ authorLogin: "august", viewerLogin: "nach" }),
+  };
+  return Effect.gen(function* () {
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const sync = yield* ReviewSyncService.ReviewSyncService;
+    const session = sessionFixture({
+      phase: "done",
+      authorLogin: "august",
+      viewerLogin: "nach",
+    });
+    yield* repo.insertSession(session);
+    yield* repo.upsertRound(session.id, { ...roundFixture(1), state: "applied" });
+    // Nothing new on GitHub: it stays finished.
+    assert.isFalse(yield* sync.syncSession(session.id));
+
+    harness.read = reviewRoundRead({
+      authorLogin: "august",
+      viewerLogin: "nach",
+      pendingReviewers: [actor("nach")],
+    });
+    yield* sync.syncSession(session.id);
+    const back = yield* repo.getSession(session.id);
+    assert.deepEqual(
+      back._tag === "Some" ? [back.value.phase, back.value.round, back.value.viewerRequested] : [],
+      ["self-review", 1, true],
+    );
+  }).pipe(Effect.provide(makeSyncLayer(harness)));
+});
+
+it.effect("keeps a review finished under a pending request until you are asked again", () => {
+  const requested = reviewRoundRead({
+    authorLogin: "august",
+    viewerLogin: "nach",
+    pendingReviewers: [actor("nach")],
+  });
+  const harness: SyncHarness = { read: requested };
+  return Effect.gen(function* () {
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const sync = yield* ReviewSyncService.ReviewSyncService;
+    const session = sessionFixture({
+      phase: "done",
+      authorLogin: "august",
+      viewerLogin: "nach",
+      viewerRequested: true,
+    });
+    yield* repo.insertSession(session);
+    yield* repo.upsertRound(session.id, { ...roundFixture(1), state: "applied" });
+    const phase = () =>
+      repo
+        .getSession(session.id)
+        .pipe(
+          Effect.map((found) =>
+            found._tag === "Some" ? [found.value.phase, found.value.viewerRequested] : [],
+          ),
+        );
+    // Finished before you submitted: the same request does not bring it back.
+    yield* sync.syncSession(session.id);
+    assert.deepEqual(yield* phase(), ["done", true]);
+
+    // You submitted on GitHub, so the request is gone; asking you again is new.
+    harness.read = reviewRoundRead({ authorLogin: "august", viewerLogin: "nach" });
+    yield* sync.syncSession(session.id);
+    assert.deepEqual(yield* phase(), ["done", false]);
+    harness.read = requested;
+    yield* sync.syncSession(session.id);
+    assert.deepEqual(yield* phase(), ["self-review", true]);
+  }).pipe(Effect.provide(makeSyncLayer(harness)));
+});
+
+it.effect("opens a new round on your own finished pull request after a push", () => {
+  const harness: SyncHarness = { read: reviewRoundRead({ headSha: "def456" }) };
+  return Effect.gen(function* () {
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const sync = yield* ReviewSyncService.ReviewSyncService;
+    const session = sessionFixture({ phase: "done", authorLogin: "nach", viewerLogin: "nach" });
+    yield* repo.insertSession(session);
+    yield* repo.upsertRound(session.id, { ...roundFixture(1), state: "applied" });
+    yield* sync.syncSession(session.id);
+    const back = yield* repo.getSession(session.id);
+    assert.deepEqual(
+      back._tag === "Some" ? [back.value.phase, back.value.round, back.value.headSha] : [],
+      ["self-review", 2, "def456"],
+    );
+    const rounds = yield* repo.listRounds(session.id);
+    assert.deepEqual(
+      rounds.map((round) => [round.round, round.state]),
+      [
+        [2, "collecting"],
+        [1, "applied"],
+      ],
+    );
+  }).pipe(Effect.provide(makeSyncLayer(harness)));
+});

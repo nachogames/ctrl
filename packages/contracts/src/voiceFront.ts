@@ -1,19 +1,8 @@
 /**
- * Voice front - a small local model that answers a voice turn at once.
- *
- * When a hands-free turn ends, the client asks the environment for a short
- * spoken reply from a small model in LM Studio's local server, then speaks it
- * while the thread's agent works on the same message. The model is told what
- * the thread (or, in Shift's thread, every thread) is doing, says whether it
- * fully answered, and never replaces the message sent to the thread.
- *
- * The optional Gemini engine swaps the local model for a Gemini Live session
- * held by the environment: it hears the turn's speech as the user talks and
- * answers in audio, which the client plays through the same queue. Its API key
- * stays on the environment, and a monthly spend cap hands back to the local
- * model when reached.
- *
- * @module VoiceFront
+ * Voice front - a quick spoken reply to a hands-free turn while the thread's
+ * agent works on the same message, from a small LM Studio model or, optionally,
+ * a Gemini Live session under a monthly spend cap. It says whether it fully
+ * answered and never replaces the message sent to the thread.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -48,7 +37,7 @@ export const VoiceFrontMonthlyCap = Schema.Number.check(
   Schema.isBetween({ minimum: 0, maximum: MAX_VOICE_FRONT_MONTHLY_CAP_USD }),
 );
 /** Longest API key the environment stores. */
-export const GEMINI_API_KEY_MAX_LENGTH = 256;
+const GEMINI_API_KEY_MAX_LENGTH = 256;
 
 /** Server settings for the front voice. Off by default; nothing is loaded until a voice turn asks. */
 export const VoiceFrontSettings = Schema.Struct({

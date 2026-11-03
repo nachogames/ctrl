@@ -2,9 +2,10 @@ import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
-  type FleetEnvironment,
   type OrchestrationV2ThreadShell,
   type OrchestratorMcpThreadListItem,
+  type PeerLinkStatus,
+  type PeerLinkSummary,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -16,8 +17,9 @@ import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as FleetBroker from "../home/FleetBroker.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as PeerLinks from "../peer/PeerLinks.ts";
 import { contextText, SNAPSHOT_THREAD_LIMIT } from "./frontPrompt.ts";
 import * as VoiceFrontContext from "./VoiceFrontContext.ts";
 
@@ -68,10 +70,15 @@ const listResult = (threads: ReadonlyArray<OrchestratorMcpThreadListItem>) => ({
   total: threads.length,
 });
 
+/** A linked machine as Settings → Linked environments lists it. */
+const link = (environmentId: EnvironmentId, label: string, status: PeerLinkStatus = "reachable") =>
+  ({ environmentId, label, status }) as PeerLinkSummary;
+
 const setup = (options: {
   readonly local: ReadonlyArray<OrchestrationV2ThreadShell>;
-  readonly hostConnected: boolean;
-  readonly environments?: ReadonlyArray<FleetEnvironment>;
+  /** Whether the Linked environments beta is on here. */
+  readonly linksEnabled: boolean;
+  readonly links?: ReadonlyArray<PeerLinkSummary>;
   readonly remote?: Partial<
     Record<string, Effect.Effect<ReturnType<typeof listResult>, never> | "fail">
   >;
@@ -89,22 +96,27 @@ const setup = (options: {
               archivedThreads: [],
             }),
           getThreadRecords: () => Effect.succeed({ runs: [] } as never),
+          getThreadShell: () =>
+            Effect.succeed({
+              modelSelection: { instanceId: "claude", model: "opus" },
+            } as unknown as OrchestrationV2ThreadShell),
         }),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
           getDescriptor: Effect.succeed({ environmentId: here } as ExecutionEnvironmentDescriptor),
         }),
-        Layer.mock(FleetBroker.FleetBroker)({
-          reach: Effect.succeed({
-            hostConnected: options.hostConnected,
-            environments: options.environments ?? [],
-          }),
-          invoke: (environmentId, invoke) => {
-            invoked.push(`${environmentId}:${invoke.request.op}`);
-            assert.deepStrictEqual(invoke.actor, { environmentId: here, threadId: homeThreadId });
+        Layer.mock(PeerLinks.PeerLinks)({
+          enabled: Effect.succeed(options.linksEnabled),
+          list: Effect.succeed(options.links ?? []),
+        }),
+        Layer.mock(PeerForwarding.PeerForwarding)({
+          call: (scope, tool, environmentId) => {
+            invoked.push(`${environmentId}:${tool.name}`);
+            // Shift asks as its own thread, the way its tools reach linked machines.
+            assert.strictEqual(scope.thread?.threadId, homeThreadId);
             const answer = options.remote?.[environmentId];
             if (answer === undefined || answer === "fail")
               return Effect.die("unexpected or failing environment");
-            return answer;
+            return answer as never;
           },
         }),
       ),
@@ -121,11 +133,8 @@ const load = Effect.gen(function* () {
 it.effect("merges every connected machine's threads, newest first, labeled by machine", () => {
   const { layer, invoked } = setup({
     local: [shell("local-old", 1 * 60_000), shell("local-new", 9 * 60_000)],
-    hostConnected: true,
-    environments: [
-      { environmentId: here, label: "Laptop", connected: true },
-      { environmentId: studio, label: "Studio", connected: true },
-    ],
+    linksEnabled: true,
+    links: [link(studio, "Studio")],
     remote: {
       studio: Effect.succeed(
         listResult([
@@ -138,8 +147,7 @@ it.effect("merges every connected machine's threads, newest first, labeled by ma
   });
   return Effect.gen(function* () {
     const context = yield* load;
-    // This environment is never asked through the relay.
-    assert.deepStrictEqual(invoked, ["studio:threads.list"]);
+    assert.deepStrictEqual(invoked, ["studio:t3_thread_list"]);
     assert.deepStrictEqual(
       context.threads.map((line) => [line.title, line.machine ?? null, line.state]),
       [
@@ -159,8 +167,8 @@ it.effect("merges every connected machine's threads, newest first, labeled by ma
 it.effect("keeps the merged list to the snapshot limit", () => {
   const { layer } = setup({
     local: Array.from({ length: SNAPSHOT_THREAD_LIMIT }, (_, index) => shell(`l${index}`, index)),
-    hostConnected: true,
-    environments: [{ environmentId: studio, label: "Studio", connected: true }],
+    linksEnabled: true,
+    links: [link(studio, "Studio")],
     remote: {
       studio: Effect.succeed(
         listResult(
@@ -178,18 +186,18 @@ it.effect("keeps the merged list to the snapshot limit", () => {
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("answers without a slow, failing, or offline machine and names it", () =>
+it.effect("answers without a slow, failing, or expired machine and names it", () =>
   Effect.gen(function* () {
     // Tower takes the request and never answers.
     const towerAsked = yield* Deferred.make<void>();
     const { layer, invoked } = setup({
       local: [shell("local", 9 * 60_000)],
-      hostConnected: true,
-      environments: [
-        { environmentId: studio, label: "Studio", connected: true },
-        { environmentId: tower, label: "Tower", connected: true },
-        { environmentId: EnvironmentId.make("broken"), label: "Broken", connected: true },
-        { environmentId: EnvironmentId.make("asleep"), label: "Asleep", connected: false },
+      linksEnabled: true,
+      links: [
+        link(studio, "Studio"),
+        link(tower, "Tower"),
+        link(EnvironmentId.make("broken"), "Broken"),
+        link(EnvironmentId.make("asleep"), "Asleep", "expired"),
       ],
       remote: {
         studio: Effect.succeed(listResult([item("studio", 8 * 60_000)])),
@@ -206,8 +214,8 @@ it.effect("answers without a slow, failing, or offline machine and names it", ()
     yield* Deferred.await(towerAsked);
     yield* TestClock.adjust(VoiceFrontContext.REMOTE_THREADS_TIMEOUT);
     const context = yield* Fiber.join(fiber);
-    // An offline machine is not asked at all.
-    assert.notInclude(invoked, "asleep:threads.list");
+    // An expired link is not asked at all.
+    assert.notInclude(invoked, "asleep:t3_thread_list");
     assert.deepStrictEqual(
       context.threads.map((line) => line.title),
       ["local", "studio"],
@@ -221,10 +229,11 @@ it.effect("answers without a slow, failing, or offline machine and names it", ()
   }),
 );
 
-it.effect("lists only this machine, unlabeled, with no desktop relaying", () => {
+it.effect("lists only this machine, unlabeled, while linked environments are off", () => {
   const { layer, invoked } = setup({
     local: [shell("local", 9 * 60_000)],
-    hostConnected: false,
+    linksEnabled: false,
+    links: [link(studio, "Studio")],
   });
   return Effect.gen(function* () {
     const context = yield* load;

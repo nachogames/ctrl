@@ -5,8 +5,8 @@ import { DICTATION_SAMPLE_RATE } from "@t3tools/contracts";
  * computed exactly as Hugging Face's `WhisperFeatureExtractor(chunk_length=8)`
  * with `do_normalize=True` does, which is what the model was trained on.
  */
-export const SMART_TURN_SECONDS = 8;
-export const SMART_TURN_SAMPLES = SMART_TURN_SECONDS * DICTATION_SAMPLE_RATE;
+const SMART_TURN_SECONDS = 8;
+const SMART_TURN_SAMPLES = SMART_TURN_SECONDS * DICTATION_SAMPLE_RATE;
 export const MEL_BINS = 80;
 export const MEL_FRAMES = SMART_TURN_SAMPLES / 160;
 
@@ -26,7 +26,7 @@ const melToHertz = (mel: number) =>
   mel >= MIN_LOG_MEL ? MIN_LOG_HERTZ * Math.exp((mel - MIN_LOG_MEL) / LOG_STEP) : (200 * mel) / 3;
 
 /** Slaney-normalized triangular filters, `[mel][bin]` flattened. */
-export function melFilters(): Float32Array {
+function melFilters(): Float32Array {
   const maxMel = hertzToMel(DICTATION_SAMPLE_RATE / 2);
   const edges = Array.from({ length: MEL_BINS + 2 }, (_, index) =>
     melToHertz((maxMel * index) / (MEL_BINS + 1)),

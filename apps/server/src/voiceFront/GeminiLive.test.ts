@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { DictationSessionId, ThreadId, type VoiceFrontSettings } from "@t3tools/contracts";
@@ -129,7 +130,7 @@ const setup = (options: {
 
 const layer = Layer.mergeAll(ServerSecretStore.layer).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-gemini-live-test-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 describe("GeminiLive", () => {

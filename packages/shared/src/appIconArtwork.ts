@@ -27,7 +27,7 @@ export interface AppIconLegends {
 }
 
 /** Icon Composer layer coordinate space (assets/<channel>/app-icon*.icon/Assets/*.svg). */
-export const APP_ICON_CANVAS = 128;
+const APP_ICON_CANVAS = 128;
 /** Tight box around every keycap (16..112 plus stroke), for inline marks. */
 export const APP_ICON_MARK_VIEWBOX = "14 14 100 100";
 

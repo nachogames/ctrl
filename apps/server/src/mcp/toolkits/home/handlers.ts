@@ -1,47 +1,13 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
-import * as FleetBroker from "../../../home/FleetBroker.ts";
 import * as HomeService from "../../../home/HomeService.ts";
 import { callerIsHome, readHomeChangeCaller } from "../../homeRouting.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { readCaller, unavailable } from "../../threadAccess.ts";
+import { unavailable } from "../../threadAccess.ts";
 import { HomeToolkit } from "./tools.ts";
 
 export const layer = McpToolAccess.toLayer(HomeToolkit, {
-  t3_environment_list: McpToolAccess.reads(() =>
-    Effect.gen(function* () {
-      const { scope } = yield* readCaller();
-      const environment = yield* ServerEnvironment.ServerEnvironment;
-      const descriptor = yield* environment.getDescriptor;
-      const current = {
-        environmentId: scope.environmentId,
-        label: descriptor.label,
-        connected: true,
-        current: true,
-      };
-      if (!(yield* callerIsHome())) {
-        return {
-          currentEnvironmentId: scope.environmentId,
-          relayConnected: false,
-          environments: [current],
-        };
-      }
-      const reach = yield* (yield* FleetBroker.FleetBroker).reach;
-      return {
-        currentEnvironmentId: scope.environmentId,
-        relayConnected: reach.hostConnected,
-        environments: [
-          current,
-          ...reach.environments
-            .filter((candidate) => candidate.environmentId !== scope.environmentId)
-            .map((candidate) => ({ ...candidate, current: false })),
-        ],
-      };
-    }),
-  ),
-
   t3_thread_watch: McpToolAccess.writes((input) =>
     Effect.gen(function* () {
       if (!(yield* callerIsHome()))

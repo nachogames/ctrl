@@ -1,11 +1,6 @@
 /**
- * Speech - text-to-speech for spoken replies, run by an environment.
- *
- * The environment synthesizes short chunks of text with an opt-in local
- * Kokoro voice (sherpa-onnx, the same runtime local dictation uses) and
- * returns 16-bit PCM WAV for the client to play.
- *
- * @module Speech
+ * Speech - text-to-speech for spoken replies, run by an environment with an
+ * opt-in local Kokoro voice (sherpa-onnx) that returns 16-bit PCM WAV.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -25,7 +20,7 @@ export const SpeechVoiceId = Schema.Literals([
 export type SpeechVoiceId = typeof SpeechVoiceId.Type;
 
 /** Longest text one synthesize call accepts; clients send one sentence at a time. */
-export const SPEECH_MAX_TEXT_LENGTH = 600;
+const SPEECH_MAX_TEXT_LENGTH = 600;
 
 /**
  * Server settings for this environment's spoken replies. Turning them on

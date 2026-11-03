@@ -1,9 +1,9 @@
 import { DICTATION_SAMPLE_RATE } from "@t3tools/contracts";
 
 /** Audio kept from just before speech is heard, so the first syllable is not clipped. */
-export const GATE_PRE_ROLL_MS = 300;
+const GATE_PRE_ROLL_MS = 300;
 /** Audio still sent after speech stops, so word endings and short pauses carry. */
-export const GATE_HANGOVER_MS = 300;
+const GATE_HANGOVER_MS = 300;
 
 /** Audio to send, oldest first; `start` opens the activity before it. */
 export interface GateOutput {

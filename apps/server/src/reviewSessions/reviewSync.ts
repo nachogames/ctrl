@@ -7,6 +7,7 @@ import type {
   ReviewSource,
   ReviewSourceComment,
 } from "@t3tools/contracts";
+import { reviewRole } from "@t3tools/contracts";
 import type { ProviderChangeRequestReviewRound } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 const COPILOT_LOGIN = /^(copilot|copilot-pull-request-reviewer)(\[bot\])?$/i;
@@ -16,7 +17,7 @@ export const isCopilotLogin = (login: string | null | undefined): boolean =>
   login !== null && login !== undefined && COPILOT_LOGIN.test(login);
 
 /** The hidden marker Ctrl puts on every comment it writes for a review session. */
-export const ctrlReviewMarker = (sessionId: string) => `ctrl-review:${sessionId}:`;
+const ctrlReviewMarker = (sessionId: string) => `ctrl-review:${sessionId}:`;
 
 const VERDICTS: Record<string, ReviewVerdict> = {
   APPROVED: "approved",
@@ -25,7 +26,7 @@ const VERDICTS: Record<string, ReviewVerdict> = {
 };
 
 /** A reviewer asked in a round who has not reviewed yet. */
-export const requestSourceId = (round: number, login: string) => `request:${round}:${login}`;
+const requestSourceId = (round: number, login: string) => `request:${round}:${login}`;
 
 export interface ReviewSyncInput {
   /** The session the markers name; null for the pre-session history read. */
@@ -91,15 +92,10 @@ function reviewComments(
 }
 
 /**
- * What one GitHub read changes about a session's sources. Idempotent: a read that matches what
- * is stored plans nothing. New reviews and requests join the current round, except while it is
- * being applied; then they wait, and the first read after the round advances files them in the
- * next one. A known source keeps its round and triage mark. Reviews by the pull request's
- * author are retained unless they are Ctrl apply summaries or reply-only reviews.
- *
- * On someone else's pull request the viewer's own reviews always file into the current round,
- * even while it is held, and their pending review files as `pending`: it is the review this
- * round is building.
+ * What one GitHub read changes about a session's sources; idempotent. New sources join the
+ * current round unless it is being applied, then wait for the next. On someone else's PR the
+ * viewer's own reviews always join the current round, a pending one as `pending`. The PR
+ * author's reviews stay unless they are Ctrl apply summaries or reply-only.
  */
 export function planReviewSync(input: ReviewSyncInput): ReviewSyncPlan {
   const { read, sessionRound, now } = input;
@@ -329,7 +325,8 @@ export function rawReviewItems(
     if (source.state !== "done" || source.round !== session.round) continue;
     for (const comment of comments ?? []) {
       if (keys.has(comment.key) || !comment.body.trim()) continue;
-      if (source.kind === "copilot" && comment.key.startsWith("gh-review:")) continue;
+      // A review's body is its overview; triage lifts out any problem only it raises.
+      if (comment.key.startsWith("gh-review:")) continue;
       if (marker !== null && comment.body.includes(marker)) continue;
       keys.add(comment.key);
       const summary = comment.body.trim().split("\n")[0]!.slice(0, 180);
@@ -415,4 +412,51 @@ export function repairUnknownLocalSources(
         ]
       : [],
   );
+}
+
+/** Why GitHub brings a finished review back, or null while nothing new wants you. */
+export type ReviewReopenReason = "requested" | "new-commits" | "new-review";
+
+/** True when GitHub lists you as a pending reviewer of someone else's pull request. */
+export function viewerPendingReview(
+  session: Pick<ReviewSession, "authorLogin" | "viewerLogin">,
+  read: Pick<ProviderChangeRequestReviewRound, "pendingReviewers">,
+): boolean {
+  const viewer = session.viewerLogin?.toLowerCase() ?? null;
+  return (
+    reviewRole(session) === "reviewer" &&
+    viewer !== null &&
+    read.pendingReviewers.some((reviewer) => reviewer.login.toLowerCase() === viewer)
+  );
+}
+
+/**
+ * A finished review comes back when GitHub moved past where it ended: someone asked you to
+ * review again (even after you approved), commits landed after it finished, or, on your own
+ * pull request, someone else reviewed it since. A request still pending from before you
+ * finished is not a new one.
+ */
+export function reviewReopenReason(
+  session: Pick<
+    ReviewSession,
+    "headSha" | "updatedAt" | "authorLogin" | "viewerLogin" | "viewerRequested"
+  >,
+  read: Pick<ProviderChangeRequestReviewRound, "headSha" | "reviews" | "pendingReviewers">,
+): ReviewReopenReason | null {
+  const viewer = session.viewerLogin?.toLowerCase() ?? null;
+  const reviewing = reviewRole(session) === "reviewer";
+  if (session.viewerRequested !== true && viewerPendingReview(session, read)) return "requested";
+  if (read.headSha !== null && session.headSha !== null && read.headSha !== session.headSha)
+    return "new-commits";
+  if (
+    !reviewing &&
+    read.reviews.some(
+      (review) =>
+        review.submittedAt !== null &&
+        review.submittedAt > session.updatedAt &&
+        review.author?.login.toLowerCase() !== viewer,
+    )
+  )
+    return "new-review";
+  return null;
 }

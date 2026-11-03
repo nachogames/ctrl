@@ -295,6 +295,7 @@ function useVoiceFrontStatus(environmentId: EnvironmentId | null, key: string): 
     key: "",
     status: null,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- probes LM Studio or Gemini through the environment each time the settings it depends on change; a live probe, not cached data
   useEffect(() => {
     if (environmentId === null) return;
     let current = true;

@@ -74,6 +74,12 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
         Number.isSafeInteger(surface.revealRequestId) &&
         (surface.attachment === undefined || isAttachment(surface.attachment))
       );
+    case "plugin":
+      return (
+        typeof surface.pluginId === "string" &&
+        typeof surface.viewId === "string" &&
+        typeof surface.title === "string"
+      );
     case "device":
       return (
         (surface.title === undefined || typeof surface.title === "string") &&
@@ -84,6 +90,8 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
             typeof surface.target.name === "string" &&
             (surface.target.platform === "ios" || surface.target.platform === "android")))
       );
+    case "side-chat":
+      return typeof surface.threadId === "string" && surface.id === `side-chat:${surface.threadId}`;
     case "pull-request":
       return (
         typeof surface.projectId === "string" &&

@@ -145,3 +145,36 @@ export async function groupWithTarget<G>(input: {
   if (await input.move(group, input.needsWorkspaceSwitch)) return { kind: "grouped", group };
   return { kind: "move-failed", cleanedUp: await input.deleteGroup(group) };
 }
+
+interface GroupableThread {
+  readonly environmentId: string;
+  readonly projectId: string;
+  readonly groupId?: ThreadGroupId | null | undefined;
+}
+
+/**
+ * Where "Group chats" puts a multi-selection: `anchor`'s group, else the one
+ * group among them (null id: a new group around `anchor`). Null when they
+ * span projects or machines, or nothing would move.
+ */
+export function resolveGroupThreadsTarget(
+  threads: ReadonlyArray<GroupableThread>,
+  anchor: GroupableThread,
+): { readonly groupId: ThreadGroupId | null; readonly moving: number } | null {
+  if (
+    threads.length < 2 ||
+    threads.some(
+      (thread) =>
+        thread.environmentId !== anchor.environmentId || thread.projectId !== anchor.projectId,
+    )
+  ) {
+    return null;
+  }
+  const groupIds = new Set(threads.flatMap((thread) => (thread.groupId ? [thread.groupId] : [])));
+  const groupId = anchor.groupId ?? (groupIds.size === 1 ? [...groupIds][0]! : null);
+  // A new group starts as the anchor; an existing one takes everyone not in it.
+  const moving = threads.filter((thread) =>
+    groupId === null ? thread !== anchor : thread.groupId !== groupId,
+  ).length;
+  return moving === 0 ? null : { groupId, moving };
+}

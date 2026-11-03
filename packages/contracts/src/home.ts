@@ -1,54 +1,19 @@
 /**
- * Home: one agent thread per desktop install that can act across every
- * project and environment the user has connected.
- *
- * The desktop's local server (the hub) runs Home and owns its state. Calls
- * that target another environment go through the desktop renderer, which
- * already holds a live connection to each one, and land on that
- * environment's `fleet.invoke`. See docs/internals/home.md.
+ * Home: one agent thread per desktop install, run by the desktop's local server
+ * (the hub), that acts with the user's reach across every project here and every
+ * linked environment. See docs/internals/home.md.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import {
-  EnvironmentId,
-  NonNegativeInt,
-  ProjectId,
-  RuntimeRequestId,
-  ThreadId,
-  TrimmedNonEmptyString,
-  RunId,
-  IsoDateTime,
-} from "./baseSchemas.ts";
+import { EnvironmentId, RuntimeRequestId, ThreadId, IsoDateTime } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import {
-  OrchestratorMcpClientRequestId,
-  OrchestratorMcpEnvironmentTarget,
-  OrchestratorMcpProviderCapability,
-  OrchestratorMcpFailure,
-  OrchestratorMcpThreadInterruptInput,
-  OrchestratorMcpThreadInterruptResult,
-  OrchestratorMcpThreadListInput,
-  OrchestratorMcpThreadListResult,
-  OrchestratorMcpThreadReadInput,
-  OrchestratorMcpThreadReadResult,
-  OrchestratorMcpThreadSendInput,
-  OrchestratorMcpThreadSendResult,
-} from "./orchestratorMcp.ts";
-import {
-  OrchestrationV2DispatchCommandResult,
-  OrchestrationV2RunStatus,
-  OrchestrationV2ThreadLaunchWorkspaceStrategy,
-} from "./orchestrationV2.ts";
-import { Project } from "./project.ts";
-import { ThreadMetadataMcpUpdateResult } from "./threadMetadataMcp.ts";
+import { OrchestrationV2DispatchCommandResult } from "./orchestrationV2.ts";
 import {
   ProviderApprovalDecision,
   ProviderApprovalOption,
-  ProviderInteractionMode,
   ProviderRequestKind,
   ProviderUserInputAnswers,
-  RuntimeMode,
 } from "./providerPolicy.ts";
 
 /** Why Home watches a thread. Threads Home launched also stop notifying the user. */
@@ -122,62 +87,6 @@ export const FleetActor = Schema.Struct({
 });
 export type FleetActor = typeof FleetActor.Type;
 
-const environmentIdField = OrchestratorMcpEnvironmentTarget;
-
-export const FleetProjectListInput = Schema.Struct({
-  environmentId: environmentIdField,
-  cursor: Schema.optional(NonNegativeInt),
-  limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
-});
-export type FleetProjectListInput = typeof FleetProjectListInput.Type;
-
-export const FleetProjectListResult = Schema.Struct({
-  projects: Schema.Array(Project),
-  nextCursor: Schema.NullOr(NonNegativeInt),
-});
-export type FleetProjectListResult = typeof FleetProjectListResult.Type;
-
-export const FleetThreadLaunchInput = Schema.Struct({
-  environmentId: environmentIdField,
-  /** Chosen by the hub, so Home's watch on the thread exists before the thread does. */
-  threadId: Schema.optional(ThreadId),
-  projectId: Schema.optional(ProjectId),
-  scratch: Schema.optional(
-    Schema.Boolean.annotate({
-      description:
-        "Launch without a project, in its own folder under the environment's Scratch project. Not with projectId or workspaceStrategy.",
-    }),
-  ),
-  title: TrimmedNonEmptyString,
-  modelSelection: Schema.optional(ModelSelection),
-  runtimeMode: Schema.optional(RuntimeMode),
-  interactionMode: Schema.optional(ProviderInteractionMode),
-  workspaceStrategy: Schema.optional(
-    OrchestrationV2ThreadLaunchWorkspaceStrategy.annotate({
-      description:
-        "Choose where this thread runs before starting its agent: worktree creates and binds a new checkout from baseRef; existing_worktree binds worktreePath; root uses the project checkout. Omitted means root, not the caller's worktree. For a PR stack use the parent branch as baseRef and startFromOrigin:false. Uncommitted changes are not copied.",
-    }),
-  ),
-  message: Schema.optional(
-    Schema.String.check(Schema.isMaxLength(120000)).annotate({
-      description:
-        "First task prompt, delivered after workspace preparation. Omit message and attachments to create an idle thread.",
-    }),
-  ),
-});
-export type FleetThreadLaunchInput = typeof FleetThreadLaunchInput.Type;
-
-export const FleetThreadLaunchResult = Schema.Struct({
-  threadId: ThreadId,
-  /** Paste this whenever you mention the thread, so the user can click to open it. */
-  link: Schema.String,
-  projectId: ProjectId,
-  modelSelection: ModelSelection,
-  runId: Schema.NullOr(RunId),
-  status: Schema.NullOr(OrchestrationV2RunStatus),
-});
-export type FleetThreadLaunchResult = typeof FleetThreadLaunchResult.Type;
-
 export const FleetThreadOrganizeAction = Schema.Literals([
   "pin",
   "unpin",
@@ -192,23 +101,13 @@ export const FleetThreadOrganizeAction = Schema.Literals([
 export type FleetThreadOrganizeAction = typeof FleetThreadOrganizeAction.Type;
 
 export const FleetThreadOrganizeInput = Schema.Struct({
-  environmentId: environmentIdField,
   threadId: Schema.optional(ThreadId),
   action: FleetThreadOrganizeAction,
   snoozedUntil: Schema.optional(IsoDateTime),
 });
 export type FleetThreadOrganizeInput = typeof FleetThreadOrganizeInput.Type;
 
-export const FleetThreadRenameInput = Schema.Struct({
-  environmentId: environmentIdField,
-  threadId: ThreadId,
-  title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-});
-export type FleetThreadRenameInput = typeof FleetThreadRenameInput.Type;
-
 export const FleetRequestsListInput = Schema.Struct({
-  environmentId: environmentIdField,
   threadId: Schema.optional(ThreadId),
 });
 export type FleetRequestsListInput = typeof FleetRequestsListInput.Type;
@@ -225,7 +124,6 @@ export const FleetRequestsListResult = Schema.Struct({
 export type FleetRequestsListResult = typeof FleetRequestsListResult.Type;
 
 export const FleetRequestTarget = Schema.Struct({
-  environmentId: environmentIdField,
   threadId: Schema.optional(ThreadId),
   requestId: RuntimeRequestId,
 });
@@ -275,26 +173,12 @@ export const FleetRequestRespondInput = Schema.Struct({
 });
 export type FleetRequestRespondInput = typeof FleetRequestRespondInput.Type;
 
-/** The providers another environment offers, for picking a model there. */
-export const FleetCapabilitiesResult = Schema.Struct({
-  providers: Schema.Array(OrchestratorMcpProviderCapability),
-});
-export type FleetCapabilitiesResult = typeof FleetCapabilitiesResult.Type;
-
 const operation = <const Op extends string, S extends Schema.Top>(op: Op, input: S) =>
   Schema.Struct({ op: Schema.Literal(op), input });
 
-/** One operation Home asks an environment to run, with the user's reach. */
+/** One operation Home runs in its own environment with the user's reach, beyond an agent's. */
 export const FleetRequest = Schema.Union([
-  operation("capabilities", Schema.Struct({ environmentId: environmentIdField })),
-  operation("projects.list", FleetProjectListInput),
-  operation("threads.list", OrchestratorMcpThreadListInput),
-  operation("threads.read", OrchestratorMcpThreadReadInput),
-  operation("threads.launch", FleetThreadLaunchInput),
-  operation("threads.send", OrchestratorMcpThreadSendInput),
-  operation("threads.interrupt", OrchestratorMcpThreadInterruptInput),
   operation("threads.organize", FleetThreadOrganizeInput),
-  operation("threads.rename", FleetThreadRenameInput),
   operation("requests.list", FleetRequestsListInput),
   operation("requests.read", FleetRequestTarget),
   operation("requests.respond", FleetRequestRespondInput),
@@ -302,17 +186,9 @@ export const FleetRequest = Schema.Union([
 export type FleetRequest = typeof FleetRequest.Type;
 export type FleetOperation = FleetRequest["op"];
 
-/** The result schema of each operation. Results cross the wire untyped and are decoded with these. */
-export const FleetResults = {
-  capabilities: FleetCapabilitiesResult,
-  "projects.list": FleetProjectListResult,
-  "threads.list": OrchestratorMcpThreadListResult,
-  "threads.read": OrchestratorMcpThreadReadResult,
-  "threads.launch": FleetThreadLaunchResult,
-  "threads.send": OrchestratorMcpThreadSendResult,
-  "threads.interrupt": OrchestratorMcpThreadInterruptResult,
+/** The result schema of each operation. */
+const FleetResults = {
   "threads.organize": OrchestrationV2DispatchCommandResult,
-  "threads.rename": ThreadMetadataMcpUpdateResult,
   "requests.list": FleetRequestsListResult,
   "requests.read": FleetRequestReadResult,
   "requests.respond": OrchestrationV2DispatchCommandResult,
@@ -320,36 +196,9 @@ export const FleetResults = {
 export type FleetResult<Op extends FleetOperation> = (typeof FleetResults)[Op]["Type"];
 export type FleetInput<Op extends FleetOperation> = Extract<FleetRequest, { op: Op }>["input"];
 
-/** Runs one fleet operation on the environment that receives it. */
+/** One Home operation and the Home thread that asked. */
 export const FleetInvokeInput = Schema.Struct({ actor: FleetActor, request: FleetRequest });
 export type FleetInvokeInput = typeof FleetInvokeInput.Type;
-
-export const FleetEnvironment = Schema.Struct({
-  environmentId: EnvironmentId,
-  label: Schema.String,
-  connected: Schema.Boolean,
-});
-export type FleetEnvironment = typeof FleetEnvironment.Type;
-
-/** A desktop renderer offering to relay Home's calls to its connections. */
-export const FleetHostRegistration = Schema.Struct({
-  clientId: TrimmedNonEmptyString,
-  environments: Schema.Array(FleetEnvironment),
-});
-export type FleetHostRegistration = typeof FleetHostRegistration.Type;
-
-export const FleetHostRequest = Schema.Struct({
-  requestId: TrimmedNonEmptyString,
-  environmentId: EnvironmentId,
-  invoke: FleetInvokeInput,
-});
-export type FleetHostRequest = typeof FleetHostRequest.Type;
-
-export const FleetHostResponse = Schema.Union([
-  Schema.Struct({ requestId: TrimmedNonEmptyString, result: Schema.Unknown }),
-  Schema.Struct({ requestId: TrimmedNonEmptyString, failure: OrchestratorMcpFailure }),
-]);
-export type FleetHostResponse = typeof FleetHostResponse.Type;
 
 export const HomeWatchEventKind = Schema.Literals([
   "completed",

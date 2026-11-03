@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 
-// Icon Composer exports already contain a rounded-square silhouette, and Android masks
-// the central 72dp of a 108dp adaptive canvas, so exporting them as a foreground produces
-// a double-framed icon with the keycap cropped by the mask. Instead, each variant gets a
-// full-bleed background layer (the artwork behind the keycap mark) and a transparent
-// foreground per design that keeps the keycap inside the safe zone.
+// Android masks the central 72dp of a 108dp canvas, so Icon Composer's rounded exports would
+// double-frame and crop the keycap. Each variant gets a full-bleed background and a
+// transparent foreground that keeps the keycap inside the safe zone.
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -52,8 +50,7 @@ export const markTransform = (size: number, fraction: number) => {
 const canvasSvg = (size: number, inner: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" fill="none">${inner}</svg>`;
 
-// The layer sources clip to a 10pt rounded rectangle for the iOS silhouette. Android
-// applies its own mask, so the layer must bleed to the canvas edge.
+// Remove the iOS 10pt corner clip; Android's own mask needs full bleed.
 const fullBleed = (svg: string) =>
   svg.replace(/<rect width="128" height="128" rx="10"\/>/, '<rect width="128" height="128"/>');
 
@@ -147,8 +144,7 @@ const renderNightlyBackground = Effect.fn("androidIcons.renderNightlyBackground"
   repositoryRoot: string,
   size: number,
 ) {
-  // Positions mirror assets/nightly/app-icon.icon/icon.json. The SVG blur filter is
-  // dropped because Icon Composer ignores it and it smears at this raster size.
+  // Match assets/nightly/app-icon.icon/icon.json; omit blur, which Icon Composer ignores and rasterization smears.
   const clouds = [
     { file: "cloud-lower-left.svg", scale: 25, translation: [-309.6375, 268.66077693836917] },
     {

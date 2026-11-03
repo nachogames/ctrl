@@ -1,16 +1,10 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_HOME_SETTINGS,
   type EnvironmentId,
-  type FleetHostRegistration,
-  type FleetHostRequest,
   type HomeSettings,
   type HomeWatchEvent,
-  OrchestratorMcpFailure,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 
 import { isElectron } from "../../env";
@@ -28,10 +22,9 @@ const WATCH_REPORT_RETRY_MS = 5_000;
 const WATCH_REPORT_ATTEMPTS = 12;
 
 /**
- * Desktop-only host for Home, which runs on the desktop's own server. While
- * Home is on, this renderer relays Home's calls to the user's other
- * environments over the connections it already holds, reports watched thread
- * changes back to Home, and keeps itself alive when the window closes.
+ * Desktop-only host for Home. While Home is on, this renderer reports watched
+ * thread changes in every environment it is connected to, and keeps itself
+ * alive when the window closes.
  */
 export function HomeFleetHost() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -43,91 +36,14 @@ function HomeHub({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const home = settings?.home ?? DEFAULT_HOME_SETTINGS;
   const on = home.threadId !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sets the desktop bridge's keep-alive-on-close while Home is on
   useEffect(() => {
     void window.desktopBridge?.setKeepAliveOnClose?.(on);
-    // Without a relay running, closing the window should quit as usual.
+    // With Home off, closing the window should quit as usual.
     return () => void window.desktopBridge?.setKeepAliveOnClose?.(false);
   }, [on]);
   if (!on) return null;
-  return (
-    <>
-      <HomeRelay environmentId={environmentId} />
-      <HomeWatchReporter environmentId={environmentId} home={home} />
-    </>
-  );
-}
-
-const isRelayFailure = Schema.is(OrchestratorMcpFailure);
-function createRelayClientId(): string {
-  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
-  return `home-relay-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
-
-const relayFailure = (error: unknown) =>
-  isRelayFailure(error)
-    ? error
-    : new OrchestratorMcpFailure({
-        code: "environment_unavailable",
-        message:
-          error instanceof Error ? error.message : "The other environment could not be reached.",
-      });
-
-function HomeRelay({ environmentId }: { readonly environmentId: EnvironmentId }) {
-  const { environments } = useEnvironments();
-  const [clientId] = useState(createRelayClientId);
-  // The hub keeps the newest registration, so a changed list re-registers.
-  const reachKey = JSON.stringify(
-    environments
-      .filter((environment) => environment.environmentId !== environmentId)
-      .map((environment) => ({
-        environmentId: environment.environmentId,
-        label: environment.label,
-        connected: environment.connection.phase === "connected",
-      })),
-  );
-  const registration: FleetHostRegistration = { clientId, environments: JSON.parse(reachKey) };
-  const requestsAtom = homeEnvironment.relayRequests({ environmentId, input: registration });
-  const invoke = useAtomCommand(homeEnvironment.invoke, { reportFailure: false });
-  const respond = useAtomCommand(homeEnvironment.relayRespond, { reportFailure: false });
-
-  const handle = async (request: FleetHostRequest) => {
-    const result = await invoke({ environmentId: request.environmentId, input: request.invoke });
-    await respond({
-      environmentId,
-      input:
-        result._tag === "Success"
-          ? { requestId: request.requestId, result: result.value }
-          : {
-              requestId: request.requestId,
-              failure: relayFailure(squashAtomCommandFailure(result)),
-            },
-    });
-  };
-  // The consumer outlives renders, so it reads the latest handler from an atom.
-  const [handlerAtom] = useState(() => Atom.make({ handle }));
-  const setHandler = useAtomSet(handlerAtom);
-  useEffect(() => {
-    setHandler({ handle });
-  }, [handle, setHandler]);
-
-  const consumerAtom = Atom.make((get) => {
-    get.mount(handlerAtom);
-    // A request runs once even if the stream value is seen again.
-    const handled = new Set<string>();
-    // `immediate` reads the stream atom now, which opens fleet.connect. Without
-    // it the atom is never computed and the hub never hears from this window.
-    get.subscribe(
-      requestsAtom,
-      (result) => {
-        if (!AsyncResult.isSuccess(result) || handled.has(result.value.requestId)) return;
-        handled.add(result.value.requestId);
-        void get.once(handlerAtom).handle(result.value);
-      },
-      { immediate: true },
-    );
-  }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`home:relay:${environmentId}:${clientId}`));
-  useAtomValue(consumerAtom);
-  return null;
+  return <HomeWatchReporter environmentId={environmentId} home={home} />;
 }
 
 function HomeWatchReporter({
@@ -155,6 +71,7 @@ function HomeWatchReporter({
   const sending = useRef(false);
   const stopped = useRef(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- batches watch transitions into timed reports to the server
   useEffect(() => {
     const { next, events } = diffWatchedThreads({
       previous: previous.current,
@@ -192,6 +109,7 @@ function HomeWatchReporter({
     timer.current = setTimeout(() => void send(), WATCH_REPORT_DELAY_MS);
   }, [environmentId, home, knownWatchKeys, labels, liveEnvironmentIds, report, shells]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the report timer and drops late results on unmount
   useEffect(() => {
     stopped.current = false;
     return () => {

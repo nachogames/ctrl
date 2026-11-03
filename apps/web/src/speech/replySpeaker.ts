@@ -29,7 +29,7 @@ export function decodeBase64(base64: string): ArrayBuffer {
 const STREAM_LEAD_SECONDS = 0.12;
 
 /** 16-bit little-endian PCM as samples for an AudioBuffer. */
-export function decodePcm16(base64: string): Float32Array<ArrayBuffer> {
+function decodePcm16(base64: string): Float32Array<ArrayBuffer> {
   const view = new DataView(decodeBase64(base64));
   const samples = new Float32Array(Math.floor(view.byteLength / 2));
   for (let index = 0; index < samples.length; index++)

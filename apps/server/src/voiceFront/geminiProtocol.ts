@@ -7,7 +7,7 @@ import type { GeminiLiveModel } from "@t3tools/contracts";
 
 import type { LiveUsage } from "./geminiCost.ts";
 
-export const GEMINI_LIVE_ENDPOINT =
+const GEMINI_LIVE_ENDPOINT =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
 /** The key rides in the query string, as the Live API requires. Never log this URL. */
@@ -21,16 +21,16 @@ export const redactKey = (text: string) => text.replace(/key=[^&\s"']+/g, "key=*
  * Context Gemini keeps before it slides older turns out. Every turn is billed
  * for the whole context it sees, so this stays small: about 80 s of audio.
  */
-export const CONTEXT_TRIGGER_TOKENS = 4_000;
-export const CONTEXT_TARGET_TOKENS = 2_000;
+const CONTEXT_TRIGGER_TOKENS = 4_000;
+const CONTEXT_TARGET_TOKENS = 2_000;
 
 export const TOOL_HAND_OFF = "hand_off";
 export const TOOL_CHECK_THREADS = "check_threads";
 
 /** Only 3.8 Live supports non-blocking calls and response scheduling. */
-export const supportsAsyncTools = (model: GeminiLiveModel) => model === "gemini-3.8-live";
+const supportsAsyncTools = (model: GeminiLiveModel) => model === "gemini-3.8-live";
 
-export function toolDeclarations(model: GeminiLiveModel, worker: string) {
+function toolDeclarations(model: GeminiLiveModel, worker: string) {
   const async = supportsAsyncTools(model);
   return [
     {

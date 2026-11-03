@@ -37,6 +37,7 @@ const readWav = (bytes: Uint8Array) => {
   throw new Error("The fixture has no data chunk.");
 };
 
+// oxlint-disable-next-line t3code/no-test-timeout-or-unreasoned-skip -- opt-in round trip to the real Gemini Live API, skipped without a key and fixture
 it.skipIf(!key || !fixture)(
   "Gemini Live answers a spoken turn in audio and reports usage",
   () =>
@@ -53,6 +54,7 @@ it.skipIf(!key || !fixture)(
             worker: "Shift",
             resumeHandle,
           }),
+        // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- the live session times a real network socket; nothing asserts on elapsed time
         now: () => performance.now(),
         onUsage: (report) => void usage.push(report),
         runTool: async () => "There are no threads.",
