@@ -324,6 +324,12 @@ export function summarizeT3ToolCalls(
     case "project-list":
       label = phrase("Listed", "list", `projects ${times}`);
       break;
+    case "plugin-list":
+      label = phrase("Listed", "list", `plugins ${times}`);
+      break;
+    case "plugin-reload":
+      label = phrase("Reloaded", "reload", `plugins ${times}`);
+      break;
     case "project-read":
       label = phrase("Read", "read", quantity(countEntities(projectIds), "project"));
       break;

@@ -103,6 +103,7 @@ import {
   WS_METHODS,
   WsBaseRpcGroup,
   WsReviewSessionsRpcGroup,
+  WsPluginsRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -225,6 +226,7 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as DirectPush from "./push/DirectPush.ts";
+import * as PluginHost from "./plugins/PluginHost.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
@@ -562,6 +564,7 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 const ServerWsBaseRpcGroup = WsBaseRpcGroup.middleware(RpcInstrumentation);
 const ServerReviewSessionsRpcGroup = WsReviewSessionsRpcGroup.middleware(RpcInstrumentation);
+const ServerPluginsRpcGroup = WsPluginsRpcGroup.middleware(RpcInstrumentation);
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -1248,6 +1251,23 @@ const layerReviewSessionsRpc = ServerReviewSessionsRpcGroup.toLayer(
       [WS_METHODS.reviewSessionsRequest]: (input) => reviewSessions.requestTurn(input),
       [WS_METHODS.reviewSessionsRunLocalReview]: (input) => reviewSessions.runLocalReview(input),
       [WS_METHODS.reviewSessionsDiscussInSideChat]: (input) => reviewSessions.openSideChat(input),
+    });
+  }),
+);
+
+const layerPluginsRpc = ServerPluginsRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const plugins = yield* PluginHost.PluginHost;
+    return ServerPluginsRpcGroup.of({
+      [WS_METHODS.pluginsSubscribe]: (_input) => plugins.subscribe,
+      [WS_METHODS.pluginsBandsSubscribe]: (input) => plugins.subscribeBands(input.threadId),
+      [WS_METHODS.pluginsBandPress]: (input) => plugins.press(input),
+      [WS_METHODS.pluginsViewRead]: (input) => plugins.readView(input.pluginId, input.viewId),
+      [WS_METHODS.pluginsViewCall]: (input) =>
+        plugins.callView(input).pipe(Effect.map((value) => ({ value }))),
+      [WS_METHODS.pluginsCommandRun]: (input) => plugins.runCommand(input),
+      [WS_METHODS.pluginsSetEnabled]: (input) => plugins.setEnabled(input.pluginId, input.enabled),
+      [WS_METHODS.pluginsReload]: (_input) => Effect.asVoid(plugins.reload),
     });
   }),
 );
@@ -3372,7 +3392,7 @@ export const layer = Layer.unwrap(
           return httpEffect;
         }).pipe(
           Effect.provide(
-            Layer.merge(
+            Layer.mergeAll(
               layerWsRpc(
                 session,
                 clientOrigin,
@@ -3381,6 +3401,7 @@ export const layer = Layer.unwrap(
                 serverBrowser,
               ),
               layerReviewSessionsRpc,
+              layerPluginsRpc,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees

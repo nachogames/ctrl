@@ -133,6 +133,7 @@ import {
   boundProviderEventForLogging,
   shouldPersistProviderEvent,
 } from "../../provider/EventNdjsonLogger.ts";
+import * as ClaudeModUi from "../../plugins/ClaudeModUi.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   claudeRateLimitEventToUpdate,
@@ -702,6 +703,16 @@ export function makeClaudeAgentSdkProtocolLogger(input: {
   };
 }
 
+/** The SDK `Query`'s control-request sender, when this SDK build has one. */
+const claudeControlRequestOf = (
+  queryRuntime: unknown,
+): ClaudeModUi.ClaudeControlRequest | undefined => {
+  const request = (queryRuntime as { request?: unknown }).request;
+  return typeof request === "function"
+    ? (body) => (request as ClaudeModUi.ClaudeControlRequest).call(queryRuntime, body)
+    : undefined;
+};
+
 export const layerQueryRunner: Layer.Layer<
   ClaudeAgentSdkQueryRunner,
   never,
@@ -711,6 +722,7 @@ export const layerQueryRunner: Layer.Layer<
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
+    const modUi = yield* ClaudeModUi.ClaudeModUi;
     const agentScope = yield* AgentScope;
     const platform = yield* HostProcess.Platform;
 
@@ -834,6 +846,13 @@ export const layerQueryRunner: Layer.Layer<
           ),
         );
 
+        // Mod UI (`ui_render`, `ui_press`) rides the SDK's control-request
+        // channel, which the SDK only exposes as an untyped method.
+        const modUiRequest = claudeControlRequestOf(queryRuntime);
+        if (modUiRequest !== undefined) {
+          yield* modUi.attach(input.threadId, modUiRequest);
+        }
+
         return {
           messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) =>
             queryRunnerError(cause, "fromAsyncIterable"),
@@ -845,6 +864,7 @@ export const layerQueryRunner: Layer.Layer<
                 payload: message,
               }),
             ),
+            Stream.tap((message) => modUi.ingest(input.threadId, message, modUiRequest)),
           ),
           offer: (message) =>
             Queue.offer(promptQueue, message).pipe(
@@ -937,6 +957,9 @@ export const layerQueryRunner: Layer.Layer<
           ),
           close: Queue.shutdown(promptQueue).pipe(
             Effect.andThen(closeClaudeQuery(queryRuntime)),
+            Effect.ensuring(
+              modUiRequest === undefined ? Effect.void : modUi.detach(input.threadId, modUiRequest),
+            ),
             Effect.tap(() =>
               logProtocolEvent({
                 direction: "outgoing",
@@ -1202,6 +1225,7 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_queue_read",
   "mcp__t3-code__html_preview",
   "mcp__t3-code__html_render",
+  "mcp__t3-code__t3_plugin_list",
 ];
 
 // Claude Code aborts an HTTP MCP call after 60 s ("The operation timed out.")
