@@ -84,7 +84,6 @@ export function VoiceEnginePicker(props: { readonly environmentId: EnvironmentId
             size="icon-xs"
             variant="ghost"
             aria-label={`Quick voice: ${CHOICES.find((choice) => choice.id === value)?.label}`}
-            onPointerDown={(event) => event.preventDefault()}
           />
         }
       >
