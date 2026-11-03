@@ -1,4 +1,5 @@
 export {
+  NO_SPEECH_DETECTED_MESSAGE,
   VoiceInputController,
   VOICE_RECORDING_LIMIT_SECONDS,
   voiceInputBlocksSubmission,
@@ -15,5 +16,6 @@ export {
   type PreparedVoiceTranscription,
   type VoiceTranscriber,
   type VoiceTranscriptionErrorCode,
+  type VoiceTranscript,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";

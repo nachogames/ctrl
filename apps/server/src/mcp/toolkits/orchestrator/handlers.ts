@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import { callerIsHome } from "../../homeRouting.ts";
 import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -140,6 +141,12 @@ const handlers = {
   ),
   create_threads: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
+      // These threads share the caller's folder, and Shift's folder makes them act as Shift.
+      if (yield* callerIsHome())
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Shift launches threads with t3_thread_launch and a projectId or scratch:true.",
+        });
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.createThreads(scope, input);
@@ -149,7 +156,10 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.listThreads(scope, input);
+      // Shift's own folder is no project to list, so it lists every project by default.
+      const allProjects =
+        input.allProjects ?? (input.projectId === undefined && (yield* callerIsHome()));
+      return yield* service.listThreads(scope, { ...input, allProjects });
     }),
   ),
   t3_thread_read: McpToolAccess.reads((input) =>

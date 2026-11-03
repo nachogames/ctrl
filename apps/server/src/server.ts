@@ -91,6 +91,7 @@ import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerMcpClient from "./peer/PeerMcpClient.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import { HomeLayer } from "./home/HomeLayer.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -115,6 +116,15 @@ import * as ClaudeModUi from "./plugins/ClaudeModUi.ts";
 import * as PluginHost from "./plugins/PluginHost.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as Dictation from "./dictation/Dictation.ts";
+import * as DictationArtifacts from "./dictation/DictationArtifacts.ts";
+import * as DictationRecognizer from "./dictation/DictationRecognizer.ts";
+import * as AppleSpeech from "./dictation/AppleSpeech.ts";
+import * as DictationVocabulary from "./dictation/DictationVocabulary.ts";
+import * as SmartTurn from "./dictation/SmartTurn.ts";
+import * as VoiceActivity from "./dictation/VoiceActivity.ts";
+import * as Speech from "./speech/Speech.ts";
+import * as SpeechSynthesizer from "./speech/SpeechSynthesizer.ts";
 import * as ManagedLimits from "./policy/managedLimits.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
@@ -395,6 +405,22 @@ const layerHttpServer = Layer.unwrap(
 
 const layerPlatformServices = DocumentText.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
+
+const layerDictationArtifacts = DictationArtifacts.layer;
+const layerDictation = Dictation.layer.pipe(
+  Layer.provide(DictationRecognizer.layer.pipe(Layer.provide(layerDictationArtifacts))),
+  Layer.provide(layerDictationArtifacts),
+  Layer.provide(AppleSpeech.layer),
+  Layer.provide(VoiceActivity.layer.pipe(Layer.provide(layerDictationArtifacts))),
+  Layer.provide(SmartTurn.layer.pipe(Layer.provide(layerDictationArtifacts))),
+  Layer.provide(DictationVocabulary.layer.pipe(Layer.provide(ProjectStore.layer))),
+  Layer.provide(layerServerSettings),
+);
+const layerSpeech = Speech.layer.pipe(
+  Layer.provide(SpeechSynthesizer.layer.pipe(Layer.provide(layerDictationArtifacts))),
+  Layer.provide(layerDictationArtifacts),
+  Layer.provide(layerServerSettings),
 );
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
@@ -702,6 +728,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   Layer.provideMerge(SecretResolver.layer),
   Layer.provideMerge(layerServerSettings),
+  Layer.provideMerge(layerDictation),
+  Layer.provideMerge(layerSpeech),
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
@@ -852,6 +880,8 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(PreviewBrowser.layer),
+  // Shift's front voice asks linked environments, so Home sits above the links.
+  Layer.provide(HomeLayer),
   // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
   Layer.provide(
     PeerForwarding.layer.pipe(

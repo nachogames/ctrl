@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  isHomeThreadId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -337,7 +338,8 @@ export const ChatHeader = memo(function ChatHeader({
         ariaLabel="Thread breadcrumb"
         className="flex-1 overflow-clip [overflow-clip-margin:2px]"
       >
-        {activeProject ? (
+        {/* Shift's folder belongs to Shift alone, so its thread shows no project crumb. */}
+        {activeProject && !isHomeThreadId(activeThreadId) ? (
           <>
             <WorkspaceBreadcrumbItem className="shrink">
               <Tooltip>

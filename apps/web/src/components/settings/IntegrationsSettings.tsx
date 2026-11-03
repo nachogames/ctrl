@@ -3,6 +3,8 @@ import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceSourcesSettings } from "./DeviceSourcesSettings";
+import { DictationSettingsSection } from "./DictationSettings";
+import { SpeechSettingsSection } from "./SpeechSettings";
 import {
   AuthSettingsWriteScope,
   BrowserImportFailureReason,
@@ -1615,6 +1617,8 @@ export function DevicesSettingsPanel() {
   return (
     <SettingsPageContainer>
       <DeviceIntegrationSettings />
+      <DictationSettingsSection />
+      <SpeechSettingsSection />
     </SettingsPageContainer>
   );
 }

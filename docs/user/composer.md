@@ -203,6 +203,91 @@ microphone. Swipe a device left to forget it.
 Transcription runs on your device. T3 Code deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
 
+## Dictation on web and desktop
+
+Dictation turns speech into text with a speech model that runs on one of your T3 Code
+machines. Set it up for that machine in **Settings → Devices → Dictation** by turning it on.
+
+On a Mac with macOS 26 or later, dictation uses Apple's built-in on-device speech recognition
+and downloads nothing (macOS may fetch its own language files the first time). It knows your
+project names, so they come out spelled right. To use a downloadable model instead, set
+**Speech recognizer** to Parakeet.
+
+On other machines, pick a model. Parakeet v3 covers 25 European languages, Whisper turbo covers 99, and Moonshine
+base is a small English-only model. Nothing downloads until dictation is on; then the machine
+downloads the model you picked and the status line shows the progress. **Language** can pin
+Whisper turbo or Apple's recognizer to one language; Apple's otherwise follows your Mac's
+language, and the other models always detect it automatically. Remove models
+you no longer use to free disk. Whisper turbo is slow without a GPU.
+
+Hold `Option+Space` on macOS or `Ctrl+Shift+Space` on Windows and Linux while Ctrl is focused,
+and release to insert the text where your selection was. Your words appear in gray at the cursor
+as you speak, and the finished transcript replaces them when you stop. `Esc` cancels. Recordings can
+be up to five minutes long. Rebind the shortcut as **Composer: Hold to Dictate** in
+[keybindings](keybindings.md).
+
+The machine that owns the thread transcribes when its dictation is ready; otherwise another
+ready machine does. With two or more machines connected, you can pick one for this device in
+**Settings → Connections → Dictation machine**. Your audio goes only to that machine.
+
+Say a skill's name followed by "skill", such as "use the bug fix skill", to insert it as a skill.
+
+The first recording asks for microphone access, and keeps recording once you allow it. Browsers
+allow the microphone only over HTTPS or on localhost.
+
+### Voice
+
+Click the waveform button in the composer, press `F8`, or send `/voice` to talk with the thread.
+It works the same in every thread, including a new one: a strip above the composer shows whether
+it is listening or speaking, the last things you and it said, and buttons to mute or stop.
+
+- In a Codex thread you talk with Codex's own voice, which hands work to Codex and reads its
+  answers back. See [Codex voice conversations](providers-codex.md#voice-conversations).
+- In any other thread, Ctrl listens with dictation and reads each new reply aloud: its prose and
+  list items, up to about a dozen sentences, skipping code and tables. It needs **Dictation** and
+  **Spoken replies** both on in **Settings → Devices**; until then the button says what is
+  missing. Your words go out when you stop speaking for a moment, and the microphone listens
+  again once a reply starts being read, so you can answer or talk over it.
+  The arrow next to the waveform picks the quick voice that answers first: **Gemini Live**,
+  **Local** (LM Studio), or **Off** for only the agent's reply. It is the machine's
+  **Front voice** setting below.
+
+A pause mid-sentence keeps the microphone listening for up to about two seconds; a finished
+sentence goes out in about half a second. That judgement comes from a small turn model (about
+23 MB) Ctrl downloads with the voice files, or on the first conversation after an update. Until it
+is there, your words go out after a fixed short pause.
+
+For instant answers, turn on **Fast front voice** under **Spoken replies** and download its model
+into [LM Studio](https://lmstudio.ai) once:
+`lms get https://huggingface.co/lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit` (about
+2.3 GB). A small local model then answers each voice turn within a second while the agent works
+on it, and its words show under the composer. When it fully answers, the agent's reply is not
+read aloud. Ctrl starts LM Studio's server when it is not running, uses only the model you name
+(up to 6 GB), and LM Studio unloads it after 10 idle minutes.
+
+The front voice runs on the machine that owns the thread, with that machine's settings and model.
+In a thread on another machine where it isn't set up, Ctrl tells you once and the agent's reply is
+read as usual.
+
+#### Gemini front voice
+
+To talk with Gemini Live instead, set **Front voice engine** to **Gemini Live** and paste an API
+key from [Google AI Studio](https://aistudio.google.com/apikey) into **Gemini API key**. The key
+stays on the machine running Ctrl and is never shown again; settings only say whether one is set.
+Gemini then hears each turn as you speak and answers in its own voice, so replies start sooner.
+It hands work to Shift (or the thread's agent) the same way the local voice does, and Shift's
+reply is still read aloud. Voice mode on the phone app isn't available yet.
+
+Ctrl sends Gemini only your speech, not the silence around it, and closes the session when the
+conversation ends. It meters what Gemini reports using and shows this month's cost next to the
+key. When the cost reaches **Gemini monthly limit** ($10 unless you change it), or Gemini has no
+key or stops answering, the local voice answers instead and tells you why once. Keep the LM Studio
+model downloaded for that fallback. The meter follows Google's published prices, so check your
+Google bill for the exact amount.
+
+A free-tier key also works, but Google may use free-tier audio to improve its products. Use a key
+from a paid project to keep it out.
+
 ## Queued messages
 
 On web and desktop, the composer shows **Interrupt** while the agent is working and the draft is

@@ -239,6 +239,8 @@ export const ServerProvider = Schema.Struct({
   /** The instance can list its connectors, MCP servers, plugins and skills. */
   supportsInventory: Schema.optional(Schema.Boolean),
   supportsTextGeneration: Schema.optional(Schema.Boolean),
+  // The driver can hold realtime voice conversations (`provider.voice.session`).
+  supportsVoice: Schema.optional(Schema.Boolean),
   setup: Schema.optional(
     Schema.Struct({
       canAuthenticate: Schema.Boolean,
@@ -672,6 +674,11 @@ export const ServerConfig = Schema.Struct({
   /** Secret settings may point at a secret provider; older servers drop the reference. */
   secretReferences: Schema.optionalKey(Schema.Boolean),
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * Folder behind Home, the fleet-wide agent thread. Present only on servers a
+   * desktop app hosts, which are the only ones that can run Home.
+   */
+  homeWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
    * Why this environment offers no Scratch folder, so clients can show the
    * machine as unavailable instead of hiding it. Absent when it offers one,

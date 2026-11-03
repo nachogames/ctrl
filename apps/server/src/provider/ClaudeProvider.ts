@@ -421,7 +421,10 @@ const probeClaudeCapabilities = (
       }),
     ),
     Effect.tapError((error) =>
-      Effect.logWarning("Claude capability probe failed.", { errorTag: error._tag }),
+      Effect.logWarning("Claude capability probe failed.", {
+        errorTag: error._tag,
+        cause: String("cause" in error ? error.cause : error),
+      }),
     ),
   );
 };

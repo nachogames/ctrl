@@ -93,6 +93,10 @@ function makeFakeBrowserWindow() {
     reloadIgnoringCache: vi.fn(),
     replaceMisspelling: vi.fn(),
     send: vi.fn(),
+    session: {
+      setPermissionCheckHandler: vi.fn(),
+      setPermissionRequestHandler: vi.fn(),
+    },
     setBackgroundThrottling: vi.fn(),
     setWindowOpenHandler: vi.fn(),
     toggleDevTools: vi.fn(),
@@ -425,6 +429,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
             recordMetrics: () => Effect.void,
             shutdown: Effect.void,
           }),
+          DesktopState.layer,
           layerDesktopEnvironment,
           DesktopAppSettings.layerTest(),
           layerDesktopClientSettings,

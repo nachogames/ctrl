@@ -55,6 +55,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   BugIcon,
+  AudioLinesIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -67,6 +68,8 @@ import {
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
+  MicIcon,
+  MicOffIcon,
   PaletteIcon,
   RotateCcwIcon,
   SendIcon,
@@ -155,6 +158,7 @@ import {
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
+  isHomeProject,
   isScratchProject,
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
@@ -175,8 +179,11 @@ import {
   isWindowsPlatform,
   newProjectId,
 } from "../lib/utils";
+import { shiftEnvironmentIdAtom, shiftThreadIdAtom } from "../state/shiftEnvironment";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
+import { resolveThreadVoiceAvailability } from "../voice/voiceAvailability";
+import { toggleThreadVoice, useVoiceModeState, voiceMode } from "../voice/voiceMode";
 import {
   applyWslEnvironmentConfiguration,
   parseWslUncPath,
@@ -254,7 +261,7 @@ import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerConfigAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -269,6 +276,7 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
+import { ShiftKeyIcon } from "./home/ShiftKeyIcon";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
@@ -472,6 +480,13 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // Open Shift goes to the machine this device uses Shift from.
+  const shiftEnvironmentId = useAtomValue(shiftEnvironmentIdAtom);
+  const shiftThreadId = useAtomValue(shiftThreadIdAtom);
+  const homeWorkspaceRoot = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => config?.homeWorkspaceRoot ?? null,
+  );
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
@@ -503,6 +518,7 @@ function OpenCommandPaletteDialog(props: {
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
+  const voiceState = useVoiceModeState();
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -827,9 +843,14 @@ function OpenCommandPaletteDialog(props: {
   };
 
   // Pinning from a row keeps rows in place while the palette is open.
+  // Home's folder belongs to Home alone: no search result or picker starts a thread there.
+  const isPrimaryHomeProject = (project: {
+    readonly environmentId: EnvironmentId;
+    readonly workspaceRoot: string;
+  }) => project.environmentId === primaryEnvironmentId && isHomeProject(project, homeWorkspaceRoot);
   const projectSearchItems = useOrderWhileOpen(
     buildProjectSearchItems({
-      projects: pickerProjects,
+      projects: pickerProjects.filter((project) => !isPrimaryHomeProject(project)),
       projectGroupByTargetKey,
       locationByEnvironmentId: projectEnvironmentLocationById,
       runProject: openProjectFromSearch,
@@ -844,7 +865,9 @@ function OpenCommandPaletteDialog(props: {
       const isScratch = (project: CommandPaletteProject) =>
         isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
       const projectItems = buildNewThreadInProjectItems({
-        projects: pickerProjects.filter((project) => !isScratch(project)),
+        projects: pickerProjects.filter(
+          (project) => !isScratch(project) && !isPrimaryHomeProject(project),
+        ),
         projectGroupByTargetKey,
         locationByEnvironmentId: projectEnvironmentLocationById,
         pin: projectPin,
@@ -1534,6 +1557,66 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  const voiceEngaged = voiceState.phase !== "idle";
+  const voiceTarget = activeThread
+    ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+    : null;
+  const voiceOnActiveThread = voiceTarget !== null && voiceMode.isActiveFor(voiceTarget);
+  if (activeThread !== null && voiceTarget !== null && !voiceOnActiveThread) {
+    const voiceAvailability = resolveThreadVoiceAvailability(
+      activeThread,
+      providersByEnvironment.get(activeThread.environmentId) ?? [],
+    );
+    if (voiceAvailability.kind !== "unsupported") {
+      actionItems.push({
+        kind: "action",
+        value: "action:voice-start",
+        searchTerms: ["voice", "talk", "speak", "conversation", "microphone", "realtime"],
+        title: "Start voice conversation",
+        description:
+          voiceAvailability.kind === "unavailable" ? voiceAvailability.reason : undefined,
+        disabled: voiceAvailability.kind === "unavailable",
+        icon: <AudioLinesIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "voice.toggle",
+        run: async () => {
+          toggleThreadVoice(voiceTarget, voiceAvailability);
+        },
+      });
+    }
+  }
+  // Stop and mute act on the one conversation, wherever it runs.
+  if (voiceEngaged) {
+    actionItems.push(
+      {
+        kind: "action",
+        value: "action:voice-stop",
+        searchTerms: ["voice", "stop", "end", "conversation", "hang up"],
+        title: "Stop voice conversation",
+        icon: <AudioLinesIcon className={ITEM_ICON_CLASS} />,
+        // F8 toggles the current thread, so it only stops a conversation held here.
+        ...(voiceOnActiveThread ? { shortcutCommand: "voice.toggle" as const } : {}),
+        run: async () => {
+          voiceMode.stop();
+        },
+      },
+      {
+        kind: "action",
+        value: "action:voice-mute",
+        searchTerms: ["voice", "mute", "unmute", "microphone"],
+        title: voiceState.muted ? "Unmute voice" : "Mute voice",
+        icon: voiceState.muted ? (
+          <MicIcon className={ITEM_ICON_CLASS} />
+        ) : (
+          <MicOffIcon className={ITEM_ICON_CLASS} />
+        ),
+        shortcutCommand: "voice.toggleMute",
+        run: async () => {
+          voiceMode.toggleMuted();
+        },
+      },
+    );
+  }
+
   actionItems.push({
     kind: "action",
     value: "action:open-file-picker",
@@ -1664,6 +1747,23 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
+
+  if (shiftEnvironmentId !== null && shiftThreadId !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:home",
+      searchTerms: ["shift", "fleet", "all projects"],
+      title: "Open Shift",
+      icon: <ShiftKeyIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "home.open",
+      run: async () => {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(scopeThreadRef(shiftEnvironmentId, shiftThreadId)),
+        });
+      },
+    });
+  }
 
   for (const direction of [1, -1] as const) {
     const title = direction === 1 ? "Focus Next Workspace Area" : "Focus Previous Workspace Area";
@@ -2534,7 +2634,7 @@ function OpenCommandPaletteDialog(props: {
         command === "chat.newLocal" ||
         command === "chat.newWithoutProject");
     const matchingItem =
-      isJump || isNewThread
+      isJump || isNewThread || command === "voice.toggle" || command === "voice.toggleMute"
         ? displayedGroups
             .flatMap((group) => group.items)
             .find((item) => item.shortcutCommand === command)

@@ -45,6 +45,7 @@ import {
 export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/general",
   "/settings/appearance",
+  "/settings/home",
   "/settings/chat",
   "/settings/diffs",
   "/settings/snap-shot",

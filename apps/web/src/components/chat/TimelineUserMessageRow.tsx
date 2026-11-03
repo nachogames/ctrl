@@ -3,6 +3,7 @@ import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
 import {
   type EnvironmentId,
+  isHomeReportMessageId,
   type KnownComposerContextRecord,
   type MessageId,
   type ScheduledTaskId,
@@ -893,7 +894,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       {handoffRecords.map((record) => (
         <HandoffDivider key={record.contextId} record={record} />
       ))}
-      {userMessage.attribution === "t3code" ? (
+      {isHomeReportMessageId(row.message.id) ? (
+        <p
+          className="me-1 text-2xs text-muted-foreground/70"
+          data-user-message-attribution="home-report"
+        >
+          Watch report from {APP_BASE_NAME}
+        </p>
+      ) : userMessage.attribution === "t3code" ? (
         <p
           className="me-1 text-2xs text-muted-foreground/70"
           data-user-message-attribution="t3code"

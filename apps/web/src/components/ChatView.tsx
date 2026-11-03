@@ -240,6 +240,7 @@ import {
 import { threadEnvironment } from "../state/threads";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
+import { VoiceReplies } from "./chat/VoiceReplies";
 import {
   type EnvironmentPresentation,
   useEnvironment,
@@ -3473,6 +3474,13 @@ export default function ChatView(props: ChatViewProps) {
               {...conversationArea}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
+              {isServerThread && !embedded ? (
+                <VoiceReplies
+                  key={`${environmentId}:${threadId}`}
+                  environmentId={environmentId}
+                  threadId={threadId}
+                />
+              ) : null}
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline
                   pendingApprovals={pendingApprovals}

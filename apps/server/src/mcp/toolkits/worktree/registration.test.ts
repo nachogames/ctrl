@@ -44,6 +44,7 @@ import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import * as GroupResourceScanner from "../../../threadGroups/GroupResourceScanner.ts";
 import * as PluginHost from "../../../plugins/PluginHost.ts";
 import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
+import { notHomeLayer } from "../../../home/HomeTestkit.ts";
 import * as RemoteMcpServers from "../../../remoteMcp/RemoteMcpServers.ts";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
@@ -85,6 +86,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
   Layer.mock(PeerLinks.PeerLinks)({}),
   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+  notHomeLayer,
   Layer.mock(RemoteMcpServers.RemoteMcpServers)({
     tools: () => [
       {

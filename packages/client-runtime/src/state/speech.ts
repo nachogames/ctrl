@@ -1,0 +1,76 @@
+import { mergeVoiceFrontReplies, WS_METHODS } from "@t3tools/contracts";
+import * as Stream from "effect/Stream";
+import { Atom } from "effect/reactivity";
+
+import type { EnvironmentRegistry } from "../connection/registry.ts";
+import {
+  createAtomCommandScheduler,
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "./runtime.ts";
+
+/**
+ * Spoken-reply atoms for every environment. Install and remove run one at a
+ * time per environment; synthesize calls queue on the server's native permit.
+ */
+export function createSpeechEnvironmentAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+) {
+  const scheduler = createAtomCommandScheduler();
+  const concurrency = {
+    mode: "serial" as const,
+    key: ({ environmentId }: { environmentId: string }) => environmentId,
+  };
+  return {
+    /** Server-pushed settings, voice download progress, and readiness for one environment. */
+    state: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:speech:state",
+      tag: WS_METHODS.subscribeSpeechState,
+    }),
+    install: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:install",
+      tag: WS_METHODS.speechInstall,
+      scheduler,
+      concurrency,
+    }),
+    remove: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:remove",
+      tag: WS_METHODS.speechRemove,
+      scheduler,
+      concurrency,
+    }),
+    /** Speaks one sentence; returns base64 WAV. */
+    synthesize: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:speech:synthesize",
+      tag: WS_METHODS.speechSynthesize,
+    }),
+    /** Whether the front voice can answer on this environment, for settings. */
+    frontStatus: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice-front:status",
+      tag: WS_METHODS.voiceFrontStatus,
+    }),
+    /**
+     * The front voice's reply to one voice turn. The atom keeps only the last
+     * value of each batch it receives, so a batch is merged into one value
+     * first, keeping every audio chunk.
+     */
+    frontReply: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:voice-front:reply",
+      tag: WS_METHODS.voiceFrontRespond,
+      completeWhen: (reply) => reply.done,
+      idleTtlMs: 0,
+      sensitiveInput: true,
+      transform: Stream.mapArray((replies) => [replies.reduce(mergeVoiceFrontReplies)]),
+    }),
+    /** Hands-free voice ended in a thread; closes its Gemini session. */
+    frontEnd: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice-front:end",
+      tag: WS_METHODS.voiceFrontEnd,
+    }),
+    /** Stores or removes the environment's Gemini API key. */
+    setGeminiKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:voice-front:set-gemini-key",
+      tag: WS_METHODS.voiceFrontSetGeminiKey,
+    }),
+  };
+}

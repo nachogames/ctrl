@@ -131,9 +131,17 @@
       "types": "./src/providerUpdateRequiredModels.ts",
       "default": "./src/providerUpdateRequiredModels.ts"
     },
+    "./spoken-opening": {
+      "types": "./src/spokenOpening.ts",
+      "default": "./src/spokenOpening.ts"
+    },
     "./voice-input": {
       "types": "./src/voice-input/index.ts",
       "default": "./src/voice-input/index.ts"
+    },
+    "./voice-mode": {
+      "types": "./src/voice-mode/index.ts",
+      "default": "./src/voice-mode/index.ts"
     },
     "./t3ToolSummary": {
       "types": "./src/t3ToolSummary.ts",
@@ -223,6 +231,14 @@
       "types": "./src/state/device.ts",
       "default": "./src/state/device.ts"
     },
+    "./state/dictation": {
+      "types": "./src/state/dictation.ts",
+      "default": "./src/state/dictation.ts"
+    },
+    "./state/speech": {
+      "types": "./src/state/speech.ts",
+      "default": "./src/state/speech.ts"
+    },
     "./state/remoteMcp": {
       "types": "./src/state/remoteMcp.ts",
       "default": "./src/state/remoteMcp.ts"
@@ -230,6 +246,10 @@
     "./state/deviceHubAccess": {
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
+    },
+    "./state/home": {
+      "types": "./src/state/home.ts",
+      "default": "./src/state/home.ts"
     },
     "./state/peerLinks": {
       "types": "./src/state/peerLinks.ts",

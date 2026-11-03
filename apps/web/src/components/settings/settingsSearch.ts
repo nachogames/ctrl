@@ -19,6 +19,7 @@ export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
   | "/settings/diagnostics"
+  | "/settings/home"
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
@@ -90,6 +91,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diagnostics": "Diagnostics",
   "/settings/projects": "Projects",
   "/settings/general": "General",
+  "/settings/home": "Shift",
   "/settings/appearance": "Appearance",
   "/settings/chat": "Chat",
   "/settings/diffs": "Diffs & pull requests",
@@ -121,6 +123,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: null,
     paths: [
       "/settings/general",
+      "/settings/home",
       "/settings/appearance",
       "/settings/chat",
       "/settings/diffs",
@@ -773,6 +776,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer meter usage tokens circle old"],
   },
   {
+    id: "home",
+    title: "Shift",
+    to: "/settings/home",
+    searchTerms: ["agent all projects machines fleet questions approvals instructions agents.md"],
+    desktopOnly: true,
+    localEnvironmentOnly: true,
+  },
+  {
     id: "keybindings",
     title: "Keybindings",
     to: "/settings/keybindings",
@@ -898,6 +909,87 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/tools",
     targetId: "plugins",
     searchTerms: ["extensions mods claude code mods views status toast band slash commands"],
+  },
+  {
+    id: "dictation-engine",
+    title: "Dictation",
+    to: "/settings/devices",
+    searchTerms: ["speech to text voice microphone transcribe local model"],
+  },
+  {
+    id: "dictation-recognizer",
+    title: "Speech recognizer",
+    to: "/settings/devices",
+    targetId: "dictation",
+    searchTerms: ["apple on-device siri macos parakeet engine no download"],
+  },
+  {
+    id: "dictation-model",
+    title: "Dictation model",
+    to: "/settings/devices",
+    searchTerms: ["download remove parakeet whisper moonshine speech model languages disk"],
+  },
+  {
+    id: "dictation-language",
+    title: "Dictation language",
+    to: "/settings/devices",
+    // The row sits inside the Dictation section; land on the section heading.
+    targetId: "dictation",
+    searchTerms: ["speech transcription automatic detect english spoken"],
+  },
+  {
+    id: "speech-replies",
+    title: "Spoken replies",
+    to: "/settings/devices",
+    searchTerms: ["text to speech voice read aloud shift kokoro local talk"],
+  },
+  {
+    id: "speech-voice",
+    title: "Reply voice",
+    to: "/settings/devices",
+    searchTerms: ["text to speech kokoro speaker voice shift"],
+  },
+  {
+    id: "voice-front",
+    title: "Fast front voice",
+    to: "/settings/devices",
+    searchTerms: ["lm studio local model llm instant voice reply shift qwen"],
+  },
+  {
+    id: "voice-front-model",
+    title: "Front model",
+    to: "/settings/devices",
+    searchTerms: ["lm studio model key qwen lms get voice front"],
+  },
+  {
+    id: "voice-front-endpoint",
+    title: "LM Studio endpoint",
+    to: "/settings/devices",
+    searchTerms: ["lm studio server port url localhost 1234 voice front"],
+  },
+  {
+    id: "voice-front-engine",
+    title: "Front voice engine",
+    to: "/settings/devices",
+    searchTerms: ["gemini live google duplex voice front engine local"],
+  },
+  {
+    id: "voice-front-gemini-key",
+    title: "Gemini API key",
+    to: "/settings/devices",
+    searchTerms: ["gemini google ai studio api key voice front live"],
+  },
+  {
+    id: "voice-front-gemini-model",
+    title: "Gemini model",
+    to: "/settings/devices",
+    searchTerms: ["gemini live model flash 3.1 3.8 voice front"],
+  },
+  {
+    id: "voice-front-gemini-cap",
+    title: "Gemini monthly limit",
+    to: "/settings/devices",
+    searchTerms: ["gemini spend cost cap budget limit dollars month voice front"],
   },
   {
     id: "browser-profiles",
@@ -1216,6 +1308,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     secretsFeatureOnly: true,
   },
   {
+    id: "dictation-environment",
+    title: "Dictation machine",
+    to: "/settings/connections",
+    searchTerms: ["speech to text voice transcribe environment automatic"],
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",
@@ -1231,6 +1329,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/diagnostics": "environment",
   "/settings/projects": "project",
   "/settings/general": null,
+  "/settings/home": null,
   "/settings/appearance": null,
   "/settings/chat": null,
   "/settings/diffs": null,

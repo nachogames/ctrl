@@ -25,6 +25,7 @@ import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { readProjects, readThreadShell } from "../state/entities";
 import { environmentPresentations, environmentSummaries } from "../state/presentation";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
+import { primaryServerConfigAtom } from "../state/server";
 import { readEnvironmentScope } from "../state/session";
 import { readThreadGroup } from "../state/threadGroups";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -96,7 +97,12 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       {
         activeDraftThread,
         activeThread: activeThread ?? undefined,
-        defaultProjectRef: resolveDefaultProjectRef(readProjects(), projectOrder),
+        // Skips Shift's folder, as the new-thread button does.
+        defaultProjectRef: resolveDefaultProjectRef(readProjects(), projectOrder, {
+          primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
+          homeWorkspaceRoot:
+            appAtomRegistry.get(primaryServerConfigAtom)?.homeWorkspaceRoot ?? null,
+        }),
         handleNewThread,
       },
       environmentScopeId,

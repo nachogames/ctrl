@@ -1,5 +1,7 @@
 import {
   CommandId,
+  type EnvironmentId,
+  HOME_LAUNCHED_THREAD_ID_PREFIX,
   MessageId,
   ThreadId,
   OrchestratorMcpFailure,
@@ -11,6 +13,8 @@ import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { refuseHomeFolder } from "../../../home/FleetService.ts";
+import * as HomeService from "../../../home/HomeService.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
@@ -27,6 +31,7 @@ import * as DateTime from "effect/DateTime";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
+import { callerIsHome } from "../../homeRouting.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
@@ -77,6 +82,30 @@ const launchCommandId = Effect.fn("mcp.launchCommandId")(function* (
   return CommandId.make(`mcp:launch:${Hex.encode(digest)}`);
 });
 
+/**
+ * Threads Home launches are watched for it. The watch is saved before the
+ * launch, and a launch whose watch cannot be saved does not run. A failed
+ * launch keeps its watch; a watch whose thread never appears ends at the next
+ * start.
+ */
+const watchLaunched = (homeThreadId: ThreadId, environmentId: EnvironmentId, threadId: ThreadId) =>
+  Effect.serviceOption(HomeService.HomeService).pipe(
+    Effect.flatMap((home) =>
+      Option.isNone(home)
+        ? Effect.fail(undefined)
+        : home.value.updateWatches(homeThreadId, (current) =>
+            HomeService.addWatch(current, { environmentId, threadId, reason: "launched" }),
+          ),
+    ),
+    Effect.mapError(
+      () =>
+        new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "Shift could not watch the new thread, so it was not launched.",
+        }),
+    ),
+  );
+
 const access = Effect.gen(function* () {
   yield* readCaller();
   return yield* Project.ProjectService;
@@ -89,6 +118,15 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const context = yield* readCaller();
         const { caller } = context;
+        // Home is always a thread caller; its id scopes the watches it saves.
+        const homeThreadId = (yield* callerIsHome()) ? caller?.id : undefined;
+        // Home's folder carries Home's own instructions, so nothing launches there.
+        if (homeThreadId !== undefined && input.projectId === undefined && input.scratch !== true)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "Shift must pass projectId or scratch:true. Threads never launch in Shift's folder.",
+          });
         // A retry with the same key replays the first launch: the ids derive
         // from the caller and the key, and the launch service replays a
         // command it already accepted.
@@ -96,7 +134,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           input.clientRequestId === undefined
             ? yield* newCommandId()
             : yield* launchCommandId(scope.requestNamespace, input.clientRequestId);
-        const threadId = ThreadId.make(commandId);
+        // Clients tell Home's threads apart by this prefix before its watch reaches them.
+        const threadId = ThreadId.make(
+          homeThreadId === undefined ? commandId : `${HOME_LAUNCHED_THREAD_ID_PREFIX}${commandId}`,
+        );
         const messageId = MessageId.make(commandId);
         const attachments = input.attachments ?? [];
         if (attachments.some((attachment) => !Claims.attachmentIsPendingUpload(attachment)))
@@ -169,6 +210,17 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 }),
             ),
           );
+        if (homeThreadId !== undefined && !replaying) {
+          if (input.projectId !== undefined)
+            yield* refuseHomeFolder(
+              {
+                projects: yield* Project.ProjectService,
+                folders: yield* ManagedProjectFolders.ManagedProjectFolders,
+              },
+              { projectId: input.projectId, workspaceStrategy: input.workspaceStrategy },
+            );
+          yield* watchLaunched(homeThreadId, scope.environmentId, threadId);
+        }
         // A caller outside a thread has nothing to inherit, so it starts with the
         // project's effective defaults, as the composer does. Its mode stays
         // within the ceiling it was approved with.
@@ -364,6 +416,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
+      if (yield* callerIsHome())
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Shift cannot delete projects.",
+        });
       const projects = yield* Project.ProjectService;
       const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
       return yield* mutateProjectWithClone(projects, clones, {

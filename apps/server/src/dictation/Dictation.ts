@@ -1,0 +1,1046 @@
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import {
+  DICTATION_MAX_SECONDS,
+  DICTATION_SAMPLE_RATE,
+  DictationError,
+  DictationSessionId,
+  type DictationAppleEngineState,
+  type DictationInstallState,
+  type DictationLocalEngine,
+  type DictationModelId,
+  type DictationAppendInput,
+  type DictationAppendResult,
+  type DictationCancelInput,
+  type DictationFinishInput,
+  type DictationFinishResult,
+  type DictationInstallInput,
+  type DictationRemoveInput,
+  type DictationSettings,
+  type DictationStartInput,
+  type DictationStartResult,
+  type DictationState,
+  type ThreadId,
+} from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as ServerSettings from "../serverSettings.ts";
+import * as AppleSpeech from "./AppleSpeech.ts";
+import * as DictationArtifacts from "./DictationArtifacts.ts";
+import * as DictationRecognizer from "./DictationRecognizer.ts";
+import * as DictationVocabulary from "./DictationVocabulary.ts";
+import * as SmartTurn from "./SmartTurn.ts";
+import * as VoiceActivity from "./VoiceActivity.ts";
+import {
+  TURN_COMPLETE_PROBABILITY,
+  createBargeInGate,
+  createTurnDetector,
+  type BargeInGate,
+  type TurnDetector,
+} from "./endOfTurn.ts";
+import { createRecentAudio, type RecentAudio } from "./smartTurnFeatures.ts";
+import { concatenate, decodePcm, findSplit, joinTexts, takeOrderedChunks } from "./audio.ts";
+import { models, resolveLanguage } from "./models.ts";
+
+/** The recognizer sessions use: the chosen one, unless Apple's is unavailable here. */
+export function resolveActiveEngine(
+  setting: DictationLocalEngine,
+  appleAvailable: boolean,
+): DictationLocalEngine {
+  return setting === "apple" && appleAvailable ? "apple" : "parakeet";
+}
+
+/** Apple's probe as client state. Assets macOS is mid-way through fetching read as not installed. */
+function appleEngineState(probe: AppleSpeech.AppleProbe): DictationAppleEngineState {
+  return {
+    available: probe.available,
+    unavailableReason: probe.reason,
+    locale: probe.locale,
+    languageOptions: probe.languageOptions,
+    assets: !probe.available
+      ? { _tag: "not-installed" }
+      : probe.locale === null
+        ? { _tag: "failed", message: "Apple's speech recognition does not support this language." }
+        : probe.assets === "installed"
+          ? { _tag: "installed", sizeBytes: 0 }
+          : { _tag: "not-installed" },
+  };
+}
+
+/** Whether a client can start a session on this state right now. */
+function isReady(state: DictationState): boolean {
+  if (!state.supported || state.settings.engine !== "local") return false;
+  if (state.activeEngine === "apple")
+    return state.apple.available && state.apple.assets._tag === "installed";
+  return (
+    state.runtime._tag === "installed" &&
+    state.models.some(
+      (model) => model.id === state.settings.localModel && model.install._tag === "installed",
+    )
+  );
+}
+
+interface Installation {
+  readonly model: DictationModelId;
+  fiber: Fiber.Fiber<void> | null;
+}
+
+interface LoadedModel {
+  model: DictationSettings["localModel"];
+  loading: Fiber.Fiber<void> | null;
+  recognizer: DictationRecognizer.Recognizer | null;
+  error: DictationError | null;
+  retired: boolean;
+}
+interface Session {
+  id: DictationSessionId;
+  /** Null for Apple sessions, which stream to their own helper instead. */
+  model: LoadedModel | null;
+  apple: AppleSpeech.AppleTranscription | null;
+  /** Keeps Apple writes in recording order across concurrent appends. */
+  writes: Semaphore.Semaphore;
+  language: string;
+  chunks: Map<number, Float32Array>;
+  next: number;
+  samples: number;
+  pending: Float32Array[];
+  pendingSamples: number;
+  attemptedSamples: number;
+  texts: string[];
+  locale: string;
+  changed: Deferred.Deferred<void>;
+  worker: Fiber.Fiber<void> | null;
+  busy: boolean;
+  closed: boolean;
+  finishing: boolean;
+  expectedChunks: number | null;
+  lastUse: number;
+  error: DictationError | null;
+  /** Hands-free sessions only: hears speech, and decides when the turn ends. */
+  vad: VoiceActivity.VoiceActivityDetector | null;
+  turn: TurnDetector | null;
+  /** Hands-free only: keeps a reply's echo from counting as the user talking over it. */
+  gate: BargeInGate | null;
+  /** Hands-free with Smart Turn only: the turn's last 8 s, and the classifier that judges them. */
+  recent: RecentAudio | null;
+  classifier: SmartTurn.TurnClassifier | null;
+  /** The pause the turn detector asked about during the last `listen`, not yet sent to the classifier. */
+  pendingCheck: number | null;
+  /** Samples the detector has heard, its clock. */
+  heardSamples: number;
+  /** Hands-free voice mode only: the thread this turn talks to, which hears its audio live. */
+  voiceThreadId: ThreadId | null;
+  /** The end of this turn was announced to `voiceAudio`. */
+  voiceEnded: boolean;
+}
+
+/**
+ * A hands-free voice turn's audio as the detector heard it, for a live voice
+ * front that listens along (Gemini). `speech` is the detector's verdict for
+ * the chunk after the reply-echo gate. A session ends with "endOfTurn" when
+ * the user finished, then always with "closed".
+ */
+export type VoiceAudioEvent =
+  | {
+      readonly _tag: "audio";
+      readonly threadId: ThreadId;
+      readonly sessionId: DictationSessionId;
+      readonly samples: Float32Array;
+      readonly speech: boolean;
+    }
+  | {
+      readonly _tag: "endOfTurn" | "closed";
+      readonly threadId: ThreadId;
+      readonly sessionId: DictationSessionId;
+    };
+
+export class Dictation extends Context.Service<
+  Dictation,
+  {
+    readonly state: Effect.Effect<DictationState>;
+    readonly stateStream: Stream.Stream<DictationState>;
+    readonly install: (input: DictationInstallInput) => Effect.Effect<void, DictationError>;
+    readonly remove: (input: DictationRemoveInput) => Effect.Effect<void, DictationError>;
+    readonly start: (
+      input: DictationStartInput,
+    ) => Effect.Effect<DictationStartResult, DictationError>;
+    readonly warm: Effect.Effect<void>;
+    /** Queues one chunk and returns the live transcript so far. */
+    readonly append: (
+      input: DictationAppendInput,
+    ) => Effect.Effect<DictationAppendResult, DictationError>;
+    readonly finish: (
+      input: DictationFinishInput,
+    ) => Effect.Effect<DictationFinishResult, DictationError>;
+    readonly cancel: (input: DictationCancelInput) => Effect.Effect<void, DictationError>;
+    /** Audio of hands-free sessions started with a `voiceThreadId`, as it is heard. */
+    readonly voiceAudio: Stream.Stream<VoiceAudioEvent>;
+  }
+>()("t3/dictation/Dictation") {}
+
+const make = Effect.gen(function* () {
+  const crypto = yield* SecureRandom.SecureRandom;
+  const scope = yield* Effect.scope;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const artifacts = yield* DictationArtifacts.DictationArtifacts;
+  const recognizers = yield* DictationRecognizer.DictationRecognizer;
+  const apple = yield* AppleSpeech.AppleSpeech;
+  const vocabulary = yield* DictationVocabulary.DictationVocabulary;
+  const voiceActivity = yield* VoiceActivity.VoiceActivity;
+  const smartTurn = yield* SmartTurn.SmartTurn;
+  const settingsChanges = yield* settings.subscribeChanges;
+  const readSettings = settings.getSettings.pipe(
+    Effect.mapError(
+      (cause) =>
+        new DictationError({
+          reason: "disabled",
+          message: "Could not read dictation settings.",
+          cause,
+        }),
+    ),
+  );
+  const initialSettings = yield* readSettings;
+  // An unreadable state directory must not stop the server from starting; it reads as not installed.
+  const installed = yield* artifacts.inspect.pipe(
+    Effect.orElseSucceed(() => ({
+      runtime: { _tag: "not-installed" } satisfies DictationInstallState,
+      models: new Map<DictationModelId, DictationInstallState>(),
+    })),
+  );
+  const state = yield* SubscriptionRef.make<DictationState>({
+    supported: artifacts.supported,
+    settings: initialSettings.dictation,
+    runtime: installed.runtime,
+    models: (Object.keys(models) as DictationSettings["localModel"][]).map((id) => ({
+      id,
+      label: models[id].label,
+      languages: models[id].languages,
+      languageOptions: models[id].languageOptions,
+      note: models[id].note,
+      downloadBytes: models[id].files.reduce((n, file) => n + file.bytes, 0),
+      install: installed.models.get(id) ?? { _tag: "not-installed" },
+    })),
+    loadedModel: null,
+    apple: appleEngineState({
+      available: false,
+      reason: null,
+      locale: null,
+      assets: "unsupported",
+      languageOptions: [],
+    }),
+    activeEngine: "parakeet",
+    ready: false,
+  });
+  const update = (change: (current: DictationState) => DictationState) =>
+    SubscriptionRef.update(state, (current) => {
+      const next = change(current);
+      const activeEngine = resolveActiveEngine(next.settings.localEngine, next.apple.available);
+      const resolved = {
+        ...next,
+        supported: artifacts.supported || next.apple.available,
+        activeEngine,
+      };
+      return { ...resolved, ready: isReady(resolved) };
+    });
+  yield* update((current) => current);
+  // Native work cannot be cancelled. Hold its permit until it really returns, including on cancellation.
+  const native = yield* Semaphore.make(1);
+  const lifecycle = yield* Semaphore.make(1);
+  const sessions = new Map<DictationSessionId, Session>();
+  const voiceAudio = yield* PubSub.unbounded<VoiceAudioEvent>();
+  /** Tells listeners the turn ended, once. */
+  const announceEnd = (session: Session) => {
+    if (!session.voiceThreadId || session.voiceEnded || !session.turn?.state.endOfTurn) return;
+    session.voiceEnded = true;
+    PubSub.publishUnsafe(voiceAudio, {
+      _tag: "endOfTurn",
+      threadId: session.voiceThreadId,
+      sessionId: session.id,
+    });
+  };
+  let loaded: LoadedModel | null = null;
+  let lastModelUse = yield* Clock.currentTimeMillis;
+  let installing: Installation | null = null;
+  let appleInstalling: Fiber.Fiber<void> | null = null;
+  /** Language Apple was last probed for; null forces a probe on the next reconcile. */
+  let appleProbedLanguage: string | null = null;
+
+  const close = Effect.fnUntraced(function* (session: Session) {
+    session.closed = true;
+    sessions.delete(session.id);
+    session.chunks.clear();
+    session.pending = [];
+    session.texts = [];
+    session.pendingSamples = 0;
+    session.vad?.release();
+    session.vad = null;
+    if (session.voiceThreadId)
+      PubSub.publishUnsafe(voiceAudio, {
+        _tag: "closed",
+        threadId: session.voiceThreadId,
+        sessionId: session.id,
+      });
+    yield* Deferred.succeed(session.changed, undefined);
+    session.worker?.interruptUnsafe();
+    if (session.apple) yield* session.apple.close;
+  });
+  const unload = Effect.fnUntraced(function* () {
+    const previous = loaded;
+    loaded = null;
+    if (previous) {
+      previous.retired = true;
+
+      for (const session of sessions.values())
+        if (session.model === previous) yield* close(session);
+      const release = native.withPermit(
+        Effect.gen(function* () {
+          if (previous.recognizer) yield* previous.recognizer.release;
+          previous.recognizer = null;
+        }),
+      );
+      yield* release.pipe(Effect.forkIn(scope, { startImmediately: true }));
+    }
+    yield* update((current) => ({ ...current, loadedModel: null }));
+  });
+  const progress: Parameters<DictationArtifacts.DictationArtifacts["Service"]["install"]>[1] = (
+    artifact,
+    install,
+  ) =>
+    update((current) =>
+      artifact === "runtime"
+        ? { ...current, runtime: install }
+        : {
+            ...current,
+            models: current.models.map((model) =>
+              model.id === artifact ? { ...model, install } : model,
+            ),
+          },
+    );
+  const setAppleAssets = (assets: DictationInstallState) =>
+    update((current) => ({ ...current, apple: { ...current.apple, assets } }));
+  const stopInstallation = Effect.fnUntraced(function* () {
+    const appleJob = appleInstalling;
+    appleInstalling = null;
+    if (appleJob) {
+      yield* Fiber.interrupt(appleJob);
+      appleProbedLanguage = null;
+    }
+    const previous = installing;
+    installing = null;
+    if (!previous) return;
+    if (previous.fiber) yield* Fiber.interrupt(previous.fiber);
+    const snapshot = yield* artifacts.inspect.pipe(Effect.orElseSucceed(() => null));
+    yield* update((current) => ({
+      ...current,
+      runtime: snapshot?.runtime ?? { _tag: "not-installed" },
+      models: current.models.map((model) =>
+        model.id === previous.model
+          ? { ...model, install: snapshot?.models.get(model.id) ?? { _tag: "not-installed" } }
+          : model,
+      ),
+    }));
+  });
+  // The lifecycle permit protects claiming the job; the download belongs to the service, not its RPC caller.
+  const beginInstallation = Effect.fnUntraced(function* (model: DictationModelId, retry: boolean) {
+    const current = yield* SubscriptionRef.get(state);
+    if (
+      !current.supported ||
+      current.settings.engine !== "local" ||
+      current.activeEngine !== "parakeet" ||
+      current.settings.localModel !== model ||
+      installing
+    )
+      return;
+    const modelState = current.models.find((candidate) => candidate.id === model)?.install;
+    if (current.runtime._tag === "installed" && modelState?._tag === "installed") return;
+    if (
+      !retry &&
+      (current.runtime._tag === "failed" ||
+        modelState?._tag === "failed" ||
+        modelState?._tag === "installing")
+    )
+      return;
+    const job: Installation = { model, fiber: null };
+    installing = job;
+    yield* progress(model, {
+      _tag: "installing",
+      receivedBytes: 0,
+      totalBytes: models[model].files.reduce((n, file) => n + file.bytes, 0),
+    });
+    const failInstallation = (message: string) =>
+      update((current) => {
+        if (installing !== job) return current;
+        // Publish failure and release ownership together so an immediate retry can claim the job.
+        installing = null;
+        return {
+          ...current,
+          runtime:
+            current.runtime._tag === "installing" ? { _tag: "failed", message } : current.runtime,
+          models: current.models.map((candidate) =>
+            candidate.id === model
+              ? { ...candidate, install: { _tag: "failed", message } }
+              : candidate,
+          ),
+        };
+      });
+    job.fiber = yield* artifacts
+      .install(model, (artifact, value) =>
+        Effect.suspend(() => (installing === job ? progress(artifact, value) : Effect.void)),
+      )
+      .pipe(
+        Effect.catchTags({
+          DictationError: (error) => failInstallation(error.message),
+        }),
+        Effect.catchCause(() => failInstallation("Dictation installation failed.")),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (installing === job) installing = null;
+          }),
+        ),
+        Effect.forkIn(scope),
+      );
+  }, Effect.uninterruptible);
+  /** Asks macOS for Apple's language assets; nothing else is downloaded for this engine. */
+  const beginAppleInstallation = Effect.fnUntraced(function* (retry: boolean) {
+    const current = yield* SubscriptionRef.get(state);
+    if (
+      current.settings.engine !== "local" ||
+      current.activeEngine !== "apple" ||
+      appleInstalling ||
+      current.apple.locale === null
+    )
+      return;
+    const assets = current.apple.assets;
+    if (assets._tag === "installed" || (!retry && assets._tag === "failed")) return;
+    yield* setAppleAssets({ _tag: "installing", receivedBytes: 0, totalBytes: 0 });
+    const job = apple
+      .install(current.settings.language, (completed, total) =>
+        setAppleAssets({ _tag: "installing", receivedBytes: completed, totalBytes: total }),
+      )
+      .pipe(
+        Effect.andThen(setAppleAssets({ _tag: "installed", sizeBytes: 0 })),
+        Effect.catchTags({
+          DictationError: (error) => setAppleAssets({ _tag: "failed", message: error.message }),
+        }),
+        Effect.catchCause(() =>
+          setAppleAssets({ _tag: "failed", message: "Could not download Apple's speech assets." }),
+        ),
+      );
+    const fiber = yield* job.pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (appleInstalling === fiber) appleInstalling = null;
+        }),
+      ),
+      Effect.forkIn(scope, { startImmediately: false }),
+    );
+    appleInstalling = fiber;
+  });
+  const probeApple = Effect.fnUntraced(function* (language: string) {
+    if (appleProbedLanguage === language) return;
+    const probe = yield* apple.probe(language);
+    appleProbedLanguage = language;
+    yield* update((current) => ({ ...current, apple: appleEngineState(probe) }));
+  });
+  const reconcileSettings = Effect.fnUntraced(function* () {
+    let next = (yield* readSettings).dictation;
+    const before = yield* SubscriptionRef.get(state);
+    if (
+      before.settings.engine !== next.engine ||
+      before.settings.localEngine !== next.localEngine ||
+      before.settings.localModel !== next.localModel
+    ) {
+      yield* stopInstallation();
+      yield* unload();
+      // Cancellation can wait for cleanup while settings change again. Claim from the latest selection.
+      next = (yield* readSettings).dictation;
+    }
+    // Probe before any download decision, so a Mac that has Apple's engine never fetches Parakeet.
+    yield* probeApple(next.language);
+    const current = yield* SubscriptionRef.get(state);
+    const activationChanged =
+      current.settings.engine !== next.engine ||
+      current.settings.localEngine !== next.localEngine ||
+      current.settings.localModel !== next.localModel;
+    if (activationChanged || current.settings.language !== next.language) {
+      yield* update((current) => ({
+        ...current,
+        settings: next,
+        runtime:
+          activationChanged && next.engine === "local" && current.runtime._tag === "failed"
+            ? { _tag: "not-installed" }
+            : current.runtime,
+        models: current.models.map((model) =>
+          activationChanged &&
+          next.engine === "local" &&
+          model.id === next.localModel &&
+          model.install._tag === "failed"
+            ? { ...model, install: { _tag: "not-installed" } }
+            : model,
+        ),
+        // Re-activating retries Apple's assets, unless the language itself is unsupported.
+        apple:
+          activationChanged &&
+          next.engine === "local" &&
+          current.apple.assets._tag === "failed" &&
+          current.apple.locale !== null
+            ? { ...current.apple, assets: { _tag: "not-installed" } }
+            : current.apple,
+      }));
+    }
+    if ((yield* SubscriptionRef.get(state)).activeEngine === "apple")
+      yield* beginAppleInstallation(false);
+    else yield* beginInstallation(next.localModel, false);
+  }, Effect.uninterruptible);
+  yield* settingsChanges.pipe(
+    Stream.runForEach(() =>
+      reconcileSettings().pipe(
+        lifecycle.withPermit,
+        Effect.catchTags({
+          DictationError: (error) =>
+            Effect.logWarning("Could not reconcile dictation settings.").pipe(
+              Effect.annotateLogs({ reason: error.reason }),
+            ),
+        }),
+      ),
+    ),
+    Effect.forkIn(scope),
+  );
+  const install = Effect.fnUntraced(function* (input: DictationInstallInput) {
+    yield* lifecycle.withPermit(
+      Effect.gen(function* () {
+        yield* reconcileSettings();
+        const current = yield* SubscriptionRef.get(state);
+        if (!current.supported)
+          return yield* new DictationError({
+            reason: "unsupported-platform",
+            message: "Local dictation is unavailable on this platform.",
+          });
+        if (current.settings.engine === "local" && current.activeEngine === "apple") {
+          appleProbedLanguage = null;
+          yield* probeApple(current.settings.language);
+          return yield* beginAppleInstallation(true);
+        }
+        if (current.settings.engine !== "local" || current.settings.localModel !== input.model)
+          return yield* new DictationError({
+            reason: "disabled",
+            message: "Activate this model before installing it.",
+          });
+        yield* beginInstallation(input.model, true);
+      }),
+    );
+  });
+  // Removing the active model is a no-op. Deactivate it or choose another model before reclaiming its files.
+  const remove = Effect.fnUntraced(function* (input: DictationRemoveInput) {
+    yield* lifecycle.withPermit(
+      Effect.gen(function* () {
+        yield* reconcileSettings();
+        const current = yield* SubscriptionRef.get(state);
+        if (current.settings.engine === "local" && current.settings.localModel === input.model)
+          return;
+        yield* progress(input.model, { _tag: "not-installed" });
+        // Retired recognizers must release their handle before their files are deleted.
+        yield* native.withPermit(artifacts.remove(input.model)).pipe(
+          Effect.catchTags({
+            DictationError: Effect.fn("Dictation.removeFailed")(function* (error) {
+              const snapshot = yield* artifacts.inspect.pipe(Effect.orElseSucceed(() => null));
+              yield* progress(
+                input.model,
+                snapshot?.models.get(input.model) ?? {
+                  _tag: "failed",
+                  message: "Could not remove dictation files.",
+                },
+              );
+              return yield* error;
+            }),
+          }),
+        );
+      }).pipe(Effect.uninterruptible),
+    );
+  });
+
+  /**
+   * Starts loading the selected model in the background unless it is already
+   * loaded or loading, and counts as use for the 30 minute idle unload.
+   */
+  const ensureLoaded = Effect.fn("Dictation.ensureLoaded")(function* (
+    current: DictationState,
+  ): Effect.fn.Return<LoadedModel, DictationError> {
+    lastModelUse = yield* Clock.currentTimeMillis;
+    if (loaded?.error) yield* unload();
+    if (!loaded) {
+      const slot: LoadedModel = {
+        model: current.settings.localModel,
+        loading: null,
+        recognizer: null,
+        error: null,
+        retired: false,
+      };
+      loaded = slot;
+      slot.loading = yield* native
+        .withPermit(
+          Effect.gen(function* () {
+            if (slot.retired) return;
+            const recognizer = yield* recognizers
+              .load(slot.model, current.settings.language)
+              .pipe(Effect.uninterruptible);
+            if (slot.retired) {
+              yield* recognizer.release;
+              return;
+            }
+            slot.recognizer = recognizer;
+            yield* update((current) => ({ ...current, loadedModel: slot.model }));
+          }),
+        )
+        .pipe(
+          Effect.catchTags({
+            DictationError: (error) =>
+              Effect.sync(() => {
+                slot.error = error;
+              }),
+          }),
+          Effect.forkIn(scope),
+        );
+    }
+    return loaded;
+  });
+
+  /**
+   * Best-effort warm-up for a client that is about to dictate, e.g. when its
+   * composer gains focus. Does nothing unless dictation is on and installed.
+   */
+  const warm = Effect.gen(function* () {
+    yield* reconcileSettings();
+    const current = yield* SubscriptionRef.get(state);
+    // A failed load is retried by the next recording, not by every warm-up.
+    if (loaded) return;
+    if (
+      current.supported &&
+      current.settings.engine === "local" &&
+      current.activeEngine === "parakeet" &&
+      current.ready
+    ) {
+      yield* ensureLoaded(current);
+    }
+  }).pipe(
+    // Same permit as start, install, and remove, so a warm-up never races a removal.
+    lifecycle.withPermit,
+    Effect.catchTags({ DictationError: () => Effect.void }),
+  );
+
+  const start = Effect.fnUntraced(function* (input: DictationStartInput) {
+    yield* reconcileSettings();
+    const current = yield* SubscriptionRef.get(state);
+    if (!current.supported)
+      return yield* new DictationError({
+        reason: "unsupported-platform",
+        message: "Local dictation is unavailable on this platform.",
+      });
+    if (current.settings.engine !== "local")
+      return yield* new DictationError({
+        reason: "disabled",
+        message: "Enable local dictation in environment settings.",
+      });
+    if (!current.ready)
+      return yield* new DictationError({
+        reason: "not-installed",
+        message:
+          current.activeEngine === "apple"
+            ? "Apple's speech assets are not installed yet."
+            : "Install the dictation model first.",
+      });
+    if (sessions.size >= 4)
+      return yield* new DictationError({
+        reason: "transcription-failed",
+        message: "Too many dictation sessions are active.",
+      });
+    const useApple = current.activeEngine === "apple";
+    const model = useApple ? null : yield* ensureLoaded(current);
+    const id = DictationSessionId.make(
+      yield* crypto.uuidV4().pipe(
+        Effect.mapError(
+          (cause) =>
+            new DictationError({
+              reason: "transcription-failed",
+              message: "Could not create a dictation session.",
+              cause,
+            }),
+        ),
+      ),
+    );
+    const transcription = useApple
+      ? yield* apple.open({ language: current.settings.language, words: yield* vocabulary.words })
+      : null;
+    const vad = input.handsFree ? yield* voiceActivity.open : null;
+    const classifier = vad ? yield* smartTurn.open : null;
+    const session: Session = {
+      id,
+      model,
+      apple: transcription,
+      writes: yield* Semaphore.make(1),
+      language: resolveLanguage(current.settings.localModel, current.settings.language),
+      chunks: new Map(),
+      next: 0,
+      samples: 0,
+      pending: [],
+      pendingSamples: 0,
+      attemptedSamples: 0,
+      texts: [],
+      locale: resolveLanguage(current.settings.localModel, current.settings.language) || "en",
+      changed: yield* Deferred.make<void>(),
+      worker: null,
+      busy: false,
+      closed: false,
+      finishing: false,
+      expectedChunks: null,
+      // Not lastModelUse: Apple sessions never touch the model, so that can be
+      // long past, and the idle sweep would end a session whose first audio is
+      // still waiting on the microphone permission prompt.
+      lastUse: yield* Clock.currentTimeMillis,
+      error: null,
+      vad,
+      turn: null,
+      gate: vad ? createBargeInGate() : null,
+      recent: classifier ? createRecentAudio() : null,
+      classifier,
+      pendingCheck: null,
+      heardSamples: 0,
+      voiceThreadId: vad ? (input.voiceThreadId ?? null) : null,
+      voiceEnded: false,
+    };
+    if (vad)
+      session.turn = createTurnDetector(
+        classifier
+          ? {
+              check: (pause) => {
+                session.pendingCheck = pause;
+              },
+            }
+          : undefined,
+      );
+    sessions.set(id, session);
+    return { sessionId: id, handsFree: vad !== null };
+  }, lifecycle.withPermit);
+
+  const getSession = (id: DictationSessionId) =>
+    Effect.suspend(() => {
+      const session = sessions.get(id);
+      return session
+        ? Effect.succeed(session)
+        : Effect.fail(
+            new DictationError({
+              reason: "unknown-session",
+              message: "This dictation session has ended.",
+            }),
+          );
+    });
+  const decode = Effect.fnUntraced(function* (session: Session, samples: Float32Array) {
+    const model = session.model;
+    if (!model) return;
+    if (model.loading) yield* Fiber.join(model.loading);
+    if (model.error) return yield* model.error;
+    yield* native.withPermit(
+      Effect.gen(function* () {
+        if (session.closed || !model.recognizer) return;
+        const result = yield* model.recognizer
+          .decode(samples, session.language)
+          .pipe(Effect.uninterruptible);
+        if (!session.closed && result.text.trim()) {
+          session.texts.push(result.text);
+          session.locale = result.locale;
+        }
+      }),
+    );
+    lastModelUse = yield* Clock.currentTimeMillis;
+  });
+  const pump = Effect.fnUntraced(function* (session: Session) {
+    if (
+      session.busy ||
+      session.closed ||
+      session.error ||
+      session.pendingSamples < 4 * DICTATION_SAMPLE_RATE ||
+      session.pendingSamples - session.attemptedSamples < DICTATION_SAMPLE_RATE / 4
+    )
+      return;
+    session.busy = true;
+    session.worker = yield* Effect.gen(function* () {
+      if (session.model?.loading) yield* Fiber.join(session.model.loading);
+      while (!session.closed) {
+        const samples = concatenate(session.pending);
+        session.attemptedSamples = samples.length;
+        const split = findSplit(samples);
+        if (split === null) break;
+        session.pending = [samples.slice(split)];
+        session.pendingSamples = samples.length - split;
+        session.attemptedSamples = 0;
+        yield* decode(session, samples.subarray(0, split));
+      }
+    }).pipe(
+      Effect.catchTags({
+        DictationError: (error) =>
+          Effect.sync(() => {
+            session.error = error;
+          }),
+      }),
+      Effect.ensuring(
+        Effect.sync(() => {
+          session.busy = false;
+        }),
+      ),
+      Effect.forkIn(scope),
+    );
+  });
+  /** Feeds ordered audio to a hands-free session's detector. `playback`: a reply was playing. */
+  const listen = (session: Session, chunks: ReadonlyArray<Float32Array>, playback: boolean) => {
+    const { vad, turn, gate } = session;
+    if (!vad || !turn || !gate) return;
+    for (const chunk of chunks) {
+      if (turn.state.endOfTurn) return;
+      const frame = vad.accept(chunk);
+      session.recent?.push(chunk);
+      session.heardSamples += chunk.length;
+      const atMs = (session.heardSamples / DICTATION_SAMPLE_RATE) * 1000;
+      const speech = gate.accept(frame, playback, atMs);
+      turn.push(speech, atMs);
+      if (session.voiceThreadId)
+        PubSub.publishUnsafe(voiceAudio, {
+          _tag: "audio",
+          threadId: session.voiceThreadId,
+          sessionId: session.id,
+          samples: chunk,
+          speech,
+        });
+    }
+    announceEnd(session);
+  };
+  /**
+   * Asks Smart Turn about the pause the detector just reported, off the
+   * request path; the verdict shows up in a later append's `endOfTurn`.
+   */
+  const checkTurn = Effect.fnUntraced(function* (session: Session) {
+    const pause = session.pendingCheck;
+    const { classifier, recent, turn } = session;
+    session.pendingCheck = null;
+    if (pause === null || !classifier || !recent || !turn) return;
+    const audio = recent.snapshot();
+    yield* Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis;
+      const probability = yield* classifier.probability(audio);
+      if (session.closed || probability === null) return;
+      const finished = probability >= TURN_COMPLETE_PROBABILITY;
+      turn.verdict(pause, finished);
+      announceEnd(session);
+      yield* Effect.logDebug("Smart Turn verdict.").pipe(
+        Effect.annotateLogs({
+          probability: Math.round(probability * 1000) / 1000,
+          finished,
+          ms: (yield* Clock.currentTimeMillis) - startedAt,
+        }),
+      );
+    }).pipe(Effect.forkIn(scope));
+  });
+  /** Live text so far (Apple's streams per word, Parakeet's per decoded phrase), and the turn. */
+  const live = (session: Session) =>
+    Effect.map(
+      session.apple ? session.apple.partial : Effect.sync(() => joinTexts(session.texts)),
+      (partial): DictationAppendResult => ({
+        partial,
+        speaking: session.turn?.state.speaking ?? false,
+        endOfTurn: session.turn?.state.endOfTurn ?? false,
+      }),
+    );
+  const append = Effect.fnUntraced(function* (input: DictationAppendInput) {
+    const session = yield* getSession(input.sessionId);
+    if (input.seq < session.next || session.chunks.has(input.seq)) return yield* live(session);
+    if (session.expectedChunks !== null && input.seq >= session.expectedChunks)
+      return yield* new DictationError({
+        reason: "transcription-failed",
+        message: "The recording chunk count is invalid.",
+      });
+    if (
+      input.seq >= 60_000 ||
+      input.pcm.length > (DICTATION_MAX_SECONDS * DICTATION_SAMPLE_RATE * 2 * 4) / 3 + 4
+    ) {
+      yield* close(session);
+      return yield* new DictationError({
+        reason: "too-long",
+        message: "The dictation recording is too long.",
+      });
+    }
+    const samples = yield* Effect.try({
+      try: () => decodePcm(input.pcm),
+      catch: (cause) =>
+        new DictationError({
+          reason: "transcription-failed",
+          message: "The recording contains invalid PCM.",
+          cause,
+        }),
+    });
+    if (samples.length === 0)
+      return yield* new DictationError({
+        reason: "transcription-failed",
+        message: "The recording chunk is empty.",
+      });
+    if (session.samples + samples.length > DICTATION_MAX_SECONDS * DICTATION_SAMPLE_RATE) {
+      yield* close(session);
+      return yield* new DictationError({
+        reason: "too-long",
+        message: "The dictation recording is too long.",
+      });
+    }
+    session.lastUse = lastModelUse = yield* Clock.currentTimeMillis;
+    session.samples += samples.length;
+    session.chunks.set(input.seq, samples);
+    const transcription = session.apple;
+    if (transcription) {
+      yield* session.writes.withPermit(
+        Effect.gen(function* () {
+          const ordered = takeOrderedChunks(session.chunks, session.next);
+          session.next = ordered.next;
+          listen(session, ordered.ordered, input.playback === true);
+          for (const chunk of ordered.ordered)
+            yield* transcription.write(AppleSpeech.encodePcm16(chunk));
+        }),
+      );
+    } else {
+      const ordered = takeOrderedChunks(session.chunks, session.next);
+      session.next = ordered.next;
+      listen(session, ordered.ordered, input.playback === true);
+      session.pending.push(...ordered.ordered);
+      session.pendingSamples += ordered.ordered.reduce((n, chunk) => n + chunk.length, 0);
+    }
+    const changed = session.changed;
+    session.changed = yield* Deferred.make<void>();
+    yield* Deferred.succeed(changed, undefined);
+    if (!transcription) yield* pump(session);
+    yield* checkTurn(session);
+    return yield* live(session);
+  });
+  const finish = Effect.fnUntraced(function* (input: DictationFinishInput) {
+    const session = yield* getSession(input.sessionId);
+    if (session.finishing)
+      return yield* new DictationError({
+        reason: "transcription-failed",
+        message: "This dictation session is already finishing.",
+      });
+    session.finishing = true;
+    session.expectedChunks = input.chunkCount;
+    const result = Effect.gen(function* () {
+      if (
+        input.chunkCount > 60_000 ||
+        input.chunkCount < session.next ||
+        [...session.chunks.keys()].some((seq) => seq >= input.chunkCount)
+      )
+        return yield* new DictationError({
+          reason: "transcription-failed",
+          message: "The recording chunk count is invalid.",
+        });
+      session.lastUse = lastModelUse = yield* Clock.currentTimeMillis;
+      yield* Effect.gen(function* () {
+        while (!session.closed && session.next < input.chunkCount)
+          yield* Deferred.await(session.changed);
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: "2 seconds",
+          orElse: () =>
+            Effect.fail(
+              new DictationError({
+                reason: "transcription-failed",
+                message: "Some recording chunks did not arrive.",
+              }),
+            ),
+        }),
+      );
+      const transcription = session.apple;
+      if (transcription) {
+        if (session.closed)
+          return yield* new DictationError({
+            reason: "unknown-session",
+            message: "This dictation session has ended.",
+          });
+        return yield* session.writes.withPermit(transcription.finish);
+      }
+      if (session.worker) yield* Fiber.await(session.worker);
+      if (session.closed)
+        return yield* new DictationError({
+          reason: "unknown-session",
+          message: "This dictation session has ended.",
+        });
+      if (session.error) return yield* session.error;
+      // Pump large backlogs before decoding the tail, even if the last append raced a worker's exit.
+      const pending = concatenate(session.pending);
+      session.pending = [];
+      session.pendingSamples = 0;
+      let offset = 0;
+      while (offset < pending.length && !session.closed) {
+        const split = findSplit(pending.subarray(offset));
+        const end = split === null ? pending.length : offset + split;
+        yield* decode(session, pending.subarray(offset, end));
+        offset = end;
+      }
+      if (session.closed)
+        return yield* new DictationError({
+          reason: "unknown-session",
+          message: "This dictation session has ended.",
+        });
+      return { text: joinTexts(session.texts), locale: session.locale };
+    });
+    return yield* result.pipe(Effect.ensuring(close(session)));
+  });
+  const cancel = Effect.fnUntraced(function* (input: DictationCancelInput) {
+    yield* close(yield* getSession(input.sessionId));
+  });
+
+  yield* Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    for (const session of sessions.values())
+      if (!session.finishing && now - session.lastUse >= 60_000) yield* close(session);
+    yield* lifecycle.withPermit(
+      Effect.gen(function* () {
+        if (loaded && sessions.size === 0 && now - lastModelUse >= 30 * 60_000) yield* unload();
+      }),
+    );
+  }).pipe(Effect.repeat(Schedule.spaced("10 seconds")), Effect.forkIn(scope));
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      for (const session of sessions.values()) yield* close(session);
+      const previous = loaded;
+      loaded = null;
+      if (previous) previous.retired = true;
+      yield* native.withPermit(
+        Effect.gen(function* () {
+          if (previous?.recognizer) yield* previous.recognizer.release;
+          if (previous) previous.recognizer = null;
+        }),
+      );
+    }),
+  );
+  // Probing Apple's engine takes a moment (or a one-time helper build in a checkout); do not hold up startup.
+  yield* reconcileSettings().pipe(
+    lifecycle.withPermit,
+    Effect.catchTags({ DictationError: () => Effect.void }),
+    Effect.forkIn(scope),
+  );
+  return Dictation.of({
+    state: SubscriptionRef.get(state),
+    stateStream: SubscriptionRef.changes(state),
+    install,
+    remove,
+    start,
+    warm,
+    append,
+    finish,
+    cancel,
+    voiceAudio: Stream.fromPubSub(voiceAudio),
+  });
+});
+
+export const layer = Layer.effect(Dictation, make);

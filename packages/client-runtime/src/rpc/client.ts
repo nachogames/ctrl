@@ -69,6 +69,9 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
   | typeof WS_METHODS.threadGroupsSubscribeResources
   | typeof WS_METHODS.subscribeDeviceState
+  | typeof WS_METHODS.subscribeDictationState
+  | typeof WS_METHODS.subscribeSpeechState
+  | typeof WS_METHODS.voiceFrontRespond
   | typeof WS_METHODS.remoteMcpSubscribe
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
@@ -82,6 +85,7 @@ export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.chatGptHandoffSubscribe
   | typeof WS_METHODS.cloudInstallRelayClient
   | typeof WS_METHODS.serverUpdateServerWithProgress
+  | typeof WS_METHODS.providerVoiceSession
   | typeof WS_METHODS.gitRunStackedAction;
 
 export type EnvironmentStreamRpcTag =

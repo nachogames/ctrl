@@ -169,6 +169,9 @@ import {
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
+  ProviderVoiceSessionError,
+  ProviderVoiceSessionEvent,
+  ProviderVoiceSessionInput,
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
@@ -314,6 +317,39 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
+import {
+  DictationAppendInput,
+  DictationAppendResult,
+  DictationCancelInput,
+  DictationError,
+  DictationFinishInput,
+  DictationFinishResult,
+  DictationInstallInput,
+  DictationRemoveInput,
+  DictationStartInput,
+  DictationStartResult,
+  DictationState,
+} from "./dictation.ts";
+import {
+  SpeechError,
+  SpeechSynthesizeInput,
+  SpeechSynthesizeResult,
+  SpeechState,
+} from "./speech.ts";
+import {
+  VoiceFrontEndInput,
+  VoiceFrontError,
+  VoiceFrontReply,
+  VoiceFrontRespondInput,
+  VoiceFrontSetGeminiKeyInput,
+  VoiceFrontStatus,
+} from "./voiceFront.ts";
+import {
+  HomeEnableInput,
+  HomeThreadResult,
+  HomeUnavailableError,
+  HomeWatchReport,
+} from "./home.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -497,6 +533,7 @@ export const WS_METHODS = {
   mcpAppsUpdateModelContext: "mcpApps.updateModelContext",
 
   providerUploadFeedback: "provider.uploadFeedback",
+  providerVoiceSession: "provider.voice.session",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
   providerReadInventory: "provider.readInventory",
@@ -548,6 +585,12 @@ export const WS_METHODS = {
   previewReportStatus: "preview.reportStatus",
   previewStopLocalServer: "preview.stopLocalServer",
 
+  // Home methods
+  homeEnable: "home.enable",
+  homeDisable: "home.disable",
+  homeStartFresh: "home.startFresh",
+  homeReportWatchEvents: "home.reportWatchEvents",
+
   deviceConfigure: "device.configure",
   deviceList: "device.list",
   deviceTestHost: "device.testHost",
@@ -558,6 +601,22 @@ export const WS_METHODS = {
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
   deviceAction: "device.action",
+
+  dictationInstall: "dictation.install",
+  dictationRemove: "dictation.remove",
+  dictationStart: "dictation.start",
+  dictationWarm: "dictation.warm",
+  dictationAppend: "dictation.append",
+  dictationFinish: "dictation.finish",
+  dictationCancel: "dictation.cancel",
+
+  speechInstall: "speech.install",
+  speechRemove: "speech.remove",
+  speechSynthesize: "speech.synthesize",
+  voiceFrontStatus: "voiceFront.status",
+  voiceFrontRespond: "voiceFront.respond",
+  voiceFrontEnd: "voiceFront.end",
+  voiceFrontSetGeminiKey: "voiceFront.setGeminiKey",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -705,6 +764,8 @@ export const WS_METHODS = {
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
+  subscribeDictationState: "subscribeDictationState",
+  subscribeSpeechState: "subscribeSpeechState",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -1571,6 +1632,13 @@ const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, 
   error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
 });
 
+const WsProviderVoiceSessionRpc = Rpc.make(WS_METHODS.providerVoiceSession, {
+  payload: ProviderVoiceSessionInput,
+  success: ProviderVoiceSessionEvent,
+  error: Schema.Union([ProviderVoiceSessionError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusSubscriptionInput,
   success: VcsStatusStreamEvent,
@@ -1762,6 +1830,29 @@ const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+const WsHomeEnableRpc = Rpc.make(WS_METHODS.homeEnable, {
+  payload: HomeEnableInput,
+  success: HomeThreadResult,
+  error: Schema.Union([HomeUnavailableError, EnvironmentAuthorizationError]),
+});
+
+const WsHomeDisableRpc = Rpc.make(WS_METHODS.homeDisable, {
+  payload: Schema.Struct({}),
+  error: Schema.Union([HomeUnavailableError, EnvironmentAuthorizationError]),
+});
+
+const WsHomeStartFreshRpc = Rpc.make(WS_METHODS.homeStartFresh, {
+  payload: Schema.Struct({}),
+  success: HomeThreadResult,
+  error: Schema.Union([HomeUnavailableError, EnvironmentAuthorizationError]),
+});
+
+/** Watched thread changes the desktop renderer saw in every environment it is connected to. */
+const WsHomeReportWatchEventsRpc = Rpc.make(WS_METHODS.homeReportWatchEvents, {
+  payload: HomeWatchReport,
+  error: Schema.Union([HomeUnavailableError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
@@ -1846,6 +1937,112 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   success: DeviceServiceState,
   error: EnvironmentAuthorizationError,
   stream: true,
+});
+
+const DictationRpcError = Schema.Union([DictationError, EnvironmentAuthorizationError]);
+
+const WsDictationInstallRpc = Rpc.make(WS_METHODS.dictationInstall, {
+  payload: DictationInstallInput,
+  error: DictationRpcError,
+});
+
+const WsDictationRemoveRpc = Rpc.make(WS_METHODS.dictationRemove, {
+  payload: DictationRemoveInput,
+  error: DictationRpcError,
+});
+
+const WsDictationStartRpc = Rpc.make(WS_METHODS.dictationStart, {
+  payload: DictationStartInput,
+  success: DictationStartResult,
+  error: DictationRpcError,
+});
+
+/** Starts loading the speech model ahead of a likely dictation; a no-op when dictation is off. */
+const WsDictationWarmRpc = Rpc.make(WS_METHODS.dictationWarm, {
+  payload: Schema.Struct({}),
+  error: EnvironmentAuthorizationError,
+});
+
+const WsDictationAppendRpc = Rpc.make(WS_METHODS.dictationAppend, {
+  payload: DictationAppendInput,
+  // Nullish: environments from before live text answer with nothing.
+  success: Schema.NullishOr(DictationAppendResult),
+  error: DictationRpcError,
+});
+
+const WsDictationFinishRpc = Rpc.make(WS_METHODS.dictationFinish, {
+  payload: DictationFinishInput,
+  success: DictationFinishResult,
+  error: DictationRpcError,
+});
+
+const WsDictationCancelRpc = Rpc.make(WS_METHODS.dictationCancel, {
+  payload: DictationCancelInput,
+  error: DictationRpcError,
+});
+
+const WsSubscribeDictationStateRpc = Rpc.make(WS_METHODS.subscribeDictationState, {
+  payload: Schema.Struct({}),
+  success: DictationState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const SpeechRpcError = Schema.Union([SpeechError, EnvironmentAuthorizationError]);
+
+/** Starts or retries the voice model download; returns before it completes. */
+const WsSpeechInstallRpc = Rpc.make(WS_METHODS.speechInstall, {
+  payload: Schema.Struct({}),
+  error: SpeechRpcError,
+});
+
+/** Deletes the voice model. Spoken replies must be off; the shared runtime stays. */
+const WsSpeechRemoveRpc = Rpc.make(WS_METHODS.speechRemove, {
+  payload: Schema.Struct({}),
+  error: SpeechRpcError,
+});
+
+/** Speaks one short chunk of text, loading the voice model on first use. */
+const WsSpeechSynthesizeRpc = Rpc.make(WS_METHODS.speechSynthesize, {
+  payload: SpeechSynthesizeInput,
+  success: SpeechSynthesizeResult,
+  error: SpeechRpcError,
+});
+
+const WsSubscribeSpeechStateRpc = Rpc.make(WS_METHODS.subscribeSpeechState, {
+  payload: Schema.Struct({}),
+  success: SpeechState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const VoiceFrontRpcError = Schema.Union([VoiceFrontError, EnvironmentAuthorizationError]);
+
+/** Whether the front voice can answer here, and why not. Starts nothing. */
+const WsVoiceFrontStatusRpc = Rpc.make(WS_METHODS.voiceFrontStatus, {
+  payload: Schema.Struct({}),
+  success: VoiceFrontStatus,
+  error: VoiceFrontRpcError,
+});
+
+/** A short spoken reply to one voice turn, streamed as it is generated. */
+const WsVoiceFrontRespondRpc = Rpc.make(WS_METHODS.voiceFrontRespond, {
+  payload: VoiceFrontRespondInput,
+  success: VoiceFrontReply,
+  error: VoiceFrontRpcError,
+  stream: true,
+});
+
+/** Hands-free voice ended in a thread; closes its Gemini session. */
+const WsVoiceFrontEndRpc = Rpc.make(WS_METHODS.voiceFrontEnd, {
+  payload: VoiceFrontEndInput,
+  error: VoiceFrontRpcError,
+});
+
+/** Stores or removes the Gemini API key on the environment. */
+const WsVoiceFrontSetGeminiKeyRpc = Rpc.make(WS_METHODS.voiceFrontSetGeminiKey, {
+  payload: VoiceFrontSetGeminiKeyInput,
+  error: VoiceFrontRpcError,
 });
 
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
@@ -2352,7 +2549,39 @@ export const WsCursorMcpRpcGroup = RpcGroup.make(
   WsCursorMcpRestartServerRpc,
 ).middleware(RpcScopeAuthorization);
 
-/** Everything but the review RPCs, so the server builds its handlers apart; clients use `WsRpcGroup`. */
+/** Home's RPCs, a group of their own for the same reason. */
+export const WsHomeRpcGroup = RpcGroup.make(
+  WsHomeEnableRpc,
+  WsHomeDisableRpc,
+  WsHomeStartFreshRpc,
+  WsHomeReportWatchEventsRpc,
+).middleware(RpcScopeAuthorization);
+
+/** Local dictation's RPCs, a group of their own for the same reason. */
+export const WsDictationRpcGroup = RpcGroup.make(
+  WsDictationInstallRpc,
+  WsDictationRemoveRpc,
+  WsDictationStartRpc,
+  WsDictationWarmRpc,
+  WsDictationAppendRpc,
+  WsDictationFinishRpc,
+  WsDictationCancelRpc,
+  WsSubscribeDictationStateRpc,
+).middleware(RpcScopeAuthorization);
+
+/** Spoken replies' RPCs, a group of their own for the same reason. */
+export const WsSpeechRpcGroup = RpcGroup.make(
+  WsSpeechInstallRpc,
+  WsSpeechRemoveRpc,
+  WsSpeechSynthesizeRpc,
+  WsSubscribeSpeechStateRpc,
+  WsVoiceFrontStatusRpc,
+  WsVoiceFrontRespondRpc,
+  WsVoiceFrontEndRpc,
+  WsVoiceFrontSetGeminiKeyRpc,
+).middleware(RpcScopeAuthorization);
+
+/** Everything but the review, Ctrl, Home, dictation, and speech RPCs, so the server builds their handlers apart; clients use `WsRpcGroup`. */
 export const WsBaseRpcGroup = RpcGroup.make(
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
@@ -2493,6 +2722,7 @@ export const WsBaseRpcGroup = RpcGroup.make(
   WsMcpAppsReadResourceRpc,
   WsMcpAppsUpdateModelContextRpc,
   WsProviderUploadFeedbackRpc,
+  WsProviderVoiceSessionRpc,
   WsSubscribeVcsStatusRpc,
   WsSubscribeWorktreeSetupRpc,
   WsWorktreeSetupCancelRpc,
@@ -2568,6 +2798,9 @@ export const WsBaseRpcGroup = RpcGroup.make(
 
 export const WsRpcGroup = WsBaseRpcGroup.merge(
   WsReviewSessionsRpcGroup,
+  WsHomeRpcGroup,
+  WsDictationRpcGroup,
+  WsSpeechRpcGroup,
   WsCtrlRpcGroup,
   WsCursorMcpRpcGroup,
   WsPluginsRpcGroup,

@@ -1,3 +1,4 @@
+import { closeSkillTokenAtCursor, replaceSpokenSkills } from "@t3tools/shared/inlineSkills";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -44,9 +45,14 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  VOICE_FRONT_MAX_TRANSCRIPT_LENGTH,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  runAtomCommand,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -64,8 +70,10 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
+import { RegistryContext } from "@effect/atom-react";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -137,7 +145,23 @@ import {
 } from "../../lib/attachmentUploadQueue";
 import { attachmentUploadBlockReason } from "../../lib/attachmentUploadState";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { shortcutLabelForCommand } from "../../keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
+import { isEditableFocused } from "../../lib/editableFocus";
+import { resolveVoiceAvailability } from "../../voice/voiceAvailability";
+import {
+  toggleThreadVoice,
+  useVoicePhaseFor,
+  VOICE_STARTER_MESSAGE,
+  voiceMode as codexVoiceMode,
+} from "../../voice/voiceMode";
+import { localVoice } from "../../speech/localVoice";
+import {
+  clearVoiceAfterFirstTurn,
+  startVoiceAfterFirstTurn,
+  voiceAfterFirstTurnStatus,
+} from "../../voice/voiceAfterFirstTurn";
+import { ComposerVoiceButton, VoiceModeStrip } from "./VoiceModeStrip";
+import { VoiceEnginePicker } from "./VoiceEnginePicker";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -204,6 +228,22 @@ import {
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
+import { replySpeaker } from "../../speech/replySpeaker";
+import {
+  useReplySpeaking,
+  useSpokenCaption,
+  useVoiceMode,
+  voiceUnavailableReason,
+} from "../../speech/voiceMode";
+import { CONVERSATION_LISTEN_TIMEOUT_MS, VoiceConversation } from "../../speech/voiceConversation";
+import { askVoiceFront, useFrontCaption } from "../../speech/voiceFront";
+import { NO_SPEECH_DETECTED_MESSAGE } from "@t3tools/client-runtime/voice-input";
+import { useDictationEnvironmentId } from "../../state/dictation";
+import { speechEnvironment, useSpeechState } from "../../state/speech";
+import { useComposerDictation } from "../../dictation/useComposerDictation";
+import { useDictationHoldShortcut } from "../../dictation/useDictationHoldShortcut";
+import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
@@ -258,6 +298,7 @@ import {
 } from "@t3tools/client-runtime/state/composer-dispatch";
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import {
+  isProviderSkillUserInvocable,
   resolveProviderSkillsForCwd,
   providerSlashCommandReplacement,
   resolveProviderSlashCommandsForCwd,
@@ -945,7 +986,163 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
+  // Voice mode sends each dictation as soon as it is transcribed, and reads replies aloud.
+  const [voiceModeSetting, setVoiceMode] = useVoiceMode();
+  // Voice mode needs both halves on this environment; a saved "on" reads as off until they are.
+  const voiceDictationEnvironmentId = useDictationEnvironmentId(environmentId);
+  const { state: voiceSpeechState } = useSpeechState(environmentId);
+  const voiceUnavailable = voiceUnavailableReason({
+    dictationReady: voiceDictationEnvironmentId !== null,
+    spokenRepliesReady: voiceSpeechState?.ready === true,
+  });
+  const voiceMode = voiceModeSetting && voiceUnavailable === null;
+  // Hands-free conversation: Talk starts it, each turn ends when the user stops speaking.
+  const [conversation] = useState(() => new VoiceConversation());
+  const atomRegistry = use(RegistryContext);
+  /** When the environment heard the end of the current turn, for the latency log. */
+  const endOfTurnAtRef = useRef<number | null>(null);
+  const frontCaption = useFrontCaption();
+  const conversationState = useSyncExternalStore(conversation.subscribe, conversation.getSnapshot);
+  const conversationHeardSpeechRef = useRef(false);
+  // Muted keeps the conversation but leaves the microphone closed until unmuted.
+  const [localVoiceMuted, setLocalVoiceMuted] = useState(false);
+  /** What the conversation last heard, for the voice strip's caption. */
+  const [localVoiceHeard, setLocalVoiceHeard] = useState("");
+  // These callbacks run after recording, once the handlers declared below exist.
+  const dictationInsertedRangeRef = useRef<{ start: number; end: number } | null>(null);
+  /** Closes this thread's live voice session (Gemini) on the environment, if it has one. */
+  const endVoiceSession = useStableCallback(() => {
+    if (activeThreadId === null) return;
+    void runAtomCommand(
+      atomRegistry,
+      speechEnvironment.frontEnd,
+      { environmentId, input: { threadId: activeThreadId } },
+      { reportFailure: false },
+    );
+  });
+  const dictation = useComposerDictation({
+    handsFree: () => conversation.active,
+    voiceThreadId: () => (conversation.active ? activeThreadId : null),
+    onSpeechStart: () => {
+      conversationHeardSpeechRef.current = true;
+      // Barge-in: speaking over a reply that is being read stops it.
+      if (conversation.active) replySpeaker.stop();
+    },
+    playback: () => conversation.active && replySpeaker.isSpeaking(),
+    onEndOfTurn: (at) => {
+      if (!conversation.active) return;
+      endOfTurnAtRef.current = at;
+      dictation.stop();
+    },
+    quietError: (error) => conversation.active && error === NO_SPEECH_DETECTED_MESSAGE,
+    ownerKey: `${composerDraftTargetKey}:${activePendingProgress?.activeQuestion?.id ?? "prompt"}`,
+    draftEnvironmentId: environmentId,
+    // Spoken "review skill" becomes a $review chip, matching what typing would insert.
+    rewriteTranscript: (text) =>
+      replaceSpokenSkills(text, selectedProviderSkills.filter(isProviderSkillUserInvocable)),
+    readDraft: () => {
+      const text = promptRef.current;
+      return {
+        text,
+        selection: composerEditorRef.current?.readSelectionRange() ?? {
+          start: text.length,
+          end: text.length,
+        },
+      };
+    },
+    commitDraft: (text, selection, inserted) => {
+      const closed = closeSkillTokenAtCursor(
+        text,
+        selection.start,
+        selectedProviderSkills.filter(isProviderSkillUserInvocable),
+      );
+      // A space added after a trailing skill token belongs to the inserted range.
+      dictationInsertedRangeRef.current = {
+        start: inserted.start,
+        end: inserted.end + (closed.cursor - selection.start),
+      };
+      const previous = promptRef.current;
+      applyPromptReplacement(0, previous.length, closed.text, {
+        expandedCursorAfterReplace: closed.cursor,
+        focusEditorAfterReplace: false,
+      });
+    },
+    showLiveText: (text) => {
+      composerEditorRef.current?.showLiveText(text);
+      if (conversation.active) setLocalVoiceHeard(text);
+    },
+    onCommitted: () => {
+      if (voiceMode) {
+        dictationInsertedRangeRef.current = null;
+        const transcript = promptRef.current.trim();
+        setLocalVoiceHeard(transcript);
+        replySpeaker.clearCaption();
+        conversation.turnSent();
+        submitComposerStable();
+        // The thread gets the message either way; the front voice answers at once alongside it.
+        // A draft's first sentence uses the id the thread is created with.
+        if (transcript.length > 0)
+          askVoiceFront({
+            registry: atomRegistry,
+            environmentId,
+            threadId: activeThreadId ?? routeThreadRef.threadId,
+            transcript: transcript.slice(0, VOICE_FRONT_MAX_TRANSCRIPT_LENGTH),
+            endOfSpeechAt: endOfTurnAtRef.current,
+          });
+        endOfTurnAtRef.current = null;
+        return;
+      }
+      composerEditorRef.current?.focusAt(composerCursor);
+      const inserted = dictationInsertedRangeRef.current;
+      dictationInsertedRangeRef.current = null;
+      if (inserted) composerEditorRef.current?.flashRange(inserted);
+    },
+  });
+  // In voice mode the mic and the hold shortcut start a conversation: it sends
+  // when you stop, and the reply is read aloud.
+  const voiceTalk = voiceMode
+    ? {
+        label: "Talk",
+        start: () => {
+          // The press is the gesture that lets the reply's audio start later.
+          replySpeaker.prime();
+          replySpeaker.stop();
+          conversation.begin();
+          dictation.start();
+        },
+      }
+    : null;
+  const endConversation = () => {
+    conversation.end();
+    dictation.cancel();
+  };
+  /** Voice in a thread without Codex voice: a hands-free conversation through Ctrl's own voice. */
+  const startLocalVoice = () => {
+    setVoiceMode(true);
+    setLocalVoiceMuted(false);
+    setLocalVoiceHeard("");
+    // The press is the gesture that lets the reply's audio start later.
+    replySpeaker.prime();
+    replySpeaker.stop();
+    conversation.begin();
+    dictation.start();
+  };
+  const stopLocalVoice = useStableCallback(() => {
+    endConversation();
+    setVoiceMode(false);
+  });
+  const setLocalVoiceMutedStable = useStableCallback((muted: boolean) => {
+    setLocalVoiceMuted(muted);
+    if (muted) {
+      conversation.pause();
+      dictation.cancel();
+    } else {
+      // Listening again is the conversation's next step once it stops waiting.
+      conversation.begin();
+    }
+  });
   const sendDisabledReason =
+    (dictation.active ? "Finish dictation first." : null) ??
     externalSendDisabledReason ??
     (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
     (activePendingProgress
@@ -956,6 +1153,50 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
+  // Voice follows the composer's model: the thread's, or one picked but not sent
+  // yet. A picked provider has no session until a turn runs on it, so Codex
+  // voice then starts with that turn, which also makes the switch.
+  const voiceThread = activeThread ?? props.activeThreadShell ?? null;
+  const voiceSwitchPending =
+    voiceThread !== null && voiceThread.providerInstanceId !== selectedInstanceId;
+  const voiceAvailability = resolveVoiceAvailability({
+    provider: providerStatuses.find((provider) => provider.instanceId === selectedInstanceId),
+    hasMessages: voiceThread?.latestUserMessageAt != null,
+    hasSession: !voiceSwitchPending && voiceThread?.activeProviderThreadId != null,
+  });
+  /** Sends the turn that starts a thread's Codex session; set once sending is declared below. */
+  const sendVoiceStarterRef = useRef<(() => void) | null>(null);
+  const voicePhase = useVoicePhaseFor(routeThreadRef);
+  const codexVoiceEngaged = voicePhase !== "idle";
+  // Codex threads talk through Codex voice; every other thread through Ctrl's own.
+  const voiceEngine =
+    voiceAvailability.kind !== "unsupported" || codexVoiceEngaged ? "codex" : "local";
+  const voiceEngaged = voiceEngine === "codex" ? codexVoiceEngaged : conversationState.active;
+  const voiceDisabledReason = voiceEngine === "local" && !voiceEngaged ? voiceUnavailable : null;
+  const voiceSupported = voiceDisabledReason === null;
+  const toggleVoice = useStableCallback(() => {
+    if (voiceEngine === "local") {
+      if (conversationState.active) stopLocalVoice();
+      else if (voiceUnavailable === null) startLocalVoice();
+      return;
+    }
+    if (codexVoiceEngaged || voiceAvailability.kind === "ready") {
+      clearVoiceAfterFirstTurn(routeThreadRef);
+      toggleThreadVoice(routeThreadRef, voiceAvailability);
+      return;
+    }
+    // Codex voice needs the thread's session, which its first turn starts: send
+    // what is typed, or a one-line starter, and connect once that turn ends.
+    startVoiceAfterFirstTurn(routeThreadRef);
+    sendVoiceStarterRef.current?.();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- connects Codex voice once the turn started for it has given the thread a session
+  useEffect(() => {
+    if (voiceAfterFirstTurnStatus(routeThreadRef, phase) !== "ready") return;
+    if (voiceAvailability.kind !== "ready") return;
+    clearVoiceAfterFirstTurn(routeThreadRef);
+    toggleThreadVoice(routeThreadRef, voiceAvailability);
+  }, [phase, routeThreadRef, voiceAvailability]);
   const selectedProviderSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SKILLS;
@@ -1043,6 +1284,120 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isMobileViewport = useMediaQuery("max-sm");
   const isSoftwareKeyboardOpen = useSoftwareKeyboardOpen();
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  // Starting to dictate stops a reply that is being read aloud mid-sentence. A
+  // conversation listens through replies instead, and stops them when the user speaks.
+  const dictationPhase = dictation.state.phase;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops the reply speaker's audio when dictation starts from any entry point
+  useEffect(() => {
+    if (conversation.active) return;
+    if (dictationPhase === "preparing" || dictationPhase === "recording") replySpeaker.stop();
+  }, [conversation, dictationPhase]);
+  // Drives the conversation: listen again once a reply starts being read, and
+  // end it when voice mode turns off.
+  const replySpeaking = useReplySpeaking();
+  const dictationState = dictation.state;
+  const startDictation = dictation.start;
+  const cancelDictation = dictation.cancel;
+  const threadRunning = phase === "running";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drives the VoiceConversation machine and the microphone from dictation and reply playback
+  useEffect(() => {
+    if (!voiceMode) {
+      if (conversation.active) {
+        conversation.end();
+        cancelDictation();
+      }
+      return;
+    }
+    const action = conversation.sync({
+      phase: dictationState.phase,
+      speaking: replySpeaking,
+      running: threadRunning,
+      error: dictationState.error,
+      quietError: (error) => error === NO_SPEECH_DETECTED_MESSAGE,
+    });
+    if (action === "listen" && !localVoiceMuted) startDictation();
+  }, [
+    cancelDictation,
+    conversation,
+    dictationState,
+    localVoiceMuted,
+    replySpeaking,
+    startDictation,
+    threadRunning,
+    voiceMode,
+  ]);
+  // However the conversation ends, its live voice session on the environment closes with it.
+  const conversationActive = conversationState.active;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ends this composer's conversation and window-wide voice mode when the composer goes away
+  useEffect(
+    () => () => {
+      if (!conversation.active) return;
+      conversation.end();
+      setVoiceMode(false);
+    },
+    [conversation, setVoiceMode],
+  );
+  const dictationLevel = dictation.level;
+  // The reply being read replaces the quick voice's words once it starts.
+  const spokenCaption = useSpokenCaption();
+  const localVoiceReply = spokenCaption || frontCaption;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this composer's conversation with localVoice, which the shared voice strip reads, until it ends
+  useEffect(() => {
+    if (!conversationActive) return;
+    localVoice.attach(
+      { environmentId: routeThreadRef.environmentId, threadId: routeThreadRef.threadId },
+      { stop: stopLocalVoice, setMuted: setLocalVoiceMutedStable },
+      dictationLevel,
+    );
+    return () => localVoice.detach();
+  }, [
+    conversationActive,
+    dictationLevel,
+    routeThreadRef.environmentId,
+    routeThreadRef.threadId,
+    setLocalVoiceMutedStable,
+    stopLocalVoice,
+  ]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the conversation's captions and mute into localVoice for the voice strip
+  useEffect(() => {
+    if (!conversationActive) return;
+    localVoice.update({
+      phase: "active",
+      muted: localVoiceMuted,
+      captions: [
+        ...(localVoiceHeard
+          ? [{ role: "user" as const, text: localVoiceHeard, final: false }]
+          : []),
+        ...(localVoiceReply
+          ? [{ role: "assistant" as const, text: localVoiceReply, final: true }]
+          : []),
+      ],
+    });
+  }, [conversationActive, localVoiceHeard, localVoiceMuted, localVoiceReply]);
+  const wasConversationActive = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the environment's live voice session however the conversation ended
+  useEffect(() => {
+    if (wasConversationActive.current && !conversationActive) endVoiceSession();
+    wasConversationActive.current = conversationActive;
+  }, [conversationActive, endVoiceSession]);
+  // Listening that hears nothing for a minute closes the microphone until the next reply.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the listen timer that closes a silent microphone
+  useEffect(() => {
+    if (dictationPhase === "preparing") conversationHeardSpeechRef.current = false;
+    if (!conversationState.active || dictationPhase !== "recording") return;
+    const timeout = setTimeout(() => {
+      if (conversationHeardSpeechRef.current) return;
+      conversation.pause();
+      cancelDictation();
+    }, CONVERSATION_LISTEN_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [cancelDictation, conversation, conversationState.active, dictationPhase]);
+  // Focusing the composer usually comes right before dictating; load the speech model early.
+  const warmDictation = dictation.warm;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- warms the environment's speech model on focus, which upstream's focus paths set in several places
+  useEffect(() => {
+    if (isComposerFocused) warmDictation();
+  }, [isComposerFocused, warmDictation]);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
   const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
     null,
@@ -1128,6 +1483,48 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [backgroundThread]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- binds voice shortcuts to window keyboard events for the mounted composer
+  useEffect(() => {
+    if (backgroundThread) return;
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (isCommandPaletteOpen()) return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: getTerminalFocusOwner() !== null,
+          terminalOpen,
+          modelPickerOpen: isComposerModelPickerOpen,
+          editableFocus: isEditableFocused(event.target),
+          composerFocus: document.activeElement?.getAttribute("data-testid") === "composer-editor",
+          draftThreadRoute: routeKind === "draft",
+          turnRunning: phase === "running",
+        },
+      });
+      if (command === "voice.toggleMute") {
+        // Muting is global: the microphone belongs to the one conversation.
+        if (codexVoiceMode.getState().phase === "idle") return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) codexVoiceMode.toggleMuted();
+        return;
+      }
+      if (command !== "voice.toggle" || !voiceSupported) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) toggleVoice();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [
+    backgroundThread,
+    isComposerModelPickerOpen,
+    keybindings,
+    phase,
+    routeKind,
+    terminalOpen,
+    toggleVoice,
+    voiceSupported,
+  ]);
+
   const composerSendState = deriveComposerSendState({
     prompt,
     imageCount: composerImages.length + composerFiles.length,
@@ -1164,6 +1561,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     sideChatAvailable: props.sideChatAvailable === true,
     sideChatDisabledReason: props.sideChatDisabledReason ?? null,
     compactSlashCommandAvailable,
+    voiceSlashCommand: voiceSupported ? (voiceEngaged ? "stop" : "start") : null,
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
@@ -1205,6 +1603,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  /** The editor refuses text for these reasons; dictation also freezes it while active. */
+  const composerTextUnavailable =
+    projectSelectionRequired || isChoiceOnlyPendingQuestion || activePendingIsResponding;
   const showComposerTopDrawer =
     pendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
@@ -1906,6 +2307,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (applied) setComposerHighlightedItemId(null);
         return;
       }
+      if (item.command === "voice") {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          toggleVoice();
+        }
+        return;
+      }
       if (!planModeUiEnabled) return;
       void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
       const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
@@ -2162,12 +2573,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
     setComposerSubmissionError(submission.validationMessage);
     if (!submission.didDispatch) return;
+    // Sending talks over whatever the last reply was still saying.
+    replySpeaker.stop();
+    replySpeaker.clearFront();
     onTypingGuardSend();
     if (shouldBlurMobileComposerOnSubmit()) {
       blurMobileComposerAfterSend();
     }
   };
   const submitComposerStable = useStableCallback(submitComposer);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- points the voice toggle, declared above, at sending, declared here
+  useEffect(() => {
+    sendVoiceStarterRef.current = () => {
+      if (promptRef.current.trim().length === 0)
+        applyPromptReplacement(0, 0, VOICE_STARTER_MESSAGE, { focusEditorAfterReplace: false });
+      submitComposerStable();
+    };
+  });
   const handleSubmitMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     submitComposer(
@@ -2316,6 +2738,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerTrigger,
     importContextRecords,
     expandMobileComposer: expandMobileComposerStable,
+  });
+
+  useDictationHoldShortcut({
+    dictation,
+    // A side chat's composer leaves the window-wide hold shortcut to the main one.
+    enabled: !composerTextUnavailable && !backgroundThread,
+    ...(voiceTalk ? { start: voiceTalk.start } : {}),
+    escape: () => {
+      if (!conversation.active) return false;
+      endConversation();
+      return true;
+    },
+    isDictateShortcut: (event) =>
+      !isCommandPaletteOpen() &&
+      resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: getTerminalFocusOwner() !== null,
+          terminalOpen,
+          modelPickerOpen: isComposerModelPickerOpen,
+        },
+      }) === "composer.dictate",
   });
   const hasBlockingComposerTopDrawer = pendingUserInputs.length > 0;
   const composerControlsCollapsed = isComposerCollapsedMobile;
@@ -3235,6 +3678,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack items={shelfItems} />
+          {voiceEngaged ? (
+            <ComposerBanner.Attachment>
+              <VoiceModeStrip
+                target={routeThreadRef}
+                engine={voiceEngine === "codex" ? codexVoiceMode : localVoice}
+              />
+            </ComposerBanner.Attachment>
+          ) : null}
           {showComposerTopDrawer ? (
             <ComposerBanner.Attachment>
               <ComposerBanner.Root data-chat-composer-top-drawer="true" variant="info">
@@ -3475,11 +3926,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 ? "Enable a provider in Settings to send a message"
                                 : DEFAULT_COMPOSER_PLACEHOLDER
                     }
-                    disabled={
-                      projectSelectionRequired ||
-                      isChoiceOnlyPendingQuestion ||
-                      activePendingIsResponding
-                    }
+                    disabled={composerTextUnavailable || dictation.active}
                   />
                 </ComposerContextActionsContext>
                 {showMobilePendingAnswerActions ? (
@@ -3544,6 +3991,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
+                  <ComposerVoiceButton
+                    engaged={voiceEngaged}
+                    disabledReason={voiceDisabledReason}
+                    onToggle={toggleVoice}
+                  />
+                  {voiceEngine === "local" ? (
+                    <VoiceEnginePicker environmentId={environmentId} />
+                  ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

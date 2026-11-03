@@ -103,6 +103,9 @@ import {
   WsCtrlRpcGroup,
   WsCursorMcpRpcGroup,
   WsReviewSessionsRpcGroup,
+  WsDictationRpcGroup,
+  WsSpeechRpcGroup,
+  WsHomeRpcGroup,
   WsPluginsRpcGroup,
   WsRpcGroup,
   CursorMcpOperationError,
@@ -200,10 +203,15 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as ServerSettings from "./serverSettings.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
+import * as Dictation from "./dictation/Dictation.ts";
+import * as Speech from "./speech/Speech.ts";
+import * as VoiceFront from "./voiceFront/VoiceFront.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { terminalOutputStream, withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
+import * as FleetService from "./home/FleetService.ts";
+import * as HomeService from "./home/HomeService.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as RemoteMcpServers from "./remoteMcp/RemoteMcpServers.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
@@ -638,6 +646,9 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 const ServerWsBaseRpcGroup = WsBaseRpcGroup.middleware(RpcInstrumentation);
 const ServerReviewSessionsRpcGroup = WsReviewSessionsRpcGroup.middleware(RpcInstrumentation);
+const ServerHomeRpcGroup = WsHomeRpcGroup.middleware(RpcInstrumentation);
+const ServerDictationRpcGroup = WsDictationRpcGroup.middleware(RpcInstrumentation);
+const ServerSpeechRpcGroup = WsSpeechRpcGroup.middleware(RpcInstrumentation);
 const ServerPluginsRpcGroup = WsPluginsRpcGroup.middleware(RpcInstrumentation);
 const ServerCtrlRpcGroup = WsCtrlRpcGroup.middleware(RpcInstrumentation);
 const ServerCursorMcpRpcGroup = WsCursorMcpRpcGroup.middleware(RpcInstrumentation);
@@ -1367,6 +1378,18 @@ const layerReviewSessionsRpc = ServerReviewSessionsRpcGroup.toLayer(
   }),
 );
 
+const layerHomeRpc = ServerHomeRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const home = yield* HomeService.HomeService;
+    return ServerHomeRpcGroup.of({
+      [WS_METHODS.homeEnable]: (input) => home.enable(input),
+      [WS_METHODS.homeDisable]: (_input) => home.disable,
+      [WS_METHODS.homeStartFresh]: (_input) => home.startFresh,
+      [WS_METHODS.homeReportWatchEvents]: (input) => home.report(input),
+    });
+  }),
+);
+
 const layerPluginsRpc = ServerPluginsRpcGroup.toLayer(
   Effect.gen(function* () {
     const plugins = yield* PluginHost.PluginHost;
@@ -1430,6 +1453,22 @@ const layerCtrlRpc = ServerCtrlRpcGroup.toLayer(
       [WS_METHODS.remoteMcpAuthorize]: (input) => remoteMcp.authorize(input),
       [WS_METHODS.remoteMcpReconnect]: (input) => remoteMcp.reconnect(input),
       [WS_METHODS.remoteMcpRemove]: (input) => remoteMcp.remove(input),
+    });
+  }),
+);
+
+const layerDictationRpc = ServerDictationRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const dictation = yield* Dictation.Dictation;
+    return ServerDictationRpcGroup.of({
+      [WS_METHODS.dictationInstall]: (input) => dictation.install(input),
+      [WS_METHODS.dictationRemove]: (input) => dictation.remove(input),
+      [WS_METHODS.dictationStart]: (input) => dictation.start(input),
+      [WS_METHODS.dictationWarm]: () => dictation.warm,
+      [WS_METHODS.dictationAppend]: (input) => dictation.append(input),
+      [WS_METHODS.dictationFinish]: (input) => dictation.finish(input),
+      [WS_METHODS.dictationCancel]: (input) => dictation.cancel(input),
+      [WS_METHODS.subscribeDictationState]: () => dictation.stateStream,
     });
   }),
 );
@@ -1533,6 +1572,23 @@ const layerCursorMcpRpc = ServerCursorMcpRpcGroup.toLayer(
   }),
 );
 
+const layerSpeechRpc = ServerSpeechRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const speech = yield* Speech.Speech;
+    const voiceFront = yield* VoiceFront.VoiceFront;
+    return ServerSpeechRpcGroup.of({
+      [WS_METHODS.voiceFrontStatus]: () => voiceFront.status,
+      [WS_METHODS.voiceFrontRespond]: (input) => voiceFront.respond(input),
+      [WS_METHODS.voiceFrontEnd]: (input) => voiceFront.end(input.threadId),
+      [WS_METHODS.voiceFrontSetGeminiKey]: (input) => voiceFront.setGeminiKey(input.key),
+      [WS_METHODS.speechInstall]: () => speech.install,
+      [WS_METHODS.speechRemove]: () => speech.remove,
+      [WS_METHODS.speechSynthesize]: (input) => speech.synthesize(input),
+      [WS_METHODS.subscribeSpeechState]: () => speech.stateStream,
+    });
+  }),
+);
+
 export const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
@@ -1560,6 +1616,11 @@ export const layerWsRpc = (
       const scratchThreadPromotion = yield* ScratchThreadPromotion.ScratchThreadPromotion;
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
+      // Optional, so tests that build these handlers without Home still can.
+      const homeAvailable = Option.exists(
+        yield* Effect.serviceOption(HomeService.HomeService),
+        (home) => home.available,
+      );
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
@@ -2132,6 +2193,7 @@ export const layerWsRpc = (
           newProjectsRoot: managedFolders.namedProjectsRoot,
           ...(battery === null ? {} : { hostBattery: battery }),
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
+          ...(homeAvailable ? { homeWorkspaceRoot: yield* managedFolders.homeRoot } : {}),
         };
       });
 
@@ -2782,6 +2844,7 @@ export const layerWsRpc = (
                 ),
               ),
           ),
+        [WS_METHODS.providerVoiceSession]: (input) => providerSessionsV2.startVoiceSession(input),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           providerMaintenanceRunner.updateProvider(input),
         [WS_METHODS.providerConsumeResetCredit]:
@@ -2865,7 +2928,9 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
-          Effect.fnUntraced(function* ({ patch, providerInstanceMutation }) {
+          Effect.fnUntraced(function* ({ patch: clientPatch, providerInstanceMutation }) {
+            // Home's state changes only through the Home RPCs and Home's tools.
+            const { home: _home, ...patch } = clientPatch;
             const deviceHosts = patch.deviceHosts
               ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                   Effect.provide(deviceHostContext),
@@ -3676,6 +3741,11 @@ export const WS_RPC_SERVER_OPTIONS = {
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
+    const homeLayer = Layer.mergeAll(
+      Layer.succeed(HomeService.HomeService, yield* HomeService.HomeService),
+      Layer.succeed(FleetService.FleetService, yield* FleetService.FleetService),
+      Layer.succeed(VoiceFront.VoiceFront, yield* VoiceFront.VoiceFront),
+    );
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const npmRelease = yield* NpmRelease.NpmRelease;
     const pullRequests = yield* PullRequestService.PullRequestService;
@@ -3754,11 +3824,15 @@ export const layer = Layer.unwrap(
               layerCtrlRpc,
               layerCursorMcpRpc.pipe(Layer.provide(CursorMcpServers.layer)),
               layerPluginsRpc,
+              layerHomeRpc,
+              layerDictationRpc,
+              layerSpeechRpc,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+              Layer.provide(homeLayer),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),

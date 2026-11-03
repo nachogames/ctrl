@@ -10,6 +10,8 @@ import { McpServer } from "effect/ai";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
 import { DeviceService } from "../device/DeviceService.ts";
+import { FleetService } from "../home/FleetService.ts";
+import { HomeService } from "../home/HomeService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -54,6 +56,8 @@ import { PluginHost } from "../plugins/PluginHost.ts";
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
   Layer.mock(DeviceService)({}),
+  Layer.mock(FleetService)({}),
+  Layer.mock(HomeService)({ available: false }),
   Layer.mock(DocumentText)({}),
   Layer.mock(GroupResourceScanner)({}),
   Layer.mock(GitVcsDriver)({}),

@@ -1,10 +1,8 @@
-import {
-  scopedProjectKey,
-  scopeProjectRef,
-  scopeThreadRef,
-} from "@t3tools/client-runtime/environment";
+import { useAtomValue } from "@effect/atom-react";
+import { scopedProjectKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type EnvironmentId,
   type ScopedProjectRef,
   type ThreadGroupId,
   type ThreadId,
@@ -35,6 +33,7 @@ import {
   useQuietThreadShell,
 } from "../state/entities";
 import {
+  defaultNewThreadProjectRef,
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
@@ -43,7 +42,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
-import { environmentServerConfigsAtom } from "../state/server";
+import { environmentServerConfigsAtom, primaryServerConfigAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings } from "./useSettings";
@@ -437,11 +436,16 @@ export function createNewThreadHandler(router: AnyRouter) {
   };
 }
 
+/** The first project in sidebar order, skipping Home's folder when `home` names it. */
 export function resolveDefaultProjectRef(
   projects: ReadonlyArray<EnvironmentProject>,
   projectOrder: readonly string[],
+  home: {
+    readonly primaryEnvironmentId: EnvironmentId | null;
+    readonly homeWorkspaceRoot: string | null;
+  } = { primaryEnvironmentId: null, homeWorkspaceRoot: null },
 ): ScopedProjectRef | null {
-  const [defaultProject] = orderItemsByPreferredIds({
+  const orderedProjects = orderItemsByPreferredIds({
     items: projects.filter((project) => project.archivedAt == null),
     preferredIds: projectOrder,
     getId: getProjectOrderKey,
@@ -450,7 +454,7 @@ export function resolveDefaultProjectRef(
       legacyProjectCwdPreferenceKey(project.workspaceRoot),
     ],
   });
-  return defaultProject ? scopeProjectRef(defaultProject.environmentId, defaultProject.id) : null;
+  return defaultNewThreadProjectRef(orderedProjects, home);
 }
 
 export function useHandleNewThread() {
@@ -469,7 +473,18 @@ export function useHandleNewThread() {
   );
   const projects = useProjects();
   const handleNewThread = useNewThreadHandler();
-  const defaultProjectRef = resolveDefaultProjectRef(projects, projectOrder);
+  const primaryEnvironmentId = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => config?.environment.environmentId ?? null,
+  );
+  const homeWorkspaceRoot = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => config?.homeWorkspaceRoot ?? null,
+  );
+  const defaultProjectRef = resolveDefaultProjectRef(projects, projectOrder, {
+    primaryEnvironmentId,
+    homeWorkspaceRoot,
+  });
 
   return {
     activeDraftThread,

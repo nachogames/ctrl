@@ -255,6 +255,10 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   },
 ];
 
+const MICROPHONE_PERMISSION =
+  "Allow Ctrl to use your microphone for voice input and voice conversations.";
+const CAMERA_PERMISSION = "Allow Ctrl to access your camera so you can scan pairing QR codes.";
+
 // Match iOS PostScript names on Android so RN and the native composer share fonts before runtime loading.
 
 const config: ExpoConfig = {
@@ -346,8 +350,11 @@ const config: ExpoConfig = {
     },
     // JS back dispatch needs RN's Android 16 shim and withAndroidPredictiveBackCompat on Android 13-15.
     predictiveBackGestureEnabled: true,
-    // expo-sensors declares this for its pedometer, which the app does not use.
-    blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
+    // The app uses neither expo-sensors' pedometer nor WebRTC screen sharing.
+    blockedPermissions: [
+      "android.permission.ACTIVITY_RECOGNITION",
+      "android.permission.SYSTEM_ALERT_WINDOW",
+    ],
   },
   web: {
     favicon: variant.assets.appIcon,
@@ -412,22 +419,30 @@ const config: ExpoConfig = {
     [
       "expo-audio",
       {
-        microphonePermission: "Allow Ctrl to use your microphone for voice input.",
-        recordAudioAndroid: false,
+        microphonePermission: MICROPHONE_PERMISSION,
+        recordAudioAndroid: true,
         enableBackgroundPlayback: false,
         enableBackgroundRecording: false,
       },
     ],
+    // Voice conversations run over WebRTC. Pass both usage strings so its
+    // plugin cannot fall back to generic ones.
+    [
+      "@config-plugins/react-native-webrtc",
+      { cameraPermission: CAMERA_PERMISSION, microphonePermission: MICROPHONE_PERMISSION },
+    ],
     [
       "expo-camera",
       {
-        cameraPermission: "Allow Ctrl to access your camera so you can scan pairing QR codes.",
+        cameraPermission: CAMERA_PERMISSION,
         microphonePermission: false,
         barcodeScannerEnabled: true,
         recordAudioAndroid: false,
       },
     ],
-    ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
+    // `microphonePermission: false` would block RECORD_AUDIO on Android for every
+    // package, including voice conversations, so share the app's usage string.
+    ["expo-image-picker", { photosPermission: false, microphonePermission: MICROPHONE_PERMISSION }],
     [
       "expo-splash-screen",
       {

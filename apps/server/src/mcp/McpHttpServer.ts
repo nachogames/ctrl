@@ -51,6 +51,8 @@ import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
+import { HomeToolkit } from "./toolkits/home/tools.ts";
+import * as HomeHandlers from "./toolkits/home/handlers.ts";
 import { GroupToolkit } from "./toolkits/group/tools.ts";
 import * as GroupHandlers from "./toolkits/group/handlers.ts";
 import { ReviewToolkit } from "./toolkits/review/tools.ts";
@@ -1255,6 +1257,8 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+const layerHomeToolkit = toolkitRegistration(HomeToolkit, HomeHandlers.layer);
+
 /**
  * `McpServer` for in-process calls, which provide `McpInvocationContext`
  * around `callTool` as the auth middleware does for each /mcp request.
@@ -1291,6 +1295,7 @@ export const layerTools = Layer.mergeAll(
   layerThreadToolkit,
   layerAttachmentToolkit,
   layerProjectRegistration,
+  layerHomeToolkit,
   layerGroupToolkit,
   layerReviewToolkit,
   layerEnvironmentToolkit,

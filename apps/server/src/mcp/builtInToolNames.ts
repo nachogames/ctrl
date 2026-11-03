@@ -82,6 +82,7 @@ export const BUILT_IN_MCP_TOOL_NAMES: ReadonlyArray<string> = [
   "t3_thread_transfer",
   "t3_thread_update",
   "t3_thread_wait",
+  "t3_thread_watch",
   "t3_workflow_stop",
   "t3_worktree_handoff",
   "t3_worktree_list",

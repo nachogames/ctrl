@@ -2,7 +2,7 @@ import type { DraftId } from "~/composerDraftStore";
 import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDraftStore";
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { isHomeProject, isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentThreadGroup } from "@t3tools/client-runtime/state/models";
 import { ChevronDownIcon, FolderPlusIcon, LayersIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
@@ -10,7 +10,7 @@ import { useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
-import { primaryServerKeybindingsAtom } from "~/state/server";
+import { primaryServerConfigAtom, primaryServerKeybindingsAtom } from "~/state/server";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "~/hooks/useOrderWhileOpen";
 import { useProjectPin } from "~/hooks/useProjectGroupUpdate";
@@ -113,6 +113,10 @@ export function DraftHeroHeadline({
   const threadGroups = useThreadGroups();
   const highlightedPickerValueRef = useRef<string | null>(null);
   const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
+  const homeWorkspaceRoot = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => config?.homeWorkspaceRoot ?? null,
+  );
 
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
@@ -156,9 +160,14 @@ export function DraftHeroHeadline({
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
+  // Home's folder never appears in the project menu.
   const menuEntries = projectPickerEntries.filter(
     ({ targetProject }) =>
-      !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
+      !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)) &&
+      !(
+        targetProject.environmentId === primaryEnvironmentId &&
+        isHomeProject(targetProject, homeWorkspaceRoot)
+      ),
   );
   const activeProject =
     activeProjectRef === null

@@ -1,4 +1,7 @@
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
+import { DictationSettings, DictationSettingsPatch } from "./dictation.ts";
+import { SpeechSettings, SpeechSettingsPatch } from "./speech.ts";
+import { VoiceFrontSettings, VoiceFrontSettingsPatch } from "./voiceFront.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -9,8 +12,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
+import { DEFAULT_HOME_SETTINGS, HomeSettings } from "./home.ts";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
+  EnvironmentId,
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
   OmittedWhenNull,
@@ -368,6 +373,10 @@ export const ClientSettingsSchema = Schema.Struct({
   effortDisplay: EffortDisplay.pipe(Schema.withDecodingDefault(Effect.succeed("label" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Environment that transcribes this device's dictation; null picks one automatically. */
+  dictationEnvironmentId: Schema.NullOr(EnvironmentId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
   ),
@@ -635,6 +644,21 @@ export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fi
   );
 }
 
+// Voices the Codex realtime V3 session accepts (`thread/realtime/listVoices`
+// v1 list). An empty value lets Codex use its own configured default.
+const CODEX_VOICE_OPTIONS = [
+  { value: "", label: "Codex default" },
+  { value: "cove", label: "Cove" },
+  { value: "juniper", label: "Juniper" },
+  { value: "maple", label: "Maple" },
+  { value: "spruce", label: "Spruce" },
+  { value: "ember", label: "Ember" },
+  { value: "vale", label: "Vale" },
+  { value: "breeze", label: "Breeze" },
+  { value: "arbor", label: "Arbor" },
+  { value: "sol", label: "Sol" },
+] as const satisfies ReadonlyArray<ProviderSettingsFormOption>;
+
 export const CodexSettings = makeProviderSettingsSchema(
   {
     setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
@@ -685,9 +709,21 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    voice: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Voice",
+        description: "Voice used by voice conversations. Applies to the next conversation.",
+        providerSettingsForm: {
+          control: "select",
+          options: CODEX_VOICE_OPTIONS,
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs", "voice"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;
@@ -1252,6 +1288,15 @@ export const ServerSettings = Schema.Struct({
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   deviceHosts: SshDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  dictation: DictationSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(DictationSettings)({}))),
+  ),
+  speech: SpeechSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(SpeechSettings)({}))),
+  ),
+  voiceFront: VoiceFrontSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(VoiceFrontSettings)({}))),
+  ),
   easDeviceHosts: EasDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   simlockDeviceHosts: SimlockDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Alpha: Simlock device hosts. Off, the server ignores `simlockDeviceHosts`. */
@@ -1324,6 +1369,11 @@ export const ServerSettings = Schema.Struct({
   environmentLabel: ForwardCompatibleNullable(EnvironmentLabel).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Home, the fleet-wide agent thread. Only desktop-hosted servers turn it on.
+   * Server-managed: the WebSocket settings update drops client patches to it.
+   */
+  home: HomeSettings.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_HOME_SETTINGS))),
   /** Null inherits t3.json, then local; omit it on the wire for older clients requiring a literal. */
   defaultThreadEnvMode: OmittedWhenNull(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
@@ -1668,6 +1718,9 @@ export const ServerSettingsPatch = Schema.Struct({
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
+  dictation: Schema.optionalKey(DictationSettingsPatch),
+  speech: Schema.optionalKey(SpeechSettingsPatch),
+  voiceFront: Schema.optionalKey(VoiceFrontSettingsPatch),
   easDeviceHosts: Schema.optionalKey(EasDeviceHostConfigs),
   simlockDeviceHosts: Schema.optionalKey(SimlockDeviceHostConfigs),
   simlockDeviceHostsEnabled: Schema.optionalKey(Schema.Boolean),
@@ -1696,6 +1749,8 @@ export const ServerSettingsPatch = Schema.Struct({
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   environmentLabel: Schema.optionalKey(Schema.NullOr(EnvironmentLabel)),
+  /** Replaces Home's state whole. Only server code sends this. */
+  home: Schema.optionalKey(HomeSettings),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
@@ -1795,6 +1850,7 @@ export const ClientSettingsPatch = Schema.Struct({
   effortDisplay: Schema.optionalKey(EffortDisplay),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
+  dictationEnvironmentId: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
   panelAnimationDurationMs: Schema.optionalKey(PanelAnimationDurationMs),
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),

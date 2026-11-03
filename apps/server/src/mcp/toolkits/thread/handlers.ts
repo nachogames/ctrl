@@ -8,8 +8,10 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
+import { callerIsHome, routeHome } from "../../homeRouting.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
@@ -90,6 +92,12 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
+/** The thread a call names, else the calling thread. */
+const threadOrCaller = Effect.fn("mcp.threadOrCaller")(function* (threadId: ThreadId | undefined) {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
+  return threadId ?? scope.thread?.threadId;
+});
+
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
@@ -129,7 +137,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
       const { matches } = yield* threadSearch
-        .searchThreads({ ...input, projectId: input.projectId ?? caller?.projectId })
+        .searchThreads({
+          ...input,
+          // An omitted project means the caller's own; Shift searches every project.
+          projectId: input.projectId ?? ((yield* callerIsHome()) ? undefined : caller?.projectId),
+        })
         .pipe(Effect.mapError(unavailable));
       return {
         matches: matches.map((match) => ({
@@ -230,6 +242,15 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     (input) => input.action !== "respond",
     McpToolAccess.reads((input) =>
       Effect.gen(function* () {
+        const threadId = yield* threadOrCaller(input.threadId);
+        if (input.action === "list") {
+          const routed = yield* routeHome("requests.list", { threadId });
+          if (Option.isSome(routed)) return routed.value;
+        } else {
+          const requestId = yield* required(input.requestId, "requestId");
+          const routed = yield* routeHome("requests.read", { threadId, requestId });
+          if (Option.isSome(routed)) return routed.value;
+        }
         if (input.action === "list") {
           const { projection } = yield* readThread(input.threadId, ["runtimeRequests"]);
           return {
@@ -246,6 +267,18 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     writesThread((input) =>
       Effect.gen(function* () {
         const requestId = yield* required(input.requestId, "requestId");
+        const routed = yield* routeHome("requests.respond", {
+          threadId: yield* threadOrCaller(input.threadId),
+          requestId,
+          ...(input.answers === undefined ? {} : { answers: input.answers }),
+          ...(input.decision === undefined ? {} : { decision: input.decision }),
+        });
+        if (Option.isSome(routed)) return routed.value;
+        if (input.decision !== undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "capability_denied",
+            message: "Only Shift can answer approval requests. Pass answers for a question.",
+          });
         const answers = yield* required(input.answers, "answers");
         const { threads, projection } = yield* readQuestion({
           threadId: input.threadId,
@@ -334,6 +367,12 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
+      const routed = yield* routeHome("threads.organize", {
+        threadId: yield* threadOrCaller(input.threadId),
+        action: input.action,
+        ...(input.snoozedUntil === undefined ? {} : { snoozedUntil: input.snoozedUntil }),
+      });
+      if (Option.isSome(routed)) return routed.value;
       const { threads, projection, caller } = yield* readThread(input.threadId);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       if (input.action === "settle") {

@@ -105,6 +105,30 @@ finishes. Plugins and MCP servers are listed but can only be turned off in Codex
 itself. To manage connectors everywhere, use
 **Manage on chatgpt.com**.
 
+## Voice conversations
+
+A Codex thread can hold a spoken conversation. You talk with
+a voice model that hands coding requests to Codex and reads its answers back to
+you. In a new thread, Ctrl first sends a one-line starter, or what you typed, so Codex has a
+session to talk in, then connects when that turn ends.
+
+Start or stop it with the waveform button in the composer. On web and desktop you
+can also send `/voice` or press `F8`. While it runs, the strip above the composer shows whether it is
+listening or speaking, with buttons to mute your microphone and stop. The command
+palette offers the same actions, and **Voice: Toggle Mute** can be bound in
+**Settings > Keybindings**.
+
+Choose the voice in **Settings > Providers > Codex > Voice**. The change applies
+to your next conversation.
+
+On mobile, the conversation stops when you leave the thread or the app. The mobile
+app needs an update that includes voice support.
+
+Voice needs a microphone and permission to use it. When you open T3 Code from
+another device, the page must be served over HTTPS for the browser to allow the
+microphone. Live captions are not saved: the thread keeps only the requests
+handed to Codex and Codex's replies.
+
 ## Codex says I hit a usage limit
 
 When Codex stops on a usage limit, the thread names the window that ran out and

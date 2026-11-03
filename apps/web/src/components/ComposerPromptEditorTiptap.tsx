@@ -140,6 +140,16 @@ export interface ComposerPromptEditorHandle {
     contextIds: string[];
   };
   isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
+  /**
+   * Briefly highlights a range of the prompt, in the same Markdown offsets as
+   * `readSelectionRange`, so inserted text such as a dictation is easy to spot.
+   */
+  flashRange: (range: { start: number; end: number }) => void;
+  /**
+   * Shows provisional text at the caret without changing the prompt, such as
+   * the words dictation has heard so far. "" removes it.
+   */
+  showLiveText: (text: string) => void;
 }
 
 export interface ComposerPromptEditorProps {
@@ -746,10 +756,59 @@ function decorationsForSelection(state: EditorState): DecorationSet {
   return DecorationSet.create(doc, decorations);
 }
 
+const FlashPluginKey = new PluginKey<DecorationSet>("composer-flash");
+/** Matches the `composer-flash` keyframes in index.css. */
+const FLASH_DURATION_MS = 900;
+
+/** Holds one short-lived highlight, set and cleared through transaction meta. */
+const ComposerFlashPlugin = new Plugin<DecorationSet>({
+  key: FlashPluginKey,
+  state: {
+    init: () => DecorationSet.empty,
+    apply: (tr, old) => {
+      const meta = tr.getMeta(FlashPluginKey) as { from: number; to: number } | null | undefined;
+      if (meta === null) return DecorationSet.empty;
+      if (meta) {
+        return DecorationSet.create(tr.doc, [
+          Decoration.inline(meta.from, meta.to, { class: "composer-flash" }),
+        ]);
+      }
+      return old.map(tr.mapping, tr.doc);
+    },
+  },
+  props: {
+    decorations: (state) => FlashPluginKey.getState(state),
+  },
+});
+
+const LiveTextPluginKey = new PluginKey<DecorationSet>("composer-live-text");
+
+/** Holds one widget of provisional text, set and cleared through transaction meta. */
+const ComposerLiveTextPlugin = new Plugin<DecorationSet>({
+  key: LiveTextPluginKey,
+  state: {
+    init: () => DecorationSet.empty,
+    apply: (tr, old) => {
+      const meta = tr.getMeta(LiveTextPluginKey) as { at: number; text: string } | undefined;
+      if (meta === undefined) return old.map(tr.mapping, tr.doc);
+      if (meta.text === "") return DecorationSet.empty;
+      const widget = document.createElement("span");
+      widget.className = "composer-live-text";
+      widget.textContent = meta.text;
+      return DecorationSet.create(tr.doc, [
+        Decoration.widget(meta.at, widget, { side: 1, key: `live-${meta.text}` }),
+      ]);
+    },
+  },
+  props: {
+    decorations: (state) => LiveTextPluginKey.getState(state),
+  },
+});
+
 const ComposerMarkersExtension = Extension.create({
   name: "composer-rich-markers",
   addProseMirrorPlugins() {
-    return [ComposerMarkerPlugin];
+    return [ComposerMarkerPlugin, ComposerFlashPlugin, ComposerLiveTextPlugin];
   },
 });
 
@@ -991,12 +1050,15 @@ function ComposerPromptEditorTiptapInner(
     contextIds: literalText ? [] : collectInlineContextIds(value),
   });
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
+  const flashTimerRef = useRef<number | null>(null);
   const isApplyingControlledUpdateRef = useRef(false);
   const hasAppliedControlledSelectionRef = useRef(false);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
   const citationDraftRef = useRef<{ key: string; comment: string } | null>(null);
   const [isEmpty, setIsEmpty] = useState(value.length === 0);
+  // Live dictation text covers the placeholder; this flips at most twice per dictation.
+  const [showsLiveText, setShowsLiveText] = useState(false);
 
   const citationCommentActions = {
     openComment: openCitation,
@@ -1679,6 +1741,33 @@ function ComposerPromptEditorTiptapInner(
         readSnapshot();
         return selectionRangeRef.current;
       },
+      flashRange: ({ start, end }) => {
+        if (!editor || end <= start) return;
+        const map = serializeEditorDoc(editor.state.doc);
+        const from = flatToPm(map, markdownToFlat(map, start));
+        const to = flatToPm(map, markdownToFlat(map, end));
+        if (to <= from) return;
+        editor.view.dispatch(editor.state.tr.setMeta(FlashPluginKey, { from, to }));
+        // A newer flash replaces the old one, so its timer must not clear the newer one early.
+        if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
+        flashTimerRef.current = window.setTimeout(() => {
+          flashTimerRef.current = null;
+          if (!editor.isDestroyed) {
+            editor.view.dispatch(editor.state.tr.setMeta(FlashPluginKey, null));
+          }
+        }, FLASH_DURATION_MS);
+      },
+      showLiveText: (text) => {
+        if (!editor || editor.isDestroyed) return;
+        const { state } = editor;
+        if (text === "" && LiveTextPluginKey.getState(state) === DecorationSet.empty) return;
+        const at = state.selection.to;
+        // Spaced like the transcript will be: a word right before the caret gets a gap.
+        const before = state.doc.textBetween(Math.max(0, at - 1), at, "\n", " ");
+        const spaced = text !== "" && before !== "" && !/\s/.test(before) ? ` ${text}` : text;
+        editor.view.dispatch(state.tr.setMeta(LiveTextPluginKey, { at, text: spaced }));
+        setShowsLiveText(text !== "");
+      },
       requestCitationComment: (request) => {
         citationRequestRef.current = request;
         if (!editor) return;
@@ -1818,7 +1907,7 @@ function ComposerPromptEditorTiptapInner(
               onCopyCapture={(event) => handleCopyCut(event, false)}
               onCutCapture={(event) => handleCopyCut(event, true)}
             />
-            {isEmpty && contextRecords.size === 0 && placeholder ? (
+            {isEmpty && !showsLiveText && contextRecords.size === 0 && placeholder ? (
               <div
                 className={cn(
                   "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",

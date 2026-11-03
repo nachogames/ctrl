@@ -207,6 +207,8 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import { ComposerVoiceStrip } from "../voice-mode/ComposerVoiceMode";
+import { useVoiceModePhase } from "../voice-mode/useVoiceMode";
 
 export interface ThreadDetailScreenProps {
   readonly header?: React.ReactNode;
@@ -918,6 +920,8 @@ function ThreadDetailBody(
   const pendingMessageEditBlocked =
     queuedRunEditBlockedReason({ openQuestionCount: activeUserInputRequestId === null ? 0 : 1 }) !==
     null;
+  const voiceTarget = { environmentId: props.environmentId, threadId: props.selectedThread.id };
+  const voiceLiveHere = useVoiceModePhase(voiceTarget) !== "idle";
   const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;
@@ -1743,6 +1747,9 @@ function ThreadDetailBody(
                   </ComposerPanels>
                 </View>
 
+                {/* The composer below hides for a question card; keep a live
+                voice conversation's mute and stop controls reachable. */}
+                {activeUserInputRequestId !== null && voiceLiveHere ? <ComposerVoiceStrip /> : null}
                 <View style={composerSlotHidden ? { display: "none" } : undefined}>
                   {isProviderSubagent ? (
                     <View
