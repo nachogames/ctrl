@@ -49,6 +49,8 @@ import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -223,6 +225,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
           Layer.provide(NodeServices.layer),
         ),
         NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
       ),
     ),
   ),
@@ -313,6 +317,8 @@ it.effect("proxies remote MCP tools to every agent", () =>
           Layer.provide(NodeServices.layer),
         ),
         NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
       ),
     ),
   ),

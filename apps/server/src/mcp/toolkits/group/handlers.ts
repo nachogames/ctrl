@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { groupLinkLabel } from "@t3tools/shared/threadGroups";
 import { resolveNewestCurrentPullRequestLink } from "../../../sourceControl/threadPullRequests.ts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -80,9 +80,8 @@ const commandIdFor = (operation: string, clientRequestId: string | undefined) =>
 /** A random id, or one derived from the command so a retried create replays. */
 const newGroupId = (commandId: CommandId, clientRequestId: string | undefined) =>
   clientRequestId === undefined
-    ? Crypto.Crypto.pipe(
-        Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-        Effect.orDie,
+    ? SecureRandom.SecureRandom.pipe(
+        Effect.flatMap((random) => random.uuidV4()),
         Effect.map((uuid) => ThreadGroupId.make(`group:${uuid}`)),
       )
     : Effect.succeed(ThreadGroupId.make(`group:${commandId}`));
@@ -389,10 +388,7 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
         let group: OrchestrationThreadGroupShell | undefined;
         if (input.links !== undefined) {
           const ids = yield* Effect.forEach(adds, () =>
-            Crypto.Crypto.pipe(
-              Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-              Effect.orDie,
-            ),
+            SecureRandom.SecureRandom.pipe(Effect.flatMap((random) => random.uuidV4())),
           );
           const service = yield* ThreadGroup.ThreadGroupService;
           group = yield* service
@@ -548,9 +544,8 @@ export const layer = McpToolAccess.toLayer(GroupToolkit, {
         const resource: ThreadGroupManualResource = {
           id:
             input.id ??
-            `res:${yield* Crypto.Crypto.pipe(
-              Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-              Effect.orDie,
+            `res:${yield* SecureRandom.SecureRandom.pipe(
+              Effect.flatMap((random) => random.uuidV4()),
             )}`,
           name: input.name,
           url: input.url ?? null,

@@ -7,7 +7,7 @@ import type {
   AcpRegistrySetProviderInput,
   ProviderDisabledInventory,
   ProviderDriverKind,
-  ProviderInstanceEnvironment,
+  ResolvedProviderInstanceEnvironment,
   ProviderInstanceId,
   ProviderInventory,
   ServerProvider,
@@ -107,7 +107,7 @@ export interface ProviderDriverCreateInput<Config> {
   readonly instanceId: ProviderInstanceId;
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
-  readonly environment: ProviderInstanceEnvironment;
+  readonly environment: ResolvedProviderInstanceEnvironment;
   readonly enabled: boolean;
   /** Absent means nothing is switched off. */
   readonly disabledInventory?: ProviderDisabledInventory;

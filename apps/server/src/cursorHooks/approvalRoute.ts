@@ -7,7 +7,7 @@ import {
   decideCursorMcpHook,
 } from "@t3tools/provider-cursor/server/CursorMcpApprovals";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
@@ -42,8 +42,8 @@ const handler = Effect.fn("CursorApprovalRoute.handle")(function* (expectedAutho
  */
 export const layer = HttpRouter.use((router) =>
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const token = Buffer.from(yield* crypto.randomBytes(32).pipe(Effect.orDie)).toString("hex");
+    const random = yield* SecureRandom.SecureRandom;
+    const token = Buffer.from(yield* random.randomBytes(32)).toString("hex");
     const environment = yield* HostProcess.Environment;
     environment[CURSOR_HOOK_TOKEN_ENV] = token;
     yield* router.add("POST", CURSOR_HOOK_PATH, handler(`Bearer ${token}`));

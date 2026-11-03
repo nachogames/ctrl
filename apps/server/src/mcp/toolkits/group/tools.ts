@@ -12,7 +12,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -32,7 +32,7 @@ const groupTool = {
     ThreadManagementService.ThreadManagementService,
     ThreadGroupService.ThreadGroupService,
     ThreadGroupStore.ThreadGroupStoreV2,
-    Crypto.Crypto,
+    SecureRandom.SecureRandom,
   ],
 };
 

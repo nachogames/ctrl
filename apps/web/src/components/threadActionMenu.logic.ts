@@ -16,6 +16,7 @@ export const THREAD_HANDOFF_PROMPT =
 export const THREAD_HANDOFF_BUSY_HINT = "Wait for the turn to finish";
 
 export type ThreadActionMenuId =
+  | "find"
   | "new-thread-on-branch"
   | "handoff"
   | MoveToGroupMenuId
@@ -90,6 +91,7 @@ export function buildDraftActionMenuItems(options: {
 
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
+  readonly canFind?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -140,6 +142,7 @@ export interface ThreadActionMenuState {
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
+    "find",
     "new-thread-on-branch",
     "project-settings",
     "open-group-panel",
@@ -159,6 +162,9 @@ export function buildThreadActionMenuItems(
   // A group only places the chat where the server can act on groups.
   const group = state.supports.threadGroups ? (state.group ?? null) : null;
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(state.canFind
+      ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
+      : []),
     ...(state.branch
       ? [
           {

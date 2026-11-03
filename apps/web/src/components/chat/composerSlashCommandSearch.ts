@@ -25,6 +25,7 @@ function isMidMessageSkill(item: SlashSearchItem): boolean {
 /**
  * Mid-message, skills lead: picking one inserts a `$` mention the server dispatches
  * anywhere. Commands that only expand at the message start stay listed last, with a hint.
+ * `/side` and `/btw` work only at the message start, so they are left out.
  */
 export function slashCommandItemsForPromptPosition(
   items: ReadonlyArray<SlashSearchItem>,
@@ -34,7 +35,9 @@ export function slashCommandItemsForPromptPosition(
     return [...items];
   }
   const skills = items.filter(isMidMessageSkill);
-  const builtIns = items.filter((item) => item.type === "slash-command");
+  const builtIns = items.filter(
+    (item) => item.type === "slash-command" && item.command !== "side" && item.command !== "btw",
+  );
   const startOnly = items.flatMap((item) =>
     item.type === "provider-slash-command" && !isMidMessageSkill(item)
       ? [{ ...item, hint: PROMPT_START_ONLY_HINT }]
