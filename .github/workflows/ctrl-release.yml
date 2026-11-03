@@ -28,7 +28,8 @@ permissions:
 jobs:
   release:
     name: Build and publish macOS arm64
-    runs-on: macos-15
+    # macOS 26's SDK: the Apple dictation helper uses SpeechAnalyzer.
+    runs-on: macos-26
     environment: release
     timeout-minutes: 60
     steps:
@@ -155,4 +156,3 @@ jobs:
             --title "Ctrl ${{ steps.version.outputs.version }}" \
             --generate-notes \
             release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml
-
