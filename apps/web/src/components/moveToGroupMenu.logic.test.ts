@@ -8,6 +8,7 @@ import {
   isThreadGroupWorkspaceMismatch,
   moveWithWorkspaceConfirm,
   parseMoveToGroupTarget,
+  resolveGroupThreadsTarget,
   workspaceMismatchConfirmMessage,
 } from "./moveToGroupMenu.logic";
 
@@ -209,5 +210,41 @@ describe("grouping with a dropped-on chat", () => {
     expect(workspacesDiffer(at("main", null), at("main", null))).toBe(false);
     expect(workspacesDiffer(at("main", null), at("feat/x", null))).toBe(true);
     expect(workspacesDiffer(at("feat/x", "/wt/a"), at("feat/x", "/wt/b"))).toBe(true);
+  });
+});
+
+describe("resolveGroupThreadsTarget", () => {
+  const chat = (groupId: string | null, projectId = "p") => ({
+    environmentId: "env",
+    projectId,
+    groupId: groupId === null ? null : ThreadGroupId.make(groupId),
+  });
+
+  it("forms a new group around the anchor when none is grouped", () => {
+    const anchor = chat(null);
+    expect(resolveGroupThreadsTarget([anchor, chat(null), chat(null)], anchor)).toEqual({
+      groupId: null,
+      moving: 2,
+    });
+  });
+
+  it("moves the others into the anchor's group, else the one group among them", () => {
+    const anchor = chat("a");
+    expect(resolveGroupThreadsTarget([anchor, chat("b"), chat(null)], anchor)).toEqual({
+      groupId: ThreadGroupId.make("a"),
+      moving: 2,
+    });
+    const loose = chat(null);
+    expect(resolveGroupThreadsTarget([loose, chat("b"), chat("b")], loose)).toEqual({
+      groupId: ThreadGroupId.make("b"),
+      moving: 1,
+    });
+  });
+
+  it("offers nothing across projects or when everyone is already together", () => {
+    const anchor = chat(null);
+    expect(resolveGroupThreadsTarget([anchor, chat(null, "other")], anchor)).toBeNull();
+    const member = chat("a");
+    expect(resolveGroupThreadsTarget([member, chat("a")], member)).toBeNull();
   });
 });

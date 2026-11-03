@@ -1,20 +1,7 @@
 /**
- * ClaudeModUi - draws what Claude Code mods put on screen in a headless
- * Claude session: `$.ui.status` lines, `$.ui.toast` notices and the
- * `AbovePrompt` band a mod's `ui.render` hook returns. They land in the same
- * PluginUiStore surfaces local plugins use, with a `claude-mod` source.
- *
- * The session pushes `system` messages (`ui_status`, `ui_toast`,
- * `ui_invalidate`) and draws a band only when asked with a `ui_render`
- * control request. The query runner hands every message to `ingest` and
- * registers the live query's control-request sender with `attach`; this
- * service asks for the band on attach and on each invalidate.
- *
- * Ported from pingdotgg/t3code#15827. The protocol is internal to the Claude
- * CLI, so any failure here is logged and leaves the thread without mod UI; it
- * never affects a turn.
- *
- * @module ClaudeModUi
+ * Draws Claude Code mods' `ui_status` lines, `ui_toast` notices and `AbovePrompt` band in a
+ * headless session. A band arrives only when asked with a `ui_render` control request, so this
+ * asks on attach and on each `ui_invalidate`.
  */
 import {
   PLUGIN_BAND_COLUMNS,
@@ -36,7 +23,7 @@ const BAND_MAX_ROWS = 12;
 const DEFAULT_TOAST_TIMEOUT_MS = 4000;
 
 /** The mods' combined AbovePrompt band is one tree, drawn under one source. */
-export const CLAUDE_MOD_BAND_SOURCE: PluginUiSource = { kind: "claude-mod", name: "Claude Code" };
+const CLAUDE_MOD_BAND_SOURCE: PluginUiSource = { kind: "claude-mod", name: "Claude Code" };
 
 interface ThreadEntry {
   request: ClaudeControlRequest | undefined;
@@ -172,14 +159,16 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  const clearThread = (threadId: ThreadId, entry: ThreadEntry) =>
-    Effect.gen(function* () {
-      yield* store.setBand(threadId, CLAUDE_MOD_BAND_SOURCE, null);
-      for (const name of entry.statusMods) {
-        yield* store.clearSource({ kind: "claude-mod", name }, threadId);
-      }
-      entry.statusMods.clear();
-    });
+  const clearThread = Effect.fn("ClaudeModUi.clearThread")(function* (
+    threadId: ThreadId,
+    entry: ThreadEntry,
+  ) {
+    yield* store.setBand(threadId, CLAUDE_MOD_BAND_SOURCE, null);
+    for (const name of entry.statusMods) {
+      yield* store.clearSource({ kind: "claude-mod", name }, threadId);
+    }
+    entry.statusMods.clear();
+  });
 
   const attach: ClaudeModUiShape["attach"] = (threadId, request) =>
     Effect.suspend(() => {
@@ -257,7 +246,7 @@ export const make = Effect.gen(function* () {
   return { attach, detach, ingest, press } satisfies ClaudeModUiShape;
 });
 
-export const layer = Layer.effect(ClaudeModUi, make);
+const layer = Layer.effect(ClaudeModUi, make);
 
 /** The store and the Claude mod bridge that writes into it, shared by the whole server. */
 export const layerWithStore = layer.pipe(Layer.provideMerge(PluginUiStore.layer));

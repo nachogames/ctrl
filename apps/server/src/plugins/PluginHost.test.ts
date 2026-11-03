@@ -73,7 +73,7 @@ describe("PluginHost", () => {
   );
 
   // Live services: the folder watcher debounces on the real clock.
-  it.layer(layer, { timeout: 60_000, excludeTestServices: true })((it) => {
+  it.layer(layer, { excludeTestServices: true })((it) => {
     it.effect("runs a plugin's entry, which draws a status and answers its view", () =>
       Effect.gen(function* () {
         const host = yield* PluginHost.PluginHost;

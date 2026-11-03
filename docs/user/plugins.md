@@ -20,7 +20,7 @@ A plugin is a folder in `plugins` inside your Ctrl home folder (`~/.ctrl/plugins
 desktop app). Ctrl watches the folder. When a plugin is added or a file changes, Ctrl loads it
 again. You do not need to restart Ctrl.
 
-Settings → Integrations → Plugins lists each plugin, shows why one failed to load, and turns it on
+Settings → Tools → Plugins lists each plugin, shows why one failed to load, and turns it on
 or off.
 
 ## A small plugin

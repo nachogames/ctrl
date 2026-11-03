@@ -10,10 +10,20 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+On web and desktop, open the Diff pane source picker and choose **Commits** to review one local
+commit at a time. The list shows the newest 100 commits in the branch comparison. A merge commit
+shows its changes against its first parent.
+
+A commit link from a supported code host opens in the Diff pane when the thread's repository has
+that commit locally, on any branch. Otherwise a pull request commit link opens the pull request. Other
+commit links follow your **Open links in** setting; on web, when that opens a new tab, T3 Code first
+shows an **Open link** button. Command/Ctrl+Click always opens the link in your browser. Commit links follow the **Open pull requests in T3 Code**
+setting in **Settings → Diffs**.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote
-environment, do this on the remote machine. After signing in, open **Settings → Source Control**
+environment, do this on the remote machine. After signing in, open **Settings → Source control**
 and choose **Rescan**.
 
 ### GitHub
@@ -21,7 +31,7 @@ and choose **Rescan**.
 T3 Code talks to GitHub's API directly and only needs a token. Any of these works, in this
 order of precedence:
 
-1. A token saved in **Settings → Source Control → GitHub**. It is kept in the server's secret
+1. A token saved in **Settings → Source control → GitHub**. It is kept in the server's secret
    store, and works without the GitHub CLI.
 2. `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` with `GH_HOST` for GitHub Enterprise Server) in the
    server's environment.
@@ -64,7 +74,7 @@ glab auth login
 
 ### Bitbucket
 
-Open **Settings → Source Control**, expand **Bitbucket**, and enter one of:
+Open **Settings → Source control**, expand **Bitbucket**, and enter one of:
 
 - **Access token**: a token created for one repository, project, or workspace. It can only reach
   what it was created for.
@@ -87,6 +97,11 @@ export T3CODE_BITBUCKET_EMAIL="you@example.com"
 export T3CODE_BITBUCKET_API_TOKEN="your-token"
 ```
 
+For a background service, put these `KEY=VALUE` entries in
+[`service.env`](./background-service.md#configure-the-service-environment)
+under T3 home, then run `t3 service restart`. Service installation and updates
+preserve that file.
+
 ### Azure DevOps
 
 Install [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/), add the DevOps extension, and sign in:
@@ -105,13 +120,13 @@ bun install -g @gitcafe/cli
 cafe auth login --host https://git.cafe/api
 ```
 
-Alternatively, open **Settings → Source Control**, expand **GitCafe**, and enter a token. It is
+Alternatively, open **Settings → Source control**, expand **GitCafe**, and enter a token. It is
 kept in the server's secret store, applies right away, and is used before `CAFE_TOKEN` and the
 `cafe` login. Or set `CAFE_TOKEN` in the server's environment and restart it. Both tokens are only
 sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories on
 `staging.git.cafe` need their own login with `--host https://staging.git.cafe/api`.
 
-Line comments, reviewer requests, and labels are not available for GitCafe pull requests yet.
+Line comments are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
 
 ## Start, clone, or publish a project
@@ -129,7 +144,9 @@ Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository.
 provider or paste a Git URL, then choose where to save it. The project opens right away while the
 clone runs in the background: you can write your first prompt, and sending waits until the files
 are in place. A toast tracks progress and lets you cancel; if the clone fails, retry it from the
-toast or from the banner above the composer.
+toast or from the banner above the composer. When the host refuses the machine's SSH key, T3 Code
+clones over HTTPS with Git's credentials for that host instead, and the project's remote uses the
+HTTPS URL.
 
 For a local Git repository without a remote, **Publish Repository** creates a hosted repository,
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
@@ -138,13 +155,14 @@ make your first commit before pushing.
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit
-messages, review titles, and descriptions from your changes.
+messages, review titles, and descriptions from your changes. Descriptions also draw on the work in
+the thread, including the checks it ran.
 
 An existing fork PR can appear beside the branch even if you pushed without setting an upstream.
 If its badge is missing because several remotes hold that branch, set the branch's upstream to
 the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
 
-Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
+Choose the writing style and model in **Settings → Source control**. **Repository conventions**
 uses the project's instructions and recent commit subjects.
 
 ## Review and merge
@@ -162,7 +180,7 @@ Previously loaded lists, review details, guides, and diff pages remain readable 
 without a connection, including after restarting the app. Saved content refreshes when the
 environment reconnects; submitting changes requires a connection.
 
-Enable **Remove agent credits when merging** in Settings → Source Control to remove recognized
+Enable **Remove agent credits when merging** in Settings → Source control to remove recognized
 agent co-author and generated-by lines from GitHub merge and squash commit messages. Human
 co-authors stay credited. The setting is off by default and projects can override it. It also
 applies to auto-merge, but not merge queues or native stack merges. Original commits keep their
@@ -175,15 +193,16 @@ Press **Escape** before releasing to cancel. Failed closes stay in the list so y
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
 
-GitHub sharing is off by default. In Settings → Connections → GitHub sharing (Environments on mobile), choose
-**Read PRs** or **Read and act** for each environment you trust to share GitHub access.
+Pull request sharing is off by default. In Settings → Environments → Pull request sharing (Pull
+request routing under Environments on mobile), choose **Read PRs** or **Read and act** for each
+environment you trust to share its source control access.
 Enable both the original environment and the environment answering its requests on this client.
-**Read and act** can use broader GitHub permissions than the original environment's credential;
+**Read and act** can use broader permissions than the original environment's credential;
 only enable it for environments you control and trust. Changing a saved endpoint or removing an
 environment clears its permission.
 
-GitHub review details, linked PR status, and permitted review actions can then use another
-connected environment signed in to the same GitHub account. Each needs a project on that host.
+Review details, linked PR status, and permitted review actions can then use another connected
+environment signed in to the same account on the same host. Each needs a project on that host.
 A connected local environment is preferred for actions and can answer slow or failed reads.
 Browsers and mobile clients need a paired environment to use its GitHub credentials.
 Credentials stay on their machines. Previously verified credentials remain usable for routing
@@ -196,7 +215,7 @@ declined pull request.
 
 ### Review guides
 
-Review guides are in beta. Turn on **Review guides** in Settings → Source Control to add the
+Review guides are in beta. Turn on **Review guides** in Settings → Source control to add the
 **Guide** tab to pull requests on that server. On mobile, move between stops with **Next**
 and the back button; a stale guide offers a rewrite and hides excerpts that no longer match
 the current change.
@@ -208,7 +227,7 @@ snapshots are grouped at the end, and every changed file appears somewhere on th
 Conversations already resolved in review are left out. For a pull request in a stack, the guide
 covers that layer only, and may point out what a lower layer introduced or what a higher one uses.
 
-Choose **Write guide** to have the review guide model from Settings → Source Control read the
+Choose **Write guide** to have the review guide model from Settings → Source control read the
 change in a temporary checkout; without one set, the source control writer model is used. Nothing
 in the checkout is changed, and a large pull request takes a few minutes; you can go elsewhere in
 the app. On web, you are told when the guide is ready; on mobile, return to the guide to check
@@ -224,7 +243,7 @@ are on. **Finish review** on the last stop opens the review with everything you 
 Agents can write guides too: ask one to prepare guides for a set of pull requests, and it starts
 them for you. Each is read through the project whose checkout has that repository.
 
-To shape guides to your taste, write **Review guide instructions** in Settings → Source Control,
+To shape guides to your taste, write **Review guide instructions** in Settings → Source control,
 such as what to show first or what to skip; projects can override them. They change emphasis and
 ordering, not the guide's layout or which files it covers.
 
@@ -245,9 +264,9 @@ and their marks follow the same rules as on web and desktop.
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
-  check the credentials saved in Settings → Source Control, or confirm the running server received
+  check the credentials saved in Settings → Source control, or confirm the running server received
   the environment variables.
-- **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0, or save a token in Settings → Source Control.
+- **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0, or save a token in Settings → Source control.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
@@ -257,11 +276,12 @@ and their marks follow the same rules as on web and desktop.
 
 A thread can hold several pull requests, including reviews from another repository on the same host.
 Use **Link pull request** in the command palette or **Linked pull requests** panel, or right-click a
-pull request link in the conversation. Creating a pull request from Git actions links it automatically.
-Agents can link their pull requests with the `link_pull_request` tool.
+pull request link in the conversation. Creating a pull request from Git actions links it automatically,
+and so does an agent creating one with `gh pr create` or `glab mr create`. Agents can link other
+pull requests with the `link_pull_request` tool.
 
-Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
-on the Pull Requests page, **Link to thread** lets you search for an active thread. The review header
+Use **Link pull request to thread** in the command palette to keep a pull request with the thread. From a review
+on the Pull requests page, **Link to thread** lets you search for an active thread. The review header
 also lists the threads that link to it, including archived threads, so you can return to their context.
 
 Thread badges show a stack's layer count or the current review number with a count of additional
@@ -283,7 +303,8 @@ watching inside GitHub's rate limit. Comments from your own account do not wake 
 when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
 failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
 Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
-watch. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
+watch. Watching a pull request again does not repeat check or conflict news its last
+watch already reported; unlinking the pull request clears that. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
 it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
 watched pull request shows an eye; click it to stop watching.
 
@@ -296,7 +317,7 @@ out from the matching organization and repository.
 
 ## GitHub stacks
 
-The Pull Requests page shows each PR's position in its GitHub stack. Open the stack badge in a
+The Pull requests page shows each PR's position in its GitHub stack. Open the stack badge in a
 review to navigate its layers. **Merge stack** submits the selected pull request and every unmerged
 layer below it to GitHub together, respecting branch rules and merge queues. The confirmation shows
 the scope and merge strategy. GitHub rebases the remaining stack after merging.
@@ -312,23 +333,60 @@ Linked GitHub PRs automatically collect existing and future reviews. Open the PR
 **Review** tab to see feedback as numbered points, initially marked Needs a call. No agent
 request or project skill installation is needed. Discovery runs in the background; opening
 the tab discovers the PR immediately. GitHub feedback refreshes periodically.
-Copilot overviews stay with their review summaries. Resolved findings remain in history and do not
-need another decision. Each completed Copilot pass starts a review round, with failed retries and reviews of the same
-commit grouped alongside it. Each round shows how many findings are still open or resolved,
-including resolutions made directly on GitHub.
+A review's overall summary, Copilot's or a reviewer's, is never a point by itself; a problem a
+summary raises that no inline comment covers becomes its own point when the agent triages. Resolved findings remain in history and do not
+need another decision. A PR has one review, whichever chat or group you open it from. Each
+reviewed commit is a round, whether the review came from GitHub or ran in T3 Code. Each round
+shows how many findings are still open or resolved, including resolutions made directly on GitHub.
+The top of the tab sums it up: what stands between you and approving (or merging, on your own
+PR), CI, and how many issues each round found, so you can see whether it is settling down.
 On the Pull Requests page, the **Review** tab also shows requested and completed GitHub
 reviews before a chat exists. Choose **Run your review** under **Your review** to create
-the review chat and isolated checkout and start an independent review.
-When the PR head changes, unresolved findings become stale so they can be checked again.
-Their history, decisions, and reply drafts remain available; choose **Recheck stale findings**.
+a **Review #N** chat in its own group, with an isolated checkout, and start an independent
+review. It does not join the group of the chat that made the PR.
+The review workspace lists every round that still has something open, each with its reviews,
+then all open points together under one Triage. A round moves to History once everything in it is
+resolved. When the PR head changes, open points from an earlier commit are marked **code changed**
+or **not touched** until you choose **Recheck N against the new code**. Their decisions and reply
+drafts remain.
 Ask the agent to triage when you want explanations and recommendations, or to run an
 independent local review.
-Any ordinary chat in the PR’s group can update the same review panel. Ask about `#3` in any
-of those chats, or open a point's own chat. Questions leave decisions alone;
+Review actions such as **Triage** and **Apply** run in the chat you have open, which takes the
+review over first, keeping its rounds and decisions; that is also how you move a review. Any chat
+in the project can hold it, including its reviewer chat or a point's chat. A review can't move
+while its current chat is mid-turn. If every chat for the PR is gone, its **Review #N** chat takes
+it over. Ask about `#3` in any
+chat in the review's group, or open a point's own chat. Questions leave decisions alone;
 say `#3 fix` or `#3 decline` to decide. Conclusions and reply drafts stay with the point.
+
+To change how the agent runs reviews, such as how its triage reply reads, write **Review rules**
+in Settings → Source Control. They apply to every review opened afterwards, and a project can
+override them. You can also ask the agent to change them for you ("from now on, always run a
+local review first"). Your rules can change the review's steps but never let it decide points,
+push, or follow instructions written in the PR.
 
 Marking points viewed is optional. **Apply** shows the work and replies for
 you to confirm, including the displayed recommendations, then runs in the review chat.
 Points without a decision or recommendation still need your call. It fixes accepted points, runs checks, commits
 and pushes, and posts the approved replies. Human reviewers' threads stay open. New reviews
 arrive in the same session; after applying, the next round lets you check them again.
+
+### Reviewing someone else's PR
+
+When the PR was written by someone other than the GitHub account T3 Code uses, the **Review** tab
+works for you as the reviewer. Your GitHub reviews show as yours; a review the tab posted for you
+appears once, under **Your review**.
+
+Run your review, then triage it with Copilot and anyone else's comments. Only the points your
+review raised need a choice: **Post** a new comment or **Skip** it. When someone already raised
+the same problem, choose **+1 on their thread**, **Post my own** comment, or **Skip**.
+**Prepare pending review** puts everything into a pending review on GitHub and changes no code.
+If you already have a pending review there, you choose whether to add to it or start fresh, which
+deletes that draft. Read it on GitHub and submit it with your verdict; the tab suggests one.
+
+When the author asks for your review again, choose **Re-review**. Each of your open threads is
+checked against the new code (**Resolve** or **Keep open** with a follow-up), and your review runs
+again on the new commits. Both go out together in one new pending review. Only your own threads
+are ever resolved. There is nothing to close after you approve: the review follows GitHub, so it
+comes back when the author pushes or asks for your review again, and ends when the PR is merged
+or closed.

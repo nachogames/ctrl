@@ -8,6 +8,7 @@ import {
   ReviewSourceComment,
   ReviewAlreadyFixedIn,
   type ReviewGithubState,
+  type ProjectId,
   type ThreadGroupId,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -36,6 +37,9 @@ interface SessionRow {
   readonly round: number;
   readonly head_sha: string | null;
   readonly next_number: number;
+  readonly author_login: string | null;
+  readonly viewer_login: string | null;
+  readonly viewer_requested: number;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -52,6 +56,8 @@ interface RoundRow {
 interface SourceRow {
   readonly submitted_at: string | null;
   readonly failed: number;
+  readonly verdict: string | null;
+  readonly posted: number;
   readonly source_id: string;
   readonly round: number;
   readonly kind: string;
@@ -109,6 +115,7 @@ interface ItemRow {
   readonly stale: number;
   readonly viewed: number;
   readonly side_thread_id: string | null;
+  readonly post_as: string | null;
   readonly updated_at: string;
 }
 
@@ -144,6 +151,9 @@ const sessionFromRow = (row: SessionRow) =>
     round: row.round,
     headSha: row.head_sha,
     nextNumber: row.next_number,
+    authorLogin: row.author_login,
+    viewerLogin: row.viewer_login,
+    viewerRequested: row.viewer_requested === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }).pipe(Effect.mapError(decodeError("ReviewSession")));
@@ -158,8 +168,9 @@ const roundFromRow = (row: RoundRow) =>
     updatedAt: row.updated_at,
   }).pipe(Effect.mapError(decodeError("ReviewRound")));
 
-const sourceFromRow = (row: SourceRow) =>
-  Effect.gen(function* () {
+// Per-row decoders run once per listed row; a span each would swamp the trace.
+const sourceFromRow = Effect.fnUntraced(
+  function* (row: SourceRow) {
     return yield* decodeSource({
       id: row.source_id,
       submittedAt: row.submitted_at,
@@ -175,9 +186,13 @@ const sourceFromRow = (row: SourceRow) =>
       threadId: row.thread_id,
       ranOn: row.ran_on_json === null ? null : yield* decodeRanOn(row.ran_on_json),
       url: row.url,
+      verdict: row.verdict,
+      posted: row.posted === 1,
       updatedAt: row.updated_at,
     });
-  }).pipe(Effect.mapError(decodeError("ReviewSource")));
+  },
+  Effect.mapError(decodeError("ReviewSource")),
+);
 
 const commentFromRow = (row: CommentRow) =>
   decodeComment({
@@ -190,8 +205,9 @@ const commentFromRow = (row: CommentRow) =>
     diffHunk: row.diff_hunk,
   }).pipe(Effect.mapError(decodeError("ReviewSourceComment")));
 
-const itemFromRow = (row: ItemRow) =>
-  Effect.gen(function* () {
+// Untraced for the same reason as sourceFromRow.
+const itemFromRow = Effect.fnUntraced(
+  function* (row: ItemRow) {
     const sourceKeys = yield* decodeStringList(row.source_keys_json);
     const sourceIds = yield* decodeStringList(row.source_ids_json);
     return yield* decodeItem({
@@ -228,9 +244,12 @@ const itemFromRow = (row: ItemRow) =>
       stale: row.stale === 1,
       viewed: row.viewed === 1,
       sideThreadId: row.side_thread_id,
+      postAs: row.post_as,
       updatedAt: row.updated_at,
     });
-  }).pipe(Effect.mapError(decodeError("ReviewItem")));
+  },
+  Effect.mapError(decodeError("ReviewItem")),
+);
 
 type E = ReviewSessionRepositoryError;
 
@@ -241,23 +260,32 @@ export class ReviewSessionRepository extends Context.Service<
     readonly insertSession: (session: ReviewSession) => Effect.Effect<void, E>;
     readonly updateSession: (session: ReviewSession) => Effect.Effect<void, E>;
     readonly getSession: (id: ReviewSessionId) => Effect.Effect<Option.Option<ReviewSession>, E>;
-    /** Hands the review to another chat; only for a review whose chat is gone. */
+    /** Hands the review to another chat, and that chat's group. */
     readonly setSessionReviewThread: (input: {
       readonly sessionId: ReviewSessionId;
       readonly reviewThreadId: ThreadId;
+      readonly groupId: ThreadGroupId;
       readonly updatedAt: string;
     }) => Effect.Effect<void, E>;
+    /**
+     * A pull request has one live review per project: the one in `groupId` when there is one,
+     * else the newest. Two clones of a repository are two projects, each with its own review.
+     */
     readonly findLiveSession: (input: {
       readonly key: ThreadPullRequestKey;
+      readonly projectId: ProjectId;
       readonly groupId: ThreadGroupId;
     }) => Effect.Effect<Option.Option<ReviewSession>, E>;
-    /** The newest review of a pull request in a group, finished or not, for the Review tab. */
+    /** The pull request's review for the Review tab: the newest live one, else the newest finished. */
     readonly findLatestSessionForPullRequest: (input: {
       readonly repository: string;
       readonly number: number;
-      readonly groupId: ThreadGroupId;
     }) => Effect.Effect<Option.Option<ReviewSession>, E>;
     readonly listLiveSessions: () => Effect.Effect<ReadonlyArray<ReviewSession>, E>;
+    /** Finished reviews last changed at or after `since`, newest first, for GitHub to reopen. */
+    readonly listFinishedSessions: (
+      since: string,
+    ) => Effect.Effect<ReadonlyArray<ReviewSession>, E>;
     readonly listLiveSessionsForThread: (
       threadId: ThreadId,
     ) => Effect.Effect<ReadonlyArray<ReviewSession>, E>;
@@ -350,13 +378,14 @@ const make = Effect.gen(function* () {
   const firstSession = (rows: ReadonlyArray<SessionRow>) =>
     rows.length === 0
       ? Effect.succeed(Option.none<ReviewSession>())
-      : sessionFromRow(rows[0]!).pipe(Effect.map(Option.some));
+      : sessionFromRow(rows[0]!).pipe(Effect.asSome);
   const firstItem = (rows: ReadonlyArray<ItemRow>) =>
     rows.length === 0
       ? Effect.succeed(Option.none<ReviewItem>())
-      : itemFromRow(rows[0]!).pipe(Effect.map(Option.some));
+      : itemFromRow(rows[0]!).pipe(Effect.asSome);
 
   // Keys come from review_item_keys; the review rows are the sources whose comments carry them.
+  // A `<body key>#<slug>` key is one finding inside a review body, so it belongs to that review.
   const itemSelect = sql`
     SELECT i.*,
       (SELECT json_group_array(k.source_key) FROM review_item_keys k
@@ -364,76 +393,106 @@ const make = Effect.gen(function* () {
       (SELECT json_group_array(DISTINCT c.source_id)
          FROM review_item_keys k
          JOIN review_source_comments c
-           ON c.session_id = k.session_id AND c.finding_key = k.source_key
+           ON c.session_id = k.session_id
+          AND (c.finding_key = k.source_key
+            OR substr(k.source_key, 1, length(c.finding_key) + 1) = c.finding_key || '#')
         WHERE k.session_id = i.session_id AND k.number = i.number) AS source_ids_json
     FROM review_items i
   `;
 
   return ReviewSessionRepository.of({
-    insertSession: (session) =>
+    insertSession: Effect.fn("ReviewSessionRepository.insertSession")((session) =>
       sql`
         INSERT INTO review_sessions
           (session_id, project_id, host, repository, number, url, group_id, review_thread_id,
-           phase, round, head_sha, next_number, created_at, updated_at)
+           phase, round, head_sha, next_number, author_login, viewer_login, viewer_requested,
+           created_at, updated_at)
         VALUES (${session.id}, ${session.projectId}, ${session.pullRequest.host},
                 ${session.pullRequest.repository}, ${session.pullRequest.number}, ${session.url},
                 ${session.groupId}, ${session.reviewThreadId}, ${session.phase}, ${session.round},
-                ${session.headSha}, ${session.nextNumber}, ${session.createdAt}, ${session.updatedAt})
+                ${session.headSha}, ${session.nextNumber}, ${session.authorLogin ?? null},
+                ${session.viewerLogin ?? null}, ${session.viewerRequested ? 1 : 0},
+                ${session.createdAt}, ${session.updatedAt})
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("insertReviewSession"))),
-    updateSession: (session) =>
+    ),
+    updateSession: Effect.fn("ReviewSessionRepository.updateSession")((session) =>
       sql`
         UPDATE review_sessions
         SET phase = ${session.phase}, round = ${session.round}, head_sha = ${session.headSha},
-            next_number = ${session.nextNumber}, updated_at = ${session.updatedAt}
+            next_number = ${session.nextNumber}, author_login = ${session.authorLogin ?? null},
+            viewer_login = ${session.viewerLogin ?? null},
+            viewer_requested = ${session.viewerRequested ? 1 : 0},
+            updated_at = ${session.updatedAt}
         WHERE session_id = ${session.id}
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("updateReviewSession"))),
-    getSession: (id) =>
+    ),
+    getSession: Effect.fn("ReviewSessionRepository.getSession")((id) =>
       sql<SessionRow>`SELECT * FROM review_sessions WHERE session_id = ${id}`.pipe(
         Effect.mapError(sqlError("getReviewSession")),
         Effect.flatMap(firstSession),
       ),
-    setSessionReviewThread: ({ sessionId, reviewThreadId, updatedAt }) =>
-      sql`
-        UPDATE review_sessions SET review_thread_id = ${reviewThreadId}, updated_at = ${updatedAt}
+    ),
+    setSessionReviewThread: Effect.fn("ReviewSessionRepository.setSessionReviewThread")(
+      ({ sessionId, reviewThreadId, groupId, updatedAt }) =>
+        sql`
+        UPDATE review_sessions
+        SET review_thread_id = ${reviewThreadId}, group_id = ${groupId}, updated_at = ${updatedAt}
         WHERE session_id = ${sessionId}
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("setReviewSessionThread"))),
-    findLiveSession: ({ key, groupId }) =>
-      sql<SessionRow>`
+    ),
+    findLiveSession: Effect.fn("ReviewSessionRepository.findLiveSession")(
+      ({ key, projectId, groupId }) =>
+        sql<SessionRow>`
         SELECT * FROM review_sessions
         WHERE host = ${key.host} AND repository = ${key.repository} AND number = ${key.number}
-          AND group_id = ${groupId} AND phase <> 'done'
+          AND project_id = ${projectId} AND phase <> 'done'
+        ORDER BY group_id = ${groupId} DESC, updated_at DESC, session_id DESC LIMIT 1
       `.pipe(Effect.mapError(sqlError("findLiveReviewSession")), Effect.flatMap(firstSession)),
-    findLatestSessionForPullRequest: ({ repository, number, groupId }) =>
-      // Host is left out: one group never reviews two hosts' copies of the same repository.
+    ),
+    findLatestSessionForPullRequest: Effect.fn(
+      "ReviewSessionRepository.findLatestSessionForPullRequest",
+    )(({ repository, number }) =>
+      // Host is left out: one environment never reviews two hosts' copies of the same repository.
       sql<SessionRow>`
         SELECT * FROM review_sessions
         WHERE lower(repository) = lower(${repository}) AND number = ${number}
-          AND group_id = ${groupId}
-        ORDER BY created_at DESC, session_id DESC LIMIT 1
+        ORDER BY phase <> 'done' DESC, updated_at DESC, session_id DESC LIMIT 1
       `.pipe(
         Effect.mapError(sqlError("findLatestReviewSessionForPullRequest")),
         Effect.flatMap(firstSession),
       ),
-    listLiveSessions: () =>
+    ),
+    listLiveSessions: Effect.fn("ReviewSessionRepository.listLiveSessions")(() =>
       sql<SessionRow>`
         SELECT * FROM review_sessions WHERE phase <> 'done' ORDER BY created_at, session_id
       `.pipe(Effect.mapError(sqlError("listLiveReviewSessions")), Effect.flatMap(sessions)),
-    listLiveSessionsForThread: (threadId) =>
+    ),
+    listFinishedSessions: Effect.fn("ReviewSessionRepository.listFinishedSessions")((since) =>
       sql<SessionRow>`
+        SELECT * FROM review_sessions WHERE phase = 'done' AND updated_at >= ${since}
+        ORDER BY updated_at DESC, session_id DESC
+      `.pipe(Effect.mapError(sqlError("listFinishedReviewSessions")), Effect.flatMap(sessions)),
+    ),
+    listLiveSessionsForThread: Effect.fn("ReviewSessionRepository.listLiveSessionsForThread")(
+      (threadId) =>
+        sql<SessionRow>`
         SELECT * FROM review_sessions
         WHERE review_thread_id = ${threadId} AND phase <> 'done'
         ORDER BY created_at, session_id
       `.pipe(
-        Effect.mapError(sqlError("listLiveReviewSessionsForThread")),
-        Effect.flatMap(sessions),
-      ),
-    listLiveSessionsForGroup: (groupId) =>
-      sql<SessionRow>`
+          Effect.mapError(sqlError("listLiveReviewSessionsForThread")),
+          Effect.flatMap(sessions),
+        ),
+    ),
+    listLiveSessionsForGroup: Effect.fn("ReviewSessionRepository.listLiveSessionsForGroup")(
+      (groupId) =>
+        sql<SessionRow>`
         SELECT * FROM review_sessions
         WHERE group_id = ${groupId} AND phase <> 'done'
         ORDER BY created_at, session_id
       `.pipe(Effect.mapError(sqlError("listLiveReviewSessionsForGroup")), Effect.flatMap(sessions)),
-    upsertRound: (sessionId, round) =>
+    ),
+    upsertRound: Effect.fn("ReviewSessionRepository.upsertRound")((sessionId, round) =>
       sql`
         INSERT INTO review_rounds
           (session_id, round, head_sha, state, applied_sha, created_at, updated_at)
@@ -445,29 +504,35 @@ const make = Effect.gen(function* () {
           applied_sha = excluded.applied_sha,
           updated_at = excluded.updated_at
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("upsertReviewRound"))),
-    listRounds: (sessionId) =>
+    ),
+    listRounds: Effect.fn("ReviewSessionRepository.listRounds")((sessionId) =>
       sql<RoundRow>`
         SELECT * FROM review_rounds WHERE session_id = ${sessionId} ORDER BY round DESC
       `.pipe(
         Effect.mapError(sqlError("listReviewRounds")),
         Effect.flatMap((rows) => Effect.forEach(rows, roundFromRow)),
       ),
-    upsertSource: (sessionId, source, comments) =>
-      Effect.gen(function* () {
+    ),
+    upsertSource: Effect.fn("ReviewSessionRepository.upsertSource")(
+      function* (sessionId, source, comments) {
         yield* sql`
           INSERT INTO review_sources (
             session_id, source_id, round, kind, state, author, is_bot, commit_sha,
-            comment_count, triaged, thread_id, ran_on_json, url, updated_at, submitted_at, failed
+            comment_count, triaged, thread_id, ran_on_json, url, updated_at, submitted_at, failed,
+            verdict, posted
           ) VALUES (
             ${sessionId}, ${source.id}, ${source.round}, ${source.kind}, ${source.state},
             ${source.author}, ${source.isBot ? 1 : 0}, ${source.commitSha},
             ${source.commentCount}, ${source.triaged ? 1 : 0}, ${source.threadId},
             ${source.ranOn === null ? null : encodeRanOn(source.ranOn)}, ${source.url},
-            ${source.updatedAt}, ${source.submittedAt ?? null}, ${source.failed ? 1 : 0}
+            ${source.updatedAt}, ${source.submittedAt ?? null}, ${source.failed ? 1 : 0},
+            ${source.verdict ?? null}, ${source.posted ? 1 : 0}
           )
           ON CONFLICT (session_id, source_id) DO UPDATE SET
             submitted_at = excluded.submitted_at,
             failed = excluded.failed,
+            verdict = excluded.verdict,
+            posted = excluded.posted,
             triaged = MAX(review_sources.triaged, excluded.triaged),
             kind = excluded.kind,
             state = excluded.state,
@@ -494,8 +559,10 @@ const make = Effect.gen(function* () {
                     ${comment.diffHunk})
           `;
         }
-      }).pipe(Effect.mapError(sqlError("upsertReviewSource"))),
-    listSources: (sessionId) =>
+      },
+      Effect.mapError(sqlError("upsertReviewSource")),
+    ),
+    listSources: Effect.fn("ReviewSessionRepository.listSources")((sessionId) =>
       sql<SourceRow>`
         SELECT * FROM review_sources WHERE session_id = ${sessionId}
         ORDER BY round DESC, COALESCE(submitted_at, updated_at), source_id
@@ -503,73 +570,87 @@ const make = Effect.gen(function* () {
         Effect.mapError(sqlError("listReviewSources")),
         Effect.flatMap((rows) => Effect.forEach(rows, sourceFromRow)),
       ),
-    listSourceComments: (sessionId, sourceId) =>
-      sql<CommentRow>`
+    ),
+    listSourceComments: Effect.fn("ReviewSessionRepository.listSourceComments")(
+      (sessionId, sourceId) =>
+        sql<CommentRow>`
         SELECT * FROM review_source_comments
         WHERE session_id = ${sessionId} AND source_id = ${sourceId}
         ORDER BY position
       `.pipe(
-        Effect.mapError(sqlError("listReviewSourceComments")),
-        Effect.flatMap((rows) => Effect.forEach(rows, commentFromRow)),
-      ),
-    deleteSource: (sessionId, sourceId) =>
+          Effect.mapError(sqlError("listReviewSourceComments")),
+          Effect.flatMap((rows) => Effect.forEach(rows, commentFromRow)),
+        ),
+    ),
+    deleteSource: Effect.fn("ReviewSessionRepository.deleteSource")((sessionId, sourceId) =>
       sql`
         DELETE FROM review_sources WHERE session_id = ${sessionId} AND source_id = ${sourceId}
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("deleteReviewSource"))),
-    moveSourceToRound: (sessionId, sourceId, round) =>
-      sql`
+    ),
+    moveSourceToRound: Effect.fn("ReviewSessionRepository.moveSourceToRound")(
+      (sessionId, sourceId, round) =>
+        sql`
         UPDATE review_sources SET round = ${round}
         WHERE session_id = ${sessionId} AND source_id = ${sourceId}
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("moveReviewSourceToRound"))),
-    markSourcesTriaged: (sessionId, sourceIds) =>
-      sourceIds.length === 0
-        ? Effect.void
-        : sql`
+    ),
+    markSourcesTriaged: Effect.fn("ReviewSessionRepository.markSourcesTriaged")(
+      (sessionId, sourceIds) =>
+        sourceIds.length === 0
+          ? Effect.void
+          : sql`
             UPDATE review_sources SET triaged = 1
             WHERE session_id = ${sessionId} AND source_id IN ${sql.in([...sourceIds])}
           `.pipe(Effect.asVoid, Effect.mapError(sqlError("markReviewSourcesTriaged"))),
-    resetSourcesTriage: (sessionId, sourceIds) =>
-      sourceIds.length === 0
-        ? Effect.void
-        : sql`
+    ),
+    resetSourcesTriage: Effect.fn("ReviewSessionRepository.resetSourcesTriage")(
+      (sessionId, sourceIds) =>
+        sourceIds.length === 0
+          ? Effect.void
+          : sql`
       UPDATE review_sources SET triaged = 0
       WHERE session_id = ${sessionId} AND source_id IN ${sql.in([...sourceIds])}
     `.pipe(Effect.asVoid, Effect.mapError(sqlError("resetReviewSourcesTriage"))),
-    findLocalSourceByThread: (threadId) =>
-      sql<{ readonly session_id: string; readonly source_id: string }>`
+    ),
+    findLocalSourceByThread: Effect.fn("ReviewSessionRepository.findLocalSourceByThread")(
+      (threadId) =>
+        sql<{ readonly session_id: string; readonly source_id: string }>`
         SELECT r.session_id, r.source_id
         FROM review_sources r JOIN review_sessions s ON s.session_id = r.session_id
         WHERE r.thread_id = ${threadId} AND r.kind = 'local' AND s.phase <> 'done'
         LIMIT 1
       `.pipe(
-        Effect.mapError(sqlError("findLocalReviewSource")),
-        Effect.map((rows) =>
-          rows.length === 0
-            ? Option.none()
-            : Option.some({
-                sessionId: ReviewSessionId.make(rows[0]!.session_id),
-                sourceId: rows[0]!.source_id,
-              }),
+          Effect.mapError(sqlError("findLocalReviewSource")),
+          Effect.map((rows) =>
+            rows.length === 0
+              ? Option.none()
+              : Option.some({
+                  sessionId: ReviewSessionId.make(rows[0]!.session_id),
+                  sourceId: rows[0]!.source_id,
+                }),
+          ),
         ),
-      ),
-    listItems: (sessionId) =>
+    ),
+    listItems: Effect.fn("ReviewSessionRepository.listItems")((sessionId) =>
       sql<ItemRow>`${itemSelect} WHERE i.session_id = ${sessionId} ORDER BY i.number`.pipe(
         Effect.mapError(sqlError("listReviewItems")),
         Effect.flatMap((rows) => Effect.forEach(rows, itemFromRow)),
       ),
-    getItem: (sessionId, number) =>
+    ),
+    getItem: Effect.fn("ReviewSessionRepository.getItem")((sessionId, number) =>
       sql<ItemRow>`
         ${itemSelect} WHERE i.session_id = ${sessionId} AND i.number = ${number}
       `.pipe(Effect.mapError(sqlError("getReviewItem")), Effect.flatMap(firstItem)),
-    upsertItem: (sessionId, item) =>
-      Effect.gen(function* () {
+    ),
+    upsertItem: Effect.fn("ReviewSessionRepository.upsertItem")(
+      function* (sessionId, item) {
         yield* sql`
           INSERT INTO review_items (
             session_id, number, round, last_seen_round, sources_json, github_thread_ids_json,
             github_state, path, line, summary, short_name, problem, impact, solution, skip_reason,
             excerpt, recommendation, suggested_decision, already_fixed_in_json, decision,
             decided_by, reason, conclusion, draft_reply, draft_reply_revision, draft_reply_by,
-            apply_state, stale, viewed, side_thread_id, updated_at
+            apply_state, stale, viewed, side_thread_id, updated_at, post_as
           ) VALUES (
             ${sessionId}, ${item.number}, ${item.round}, ${item.lastSeenRound},
             ${encodeStringList(item.sources)}, ${encodeStringList(item.githubThreadIds)},
@@ -580,7 +661,7 @@ const make = Effect.gen(function* () {
             ${item.decision}, ${item.decidedBy}, ${item.reason}, ${item.conclusion},
             ${item.draftReply}, ${item.draftReplyRevision}, ${item.draftReplyBy},
             ${item.applyState}, ${item.stale ? 1 : 0}, ${item.viewed ? 1 : 0},
-            ${item.sideThreadId}, ${item.updatedAt}
+            ${item.sideThreadId}, ${item.updatedAt}, ${item.postAs ?? null}
           )
           ON CONFLICT (session_id, number) DO UPDATE SET
             round = excluded.round,
@@ -610,6 +691,7 @@ const make = Effect.gen(function* () {
             stale = excluded.stale,
             viewed = excluded.viewed,
             side_thread_id = excluded.side_thread_id,
+            post_as = excluded.post_as,
             updated_at = excluded.updated_at
         `;
         for (const sourceKey of item.sourceKeys) {
@@ -618,36 +700,45 @@ const make = Effect.gen(function* () {
             VALUES (${sessionId}, ${sourceKey}, ${item.number})
           `;
         }
-      }).pipe(Effect.mapError(sqlError("upsertReviewItem"))),
-    setItemGithubState: (sessionId, number, state) =>
-      sql`
+      },
+      Effect.mapError(sqlError("upsertReviewItem")),
+    ),
+    setItemGithubState: Effect.fn("ReviewSessionRepository.setItemGithubState")(
+      (sessionId, number, state) =>
+        sql`
         UPDATE review_items SET github_state = ${state}
         WHERE session_id = ${sessionId} AND number = ${number}
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("setReviewItemGithubState"))),
-    findItemNumberByKeys: (sessionId, keys) =>
-      keys.length === 0
-        ? Effect.succeed(Option.none<number>())
-        : sql<{ readonly number: number }>`
+    ),
+    findItemNumberByKeys: Effect.fn("ReviewSessionRepository.findItemNumberByKeys")(
+      (sessionId, keys) =>
+        keys.length === 0
+          ? Effect.succeed(Option.none<number>())
+          : sql<{ readonly number: number }>`
             SELECT number FROM review_item_keys
             WHERE session_id = ${sessionId} AND source_key IN ${sql.in([...keys])}
             ORDER BY number LIMIT 1
           `.pipe(
-            Effect.mapError(sqlError("findReviewItemByKeys")),
-            Effect.map((rows) =>
-              rows.length === 0 ? Option.none<number>() : Option.some(rows[0]!.number),
+              Effect.mapError(sqlError("findReviewItemByKeys")),
+              Effect.map((rows) =>
+                rows.length === 0 ? Option.none<number>() : Option.some(rows[0]!.number),
+              ),
             ),
-          ),
-    setItemSideThread: ({ sessionId, number, threadId, updatedAt }) =>
-      sql`
+    ),
+    setItemSideThread: Effect.fn("ReviewSessionRepository.setItemSideThread")(
+      ({ sessionId, number, threadId, updatedAt }) =>
+        sql`
         UPDATE review_items SET side_thread_id = ${threadId}, updated_at = ${updatedAt}
         WHERE session_id = ${sessionId} AND number = ${number}
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("setReviewItemSideThread"))),
-    markItemsStale: (sessionId) =>
+    ),
+    markItemsStale: Effect.fn("ReviewSessionRepository.markItemsStale")((sessionId) =>
       sql`UPDATE review_items SET stale = 1 WHERE session_id = ${sessionId}`.pipe(
         Effect.asVoid,
         Effect.mapError(sqlError("markReviewItemsStale")),
       ),
-    findSideChatItem: (threadId) =>
+    ),
+    findSideChatItem: Effect.fn("ReviewSessionRepository.findSideChatItem")((threadId) =>
       sql<{ readonly session_id: string; readonly number: number }>`
         SELECT i.session_id, i.number
         FROM review_items i JOIN review_sessions s ON s.session_id = i.session_id
@@ -664,6 +755,7 @@ const make = Effect.gen(function* () {
               }),
         ),
       ),
+    ),
   });
 });
 

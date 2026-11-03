@@ -1,4 +1,5 @@
-import { isActiveReviewItem, isReviewOverview } from "@t3tools/contracts";
+import { isActiveReviewItem, isReviewOverview, isViewerSource } from "@t3tools/contracts";
+import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
 import {
   reviewHistoryRounds,
   type ReviewHistoryRound,
@@ -43,10 +44,13 @@ export function reviewRoundViews(snapshot: ReviewSessionSnapshot): ReadonlyArray
         group.sources.some((source) => source.round === round.round),
       ),
       sources: snapshot.sources.filter((source) => source.round === round.round),
+      // The current round's history also holds points still open from earlier rounds; they are
+      // listed with its open points until a recheck or your decision brings them into it.
       history: current
         ? snapshot.items.filter(
             (item) =>
-              item.lastSeenRound === round.round &&
+              (item.lastSeenRound === round.round ||
+                (item.lastSeenRound < round.round && isOpenReviewPoint(item))) &&
               !isReviewOverview(item) &&
               !isActiveReviewItem(item),
           )
@@ -174,8 +178,15 @@ export function triageButton(
     return { label: "Triaging…", busy: true, ready: false };
   }
   const untriaged = view.sources.filter((source) => source.state === "done" && !source.triaged);
-  if ((view.history ?? []).some((item) => item.stale && item.githubState !== "resolved")) {
-    return { label: "Recheck stale findings", busy: false, ready: true };
+  const recheck = (view.history ?? []).filter(
+    (item) => item.stale && isOpenReviewPoint(item),
+  ).length;
+  if (recheck > 0) {
+    return {
+      label: `Recheck ${recheck} against the new code`,
+      busy: false,
+      ready: true,
+    };
   }
   const label = reviewTriageLabel(untriaged.length);
   if (label !== null) return { label, busy: false, ready: true };
@@ -233,4 +244,62 @@ export function reviewApplyLines(summary: {
     );
   }
   return lines;
+}
+
+/**
+ * Your GitHub review that Ctrl posted from your local review is that same review, posted: each
+ * round lists the local row once, notes it was posted, and hides the GitHub copy. A review you
+ * wrote straight on GitHub stays its own row.
+ */
+export function foldPostedReviews(
+  sources: ReadonlyArray<ReviewSource>,
+  viewerLogin: string | null,
+): { readonly hidden: ReadonlySet<string>; readonly postedFor: ReadonlyMap<string, ReviewSource> } {
+  const hidden = new Set<string>();
+  const postedFor = new Map<string, ReviewSource>();
+  const time = (source: ReviewSource) => source.submittedAt ?? source.updatedAt;
+  for (const round of new Set(sources.map((source) => source.round))) {
+    const local = sources.findLast(
+      (source) => source.round === round && source.kind === "local" && source.state !== "not-run",
+    );
+    if (local === undefined) continue;
+    const posted = sources.filter(
+      (source) =>
+        source.round === round && source.posted === true && isViewerSource(source, viewerLogin),
+    );
+    if (posted.length === 0) continue;
+    for (const source of posted) hidden.add(source.id);
+    postedFor.set(
+      local.id,
+      posted.reduce((latest, source) => (time(source) > time(latest) ? source : latest)),
+    );
+  }
+  return { hidden, postedFor };
+}
+
+const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/;
+
+/**
+ * GitHub's comment hunk runs from the top of the diff hunk down to the commented line, which on
+ * a new file is the whole file. Keep the last `keep` lines, ending at the comment, and rewrite
+ * the header so their line numbers stay right.
+ */
+export function trimReviewExcerpt(excerpt: string, keep = 8): string {
+  const lines = excerpt.replace(/\n+$/, "").split("\n");
+  const header = HUNK_HEADER.exec(lines[0] ?? "");
+  if (header === null) return lines.slice(-keep).join("\n");
+  const body = lines.slice(1);
+  if (body.length <= keep) return excerpt;
+  const counts = (part: ReadonlyArray<string>) => ({
+    old: part.filter((line) => !line.startsWith("+") && !line.startsWith("\\")).length,
+    new: part.filter((line) => !line.startsWith("-") && !line.startsWith("\\")).length,
+  });
+  const skipped = counts(body.slice(0, -keep));
+  const kept = body.slice(-keep);
+  const shown = counts(kept);
+  const oldStart = Number(header[1]) + skipped.old;
+  const newStart = Number(header[2]) + skipped.new;
+  return [`@@ -${oldStart},${shown.old} +${newStart},${shown.new} @@${header[3]}`, ...kept].join(
+    "\n",
+  );
 }

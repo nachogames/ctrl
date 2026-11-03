@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadGroupId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -584,31 +584,92 @@ it.effect("applies in the current group chat without changing the shared review 
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
 
-it.effect(
-  "refuses triage and apply in unrelated or scoped chats before changing the review",
-  () => {
-    const harness = newHarness();
-    const unrelated = ThreadId.make("unrelated-chat");
-    harness.shells.set(unrelated, chatShell(unrelated, { groupId: null }));
-    return Effect.gen(function* () {
-      const reviews = yield* service;
-      const { snapshot } = yield* reviews.open(openInput);
-      const local = yield* reviews.runLocalReview({ sessionId: snapshot.session.id });
-      const sent = harness.sent.length;
-      for (const targetThreadId of [unrelated, local.threadId]) {
-        for (const action of ["triage", "apply"] as const) {
-          const error = yield* Effect.flip(
-            reviews.requestTurn({
-              sessionId: snapshot.session.id,
-              targetThreadId,
-              request: { _tag: action },
-            }),
-          );
-          assert.match(error.message, /group|ordinary/);
-          assert.equal((yield* reviews.read(snapshot.session.id)).rounds[0]?.state, "collecting");
-        }
-      }
-      assert.equal(harness.sent.length, sent);
-    }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
-  },
-);
+it.effect("sends actions from an unrelated or review-only chat to the review chat", () => {
+  const harness = newHarness();
+  const unrelated = ThreadId.make("unrelated-chat");
+  harness.shells.set(unrelated, chatShell(unrelated, { groupId: null }));
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    const local = yield* reviews.runLocalReview({ sessionId });
+    const [running] = (yield* reviews.read(sessionId)).sources;
+    yield* reviews.submitLocalFindings({
+      sessionId,
+      sourceId: running!.id,
+      headSha: "abc123",
+      findings: [{ path: null, line: null, title: "Bug", body: "Fix it.", slug: "bug" }],
+    });
+    for (const targetThreadId of [unrelated, local.threadId]) {
+      yield* reviews.requestTurn({ sessionId, targetThreadId, request: { _tag: "triage" } });
+      assert.equal(harness.sent.at(-1)?.threadId, reviewThreadId);
+    }
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("rechecks points still open from an earlier round in this round's triage", () => {
+  const harness = newHarness();
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.runLocalReview({ sessionId });
+    const [running] = (yield* reviews.read(sessionId)).sources;
+    const done = yield* reviews.submitLocalFindings({
+      sessionId,
+      sourceId: running!.id,
+      headSha: "abc123",
+      findings: [{ path: null, line: null, title: "Bug", body: "Fix it.", slug: "bug" }],
+    });
+    yield* reviews.importItems({
+      sessionId,
+      sourceIds: [done.id],
+      items: [importItem("local::bug", { sources: ["local-review"] })],
+    });
+    // A push moved the review to round 2; the point is still open.
+    yield* repo.updateSession({ ...snapshot.session, round: 2 });
+    yield* repo.upsertRound(sessionId, { ...snapshot.rounds[0]!, state: "applied" });
+    yield* repo.upsertRound(sessionId, { ...snapshot.rounds[0]!, round: 2 });
+    yield* repo.markItemsStale(sessionId);
+    yield* reviews.requestTurn({ sessionId, request: { _tag: "triage" } });
+    assert.include(harness.sent.at(-1)?.text ?? "", "Triage round 2");
+    // The review stays in the round it reviewed, offered again, and round 2 can import it.
+    const [carried] = (yield* reviews.read(sessionId)).sources;
+    assert.deepEqual([carried?.id, carried?.round, carried?.triaged], [done.id, 1, false]);
+    yield* reviews.importItems({
+      sessionId,
+      sourceIds: [done.id],
+      items: [importItem("local::bug", { sources: ["local-review"] })],
+    });
+    const [point] = (yield* reviews.read(sessionId)).items;
+    assert.deepEqual([point?.lastSeenRound, point?.stale], [2, false]);
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("hands the review to its reviewer chat, which then acts as the review chat", () => {
+  const harness = newHarness();
+  const elsewhere = ThreadGroupId.make("group:elsewhere");
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    const local = yield* reviews.runLocalReview({ sessionId });
+    // The review chat is mid-turn: the review stays put until it finishes.
+    const refused = yield* Effect.flip(
+      reviews.moveToChat({ sessionId, threadId: local.threadId, groupId: elsewhere }),
+    );
+    assert.include(refused.message, "running in");
+    harness.shells.set(reviewThreadId, chatShell(reviewThreadId, { activeRunId: null }));
+    yield* reviews.moveToChat({ sessionId, threadId: local.threadId, groupId: elsewhere });
+    const { session } = yield* reviews.read(sessionId);
+    assert.deepEqual([session.reviewThreadId, session.groupId], [local.threadId, elsewhere]);
+    const access = yield* reviews.resolveForThread({
+      threadId: local.threadId,
+      groupId: elsewhere,
+    });
+    assert.equal(access.role, "review");
+    // It still hands in its own findings.
+    assert.isNotNull(access.localSourceId);
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});

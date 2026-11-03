@@ -55,6 +55,7 @@ export function useGroupPullRequestStatus(
         : resolvePullRequestState({
             state,
             isDraft,
+            reviewDecision: snapshot?.reviewDecision,
           }),
     state: state === null ? null : state === "open" && isDraft ? ("draft" as const) : state,
     checksText:

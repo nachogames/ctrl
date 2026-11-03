@@ -1,13 +1,7 @@
 /**
- * PluginUiStore - what local plugins and Claude Code mods draw right now:
- * status lines on threads, bands above a thread's composer, and recent toasts.
- *
- * Everything lives in memory and disappears with its producer: a plugin that
- * stops and a Claude session that closes clear their own entries. Clients
- * subscribe to change signals and read the current state when signalled, so
- * a slow client holds one pending signal, never a backlog of snapshots.
- *
- * @module PluginUiStore
+ * What plugins and Claude Code mods draw now: thread statuses, bands and toasts, in memory and
+ * cleared with their producer. Clients get change signals and read current state, so a slow
+ * client holds one pending signal, never a backlog of snapshots.
  */
 import {
   PLUGIN_STATUS_MAX_ITEMS_PER_SOURCE,
@@ -74,13 +68,11 @@ export class PluginUiStore extends Context.Service<PluginUiStore, PluginUiStoreS
   "t3/plugins/PluginUiStore",
 ) {}
 
-// oxlint-disable-next-line no-control-regex -- plugin text arrives styled for a terminal.
 const ANSI_SEQUENCE = /\u001b\[[0-9;?]*[A-Za-z]/g;
-// oxlint-disable-next-line no-control-regex -- control characters are what this strips.
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]+/g;
 
 /** One plain line: no control characters or ANSI styling, cut to `max`. */
-export const plainLine = (value: string, max: number): string => {
+const plainLine = (value: string, max: number): string => {
   const clean = value.replace(ANSI_SEQUENCE, "").replace(CONTROL_CHARACTERS, " ");
   const trimmed = clean.trim();
   return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
@@ -182,25 +174,24 @@ export const make = Effect.sync(() => {
       return notifyBands(threadId);
     });
 
-  const toast: PluginUiStoreShape["toast"] = (input) =>
-    Effect.gen(function* () {
-      const title = plainLine(input.title, 80);
-      if (title === "") return;
-      const now = yield* DateTime.now;
-      const body = input.body === undefined ? "" : plainLine(input.body, 240);
-      const next: PluginToast = {
-        id: `plugin-toast-${++toastCount}`,
-        source: input.source,
-        title,
-        ...(body === "" ? {} : { body }),
-        ...(input.tone === undefined ? {} : { tone: input.tone }),
-        ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-        ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
-        createdAt: DateTime.formatIso(now),
-      };
-      toasts = [...toasts, next].slice(-PLUGIN_TOAST_MAX_RETAINED);
-      yield* global.notify;
-    });
+  const toast: PluginUiStoreShape["toast"] = Effect.fn("PluginUiStore.toast")(function* (input) {
+    const title = plainLine(input.title, 80);
+    if (title === "") return;
+    const now = yield* DateTime.now;
+    const body = input.body === undefined ? "" : plainLine(input.body, 240);
+    const next: PluginToast = {
+      id: `plugin-toast-${++toastCount}`,
+      source: input.source,
+      title,
+      ...(body === "" ? {} : { body }),
+      ...(input.tone === undefined ? {} : { tone: input.tone }),
+      ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+      ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+      createdAt: DateTime.formatIso(now),
+    };
+    toasts = [...toasts, next].slice(-PLUGIN_TOAST_MAX_RETAINED);
+    yield* global.notify;
+  });
 
   const clearSource: PluginUiStoreShape["clearSource"] = (source, onlyThreadId) =>
     Effect.suspend(() => {

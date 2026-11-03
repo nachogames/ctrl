@@ -56,6 +56,18 @@ Opening a provider session can start MCP servers, run hooks, or launch a login b
 session creation for this reason. Antigravity likewise reserves authenticated catalog sessions for
 explicit setup or model refresh; background checks use initialization only.
 
+Listing what a provider loads (connectors, plugins, MCP servers, skills) also starts every
+configured MCP server, so [`readInventory`](../../packages/provider-core/src/server/driver.ts)
+runs only when a user opens the list. Switching an item off is T3-only: drivers pass per-process
+overrides, Claude's `--settings` layer and Codex's `-c`, and never write the provider's own
+configuration. Those overrides, like any instance setting, reach a session only when it opens, and
+Codex and OpenCode 2.x share one session across threads. The
+[session manager](../../apps/server/src/orchestration-v2/ProviderSessionManager.ts) therefore
+retires an idle session opened by an earlier build of its instance before reusing it. Account connectors live on claude.ai or chatgpt.com, where T3 cannot turn them off
+everywhere, and a remote client should not rewrite configuration on the host. Codex MCP servers
+and plugins stay view-only: a `-c` override for a server missing from the user's config hangs
+`app-server` on startup, and remote marketplace plugins ignore overrides.
+
 [Antigravity sign-in](../../apps/server/src/provider/AntigravityAuth.ts) belongs to the initiating
 T3 auth session. The client carries the return URL back to the environment because the provider's
 loopback listener may be on another machine. Forward only the callback for the owned pending flow;
@@ -89,11 +101,15 @@ symlinks there. Volta is proven by its `volta-shim` link plus the package's imag
 nothing is proven, the provider's own updater (`claude update`, `codex update`, `opencode upgrade`,
 `pi update --self`, `grok update`) runs instead, because each one detects its installer itself;
 the runner's version check catches an updater that exits 0 without updating. Mise installs stay
-manual-only because their version is pinned in mise's config. npm updates pin `--prefix` because the
+manual-only because their version is pinned in mise's config. A Grok cask whose Homebrew prefix
+cannot be verified also stays manual-only: `grok update` would install a second copy. npm updates pin `--prefix` because the
 `npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
 compares against `brew info` since casks trail npm by hours; native installs share npm's version
-train, so the registry stays authoritative for them.
-See the [resolver](../../apps/server/src/provider/providerMaintenance.ts).
+train, so the registry stays authoritative for them. A Chocolatey install of Claude stays
+manual-only: its package directory is writable only by administrators, and `claude update` through
+the shim installs a native copy elsewhere. The latest version comes from `choco search`, and the
+card shows `choco upgrade claude-code` without running it.
+See the [resolver](../../apps/server/src/provider/providerMaintenanceRunner.ts).
 
 Ownership is cached per instance and re-read immediately before an update runs. The
 [runner](../../apps/server/src/provider/providerMaintenanceRunner.ts) refuses when the lock key

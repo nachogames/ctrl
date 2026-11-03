@@ -7,9 +7,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
 
-/**
- * ERRORS
- */
 export class CommandReceiptStoreWriteError extends Schema.TaggedError<CommandReceiptStoreWriteError>()(
   "CommandReceiptStoreWriteError",
   {
@@ -40,9 +37,6 @@ export const CommandReceiptStoreV2Error = Schema.Union([
 ]);
 export type CommandReceiptStoreV2Error = typeof CommandReceiptStoreV2Error.Type;
 
-/**
- * SERVICE DEFINITION
- */
 export const CommandReceiptV2Status = Schema.Literals(["accepted", "rejected"]);
 export type CommandReceiptV2Status = typeof CommandReceiptV2Status.Type;
 
@@ -57,7 +51,6 @@ export const CommandReceiptV2 = Schema.Struct({
 });
 export type CommandReceiptV2 = typeof CommandReceiptV2.Type;
 
-/** Receipt for a project command; shares the receipt table with thread commands. */
 export const ProjectCommandReceiptV2 = Schema.Struct({
   commandId: CommandId,
   projectId: ProjectId,
@@ -90,11 +83,11 @@ export interface CommandReceiptStoreV2Shape {
   readonly upsert: (
     receipt: AnyCommandReceiptV2,
   ) => Effect.Effect<void, CommandReceiptStoreV2Error>;
-  /** A thread command's receipt; none when the command id belongs to a project command. */
+  /** None for project command ids. */
   readonly getByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<Option.Option<CommandReceiptV2>, CommandReceiptStoreV2Error>;
-  /** A project command's receipt; none when the command id belongs to a thread command. */
+  /** None for thread command ids. */
   readonly getProjectByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<Option.Option<ProjectCommandReceiptV2>, CommandReceiptStoreV2Error>;
@@ -109,9 +102,6 @@ export class CommandReceiptStoreV2 extends Context.Service<
   CommandReceiptStoreV2Shape
 >()("t3/orchestration-v2/CommandReceiptStore/CommandReceiptStoreV2") {}
 
-/**
- * IMPLEMENTATIONS
- */
 const decodeReceipt = Schema.decodeUnknownEffect(
   CommandReceiptV2.mapFields((fields) => ({
     ...fields,
@@ -196,11 +186,11 @@ const layerBase: Layer.Layer<
         receipts.getByCommandId({ commandId }).pipe(
           Effect.flatMap(
             Option.match({
-              onNone: () => Effect.succeed(Option.none()),
+              onNone: () => Effect.succeedNone,
               onSome: (receipt) =>
                 receipt.aggregateKind !== "thread"
-                  ? Effect.succeed(Option.none())
-                  : fromApplicationReceipt(receipt).pipe(Effect.map(Option.some)),
+                  ? Effect.succeedNone
+                  : fromApplicationReceipt(receipt).pipe(Effect.asSome),
             }),
           ),
           Effect.mapError(
@@ -215,7 +205,7 @@ const layerBase: Layer.Layer<
         receipts.getByCommandId({ commandId }).pipe(
           Effect.flatMap((receipt) =>
             Option.isNone(receipt) || receipt.value.aggregateKind !== "project"
-              ? Effect.succeed(Option.none())
+              ? Effect.succeedNone
               : decodeProjectReceipt({
                   commandId: receipt.value.commandId,
                   projectId: receipt.value.aggregateId,
@@ -224,7 +214,7 @@ const layerBase: Layer.Layer<
                   resultSequence: receipt.value.resultSequence,
                   status: receipt.value.status,
                   error: receipt.value.error,
-                }).pipe(Effect.map(Option.some)),
+                }).pipe(Effect.asSome),
           ),
           Effect.mapError((cause) => new CommandReceiptStoreReadError({ commandId, cause })),
         ),
@@ -232,7 +222,7 @@ const layerBase: Layer.Layer<
         receipts.getByCommandId({ commandId }).pipe(
           Effect.flatMap((receipt) =>
             Option.isNone(receipt) || receipt.value.aggregateKind !== "thread-group"
-              ? Effect.succeed(Option.none())
+              ? Effect.succeedNone
               : decodeThreadGroupReceipt({
                   commandId: receipt.value.commandId,
                   groupId: receipt.value.aggregateId,
@@ -241,7 +231,7 @@ const layerBase: Layer.Layer<
                   resultSequence: receipt.value.resultSequence,
                   status: receipt.value.status,
                   error: receipt.value.error,
-                }).pipe(Effect.map(Option.some)),
+                }).pipe(Effect.asSome),
           ),
           Effect.mapError((cause) => new CommandReceiptStoreReadError({ commandId, cause })),
         ),

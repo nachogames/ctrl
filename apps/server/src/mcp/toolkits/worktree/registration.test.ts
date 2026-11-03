@@ -6,9 +6,11 @@ import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
@@ -33,6 +35,8 @@ import * as ThreadGroupStore from "../../../orchestration-v2/ThreadGroupStore.ts
 import * as PreviewManager from "../../../preview/Manager.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import { BUILT_IN_MCP_TOOL_NAMES } from "../../builtInToolNames.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -40,6 +44,14 @@ import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import * as GroupResourceScanner from "../../../threadGroups/GroupResourceScanner.ts";
 import * as PluginHost from "../../../plugins/PluginHost.ts";
 import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
+import * as RemoteMcpServers from "../../../remoteMcp/RemoteMcpServers.ts";
+import * as DocumentText from "../../../provider/DocumentText.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -69,6 +81,25 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(GroupResourceScanner.GroupResourceScanner)({}),
   Layer.mock(ReviewSessionService.ReviewSessionService)({}),
   Layer.mock(PluginHost.PluginHost)({ pluginsDir: "/unused" }),
+  Layer.mock(PeerForwarding.PeerForwarding)({}),
+  Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+  Layer.mock(PeerLinks.PeerLinks)({}),
+  Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+  Layer.mock(RemoteMcpServers.RemoteMcpServers)({
+    tools: () => [
+      {
+        name: "notes_echo",
+        serverId: "notes",
+        remoteName: "echo",
+        description: "Echoes its text.",
+        inputSchema: { type: "object", properties: { text: { type: "string" } } },
+      },
+    ],
+    toolChanges: Stream.empty,
+    isVisible: () => true,
+    callTool: (_name, args) =>
+      Effect.succeed({ content: [{ type: "text", text: String(args?.text) }] }),
+  }),
 );
 
 const ToolsListPayload = Schema.fromJsonString(
@@ -95,7 +126,20 @@ const decodeToolsListPayload = Schema.decodeUnknownEffect(ToolsListPayload);
 it.effect("production mcp layer lists worktree tools over http", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const layerRoutes = McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer));
+      const registry = Context.get(
+        yield* McpSessionRegistry.layer.pipe(
+          Layer.provide(
+            Layer.mock(ServerEnvironment.ServerEnvironment)({
+              getEnvironmentId: Effect.succeed("environment-scratch" as never),
+            }),
+          ),
+          Layer.build,
+        ),
+        McpSessionRegistry.McpSessionRegistry,
+      );
+      const layerRoutes = McpHttpServer.layer.pipe(
+        Layer.provide(Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry)),
+      );
       yield* HttpRouter.serve(layerRoutes, {
         disableListenLog: true,
         disableLogger: true,
@@ -108,18 +152,18 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         Layer.provide(PreviewAutomationBroker.layer),
         Layer.provide(PreviewBrowser.layer),
         Layer.provide(layerStubServices),
+        Layer.provide(McpProviderSessions.layer),
         Layer.build,
       );
 
-      const registry = McpSessionRegistry.issueActiveMcpCredential({
+      const credential = yield* registry.issue({
         threadId: ThreadId.make("thread-scratch"),
         providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       });
-      const credential = yield* registry;
       expect(credential).toBeDefined();
 
       const httpClient = yield* HttpClient.HttpClient;
-      const auth = credential!.config.authorizationHeader;
+      const auth = credential.config.authorizationHeader;
       const initResponse = yield* httpClient.post("/mcp", {
         headers: {
           accept: "application/json, text/event-stream",
@@ -151,14 +195,14 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const toolNames = tools.map((tool) => tool.name);
       expect(toolNames).toContain("t3_worktree_handoff");
       expect(toolNames).toContain("t3_worktree_status");
-      // The worktree registration merges alongside the other toolkits rather
-      // than replacing them.
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
+      // Claude pre-approves exactly this list, so a served tool missing from it
+      // would start asking for approval.
+      expect(toolNames.filter((name) => !BUILT_IN_MCP_TOOL_NAMES.includes(name))).toEqual([
+        "notes_echo",
+      ]);
 
-      // The handoff tool mutates thread state, reaches the network (origin
-      // fetch), and runs project setup scripts, so its MCP hints must not
-      // promise a read-only, closed-world, non-destructive tool.
       const handoff = tools.find((tool) => tool.name === "t3_worktree_handoff");
       expect(handoff?.annotations?.readOnlyHint).toBe(false);
       expect(handoff?.annotations?.destructiveHint).toBe(true);
@@ -178,10 +222,105 @@ it.effect("production mcp layer lists worktree tools over http", () =>
     Effect.provide(
       Layer.mergeAll(
         NodeHttpServer.layerTest,
+        DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-worktree-mcp-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),
         NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+      ),
+    ),
+  ),
+);
+
+it.effect("proxies remote MCP tools to every agent", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = Context.get(
+        yield* McpSessionRegistry.layer.pipe(
+          Layer.provide(
+            Layer.mock(ServerEnvironment.ServerEnvironment)({
+              getEnvironmentId: Effect.succeed("environment-scratch" as never),
+            }),
+          ),
+          Layer.build,
+        ),
+        McpSessionRegistry.McpSessionRegistry,
+      );
+      const layerRoutes = McpHttpServer.layer.pipe(
+        Layer.provide(Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry)),
+      );
+      yield* HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.provide(
+          Layer.mock(ServerEnvironment.ServerEnvironment)({
+            getEnvironmentId: Effect.succeed("environment-scratch" as never),
+          }),
+        ),
+        Layer.provide(PreviewAutomationBroker.layer),
+        Layer.provide(PreviewBrowser.layer),
+        Layer.provide(layerStubServices),
+        Layer.provide(McpProviderSessions.layer),
+        Layer.build,
+      );
+      const credential = yield* registry.issue({
+        threadId: ThreadId.make("thread-scratch"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      });
+      const httpClient = yield* HttpClient.HttpClient;
+      const headers = {
+        accept: "application/json, text/event-stream",
+        authorization: credential.config.authorizationHeader,
+      };
+      const session = (clientName: string) =>
+        Effect.gen(function* () {
+          const init = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"${clientName}","version":"1.0.0"}}}`,
+              "application/json",
+            ),
+          });
+          const sessionId = init.headers["mcp-session-id"];
+          return (body: string) =>
+            httpClient
+              .post("/mcp", {
+                headers: {
+                  ...headers,
+                  "mcp-protocol-version": "2025-06-18",
+                  ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+                },
+                body: HttpBody.text(body, "application/json"),
+              })
+              .pipe(Effect.flatMap((response) => response.text));
+        });
+      const listNames = <E>(send: (body: string) => Effect.Effect<string, E>) =>
+        send(`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`).pipe(
+          Effect.flatMap((text) => decodeToolsListPayload(text.match(/\{.*\}/s)![0])),
+          Effect.map((payload) => payload.result.tools.map((tool) => tool.name)),
+        );
+
+      const codex = yield* session("codex-mcp-client");
+      expect(yield* listNames(codex)).toContain("notes_echo");
+      const called = yield* codex(
+        `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"notes_echo","arguments":{"text":"hello"}}}`,
+      );
+      expect(called).toContain('"text":"hello"');
+
+      const claude = yield* session("claude-code");
+      expect(yield* listNames(claude)).toContain("notes_echo");
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeHttpServer.layerTest,
+        DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-remote-mcp-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
       ),
     ),
   ),

@@ -1,19 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - plugins run as child processes over Node's IPC
 // channel, which the Effect process service does not expose, and scans read small local files.
 /**
- * PluginHost - loads local plugins from `<T3 home>/plugins` and runs them.
- *
- * Each subfolder with a `t3-plugin.json` is one plugin. The host watches the
- * folder, so a plugin an agent writes or edits loads without a restart. A
- * plugin with an `entry` runs in its own Node child process (see
- * pluginRunner.ts); a crash restarts it with backoff, and repeated crashes
- * stop it in the `error` state until its files change. Plugin code is
- * trusted OS-user code: the process boundary contains crashes, not access.
- *
- * Plugins load enabled. Turning one off is remembered in
- * `<stateDir>/plugins.json`.
- *
- * @module PluginHost
+ * Loads plugins from `<T3 home>/plugins`, reloading on file changes. A plugin's `entry` runs in its
+ * own Node process; crashes restart with backoff and repeated ones stop it until its files change.
+ * Plugin code is trusted OS-user code: the process boundary contains crashes, not access.
  */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -196,7 +186,7 @@ const resolveInside = (dir: string, relative: string): string | null => {
   }
 };
 
-export const scanPluginFolder = (dir: string, folder: string): ScannedPlugin => {
+const scanPluginFolder = (dir: string, folder: string): ScannedPlugin => {
   const base = { dir, folder, fingerprint: fingerprintOf(dir) };
   const raw = readSmallFile(NodePath.join(dir, PLUGIN_MANIFEST_FILE), MAX_MANIFEST_BYTES);
   if (raw === null) {
@@ -477,66 +467,64 @@ const make = Effect.gen(function* () {
       return setState(record, record.state === "restarting" ? "restarting" : "starting", null);
     });
 
-  const onChildExit = (
+  const onChildExit = Effect.fn("PluginHost.onChildExit")(function* (
     record: PluginRecord,
     child: RunningChild,
     code: number | null,
     signal: NodeJS.Signals | null,
-  ) =>
-    Effect.gen(function* () {
-      yield* failPending(child, "The plugin process exited.");
-      if (child.stopping || record.child !== child || records.get(idOf(record)) !== record) return;
-      record.child = null;
-      yield* store.clearSource(sourceOf(record));
-      const now = yield* Clock.currentTimeMillis;
-      record.crashes = [...record.crashes.filter((at) => now - at < CRASH_WINDOW_MS), now];
-      const reason = `The plugin exited (${signal ?? `code ${code}`}).`;
-      appendLog(record, reason);
-      if (record.crashes.length >= MAX_CRASHES) {
-        const last = record.logs.slice(-5).join("\n");
-        yield* setState(
-          record,
-          "error",
-          `${reason} It crashed ${MAX_CRASHES} times, so it stays stopped until its files change.\n${last}`,
-        );
-        return;
-      }
-      yield* setState(record, "restarting", reason);
-      const delay = 1000 * 2 ** (record.crashes.length - 1);
-      record.restartFiber = runFork(
-        Effect.sleep(Duration.millis(delay)).pipe(
-          Effect.andThen(
-            reconcileLock.withPermits(1)(
-              Effect.suspend(() => {
-                if (records.get(idOf(record)) !== record || disabled.has(idOf(record))) {
-                  return Effect.void;
-                }
-                record.restartFiber = null;
-                return startChild(record);
-              }),
-            ),
+  ) {
+    yield* failPending(child, "The plugin process exited.");
+    if (child.stopping || record.child !== child || records.get(idOf(record)) !== record) return;
+    record.child = null;
+    yield* store.clearSource(sourceOf(record));
+    const now = yield* Clock.currentTimeMillis;
+    record.crashes = [...record.crashes.filter((at) => now - at < CRASH_WINDOW_MS), now];
+    const reason = `The plugin exited (${signal ?? `code ${code}`}).`;
+    appendLog(record, reason);
+    if (record.crashes.length >= MAX_CRASHES) {
+      const last = record.logs.slice(-5).join("\n");
+      yield* setState(
+        record,
+        "error",
+        `${reason} It crashed ${MAX_CRASHES} times, so it stays stopped until its files change.\n${last}`,
+      );
+      return;
+    }
+    yield* setState(record, "restarting", reason);
+    const delay = 1000 * 2 ** (record.crashes.length - 1);
+    record.restartFiber = runFork(
+      Effect.sleep(Duration.millis(delay)).pipe(
+        Effect.andThen(
+          reconcileLock.withPermits(1)(
+            Effect.suspend(() => {
+              if (records.get(idOf(record)) !== record || disabled.has(idOf(record))) {
+                return Effect.void;
+              }
+              record.restartFiber = null;
+              return startChild(record);
+            }),
           ),
         ),
-      );
-    });
+      ),
+    );
+  });
 
   /** Starts or stops one plugin to match its manifest and enabled flag. */
-  const activate = (record: PluginRecord) =>
-    Effect.gen(function* () {
-      if (record.scanned.error !== null) {
-        yield* setState(record, "error", record.scanned.error);
-        return;
-      }
-      if (disabled.has(idOf(record))) {
-        yield* setState(record, "disabled", null);
-        return;
-      }
-      if (record.scanned.manifest?.entry === undefined) {
-        yield* setState(record, "ready", null);
-        return;
-      }
-      yield* startChild(record);
-    });
+  const activate = Effect.fn("PluginHost.activate")(function* (record: PluginRecord) {
+    if (record.scanned.error !== null) {
+      yield* setState(record, "error", record.scanned.error);
+      return;
+    }
+    if (disabled.has(idOf(record))) {
+      yield* setState(record, "disabled", null);
+      return;
+    }
+    if (record.scanned.manifest?.entry === undefined) {
+      yield* setState(record, "ready", null);
+      return;
+    }
+    yield* startChild(record);
+  });
 
   const writeEnabledState = Effect.sync(() => {
     try {
@@ -650,38 +638,38 @@ const make = Effect.gen(function* () {
     });
 
   /** Sends a request to a running plugin and waits for its answer. */
-  const request = (
+  const request = Effect.fn("PluginHost.request")(function* (
     record: PluginRecord,
     build: (id: number) => HostToRunner,
-  ): Effect.Effect<unknown, PluginError> =>
-    Effect.gen(function* () {
-      const child = record.child;
-      if (child === null || record.state !== "running") {
-        return yield* new PluginError({
-          message: `${idOf(record)} is not running (${record.state}).`,
-        });
-      }
-      const id = nextCallId++;
-      const deferred = yield* Deferred.make<unknown, PluginError>();
-      child.pending.set(id, deferred);
-      try {
-        child.process.send(build(id));
-      } catch {
+  ): Effect.fn.Return<unknown, PluginError> {
+    const child = record.child;
+    if (child === null || record.state !== "running") {
+      return yield* new PluginError({
+        message: `${idOf(record)} is not running (${record.state}).`,
+      });
+    }
+    const id = nextCallId++;
+    const deferred = yield* Deferred.make<unknown, PluginError>();
+    child.pending.set(id, deferred);
+    yield* Effect.try({
+      try: () => child.process.send(build(id)),
+      catch: () => {
         child.pending.delete(id);
-        return yield* new PluginError({ message: `${idOf(record)} could not be reached.` });
-      }
-      return yield* Deferred.await(deferred).pipe(
-        Effect.timeoutOrElse({
-          duration: CALL_TIMEOUT,
-          orElse: () => {
-            child.pending.delete(id);
-            return Effect.fail(
-              new PluginError({ message: `${idOf(record)} did not answer in time.` }),
-            );
-          },
-        }),
-      );
+        return new PluginError({ message: `${idOf(record)} could not be reached.` });
+      },
     });
+    return yield* Deferred.await(deferred).pipe(
+      Effect.timeoutOrElse({
+        duration: CALL_TIMEOUT,
+        orElse: () => {
+          child.pending.delete(id);
+          return Effect.fail(
+            new PluginError({ message: `${idOf(record)} did not answer in time.` }),
+          );
+        },
+      }),
+    );
+  });
 
   const subscribe: Stream.Stream<PluginsSnapshot> = Stream.unwrap(
     Effect.gen(function* () {
@@ -715,7 +703,7 @@ const make = Effect.gen(function* () {
     subscribeBands: store.subscribeBands,
     reload: reconcile.pipe(Effect.andThen(list)),
     list,
-    setEnabled: (pluginId, enabled) =>
+    setEnabled: Effect.fn("PluginHost.setEnabled")((pluginId, enabled) =>
       reconcileLock.withPermits(1)(
         Effect.gen(function* () {
           const record = yield* recordFor(pluginId);
@@ -729,48 +717,46 @@ const make = Effect.gen(function* () {
           yield* notifyCatalog;
         }),
       ),
-    readView: (pluginId, viewId) =>
-      Effect.gen(function* () {
-        const record = yield* recordFor(pluginId);
-        const view = record.scanned.manifest?.views.find((candidate) => candidate.id === viewId);
-        if (view === undefined || disabled.has(pluginId) || record.scanned.error !== null) {
-          return yield* new PluginError({ message: `${pluginId} has no view ${viewId}.` });
-        }
-        const path = resolveInside(record.scanned.dir, view.html);
-        const html = path === null ? null : readSmallFile(path, MAX_VIEW_BYTES);
-        if (html === null) {
-          return yield* new PluginError({
-            message: `${view.html} is missing or larger than ${MAX_VIEW_BYTES} bytes.`,
-          });
-        }
-        return {
-          title: view.title,
-          html: injectHtmlRenderBootstrap(html, PLUGIN_VIEW_BRIDGE_SCRIPT),
-        };
-      }),
-    callView: (input) =>
-      Effect.gen(function* () {
-        const record = yield* recordFor(input.pluginId);
-        return yield* request(record, (id) => ({
-          t: "call",
-          id,
-          handler: input.handler,
-          input: input.input,
-          context: { viewId: input.viewId, threadId: input.threadId ?? null },
-        }));
-      }),
-    runCommand: (input) =>
-      Effect.gen(function* () {
-        const record = yield* recordFor(input.pluginId);
-        yield* request(record, (id) => ({
-          t: "command",
-          id,
-          name: input.command,
-          threadId: input.threadId,
-          args: input.args,
-        }));
-      }),
-    press: (input) =>
+    ),
+    readView: Effect.fn("PluginHost.readView")(function* (pluginId, viewId) {
+      const record = yield* recordFor(pluginId);
+      const view = record.scanned.manifest?.views.find((candidate) => candidate.id === viewId);
+      if (view === undefined || disabled.has(pluginId) || record.scanned.error !== null) {
+        return yield* new PluginError({ message: `${pluginId} has no view ${viewId}.` });
+      }
+      const path = resolveInside(record.scanned.dir, view.html);
+      const html = path === null ? null : readSmallFile(path, MAX_VIEW_BYTES);
+      if (html === null) {
+        return yield* new PluginError({
+          message: `${view.html} is missing or larger than ${MAX_VIEW_BYTES} bytes.`,
+        });
+      }
+      return {
+        title: view.title,
+        html: injectHtmlRenderBootstrap(html, PLUGIN_VIEW_BRIDGE_SCRIPT),
+      };
+    }),
+    callView: Effect.fn("PluginHost.callView")(function* (input) {
+      const record = yield* recordFor(input.pluginId);
+      return yield* request(record, (id) => ({
+        t: "call",
+        id,
+        handler: input.handler,
+        input: input.input,
+        context: { viewId: input.viewId, threadId: input.threadId ?? null },
+      }));
+    }),
+    runCommand: Effect.fn("PluginHost.runCommand")(function* (input) {
+      const record = yield* recordFor(input.pluginId);
+      yield* request(record, (id) => ({
+        t: "command",
+        id,
+        name: input.command,
+        threadId: input.threadId,
+        args: input.args,
+      }));
+    }),
+    press: Effect.fn("PluginHost.press")((input) =>
       input.source.kind === "claude-mod"
         ? claudeModUi.press({
             threadId: input.threadId,
@@ -786,13 +772,16 @@ const make = Effect.gen(function* () {
               handle: input.target.handle,
               ...(input.key === undefined ? {} : { key: input.key }),
             };
-            try {
-              record.child?.process.send(message);
-            } catch {
-              // A stopped plugin's band is already gone.
-            }
+            yield* Effect.sync(() => {
+              try {
+                record.child?.process.send(message);
+              } catch {
+                // A stopped plugin's band is already gone.
+              }
+            });
           }),
-    publishEvent: (event) =>
+    ),
+    publishEvent: Effect.fn("PluginHost.publishEvent")((event) =>
       Effect.sync(() => {
         const message: HostToRunner = { t: "event", event };
         for (const record of records.values()) {
@@ -804,13 +793,14 @@ const make = Effect.gen(function* () {
           }
         }
       }),
+    ),
   });
 });
 
 export const layer = Layer.effect(PluginHost, make);
 
 /** A domain event as plugins see it, or null for the many they do not. */
-export const pluginEventOf = (event: OrchestrationV2DomainEvent): PluginHostEvent | null => {
+const pluginEventOf = (event: OrchestrationV2DomainEvent): PluginHostEvent | null => {
   switch (event.type) {
     case "run.created":
     case "run.updated":

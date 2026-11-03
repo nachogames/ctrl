@@ -6,7 +6,7 @@ import {
   pluginViewResultMessage,
   readPluginViewMessage,
 } from "@t3tools/shared/pluginView";
-import { useCallback, useEffect, useMemo } from "react";
+import { useEffect, useState } from "react";
 
 import type { PluginViewSurface } from "~/rightPanelStore";
 import { pluginEnvironment } from "~/state/plugins";
@@ -44,45 +44,37 @@ export function PluginViewPanel(props: {
       : null,
   );
   const html = view.data?.html ?? null;
-  const src = useMemo(
-    () => (html === null ? null : URL.createObjectURL(new Blob([html], { type: "text/html" }))),
-    [html],
-  );
-  useEffect(() => () => (src === null ? undefined : URL.revokeObjectURL(src)), [src]);
 
   const callView = useAtomCommand(pluginEnvironment.callView, {
     reportFailure: false,
     reportDefect: false,
   });
-  const onFrameMessage = useCallback(
-    (data: unknown, reply: (message: unknown) => void) => {
-      const message = readPluginViewMessage(data);
-      if (message === undefined) return;
-      if (message.type === "ready") {
-        reply(
-          pluginViewInitMessage({ pluginId: surface.pluginId, viewId: surface.viewId, threadId }),
-        );
-        return;
-      }
-      void callView({
-        environmentId,
-        input: {
-          pluginId: surface.pluginId,
-          viewId: surface.viewId,
-          handler: message.handler,
-          input: message.input,
-          ...(threadId === null ? {} : { threadId }),
-        },
-      }).then((result) =>
-        reply(
-          result._tag === "Success"
-            ? pluginViewResultMessage(message.id, result.value.value)
-            : pluginViewErrorMessage(message.id, failureMessage(squashAtomCommandFailure(result))),
-        ),
+  const onFrameMessage = (data: unknown, reply: (message: unknown) => void) => {
+    const message = readPluginViewMessage(data);
+    if (message === undefined) return;
+    if (message.type === "ready") {
+      reply(
+        pluginViewInitMessage({ pluginId: surface.pluginId, viewId: surface.viewId, threadId }),
       );
-    },
-    [callView, environmentId, surface.pluginId, surface.viewId, threadId],
-  );
+      return;
+    }
+    void callView({
+      environmentId,
+      input: {
+        pluginId: surface.pluginId,
+        viewId: surface.viewId,
+        handler: message.handler,
+        input: message.input,
+        ...(threadId === null ? {} : { threadId }),
+      },
+    }).then((result) =>
+      reply(
+        result._tag === "Success"
+          ? pluginViewResultMessage(message.id, result.value.value)
+          : pluginViewErrorMessage(message.id, failureMessage(squashAtomCommandFailure(result))),
+      ),
+    );
+  };
 
   const notice =
     plugin === undefined
@@ -102,15 +94,35 @@ export function PluginViewPanel(props: {
       </p>
     );
   }
-  if (src === null) return null;
+  if (html === null) return null;
   return (
-    <HtmlRenderDocument
-      key={src}
-      src={src}
+    <PluginViewFrame
+      key={html}
+      html={html}
       title={surface.title}
       threadRef={props.threadRef}
-      className="min-h-0 flex-1"
       onFrameMessage={onFrameMessage}
+    />
+  );
+}
+
+/** Keyed by the HTML, so each version gets its own blob URL, revoked when it is replaced. */
+function PluginViewFrame(props: {
+  readonly html: string;
+  readonly title: string;
+  readonly threadRef: ScopedThreadRef | undefined;
+  readonly onFrameMessage: (data: unknown, reply: (message: unknown) => void) => void;
+}) {
+  const [src] = useState(() => URL.createObjectURL(new Blob([props.html], { type: "text/html" })));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases this frame's blob URL on unmount
+  useEffect(() => () => URL.revokeObjectURL(src), [src]);
+  return (
+    <HtmlRenderDocument
+      src={src}
+      title={props.title}
+      threadRef={props.threadRef}
+      className="min-h-0 flex-1"
+      onFrameMessage={props.onFrameMessage}
     />
   );
 }

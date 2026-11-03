@@ -3,13 +3,15 @@ import {
   type ReviewSessionId,
   type ReviewSessionError,
 } from "@t3tools/contracts";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
-import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
+import { normalizeThreadPullRequestKey } from "../../../sourceControl/threadPullRequests.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { reviewBrief } from "../../../reviewSessions/reviewBrief.ts";
 import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
+import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { loadCaller } from "../../threadAccess.ts";
@@ -60,15 +62,16 @@ const callingChat = Effect.gen(function* () {
 });
 
 /** The review this chat works on, and its role in it. */
-const reviewAccess = (input: { readonly sessionId?: ReviewSessionId | undefined }) =>
-  Effect.gen(function* () {
-    const caller = yield* callingChat;
-    const sessions = yield* ReviewSessionService.ReviewSessionService;
-    const access = yield* sessions
-      .resolveForThread({ threadId: caller.id, groupId: caller.groupId ?? null, ...input })
-      .pipe(Effect.catch(reviewFailure));
-    return { ...access, caller };
-  });
+const reviewAccess = Effect.fn("ReviewToolkit.reviewAccess")(function* (input: {
+  readonly sessionId?: ReviewSessionId | undefined;
+}) {
+  const caller = yield* callingChat;
+  const sessions = yield* ReviewSessionService.ReviewSessionService;
+  const access = yield* sessions
+    .resolveForThread({ threadId: caller.id, groupId: caller.groupId ?? null, ...input })
+    .pipe(Effect.catch(reviewFailure));
+  return { ...access, caller };
+});
 
 const LOCAL_ONLY =
   "This chat runs your independent review: it may not read the list (it holds the other reviews' comments) and may only hand in findings with review_source_submit.";
@@ -111,7 +114,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           "Put this chat in the pull request's group first: t3_group_create, or t3_group_move_thread into the group.",
         );
       }
-      const parsed = parseChangeRequestUrl(input.url);
+      const parsed = sourceControlDefinitions.parseChangeRequestUrl(input.url)?.link ?? null;
       if (parsed === null) return yield* invalid("This is not a recognised pull request URL.");
       if (parsed.host !== "github.com")
         return yield* invalid("Review sessions support GitHub pull requests.");
@@ -129,10 +132,26 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           headSha: input.headSha ?? null,
         })
         .pipe(Effect.catch(reviewFailure));
+      // Unreadable settings still open the review; the brief just lacks the user's rules.
+      const userRules = yield* Settings.ServerSettingsService.pipe(
+        Effect.flatMap((service) => service.getSettings),
+        Effect.map((settings) => {
+          const resolved = resolveProjectSettings(settings, result.snapshot.session.projectId);
+          return {
+            text: resolved.settings.reviewInstructions,
+            fromProject: resolved.sources.reviewInstructions === "project",
+          };
+        }),
+        Effect.catch((cause) =>
+          Effect.logWarning("review rules unavailable", { cause }).pipe(
+            Effect.as({ text: "", fromProject: false }),
+          ),
+        ),
+      );
       return {
         ...result.snapshot,
         created: result.created,
-        brief: reviewBrief(result.snapshot.session),
+        brief: reviewBrief(result.snapshot.session, userRules),
       };
     }),
   ),
@@ -160,7 +179,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
   review_source_submit: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const access = yield* reviewAccess(input);
-      if (access.role !== "local" || access.localSourceId === null) {
+      if (access.localSourceId === null) {
         return yield* invalid("Only the chat your local review runs in hands in its findings.");
       }
       const sessions = yield* ReviewSessionService.ReviewSessionService;
@@ -246,6 +265,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           number: input.number,
           decision: input.decision,
           reason: input.reason,
+          postAs: input.postAs,
           authority: { _tag: "chat", threadId: access.caller.id, quote: input.quote },
         })
         .pipe(Effect.catch(reviewFailure));

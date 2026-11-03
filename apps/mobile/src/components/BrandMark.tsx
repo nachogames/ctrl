@@ -2,14 +2,14 @@ import Constants from "expo-constants";
 import { Image } from "expo-image";
 import { View } from "react-native";
 
-import { AppText as Text } from "./AppText";
+import { AppText as Text } from "./ui/AppText";
 import { resolveBrandMarkSource } from "./brandAssets";
 import { MOBILE_APP_BASE_NAME, resolveBrandMarkVariant } from "../lib/mobileBranding";
 import { useAppIconDesign } from "../state/use-app-icon-design";
 
 const appVariant = Constants.expoConfig?.extra?.appVariant;
 const DEFAULT_STAGE_LABEL =
-  appVariant === "development" ? "Dev" : appVariant === "preview" ? "Preview" : "Alpha";
+  appVariant === "development" ? "Dev" : appVariant === "preview" ? "Preview" : "Beta";
 
 export function BrandMark(props: { readonly compact?: boolean; readonly stageLabel?: string }) {
   const design = useAppIconDesign();

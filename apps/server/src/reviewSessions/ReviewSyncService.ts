@@ -1,5 +1,6 @@
 import {
   ReviewSessionError,
+  reviewRole,
   type PullRequestRef,
   type ReviewSession,
   type ReviewSessionId,
@@ -15,6 +16,8 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import type { ProviderChangeRequestReviewRound } from "@t3tools/source-control-core/server/PullRequestProvider";
+
 import * as ReviewSessions from "../persistence/ReviewSessions.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -23,11 +26,15 @@ import {
   itemGithubState,
   planReviewSync,
   rawReviewItems,
+  repairUnknownLocalSources,
+  reviewReopenReason,
   shouldSyncReview,
+  viewerPendingReview,
   type ReviewSyncMark,
 } from "./reviewSync.ts";
 
 const SWEEP_MINUTES = 2;
+const REOPEN_WINDOW_DAYS = 30;
 
 export class ReviewSyncService extends Context.Service<
   ReviewSyncService,
@@ -36,7 +43,10 @@ export class ReviewSyncService extends Context.Service<
     readonly syncSession: (
       sessionId: ReviewSessionId,
     ) => Effect.Effect<boolean, ReviewSessionError>;
-    /** Syncs every live review every two minutes, reading in full only when GitHub moved. */
+    /**
+     * Syncs every live review, and recently finished ones GitHub may bring back, every two
+     * minutes, reading in full only when GitHub moved.
+     */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/reviewSessions/ReviewSyncService") {}
@@ -73,16 +83,90 @@ const make = Effect.gen(function* () {
         ),
       );
 
+  /**
+   * Brings a finished review back when GitHub moved past where it ended. Reviewing someone
+   * else's pull request, it returns to its posted round so Re-review is offered; on your own,
+   * a new round opens on the new head. Never while another review of the pull request is live.
+   */
+  const reopen = Effect.fn("ReviewSyncService.reopen")(function* (
+    session: ReviewSession,
+    read: ProviderChangeRequestReviewRound,
+  ) {
+    if (reviewReopenReason(session, read) === null) return null;
+    const live = yield* repo.findLiveSession({
+      key: session.pullRequest,
+      projectId: session.projectId,
+      groupId: session.groupId,
+    });
+    if (Option.isSome(live)) return null;
+    const at = DateTime.formatIso(yield* DateTime.now);
+    const roundState = yield* currentRoundState(session);
+    const nextRound = reviewRole(session) === "author" && roundState === "applied";
+    const next: ReviewSession = nextRound
+      ? {
+          ...session,
+          phase: "self-review",
+          round: session.round + 1,
+          headSha: read.headSha ?? session.headSha,
+          updatedAt: at,
+        }
+      : { ...session, phase: "self-review", updatedAt: at };
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* repo.updateSession(next);
+        if (!nextRound) return;
+        yield* repo.upsertRound(session.id, {
+          round: next.round,
+          headSha: next.headSha,
+          state: "collecting",
+          appliedSha: null,
+          createdAt: at,
+          updatedAt: at,
+        });
+        yield* repo.markItemsStale(session.id);
+      }),
+    );
+    yield* changes.publish(session.id);
+    return next;
+  });
+
   const syncSession: ReviewSyncService["Service"]["syncSession"] = (sessionId) =>
     lockFor(sessionId)
       .withPermits(1)(
         Effect.gen(function* () {
           const found = yield* repo.getSession(sessionId);
-          if (Option.isNone(found) || found.value.phase === "done") return false;
-          const session = found.value;
-          const roundState = yield* currentRoundState(session);
-          const read = yield* pullRequests.reviewRound(refOf(session));
+          if (Option.isNone(found)) return false;
+          // A merged or closed pull request ends its review. When GitHub cannot say, nothing
+          // changes.
+          const state = yield* pullRequests.summary(refOf(found.value)).pipe(
+            Effect.map((summary) => summary.state),
+            Effect.orElseSucceed(() => null),
+          );
+          if (state !== null && state !== "open") {
+            if (found.value.phase === "done") return false;
+            yield* repo.updateSession({
+              ...found.value,
+              phase: "done",
+              updatedAt: DateTime.formatIso(yield* DateTime.now),
+            });
+            yield* changes.publish(sessionId);
+            return true;
+          }
+          const read = yield* pullRequests.reviewRound(refOf(found.value));
           if (read === null) return false;
+          let session = found.value;
+          if (session.phase === "done") {
+            const reopened = yield* reopen(session, read);
+            if (reopened === null) {
+              // Once the request you finished under is gone, asking you again brings it back.
+              if (session.viewerRequested !== true || viewerPendingReview(session, read))
+                return false;
+              yield* repo.updateSession({ ...session, viewerRequested: false });
+              return false;
+            }
+            session = reopened;
+          }
+          const roundState = yield* currentRoundState(session);
           const sources = yield* repo.listSources(session.id);
           const commentsBySource = new Map(
             yield* Effect.forEach(sources, (source) =>
@@ -92,6 +176,7 @@ const make = Effect.gen(function* () {
             ),
           );
           const plan = planReviewSync({
+            sessionId: session.id,
             sessionRound: session.round,
             roundState,
             existing: sources,
@@ -109,8 +194,25 @@ const make = Effect.gen(function* () {
             ]).values(),
           ];
           const existingItems = yield* repo.listItems(session.id);
+          const rawOptions = { sessionId: session.id, viewerLogin: read.viewerLogin };
           const missingRaw =
-            roundState === "collecting" ? rawReviewItems(session, existingItems, rawSources) : [];
+            roundState === "collecting"
+              ? rawReviewItems(session, existingItems, rawSources, rawOptions)
+              : [];
+          // Who wrote it and who reads it; a read that cannot tell keeps what was known.
+          const people = (current: ReviewSession) => ({
+            authorLogin: read.authorLogin ?? current.authorLogin ?? null,
+            viewerLogin: read.viewerLogin ?? current.viewerLogin ?? null,
+            viewerRequested: plan.viewerRequested,
+          });
+          const peopleChanged = (current: ReviewSession) => {
+            const next = people(current);
+            return (
+              next.authorLogin !== (current.authorLogin ?? null) ||
+              next.viewerLogin !== (current.viewerLogin ?? null) ||
+              next.viewerRequested !== (current.viewerRequested ?? false)
+            );
+          };
           const headChanged = read.headSha !== null && session.headSha !== read.headSha;
           const githubStates = existingItems.flatMap((item) => {
             const next = itemGithubState(item.githubThreadIds, plan.threads);
@@ -123,7 +225,9 @@ const make = Effect.gen(function* () {
             plan.removals.length === 0 &&
             githubStates.length === 0 &&
             !headChanged &&
-            missingRaw.length === 0
+            missingRaw.length === 0 &&
+            !peopleChanged(session) &&
+            repairUnknownLocalSources(existingItems).length === 0
           ) {
             return false;
           }
@@ -172,7 +276,12 @@ const make = Effect.gen(function* () {
               }
               const items =
                 roundState === "collecting"
-                  ? rawReviewItems(latest.value, yield* repo.listItems(session.id), rawSources)
+                  ? rawReviewItems(
+                      latest.value,
+                      yield* repo.listItems(session.id),
+                      rawSources,
+                      rawOptions,
+                    )
                   : [];
               for (const item of items) {
                 yield* repo.upsertItem(session.id, {
@@ -180,9 +289,10 @@ const make = Effect.gen(function* () {
                   githubState: itemGithubState(item.githubThreadIds, plan.threads),
                 });
               }
-              if (items.length > 0 || headChanged)
+              if (items.length > 0 || headChanged || peopleChanged(latest.value))
                 yield* repo.updateSession({
                   ...latest.value,
+                  ...people(latest.value),
                   nextNumber: Math.max(
                     latest.value.nextNumber,
                     ...items.map((item) => item.number + 1),
@@ -217,6 +327,9 @@ const make = Effect.gen(function* () {
                 }
               }
               for (const sourceId of plan.removals) yield* repo.deleteSource(session.id, sourceId);
+              for (const item of repairUnknownLocalSources(yield* repo.listItems(session.id))) {
+                yield* repo.upsertItem(session.id, item);
+              }
               for (const { number, next } of githubStates) {
                 yield* repo.setItemGithubState(session.id, number, next);
               }
@@ -240,9 +353,24 @@ const make = Effect.gen(function* () {
       );
 
   const sweep = Effect.gen(function* () {
-    const sessions = yield* repo.listLiveSessions().pipe(Effect.orElseSucceed(() => []));
-    const live = new Set(sessions.map((session) => session.id));
-    for (const id of lastReads.keys()) if (!live.has(id)) lastReads.delete(id);
+    const live = yield* repo.listLiveSessions().pipe(Effect.orElseSucceed(() => []));
+    // Finished reviews stay watched for a while so GitHub can bring them back: the newest one
+    // of each pull request that has no live review.
+    const since = DateTime.formatIso(
+      DateTime.subtract(yield* DateTime.now, { days: REOPEN_WINDOW_DAYS }),
+    );
+    const finished = yield* repo.listFinishedSessions(since).pipe(Effect.orElseSucceed(() => []));
+    const prKey = (session: ReviewSession) =>
+      `${session.pullRequest.host}/${session.pullRequest.repository}#${session.pullRequest.number}`;
+    const watched = new Set(live.map(prKey));
+    const sessions = [...live];
+    for (const session of finished) {
+      if (watched.has(prKey(session))) continue;
+      watched.add(prKey(session));
+      sessions.push(session);
+    }
+    const ids = new Set(sessions.map((session) => session.id));
+    for (const id of lastReads.keys()) if (!ids.has(id)) lastReads.delete(id);
     for (const session of sessions) {
       const nowMs = yield* Clock.currentTimeMillis;
       const fingerprint = yield* pullRequests.watchFingerprint(refOf(session)).pipe(
@@ -272,7 +400,7 @@ const make = Effect.gen(function* () {
 
   return ReviewSyncService.of({
     syncSession,
-    start: () =>
+    start: Effect.fn("ReviewSyncService.start")(() =>
       forkParked(
         sweep.pipe(
           // A defect in one sweep must not end the loop for the server's lifetime.
@@ -281,6 +409,7 @@ const make = Effect.gen(function* () {
           Effect.asVoid,
         ),
       ),
+    ),
   });
 });
 

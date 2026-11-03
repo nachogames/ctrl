@@ -12,7 +12,7 @@ import type { ScopedThreadRef, ThreadGroupId, ThreadId } from "@t3tools/contract
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { useNavigate } from "@tanstack/react-router";
 import { LayersIcon, PencilIcon, PlusIcon, SendIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { canHandOffThread, useThreadGroupActions } from "~/hooks/useThreadGroupActions";
@@ -59,10 +59,7 @@ export function GroupPanel(props: { threadRef: ScopedThreadRef; surface: GroupSu
   const thread = useThreadShell(props.threadRef);
   const environmentId = thread?.environmentId ?? null;
   const groupId = thread?.groupId ?? null;
-  const groupRef = useMemo(
-    () => (environmentId === null || groupId === null ? null : { environmentId, groupId }),
-    [environmentId, groupId],
-  );
+  const groupRef = environmentId === null || groupId === null ? null : { environmentId, groupId };
   const group = useThreadGroup(groupRef);
   if (thread === null) return null;
   // Keyed so per-panel transient state (script runner, stopped rows, drafts)
@@ -93,35 +90,29 @@ function useProjectThreadsById(
   environmentId: EnvironmentThreadShell["environmentId"],
   projectId: EnvironmentThreadShell["projectId"],
 ) {
-  const projectRefs = useMemo(() => [{ environmentId, projectId }], [environmentId, projectId]);
+  const projectRefs = [{ environmentId, projectId }];
   const shells = useThreadShellsForProjectRefs(projectRefs);
-  return useMemo(() => {
-    const byId = new Map<ThreadId, EnvironmentThreadShell>();
-    for (const shell of shells) {
-      if (shell.environmentId === environmentId) byId.set(shell.id, shell);
-    }
-    return byId;
-  }, [environmentId, shells]);
+  const byId = new Map<ThreadId, EnvironmentThreadShell>();
+  for (const shell of shells) {
+    if (shell.environmentId === environmentId) byId.set(shell.id, shell);
+  }
+  return byId;
 }
 
 function useProjectScripts(
   environmentId: EnvironmentThreadShell["environmentId"],
   projectId: EnvironmentThreadShell["projectId"],
 ) {
-  const project = useProject(
-    useMemo(() => ({ environmentId, projectId }), [environmentId, projectId]),
-  );
+  const project = useProject({ environmentId, projectId });
   const settings = useEnvironmentSettings(environmentId);
-  const scripts = useMemo(
-    () => (project === null ? [] : resolveProjectScripts(settings, project)),
-    [project, settings],
-  );
+  const scripts = project === null ? [] : resolveProjectScripts(settings, project);
   return { project, scripts };
 }
 
 /** Scrolls to the section an `openGroup` asked for; each call writes a fresh descriptor. */
 function useScrollToSection(surface: GroupSurface) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- scrolling the DOM to a requested section is a post-commit side effect
   useEffect(() => {
     if (surface.section === null) return;
     scrollRef.current
@@ -162,31 +153,20 @@ function GroupPanelContent(props: {
   // Members and handoff sources share the group's project, so only that project's
   // chats can change what this panel shows.
   const threadsById = useProjectThreadsById(group.environmentId, group.projectId);
-  const members = useMemo(
-    () =>
-      group.threadIds.flatMap((threadId) => {
-        const member = threadsById.get(threadId);
-        return member !== undefined && member.archivedAt === null ? [member] : [];
-      }),
-    [group.threadIds, threadsById],
-  );
+  const members = group.threadIds.flatMap((threadId) => {
+    const member = threadsById.get(threadId);
+    return member !== undefined && member.archivedAt === null ? [member] : [];
+  });
 
   // One subscription feeds the Frontend card and the Running section; the server scans while
   // it is read, so it lives exactly as long as the panel shows.
   const resourcesQuery = useEnvironmentQuery(
-    useMemo(
-      () =>
-        threadGroupCommands.resources({ environmentId: group.environmentId, groupId: group.id }),
-      [group.environmentId, group.id],
-    ),
+    threadGroupCommands.resources({ environmentId: group.environmentId, groupId: group.id }),
   );
   const { project, scripts } = useProjectScripts(group.environmentId, group.projectId);
   const resources = resourcesQuery.data?.resources ?? null;
   const runner = useGroupScriptRunner(group, project?.workspaceRoot ?? null, scripts, resources);
-  const chatTitles = useMemo(
-    () => new Map([...threadsById].map(([id, shell]) => [id, shell.title])),
-    [threadsById],
-  );
+  const chatTitles = new Map([...threadsById].map(([id, shell]) => [id, shell.title]));
   const scrollRef = useScrollToSection(props.surface);
   const openChat = useOpenPanelChat(group.environmentId);
   const { newChatInGroup, renameGroup } = useThreadGroupActions();
@@ -296,31 +276,25 @@ function SoloPanelContent(props: {
   const { thread, hiddenGroup } = props;
   const threadsById = useProjectThreadsById(thread.environmentId, thread.projectId);
   const { project, scripts } = useProjectScripts(thread.environmentId, thread.projectId);
-  const workspace = useMemo(
-    () => soloGroupView(thread, hiddenGroup, project),
-    [hiddenGroup, project, thread],
-  );
-  const members = useMemo(() => [thread], [thread]);
+  const workspace = soloGroupView(thread, hiddenGroup, project);
+  const members = [thread];
 
   // A server before thread-scoped scans only scans groups, so a chat without one shows no Running.
   const scansThreads =
     useServerConfigs().get(thread.environmentId)?.environment.capabilities.threadGroupReorder ===
     true;
-  const resourcesAtom = useMemo(
-    () =>
-      hiddenGroup !== null
+  const resourcesAtom =
+    hiddenGroup !== null
+      ? threadGroupCommands.resources({
+          environmentId: hiddenGroup.environmentId,
+          groupId: hiddenGroup.id,
+        })
+      : scansThreads
         ? threadGroupCommands.resources({
-            environmentId: hiddenGroup.environmentId,
-            groupId: hiddenGroup.id,
+            environmentId: thread.environmentId,
+            threadId: thread.id,
           })
-        : scansThreads
-          ? threadGroupCommands.resources({
-              environmentId: thread.environmentId,
-              threadId: thread.id,
-            })
-          : null,
-    [hiddenGroup, scansThreads, thread.environmentId, thread.id],
-  );
+        : null;
   const resourcesQuery = useEnvironmentQuery(resourcesAtom);
   const resources = resourcesQuery.data?.resources ?? null;
   const runner = useGroupScriptRunner(
@@ -329,7 +303,7 @@ function SoloPanelContent(props: {
     scripts,
     resources,
   );
-  const chatTitles = useMemo(() => new Map([[thread.id, thread.title]]), [thread.id, thread.title]);
+  const chatTitles = new Map([[thread.id, thread.title]]);
   const scrollRef = useScrollToSection(props.surface);
   const openChat = useOpenPanelChat(thread.environmentId);
 
@@ -352,6 +326,7 @@ function SoloPanelContent(props: {
    */
   const pendingCreate = useRef<Promise<ThreadGroupId | null> | null>(null);
   // Once the group shows up it is the source of truth; a stale id must not outlive it.
+  // oxlint-disable-next-line t3code/react-effect-budget -- clears a ref, which render must not write
   useEffect(() => {
     if (hiddenGroup !== null) pendingCreate.current = null;
   }, [hiddenGroup]);
@@ -416,41 +391,37 @@ function SoloPanelContent(props: {
   };
 
   const groupsById = useThreadGroupsById(thread.environmentId);
-  const suggestedIds = useMemo(
-    () =>
-      worktreeGroupSuggestion(
-        thread,
-        [...threadsById.values()],
-        groupsById,
-        project?.workspaceRoot ?? null,
-      ),
-    [groupsById, project?.workspaceRoot, thread, threadsById],
+  const suggestedIds = worktreeGroupSuggestion(
+    thread,
+    [...threadsById.values()],
+    groupsById,
+    project?.workspaceRoot ?? null,
   );
   const [grouping, setGrouping] = useState(false);
+  // A promise's finally, not try/finally: the React Compiler skips components using the latter.
+  const groupSuggestedChats = async () => {
+    const pending = pendingCreate.current;
+    if (pending === null && hiddenGroup === null) {
+      await createOnce({ threadIds: suggestedIds }, "Failed to create group");
+      return;
+    }
+    const groupId = pending !== null ? await pending : (hiddenGroup?.id ?? null);
+    if (groupId === null) return;
+    // A group made from this chat has this chat's title and workspace until it loads.
+    const target = {
+      id: groupId,
+      title: hiddenGroup?.title ?? thread.title,
+      branch: workspace.branch,
+      worktreePath: workspace.worktreePath,
+    };
+    for (const threadId of suggestedIds) {
+      const other = threadsById.get(threadId);
+      if (other !== undefined) await moveThreadIntoGroup(other, target);
+    }
+  };
   const groupSuggested = async () => {
     setGrouping(true);
-    try {
-      const pending = pendingCreate.current;
-      if (pending === null && hiddenGroup === null) {
-        await createOnce({ threadIds: suggestedIds }, "Failed to create group");
-        return;
-      }
-      const groupId = pending !== null ? await pending : (hiddenGroup?.id ?? null);
-      if (groupId === null) return;
-      // A group made from this chat has this chat's title and workspace until it loads.
-      const target = {
-        id: groupId,
-        title: hiddenGroup?.title ?? thread.title,
-        branch: workspace.branch,
-        worktreePath: workspace.worktreePath,
-      };
-      for (const threadId of suggestedIds) {
-        const other = threadsById.get(threadId);
-        if (other !== undefined) await moveThreadIntoGroup(other, target);
-      }
-    } finally {
-      setGrouping(false);
-    }
+    await groupSuggestedChats().finally(() => setGrouping(false));
   };
 
   const handoff = hiddenGroup?.lastHandoff ?? null;
@@ -542,14 +513,10 @@ function SoloPanelContent(props: {
 /** The environment's groups by id, for telling visible groups from hidden ones. */
 function useThreadGroupsById(environmentId: EnvironmentThreadShell["environmentId"]) {
   const groups = useThreadGroups();
-  return useMemo(
-    () =>
-      new Map(
-        groups.flatMap((group) =>
-          group.environmentId === environmentId ? [[group.id, group] as const] : [],
-        ),
-      ),
-    [environmentId, groups],
+  return new Map(
+    groups.flatMap((group) =>
+      group.environmentId === environmentId ? [[group.id, group] as const] : [],
+    ),
   );
 }
 

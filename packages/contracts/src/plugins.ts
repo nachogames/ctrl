@@ -1,16 +1,7 @@
 /**
- * Local plugins: folders under `<T3 home>/plugins` that add UI to the app.
- *
- * Plugin code is trusted OS-user code. The host runs a plugin's `entry` in a
- * supervised child process, which keeps a crash out of the server but is not
- * a sandbox. Views run in a sandboxed, opaque-origin frame.
- *
- * Names and shapes follow the upstream plugin proposal (pingdotgg/t3code
- * #16047-#16065) where they overlap: the `t3-plugin.json` manifest, owner
- * qualified ids, `apiVersion`, status items and notification fields.
- *
- * Claude Code mods draw into the same surfaces: their `ui_status` lines,
- * `ui_toast` notices and `AbovePrompt` band arrive with a `claude-mod` source.
+ * Plugins under `<T3 home>/plugins` and Claude Code mods draw into the same surfaces. Names and
+ * shapes follow upstream's plugin proposal (pingdotgg/t3code #16047-#16065) where they overlap,
+ * so a later upstream merge stays cheap. Plugin code is trusted; views run sandboxed.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -57,7 +48,7 @@ export const PluginViewDeclaration = Schema.Struct({
 });
 export type PluginViewDeclaration = typeof PluginViewDeclaration.Type;
 
-export const PLUGIN_COMMAND_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+const PLUGIN_COMMAND_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 /**
  * One entry of `commands`: a `/name` in the composer menu. A command with a
@@ -119,8 +110,6 @@ export const PluginSummary = Schema.Struct({
   commands: Schema.Array(PluginCommandDeclaration),
 });
 export type PluginSummary = typeof PluginSummary.Type;
-
-// --- What plugins draw ---
 
 export const PLUGIN_STATUS_TEXT_MAX_LENGTH = 80;
 export const PLUGIN_STATUS_MAX_ITEMS_PER_SOURCE = 8;
@@ -230,8 +219,6 @@ export const PluginBandsSnapshot = Schema.Struct({
 });
 export type PluginBandsSnapshot = typeof PluginBandsSnapshot.Type;
 
-// --- RPC inputs ---
-
 export const PluginsSubscribeInput = Schema.Struct({});
 export const PluginBandsSubscribeInput = Schema.Struct({ threadId: ThreadId });
 
@@ -256,7 +243,7 @@ export const PluginViewReadResult = Schema.Struct({
 });
 export type PluginViewReadResult = typeof PluginViewReadResult.Type;
 
-export const PLUGIN_VIEW_HANDLER_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]*$/;
+const PLUGIN_VIEW_HANDLER_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]*$/;
 
 export const PluginViewCallInput = Schema.Struct({
   pluginId: Schema.String,

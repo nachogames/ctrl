@@ -15,7 +15,7 @@ export function EnvironmentDisplayNameSetting({
   serverConfig,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly serverConfig: ServerConfig | null;
+  readonly serverConfig: Omit<ServerConfig, "providers"> | null;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);

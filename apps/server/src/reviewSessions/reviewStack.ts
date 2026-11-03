@@ -2,7 +2,7 @@ import type { ThreadPullRequestKey, ThreadPullRequestLink } from "@t3tools/contr
 import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
-} from "@t3tools/shared/threadPullRequests";
+} from "../sourceControl/threadPullRequests.ts";
 
 /** Another pull request in the same stack: one this builds on, or one stacked on it. */
 export interface ReviewStackNeighbour {

@@ -41,6 +41,9 @@ const shellInput = {
   updatedAt: at,
 };
 
+const decodeScopedRef = Schema.decodeSync(ScopedThreadGroupRef);
+const decodeUnknownScopedRef = Schema.decodeUnknownSync(ScopedThreadGroupRef);
+
 describe("thread group contracts", () => {
   it("decodes a group shell from before links as having none, and decodes links", () => {
     expect(decodeShell(shellInput).links).toEqual([]);
@@ -122,12 +125,12 @@ describe("thread group contracts", () => {
 
   it("scopes a group reference to its environment", () => {
     expect(
-      Schema.decodeUnknownSync(ScopedThreadGroupRef)({
+      decodeScopedRef({
         environmentId: "environment-work",
         groupId: "group-1",
       }),
     ).toEqual({ environmentId: "environment-work", groupId: "group-1" });
-    expect(() => Schema.decodeUnknownSync(ScopedThreadGroupRef)({ groupId: "group-1" })).toThrow();
+    expect(() => decodeUnknownScopedRef({ groupId: "group-1" })).toThrow();
   });
 
   it("detaches a thread by moving it to a null group", () => {
@@ -163,11 +166,11 @@ describe("thread group contracts", () => {
         reason: "workspace-mismatch",
       }),
     );
-    expect(Schema.decodeUnknownSync(codec)(encoded)).toMatchObject({
+    expect(Schema.decodeSync(codec)(encoded)).toMatchObject({
       reason: "workspace-mismatch",
     });
     expect(
-      Schema.decodeUnknownSync(codec)({
+      Schema.decodeSync(codec)({
         _tag: "ThreadGroupMutationError",
         commandId: "command-5",
         message: "Failed.",

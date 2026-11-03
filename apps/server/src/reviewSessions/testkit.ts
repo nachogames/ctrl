@@ -155,6 +155,7 @@ export const githubThread = (
 
 export const reviewRoundRead = (fields: Partial<Read> = {}): Read => ({
   authorLogin: "nach",
+  viewerLogin: "nach",
   headSha: "abc123",
   reviews: [],
   pendingReviewers: [],
@@ -165,6 +166,8 @@ export const reviewRoundRead = (fields: Partial<Read> = {}): Read => ({
 /** What GitHub answers; tests change `read` between syncs. */
 export interface SyncHarness {
   read: Read | null;
+  /** The pull request's state on GitHub; open unless a test merges or closes it. */
+  state?: "open" | "closed" | "merged" | undefined;
   /** Runs while GitHub is being read, as if another write landed meanwhile. */
   duringRead?: Effect.Effect<void> | undefined;
 }
@@ -181,6 +184,7 @@ export const makeSyncLayer = (harness: SyncHarness) =>
             Effect.suspend(() => harness.duringRead ?? Effect.void).pipe(
               Effect.map(() => harness.read),
             ),
+          summary: () => Effect.sync(() => ({ state: harness.state ?? "open" }) as never),
           watchFingerprint: () => Effect.succeed(null),
         }),
       ),
@@ -363,6 +367,7 @@ export const makeReviewServiceLayer = (harness: ReviewServiceHarness) =>
         }),
         Layer.mock(PullRequestService.PullRequestService)({
           reviewRound: () => Effect.sync(() => harness.read),
+          summary: () => Effect.succeed({ state: "open" } as never),
           watchFingerprint: () => Effect.succeed(null),
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({

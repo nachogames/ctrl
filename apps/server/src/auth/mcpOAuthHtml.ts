@@ -1,8 +1,3 @@
-/**
- * The page for a sign-in link that cannot be trusted (unknown client or
- * unregistered redirect). It is plain server HTML so it never depends on the
- * web app, and it must not redirect anywhere.
- */
 const escapeHtml = (value: string) =>
   value.replace(
     /[&<>"']/gu,
@@ -42,5 +37,15 @@ export function renderErrorPage(description: string): string {
     `<h1>This sign-in cannot continue</h1>
     <p>${escapeHtml(description)}</p>
     <p>Close this page and start the sign-in again from your agent.</p>`,
+  );
+}
+
+/** The page a browser lands on after signing T3 Code in to someone else's MCP server. */
+export function renderNoticePage(input: { readonly heading: string; readonly message: string }) {
+  return shell(
+    input.heading,
+    `<h1>${escapeHtml(input.heading)}</h1>
+    <p>${escapeHtml(input.message)}</p>
+    <p>You can close this page.</p>`,
   );
 }

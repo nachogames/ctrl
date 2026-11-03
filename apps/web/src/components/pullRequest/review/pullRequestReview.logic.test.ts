@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   draftUpdateLabel,
+  foldPostedReviews,
   offersLocalReview,
   ranOnLabel,
   replyTarget,
@@ -19,6 +20,7 @@ import {
   toggledDecision,
   triageButton,
   triageInFlight,
+  trimReviewExcerpt,
 } from "./pullRequestReview.logic";
 
 const round = (n: number, state: "collecting" | "applying" | "applied") => ({
@@ -38,6 +40,8 @@ const point = (number: number, lastSeenRound: number, stale: boolean) =>
     sourceKeys: [],
     sourceIds: [],
     githubState: null,
+    decision: "needs-call",
+    applyState: "pending",
   }) as unknown as ReviewItem;
 const source = (id: string, round: number, kind: ReviewSource["kind"], state = "done") =>
   ({ id, round, kind, state, updatedAt: "2026-10-14T10:00:00.000Z" }) as ReviewSource;
@@ -223,7 +227,7 @@ describe("reviewApplyLines", () => {
   });
 });
 
-it("keeps stale round history and offers reverification after a base merge", () => {
+it("carries points still open from an earlier round into the current round's recheck", () => {
   const prior = source("R1", 1, "copilot");
   const current = { ...source("R2", 2, "copilot"), triaged: true };
   const snapshot = {
@@ -234,10 +238,10 @@ it("keeps stale round history and offers reverification after a base merge", () 
   } as unknown as ReviewSessionSnapshot;
   const views = reviewRoundViews(snapshot);
   expect(views).toHaveLength(2);
-  expect(views[0]!.history?.map((item) => item.number)).toEqual([2]);
+  expect(views[0]!.history?.map((item) => item.number)).toEqual([1, 2]);
   expect(views[1]!.items.map((item) => item.number)).toEqual([1]);
   expect(triageButton(views[0]!, [])).toEqual({
-    label: "Recheck stale findings",
+    label: "Recheck 2 against the new code",
     ready: true,
     busy: false,
   });
@@ -247,4 +251,64 @@ it("keeps stale round history and offers reverification after a base merge", () 
       [],
     ),
   ).toBeNull();
+});
+
+describe("foldPostedReviews", () => {
+  const base = {
+    isBot: false,
+    commitSha: "abc",
+    commentCount: 2,
+    triaged: true,
+    threadId: null,
+    ranOn: null,
+    url: null,
+    updatedAt: "2026-10-16T10:00:00.000Z",
+  };
+  const local = {
+    ...base,
+    id: "local:1",
+    round: 1,
+    kind: "local",
+    state: "done",
+    author: null,
+  } as ReviewSource;
+  const posted = {
+    ...base,
+    id: "PRR_mine",
+    round: 1,
+    kind: "human",
+    state: "done",
+    author: "NeilMcEachin",
+    posted: true,
+  } as ReviewSource;
+
+  it("shows the review Ctrl posted as your local review, once", () => {
+    const folded = foldPostedReviews([local, posted], "NeilMcEachin");
+    expect([...folded.hidden]).toEqual(["PRR_mine"]);
+    expect(folded.postedFor.get("local:1")?.id).toBe("PRR_mine");
+  });
+
+  it("keeps a review you wrote straight on GitHub, or one with no local run, as its own row", () => {
+    expect(
+      foldPostedReviews([local, { ...posted, posted: false }], "NeilMcEachin").hidden.size,
+    ).toBe(0);
+    expect(foldPostedReviews([posted], "NeilMcEachin").hidden.size).toBe(0);
+    expect(foldPostedReviews([local, posted], "dan").hidden.size).toBe(0);
+  });
+});
+
+describe("trimReviewExcerpt", () => {
+  it("keeps the last lines of a new file's hunk, numbered where they really are", () => {
+    const added = Array.from({ length: 120 }, (_, i) => `+line ${i + 1}`);
+    const trimmed = trimReviewExcerpt([`@@ -0,0 +1,120 @@`, ...added].join("\n"), 3);
+    expect(trimmed).toBe("@@ -0,0 +118,3 @@\n+line 118\n+line 119\n+line 120");
+  });
+  it("counts context and removed lines when moving the start", () => {
+    const hunk = ["@@ -10,4 +10,4 @@ fn", " a", "-b", "+B", " c", " d"].join("\n");
+    expect(trimReviewExcerpt(hunk, 2)).toBe("@@ -12,2 +12,2 @@ fn\n c\n d");
+  });
+  it("leaves a short hunk alone", () => {
+    const hunk = "@@ -1,2 +1,2 @@\n a\n+b";
+    expect(trimReviewExcerpt(hunk)).toBe(hunk);
+  });
 });

@@ -1,4 +1,9 @@
-import { ProviderDriverKind, TextGenerationError, type CodexSettings } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderSetupError,
+  TextGenerationError,
+  type CodexSettings,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -11,9 +16,11 @@ import { chatGptModels } from "../CodexChatGptModels.ts";
 import { makeCodexManagedRuntime } from "../CodexManagedRuntime.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { createCodexAdapterV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { withCodexDisabledInventory } from "./CodexInventory.ts";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
+  probeCodexInventory,
   probeCodexSkillsForCwd,
 } from "../CodexProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -30,7 +37,7 @@ const DRIVER = ProviderDriverKind.make("codex");
 export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(function* (
   input: ProviderDriverCreateInput<CodexSettings>,
 ) {
-  const { instanceId, enabled, displayName, accentColor, config } = input;
+  const { instanceId, enabled, displayName, accentColor, config, disabledInventory = {} } = input;
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -55,7 +62,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     homePath: runtime.homeLayout.sharedHomePath,
     shadowHomePath: runtime.homeLayout.mode === "authOverlay" ? runtime.homePath : null,
   };
-  const pending = makePendingCodexProvider({ ...config, customModels: [] }).pipe(
+  const pending = makePendingCodexProvider({ ...config, enabled, customModels: [] }).pipe(
     Effect.map((draft) =>
       stamp({
         ...draft,
@@ -128,11 +135,26 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             effective.environment,
             managedAuth,
           );
-          const models = yield* chatGptModels(
-            effective.environment.ACCESS_TOKEN!,
-            draft.models,
-          ).pipe(Effect.provideService(HttpClient.HttpClient, http));
-          return { ...draft, models };
+          const credentials = yield* runtime.auth.access;
+          // Another server can replace the saved profile while the native probe runs.
+          // Never send that account's token with the launch profile's catalog labels.
+          if (
+            (yield* runtime.auth.profileKey(credentials)) !== effective.revision ||
+            (yield* runtime.auth.profileKey(saved.value)) !== effective.revision
+          )
+            return yield* new ProviderSetupError({
+              instanceId,
+              operation: "models",
+              detail: "The ChatGPT connection changed while checking Codex. Retry.",
+            });
+          const models = yield* chatGptModels(credentials.accessToken, draft.models).pipe(
+            Effect.provideService(HttpClient.HttpClient, http),
+          );
+          return {
+            ...draft,
+            models,
+            skills: withCodexDisabledInventory(draft.skills, disabledInventory),
+          };
         }),
       ),
       Effect.map((draft) =>
@@ -218,15 +240,13 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     ),
   );
   yield* runtime.auth.controller.subscribe("managed-codex-snapshot").pipe(
-    // Disconnect also publishes idle when a saved account has no active sign-in flow.
     Stream.filter((state) => ["idle", "succeeded", "failed", "cancelled"].includes(state.phase)),
-    // Sign-out closes the scope of an in-flight probe, which fails that refresh
-    // with an interrupt. Keep listening so the sign-out's own idle still refreshes.
+    // Sign-out interrupts in-flight probes; keep listening for its subsequent idle refresh.
     Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
     Effect.forkScoped,
   );
   const resolveRuntime = runtime.auth.controller.withAccess!(runtime.resolve);
-  // Launch settings resolve per session from the signed-in token. The registry
+  // Launch settings bind the refresh command to the signed-in profile. The registry
   // already wraps openSession in withAccess, so resolve without re-entering it.
   const orchestrationAdapter = yield* createCodexAdapterV2(input, {
     onUsageLimits: (update) => snapshot.applyUsageLimits(update),
@@ -282,24 +302,74 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     orchestrationAdapter,
     textGeneration,
     auth: runtime.auth.controller,
+    readInventory: resolveRuntime.pipe(
+      Effect.flatMap((effective) =>
+        probeCodexInventory({
+          binaryPath: effective.config.binaryPath,
+          homePath: effective.config.homePath,
+          launchArgs: effective.config.launchArgs,
+          cwd: process.cwd(),
+          environment: effective.environment,
+        }),
+      ),
+      Effect.scoped,
+      Effect.timeout("30 seconds"),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER,
+            instanceId,
+            detail:
+              cause._tag === "TimeoutError"
+                ? "Codex took too long to list its connectors."
+                : "Codex could not list its connectors.",
+            cause,
+          }),
+      ),
+    ),
     snapshotForCwd: (cwd: string) =>
       enabled
         ? resolveRuntime.pipe(
-            Effect.flatMap((effective) =>
-              probeCodexSkillsForCwd({
-                binaryPath: effective.config.binaryPath,
-                homePath: effective.config.homePath,
-                launchArgs: effective.config.launchArgs,
-                cwd,
-                environment: effective.environment,
-              }),
-            ),
-            Effect.flatMap((skills) =>
-              snapshot.getSnapshot.pipe(Effect.map((draft) => ({ ...draft, skills }))),
-            ),
+            Effect.matchEffect({
+              // Signed-out snapshots have an empty inventory; a signed-in runtime failure must fail the scan.
+              onFailure: (cause) =>
+                snapshot.getSnapshot.pipe(
+                  Effect.filterOrFail(
+                    (machine) => machine.auth.status === "unauthenticated",
+                    () => cause,
+                  ),
+                ),
+              onSuccess: (effective) =>
+                probeCodexSkillsForCwd({
+                  binaryPath: effective.config.binaryPath,
+                  homePath: effective.config.homePath,
+                  launchArgs: effective.config.launchArgs,
+                  cwd,
+                  environment: effective.environment,
+                }).pipe(
+                  Effect.flatMap((skills) =>
+                    snapshot.getSnapshot.pipe(
+                      Effect.map((draft) => ({
+                        ...draft,
+                        skills: withCodexDisabledInventory(skills, disabledInventory),
+                      })),
+                    ),
+                  ),
+                ),
+            }),
             Effect.scoped,
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.catch(() => snapshot.getSnapshot),
+            // Fail instead of returning machine inventory, which the registry would publish as workspace inventory.
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER,
+                  instanceId,
+                  detail: `Failed to probe Codex skills for '${cwd}'`,
+                  cause,
+                }),
+            ),
           )
         : snapshot.getSnapshot,
   } satisfies ProviderInstance;

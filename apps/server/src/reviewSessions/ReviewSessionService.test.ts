@@ -204,8 +204,9 @@ it.effect("refuses a decision the user did not state, and records one they did",
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
 
-it.effect("keeps one live review per pull request per group", () =>
-  Effect.gen(function* () {
+it.effect("keeps one live review per pull request across groups", () => {
+  const harness = newHarness();
+  return Effect.gen(function* () {
     const reviews = yield* service;
     const first = yield* reviews.open(openInput);
     const again = yield* reviews.open(openInput);
@@ -217,11 +218,24 @@ it.effect("keeps one live review per pull request per group", () =>
       [[1, "collecting"]],
     );
 
+    // Opened from another group, the same review moves to that group's chat once its own
+    // chat is between turns.
+    harness.shells.set(reviewThreadId, chatShell(reviewThreadId, { activeRunId: null }));
+    const otherChat = ThreadId.make("thread:other-group");
     const otherGroup = yield* reviews.open({
       ...openInput,
       groupId: ThreadGroupId.make("group:other"),
+      reviewThreadId: otherChat,
     });
-    assert.isTrue(otherGroup.created);
+    assert.isFalse(otherGroup.created);
+    assert.deepEqual(
+      [
+        otherGroup.snapshot.session.id,
+        otherGroup.snapshot.session.groupId,
+        otherGroup.snapshot.session.reviewThreadId,
+      ],
+      [first.snapshot.session.id, ThreadGroupId.make("group:other"), otherChat],
+    );
 
     yield* reviews.advanceRound({
       sessionId: first.snapshot.session.id,
@@ -231,8 +245,8 @@ it.effect("keeps one live review per pull request per group", () =>
     const reopened = yield* reviews.open(openInput);
     assert.isTrue(reopened.created);
     assert.notEqual(reopened.snapshot.session.id, first.snapshot.session.id);
-  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
-);
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
 
 it.effect("applies decided points without requiring viewed marks", () =>
   Effect.gen(function* () {
@@ -378,6 +392,29 @@ it.effect("follows a group change after discovering an ungrouped chat's review",
       emitted.map((result) => result.snapshot?.session.reviewThreadId ?? null),
       [caller, caller],
     );
+  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+});
+
+it.effect("does not take a review from a chat in the middle of a turn", () => {
+  const harness = newHarness();
+  const otherGroup = ThreadGroupId.make("group:other");
+  const otherChat = ThreadId.make("thread:other-group");
+  harness.shells.set(reviewThreadId, chatShell(reviewThreadId));
+  return Effect.gen(function* () {
+    const reviews = yield* service;
+    yield* reviews.open(openInput);
+    const busy = yield* Effect.flip(
+      reviews.open({ ...openInput, groupId: otherGroup, reviewThreadId: otherChat }),
+    );
+    assert.include(busy.message, "once that chat finishes its turn");
+
+    harness.shells.set(reviewThreadId, chatShell(reviewThreadId, { activeRunId: null }));
+    const moved = yield* reviews.open({
+      ...openInput,
+      groupId: otherGroup,
+      reviewThreadId: otherChat,
+    });
+    assert.equal(moved.snapshot.session.reviewThreadId, otherChat);
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
 
@@ -789,5 +826,54 @@ it.effect("persists inline self-review thread IDs during apply and merges retrie
       "PRRT_existing",
       "PRRT_self",
     ]);
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);
+
+it.effect("takes your decision on a point from an earlier commit as its recheck", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("gh:T1")] });
+    // A push marks the open point stale until it is looked at again.
+    yield* repo.markItemsStale(sessionId);
+    yield* reviews.decide({
+      sessionId,
+      number: 1,
+      decision: "decline",
+      authority: { _tag: "panel" },
+    });
+    const [point] = (yield* reviews.read(sessionId)).items;
+    assert.deepEqual([point?.decision, point?.stale], ["decline", false]);
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);
+
+it.effect("brings a point still open from an earlier round into this one when you decide it", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("gh:T1")] });
+    // Round 1 already posted a reply to #1; its thread is still open on GitHub.
+    const [posted] = (yield* reviews.read(sessionId)).items;
+    yield* repo.upsertItem(sessionId, {
+      ...posted!,
+      draftReply: "Fixed in round 1.",
+      applyState: "replied",
+    });
+    yield* repo.setItemGithubState(sessionId, 1, "open");
+    // The round moved on after a push; #1 is still open on GitHub.
+    yield* repo.updateSession({ ...snapshot.session, round: 2 });
+    yield* repo.upsertRound(sessionId, { ...snapshot.rounds[0]!, state: "applied" });
+    yield* repo.upsertRound(sessionId, { ...snapshot.rounds[0]!, round: 2 });
+    yield* repo.markItemsStale(sessionId);
+    yield* reviews.decide({ sessionId, number: 1, decision: "fix", authority: { _tag: "panel" } });
+    const [point] = (yield* reviews.read(sessionId)).items;
+    assert.deepEqual(
+      [point?.lastSeenRound, point?.stale, point?.applyState, point?.draftReply],
+      [2, false, "pending", null],
+    );
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );

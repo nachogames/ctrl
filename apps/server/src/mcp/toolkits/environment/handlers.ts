@@ -15,6 +15,7 @@ export function preferences(settings: ServerSettings) {
     enableProviderUpdateChecks,
     backgroundActivity,
     sourceControlWritingStyle,
+    reviewInstructions,
   } = settings;
   const characters = Array.from(sourceControlWritingStyle.customInstructions);
   return {
@@ -27,6 +28,7 @@ export function preferences(settings: ServerSettings) {
       customInstructions: characters.slice(0, 4000).join(""),
       truncated: characters.length > 4000,
     },
+    reviewInstructions,
   };
 }
 const access = Effect.gen(function* () {
@@ -66,7 +68,6 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
           yield* settings.updateSettings(patch).pipe(Effect.mapError(unavailable)),
         );
       });
-      // A thread caller serializes with its own turn; a client has no thread to lock.
       return yield* scope.thread === undefined
         ? update
         : executor.withLock(scope.thread.threadId, update);

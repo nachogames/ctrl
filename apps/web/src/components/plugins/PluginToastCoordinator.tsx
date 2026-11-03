@@ -25,6 +25,7 @@ function EnvironmentPluginToasts(props: { readonly environmentId: EnvironmentId 
   ).data?.toasts;
   // Null until the first snapshot: toasts already in it predate this client.
   const seen = useRef<ReadonlySet<string> | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- shows new snapshot toasts through the imperative toast manager
   useEffect(() => {
     if (toasts === undefined) return;
     const { show, seen: next } = unseenPluginToasts(toasts, seen.current);

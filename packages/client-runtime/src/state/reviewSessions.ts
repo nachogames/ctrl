@@ -9,6 +9,7 @@ import {
 } from "./runtime.ts";
 
 export * from "./reviewSessionPresentation.ts";
+export * from "./reviewProgress.ts";
 
 export function createReviewSessionEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,

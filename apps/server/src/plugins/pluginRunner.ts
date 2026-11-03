@@ -1,22 +1,7 @@
 /**
- * The program a plugin's child process runs. It imports the plugin's `entry`,
- * calls its `activate(ctx)` and relays between `ctx` and the host over the
- * Node IPC channel. It ships as a string so the server needs no extra file at
- * runtime: the host starts `node -e <PLUGIN_RUNNER_SOURCE>`.
- *
- * The `ctx` a plugin gets:
- *
- *   ctx.plugin                      { id, name, version, dir }
- *   ctx.ui.setStatus(threadId, key, text, { tone, tooltip })   text "" clears
- *   ctx.ui.toast({ title, body, tone, threadId, timeoutMs })
- *   ctx.ui.setBand(threadId, tree | null)
- *   ctx.ui.h(type, props, ...children)   builds a band node; props.onPress is a function
- *   ctx.onEvent(fn)                 thread and run events, see PluginHostEvent
- *   ctx.handle(name, fn)            answers `t3.call(name, input)` from the plugin's views
- *   ctx.onCommand(name, fn)         runs `/name args` for commands without a prompt
- *   ctx.log(...args)                same as console.log; the host keeps recent lines
- *
- * activate may return a function; it runs before the process is stopped.
+ * The program a plugin's child process runs (`node -e`): it imports the `entry`, calls
+ * `activate(ctx)` and relays `ctx` over Node IPC. The `ctx` API is documented in
+ * PLUGIN_AUTHORING_GUIDE (mcp/toolkits/plugins/tools.ts).
  */
 
 /** Messages the host sends to the runner. */
