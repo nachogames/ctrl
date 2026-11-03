@@ -1151,14 +1151,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
-  // Voice follows the provider that owns the thread; a draft without a thread
-  // shell follows the composer's selection and waits for its first message.
+  // Voice follows the composer's model: the thread's, or one picked but not sent
+  // yet. A picked provider has no session until a turn runs on it, so Codex
+  // voice then starts with that turn, which also makes the switch.
   const voiceThread = activeThread ?? props.activeThreadShell ?? null;
-  const voiceProviderInstanceId = voiceThread?.providerInstanceId ?? selectedInstanceId;
+  const voiceSwitchPending =
+    voiceThread !== null && voiceThread.providerInstanceId !== selectedInstanceId;
   const voiceAvailability = resolveVoiceAvailability({
-    provider: providerStatuses.find((provider) => provider.instanceId === voiceProviderInstanceId),
+    provider: providerStatuses.find((provider) => provider.instanceId === selectedInstanceId),
     hasMessages: voiceThread?.latestUserMessageAt != null,
-    hasSession: voiceThread?.activeProviderThreadId != null,
+    hasSession: !voiceSwitchPending && voiceThread?.activeProviderThreadId != null,
   });
   /** Sends the turn that starts a thread's Codex session; set once sending is declared below. */
   const sendVoiceStarterRef = useRef<(() => void) | null>(null);
