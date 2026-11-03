@@ -16,3 +16,18 @@ export function useVoiceMode() {
 export function useReplySpeaking() {
   return useSyncExternalStore(replySpeaker.subscribe, replySpeaker.isSpeaking);
 }
+
+/**
+ * What voice needs that is missing in a thread without Codex voice, as a hint
+ * naming where to turn it on; null when dictation and spoken replies are ready.
+ */
+export function voiceUnavailableReason(input: {
+  readonly dictationReady: boolean;
+  readonly spokenRepliesReady: boolean;
+}): string | null {
+  if (!input.dictationReady && !input.spokenRepliesReady)
+    return "Turn on Dictation and Spoken replies in Settings → Devices";
+  if (!input.dictationReady) return "Turn on Dictation in Settings → Devices";
+  if (!input.spokenRepliesReady) return "Turn on Spoken replies in Settings → Devices";
+  return null;
+}

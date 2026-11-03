@@ -28,21 +28,16 @@ so choose a model you trust with that.
 
 ## Talk to Shift
 
-Shift can listen and answer out loud, all on your machine at no cost:
-
-1. In **Settings → Devices**, turn on **Dictation** and **Spoken replies**.
-   Spoken replies download a local voice model the first time, and so does
-   dictation except on a Mac with macOS 26 or later. Pick a voice under
-   **Reply voice**; the play button next to each voice plays a sample.
-2. In Shift's thread, turn on voice mode with the speaker button next to the
-   microphone.
-3. Hold **Option+Space** and speak. When you let go, your words are sent to Shift
-   right away, and Shift reads the first sentence or two of its reply aloud.
-
-Start talking or send a message to interrupt it, or press the stop button. Shift
+Click the waveform button in Shift's composer, or press `F8`, and talk. Shift
 answers quick questions itself and hands bigger thinking to a stronger agent,
-then tells you the short version. Voice mode works the same way in any thread;
-see [voice mode](./composer.md#voice-mode).
+then tells you the short version. It works like [voice](./composer.md#voice) in
+any thread:
+
+- With a Codex model for Shift, you talk with Codex's own voice. It runs on your
+  ChatGPT sign-in and needs no setup.
+- With any other model, turn on **Dictation** and **Spoken replies** in
+  **Settings → Devices** first. They run on your machine at no cost, and download
+  a local voice the first time (dictation downloads nothing on macOS 26 or later).
 
 ## Other machines
 

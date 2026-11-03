@@ -149,10 +149,15 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindin
 import { isEditableFocused } from "../../lib/editableFocus";
 import { resolveVoiceAvailability } from "../../voice/voiceAvailability";
 import {
+  clearVoiceAfterFirstTurn,
+  startVoiceAfterFirstTurn,
   toggleThreadVoice,
   useVoicePhaseFor,
+  VOICE_STARTER_MESSAGE,
   voiceMode as codexVoiceMode,
+  waitsForVoiceAfterFirstTurn,
 } from "../../voice/voiceMode";
+import { localVoice } from "../../speech/localVoice";
 import { ComposerVoiceButton, VoiceModeStrip } from "./VoiceModeStrip";
 import {
   type TerminalContextDraft,
@@ -220,10 +225,8 @@ import {
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
-import { ComposerDictationControl } from "./ComposerDictationControl";
-import { VoiceReplyControls, voiceUnavailableReason } from "./VoiceReplyControls";
 import { replySpeaker } from "../../speech/replySpeaker";
-import { useReplySpeaking, useVoiceMode } from "../../speech/voiceMode";
+import { useReplySpeaking, useVoiceMode, voiceUnavailableReason } from "../../speech/voiceMode";
 import { CONVERSATION_LISTEN_TIMEOUT_MS, VoiceConversation } from "../../speech/voiceConversation";
 import { askVoiceFront, useFrontCaption } from "../../speech/voiceFront";
 import { NO_SPEECH_DETECTED_MESSAGE } from "@t3tools/client-runtime/voice-input";
@@ -993,6 +996,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const frontCaption = useFrontCaption();
   const conversationState = useSyncExternalStore(conversation.subscribe, conversation.getSnapshot);
   const conversationHeardSpeechRef = useRef(false);
+  // Muted keeps the conversation but leaves the microphone closed until unmuted.
+  const [localVoiceMuted, setLocalVoiceMuted] = useState(false);
+  /** What the conversation last heard, for the voice strip's caption. */
+  const [localVoiceHeard, setLocalVoiceHeard] = useState("");
   // These callbacks run after recording, once the handlers declared below exist.
   const dictationInsertedRangeRef = useRef<{ start: number; end: number } | null>(null);
   /** Closes this thread's live voice session (Gemini) on the environment, if it has one. */
@@ -1052,11 +1059,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusEditorAfterReplace: false,
       });
     },
-    showLiveText: (text) => composerEditorRef.current?.showLiveText(text),
+    showLiveText: (text) => {
+      composerEditorRef.current?.showLiveText(text);
+      if (conversation.active) setLocalVoiceHeard(text);
+    },
     onCommitted: () => {
       if (voiceMode) {
         dictationInsertedRangeRef.current = null;
         const transcript = promptRef.current.trim();
+        setLocalVoiceHeard(transcript);
         conversation.turnSent();
         submitComposerStable();
         // The thread gets the message either way; the front voice answers at once alongside it.
@@ -1095,16 +1106,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     conversation.end();
     dictation.cancel();
   };
-  const conversationControls = conversationState.active
-    ? {
-        waiting: conversationState.waiting,
-        end: endConversation,
-        finish: () => {
-          conversation.end();
-          dictation.stop();
-        },
-      }
-    : null;
+  /** Voice in a thread without Codex voice: a hands-free conversation through Ctrl's own voice. */
+  const startLocalVoice = () => {
+    setVoiceMode(true);
+    setLocalVoiceMuted(false);
+    setLocalVoiceHeard("");
+    // The press is the gesture that lets the reply's audio start later.
+    replySpeaker.prime();
+    replySpeaker.stop();
+    conversation.begin();
+    dictation.start();
+  };
+  const stopLocalVoice = useStableCallback(() => {
+    endConversation();
+    setVoiceMode(false);
+  });
+  const setLocalVoiceMutedStable = useStableCallback((muted: boolean) => {
+    setLocalVoiceMuted(muted);
+    if (muted) {
+      conversation.pause();
+      dictation.cancel();
+    } else {
+      // Listening again is the conversation's next step once it stops waiting.
+      conversation.begin();
+    }
+  });
   const sendDisabledReason =
     (dictation.active ? "Finish dictation first." : null) ??
     externalSendDisabledReason ??
@@ -1126,11 +1152,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hasMessages: voiceThread?.latestUserMessageAt != null,
     hasSession: voiceThread?.activeProviderThreadId != null,
   });
+  /** Sends the turn that starts a thread's Codex session; set once sending is declared below. */
+  const sendVoiceStarterRef = useRef<(() => void) | null>(null);
   const voicePhase = useVoicePhaseFor(routeThreadRef);
-  const voiceEngaged = voicePhase !== "idle";
-  // A conversation stays stoppable here even if its provider stopped offering voice.
-  const voiceSupported = voiceAvailability.kind !== "unsupported" || voiceEngaged;
-  const toggleVoice = useStableCallback(() => toggleThreadVoice(routeThreadRef, voiceAvailability));
+  const codexVoiceEngaged = voicePhase !== "idle";
+  // Codex threads talk through Codex voice; every other thread through Ctrl's own.
+  const voiceEngine =
+    voiceAvailability.kind !== "unsupported" || codexVoiceEngaged ? "codex" : "local";
+  const voiceEngaged = voiceEngine === "codex" ? codexVoiceEngaged : conversationState.active;
+  const voiceDisabledReason = voiceEngine === "local" && !voiceEngaged ? voiceUnavailable : null;
+  const voiceSupported = voiceDisabledReason === null;
+  const toggleVoice = useStableCallback(() => {
+    if (voiceEngine === "local") {
+      if (conversationState.active) stopLocalVoice();
+      else if (voiceUnavailable === null) startLocalVoice();
+      return;
+    }
+    if (codexVoiceEngaged || voiceAvailability.kind === "ready") {
+      clearVoiceAfterFirstTurn(routeThreadRef);
+      toggleThreadVoice(routeThreadRef, voiceAvailability);
+      return;
+    }
+    // Codex voice needs the thread's session, which its first turn starts: send
+    // what is typed, or a one-line starter, and connect once that turn ends.
+    startVoiceAfterFirstTurn(routeThreadRef);
+    sendVoiceStarterRef.current?.();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- connects Codex voice once the turn started for it has given the thread a session
+  useEffect(() => {
+    if (!waitsForVoiceAfterFirstTurn(routeThreadRef)) return;
+    if (voiceAvailability.kind !== "ready" || phase === "running") return;
+    clearVoiceAfterFirstTurn(routeThreadRef);
+    toggleThreadVoice(routeThreadRef, voiceAvailability);
+  }, [phase, routeThreadRef, voiceAvailability]);
   const selectedProviderSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SKILLS;
@@ -1249,11 +1303,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       error: dictationState.error,
       quietError: (error) => error === NO_SPEECH_DETECTED_MESSAGE,
     });
-    if (action === "listen") startDictation();
+    if (action === "listen" && !localVoiceMuted) startDictation();
   }, [
     cancelDictation,
     conversation,
     dictationState,
+    localVoiceMuted,
     replySpeaking,
     startDictation,
     threadRunning,
@@ -1261,6 +1316,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
   // However the conversation ends, its live voice session on the environment closes with it.
   const conversationActive = conversationState.active;
+  const dictationLevel = dictation.level;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this composer's conversation with localVoice, which the shared voice strip reads, until it ends
+  useEffect(() => {
+    if (!conversationActive) return;
+    localVoice.attach(
+      { environmentId: routeThreadRef.environmentId, threadId: routeThreadRef.threadId },
+      { stop: stopLocalVoice, setMuted: setLocalVoiceMutedStable },
+      dictationLevel,
+    );
+    return () => localVoice.detach();
+  }, [
+    conversationActive,
+    dictationLevel,
+    routeThreadRef.environmentId,
+    routeThreadRef.threadId,
+    setLocalVoiceMutedStable,
+    stopLocalVoice,
+  ]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the conversation's captions and mute into localVoice for the voice strip
+  useEffect(() => {
+    if (!conversationActive) return;
+    localVoice.update({
+      phase: "active",
+      muted: localVoiceMuted,
+      captions: [
+        ...(localVoiceHeard
+          ? [{ role: "user" as const, text: localVoiceHeard, final: false }]
+          : []),
+        ...(frontCaption ? [{ role: "assistant" as const, text: frontCaption, final: true }] : []),
+      ],
+    });
+  }, [conversationActive, frontCaption, localVoiceHeard, localVoiceMuted]);
   const wasConversationActive = useRef(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the environment's live voice session however the conversation ended
   useEffect(() => {
@@ -2469,6 +2556,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   };
   const submitComposerStable = useStableCallback(submitComposer);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- points the voice toggle, declared above, at sending, declared here
+  useEffect(() => {
+    sendVoiceStarterRef.current = () => {
+      if (promptRef.current.trim().length === 0)
+        applyPromptReplacement(0, 0, VOICE_STARTER_MESSAGE, { focusEditorAfterReplace: false });
+      submitComposerStable();
+    };
+  });
   const handleSubmitMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     submitComposer(
@@ -3559,7 +3654,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           <ComposerBannerStack items={shelfItems} />
           {voiceEngaged ? (
             <ComposerBanner.Attachment>
-              <VoiceModeStrip target={routeThreadRef} />
+              <VoiceModeStrip
+                target={routeThreadRef}
+                engine={voiceEngine === "codex" ? codexVoiceMode : localVoice}
+              />
             </ComposerBanner.Attachment>
           ) : null}
           {showComposerTopDrawer ? (
@@ -3840,11 +3938,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
-            {voiceMode && frontCaption ? (
-              <p aria-live="polite" className="px-3 pb-2 text-xs text-muted-foreground sm:px-4">
-                {frontCaption}
-              </p>
-            ) : null}
 
             {isComposerCollapsedMobile ? null : (
               <div
@@ -3872,29 +3965,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
-                  <VoiceReplyControls
-                    voiceMode={voiceMode}
-                    onVoiceModeChange={setVoiceMode}
-                    unavailableReason={voiceUnavailable}
+                  <ComposerVoiceButton
+                    engaged={voiceEngaged}
+                    disabledReason={voiceDisabledReason}
+                    onToggle={toggleVoice}
                   />
-                  <ComposerDictationControl
-                    dictation={dictation}
-                    disabled={composerTextUnavailable}
-                    shortcutLabel={shortcutLabelForCommand(keybindings, "composer.dictate")}
-                    {...(voiceTalk ? { talk: voiceTalk } : {})}
-                    conversation={conversationControls}
-                  />
-                  {voiceSupported ? (
-                    <ComposerVoiceButton
-                      engaged={voiceEngaged}
-                      disabledReason={
-                        voiceAvailability.kind === "unavailable" && !voiceEngaged
-                          ? voiceAvailability.reason
-                          : null
-                      }
-                      onToggle={toggleVoice}
-                    />
-                  ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

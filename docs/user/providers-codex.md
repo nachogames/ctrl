@@ -109,7 +109,8 @@ itself. To manage connectors everywhere, use
 
 A Codex thread can hold a spoken conversation. You talk with
 a voice model that hands coding requests to Codex and reads its answers back to
-you. Send at least one message in the thread first.
+you. In a new thread, Ctrl first sends a one-line starter, or what you typed, so Codex has a
+session to talk in, then connects when that turn ends.
 
 Start or stop it with the waveform button in the composer. On web and desktop you
 can also send `/voice` or press `F8`. While it runs, the strip above the composer shows whether it is

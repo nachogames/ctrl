@@ -1,10 +1,14 @@
-import type { VoiceSessionTarget } from "@t3tools/client-runtime/voice-mode";
+import type {
+  VoiceLevels,
+  VoiceModeState,
+  VoiceSessionTarget,
+} from "@t3tools/client-runtime/voice-mode";
 import { AudioLinesIcon, MicIcon, MicOffIcon, SquareIcon } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
-import { isVoiceTargetFor, useVoiceModeState, voiceMode } from "~/voice/voiceMode";
+import { isVoiceTargetFor } from "~/voice/voiceMode";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Toggle } from "../ui/toggle";
@@ -65,18 +69,29 @@ function LevelMeter({
   );
 }
 
+/** A voice conversation the strip can show: Codex voice, or Ctrl's own (`localVoice`). */
+export interface VoiceStripEngine {
+  readonly subscribe: (listener: () => void) => () => void;
+  readonly getState: () => VoiceModeState;
+  readonly subscribeLevels: (listener: (levels: VoiceLevels) => void) => () => void;
+  readonly toggleMuted: () => void;
+  readonly stop: () => void;
+}
+
 /**
  * Live status for the thread's voice conversation: state, mic and speaker
  * meters, mute and stop, and the latest captions. Meters are written straight
- * to the DOM from the controller's level samples so the composer never
+ * to the DOM from the engine's level samples so the composer never
  * re-renders per sample.
  */
 export const VoiceModeStrip = memo(function VoiceModeStrip({
   target,
+  engine,
 }: {
   target: VoiceSessionTarget;
+  engine: VoiceStripEngine;
 }) {
-  const state = useVoiceModeState();
+  const state = useSyncExternalStore(engine.subscribe, engine.getState, engine.getState);
   const isOnThread = isVoiceTargetFor(state, target) && state.phase !== "idle";
   const isActive = isOnThread && state.phase === "active";
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -88,13 +103,13 @@ export const VoiceModeStrip = memo(function VoiceModeStrip({
   useEffect(() => {
     if (!isActive) return;
     // Teardown publishes a silent sample, which clears `speaking` for the next conversation.
-    return voiceMode.subscribeLevels((levels) => {
+    return engine.subscribeLevels((levels) => {
       setSpeaking(levels.speaker > SPEAKING_LEVEL);
       if (prefersReducedMotion) return;
       applyMeterLevel(microphoneMeterRef.current, levels.microphone);
       applyMeterLevel(speakerMeterRef.current, levels.speaker);
     });
-  }, [isActive, prefersReducedMotion]);
+  }, [engine, isActive, prefersReducedMotion]);
 
   if (!isOnThread) return null;
 
@@ -145,10 +160,10 @@ export const VoiceModeStrip = memo(function VoiceModeStrip({
           ) : null}
         </ComposerBanner.Content>
         <ComposerBanner.Actions>
-          <Button size="xs" variant="ghost" onClick={() => voiceMode.toggleMuted()}>
+          <Button size="xs" variant="ghost" onClick={() => engine.toggleMuted()}>
             {state.muted ? "Unmute" : "Mute"}
           </Button>
-          <Button size="xs" variant="ghost" onClick={() => voiceMode.stop()}>
+          <Button size="xs" variant="ghost" onClick={() => engine.stop()}>
             <SquareIcon className="size-3" aria-hidden />
             Stop
           </Button>

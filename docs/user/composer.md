@@ -220,10 +220,9 @@ Whisper turbo or Apple's recognizer to one language; Apple's otherwise follows y
 language, and the other models always detect it automatically. Remove models
 you no longer use to free disk. Whisper turbo is slow without a GPU.
 
-Click the composer's microphone to record, then the stop button to insert the text where your
-selection was. Your words appear in gray at the cursor as you speak, and the finished transcript
-replaces them when you stop. You can also hold `Option+Space` on macOS or `Ctrl+Shift+Space` on
-Windows and Linux while T3 Code is focused, and release to insert. `Esc` cancels. Recordings can
+Hold `Option+Space` on macOS or `Ctrl+Shift+Space` on Windows and Linux while Ctrl is focused,
+and release to insert the text where your selection was. Your words appear in gray at the cursor
+as you speak, and the finished transcript replaces them when you stop. `Esc` cancels. Recordings can
 be up to five minutes long. Rebind the shortcut as **Composer: Hold to Dictate** in
 [keybindings](keybindings.md).
 
@@ -236,19 +235,19 @@ Say a skill's name followed by "skill", such as "use the bug fix skill", to inse
 The first recording asks for microphone access, and keeps recording once you allow it. Browsers
 allow the microphone only over HTTPS or on localhost.
 
-### Voice mode
+### Voice
 
-With dictation and **Spoken replies** both on in **Settings → Devices**, the speaker button
-next to the microphone turns on voice mode. Then the microphone and the hold shortcut send what
-you say as soon as you stop, and each new reply in that thread is read aloud: its prose and list
-items, up to about a dozen sentences, skipping code and tables. Start talking, send a message, or press the stop button to interrupt it. Voice mode
-is remembered on each device, for every thread.
+Click the waveform button in the composer, press `F8`, or send `/voice` to talk with the thread.
+It works the same in every thread, including a new one: a strip above the composer shows whether
+it is listening or speaking, the last things you and it said, and buttons to mute or stop.
 
-Clicking the microphone in voice mode starts a hands-free conversation. You don't click to send:
-your words go out when you stop speaking for a moment, and once a reply starts being read the
-microphone listens again, so you can answer or talk over it. To end the conversation, press
-`Escape`, click the microphone (or its stop button, which sends what you said first), or turn
-the speaker off.
+- In a Codex thread you talk with Codex's own voice, which hands work to Codex and reads its
+  answers back. See [Codex voice conversations](providers-codex.md#voice-conversations).
+- In any other thread, Ctrl listens with dictation and reads each new reply aloud: its prose and
+  list items, up to about a dozen sentences, skipping code and tables. It needs **Dictation** and
+  **Spoken replies** both on in **Settings → Devices**; until then the button says what is
+  missing. Your words go out when you stop speaking for a moment, and the microphone listens
+  again once a reply starts being read, so you can answer or talk over it.
 
 A pause mid-sentence keeps the microphone listening for up to about two seconds; a finished
 sentence goes out in about half a second. That judgement comes from a small turn model (about
