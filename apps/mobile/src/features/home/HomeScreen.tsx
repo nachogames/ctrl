@@ -11,7 +11,11 @@ import {
 } from "@t3tools/client-runtime/state/shell";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type SidebarProjectGroupingMode,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { planGroupMemberReorder } from "@t3tools/client-runtime/state/thread-sort";
 import { AsyncResult } from "effect/reactivity";
@@ -91,6 +95,7 @@ import {
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
+import { ShiftRows } from "./ShiftRows";
 import {
   buildHomeProjectScopes,
   findHomeProjectScope,
@@ -151,6 +156,7 @@ interface HomeScreenProps {
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
+  readonly onOpenShift: (environmentId: EnvironmentId, threadId: ThreadId) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -1249,9 +1255,20 @@ export function HomeScreen(props: HomeScreenProps) {
       onPress={arrangeMode ? exitArrangeMode : enterArrangeMode}
     />
   ) : null;
+  // Shift sits above everything while the list is unfiltered, like the desktop sidebar.
+  const shiftMachines =
+    hasSearchQuery || v2ScopedProjectGroup !== null
+      ? []
+      : props.environments.filter(
+          (environment) =>
+            environment.connectionState === "connected" &&
+            (props.selectedEnvironmentId === null ||
+              environment.environmentId === props.selectedEnvironmentId),
+        );
   const v2ListHeader = (
     <>
       {listHeader}
+      <ShiftRows machines={shiftMachines} onOpen={props.onOpenShift} />
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           gutter={primaryColumn ? 8 : 0}

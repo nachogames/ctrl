@@ -9,7 +9,8 @@ their questions, approve their requests, rename, settle, snooze or archive them.
 Shift runs in the desktop app. Open **Settings → Shift**, choose a model and turn
 on the switch. Change the model there at any time, or with the model picker in
 Shift's composer; the conversation carries over. Shift then sits at the top of the sidebar. Open it from there, from the
-command palette, or with its keyboard shortcut.
+command palette, or with its keyboard shortcut. On your phone, Shift sits at the top of
+the thread list for each connected computer that has it on.
 
 Shift always runs in full access. It can approve requests in your other threads,
 so choose a model you trust with that.
