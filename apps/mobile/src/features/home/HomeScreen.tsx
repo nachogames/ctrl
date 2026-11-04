@@ -487,13 +487,15 @@ export function HomeScreen(props: HomeScreenProps) {
     loaded: shelfPreferencesLoaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
-    workingShelfEnabled,
+    workingShelfEnabled: workingShelfPreferred,
     workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
     byProject,
   } = useThreadListV2ShelfPreferences();
+  // Project sections keep working threads under their project, like folder groups on web.
+  const workingShelfEnabled = workingShelfPreferred && !byProject;
   const now = useThreadListNow(props.threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
