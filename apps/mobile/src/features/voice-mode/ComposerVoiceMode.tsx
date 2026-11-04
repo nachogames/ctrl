@@ -100,7 +100,10 @@ function StripButton(props: {
  * The live conversation's status, levels, controls, and newest captions.
  * Render only while this thread's conversation is connecting or active.
  */
-export function ComposerVoiceStrip() {
+export function ComposerVoiceStrip(props: {
+  /** Ends the conversation, or the wait for it; defaults to ending the conversation. */
+  readonly onEnd?: () => void;
+}) {
   const state = useVoiceModeState();
   const microphoneLevel = useSharedValue(0);
   const speakerLevel = useSharedValue(0);
@@ -151,7 +154,7 @@ export function ComposerVoiceStrip() {
         <StripButton
           accessibilityLabel="End voice conversation"
           icon="stop.fill"
-          onPress={() => voiceMode.stop()}
+          onPress={props.onEnd ?? (() => voiceMode.stop())}
         />
       </View>
       {captions.map((caption, index) => (

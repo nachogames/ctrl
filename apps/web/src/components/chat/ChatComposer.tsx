@@ -151,15 +151,15 @@ import { resolveVoiceAvailability } from "../../voice/voiceAvailability";
 import {
   toggleThreadVoice,
   useVoicePhaseFor,
-  VOICE_STARTER_MESSAGE,
   voiceMode as codexVoiceMode,
 } from "../../voice/voiceMode";
 import { localVoice } from "../../speech/localVoice";
 import {
   clearVoiceAfterFirstTurn,
   startVoiceAfterFirstTurn,
+  VOICE_STARTER_MESSAGE,
   voiceAfterFirstTurnStatus,
-} from "../../voice/voiceAfterFirstTurn";
+} from "@t3tools/client-runtime/voice-mode";
 import { ComposerVoiceButton, VoiceModeStrip } from "./VoiceModeStrip";
 import { VoiceEnginePicker } from "./VoiceEnginePicker";
 import {

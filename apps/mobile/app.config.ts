@@ -227,6 +227,14 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
         android: null,
         ios: { supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"] },
       },
+      {
+        name: "VoiceCallActivity",
+        displayName: "Voice conversation",
+        description: "A voice conversation in progress, with mute and end.",
+        // Android shows the call as an ongoing CallStyle notification instead.
+        android: null,
+        ios: { supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"] },
+      },
     ],
   },
 ];

@@ -11,7 +11,8 @@ export function setVoiceAudioActive(active: boolean): Promise<void> {
             allowsRecording: true,
             playsInSilentMode: true,
             interruptionMode: "doNotMix",
-            shouldPlayInBackground: false,
+            // A conversation continues like a call when the app leaves the screen.
+            shouldPlayInBackground: true,
             shouldRouteThroughEarpiece: false,
           }
         : {

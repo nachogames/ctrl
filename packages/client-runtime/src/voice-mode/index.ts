@@ -14,3 +14,11 @@ export {
   type VoiceSessionTarget,
 } from "./controller.ts";
 export { makeVoiceSessionOpener, makeVoiceSessionValidator } from "./session.ts";
+export {
+  VOICE_STARTER_MESSAGE,
+  clearVoiceAfterFirstTurn,
+  onVoiceSessionMissing,
+  recoverMissingVoiceSession,
+  startVoiceAfterFirstTurn,
+  voiceAfterFirstTurnStatus,
+} from "./afterFirstTurn.ts";
