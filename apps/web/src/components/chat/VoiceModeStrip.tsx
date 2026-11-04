@@ -41,7 +41,7 @@ function applyMeterLevel(meter: HTMLElement | null, level: number) {
   }
 }
 
-function LevelMeter({
+export function LevelMeter({
   meterRef,
   label,
   staticLevel,
@@ -78,6 +78,49 @@ export interface VoiceStripEngine {
   readonly stop: () => void;
 }
 
+/** What the conversation is doing; the assistant's voice outranks mute. */
+export function voiceStripStatus(input: {
+  readonly active: boolean;
+  readonly speaking: boolean;
+  readonly muted: boolean;
+}): string {
+  if (!input.active) return "Connecting…";
+  if (input.speaking) return "Speaking";
+  return input.muted ? "Muted" : "Listening";
+}
+
+/**
+ * Mic and speaker meters for a live conversation, written straight to the DOM
+ * from the engine's level samples so the caller never re-renders per sample.
+ */
+export function useVoiceMeters(engine: VoiceStripEngine, active: boolean, muted: boolean) {
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const microphoneMeterRef = useRef<HTMLSpanElement>(null);
+  const speakerMeterRef = useRef<HTMLSpanElement>(null);
+  const [speaking, setSpeaking] = useState(false);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe visible meters to the audio level stream.
+  useEffect(() => {
+    if (!active) return;
+    // Teardown publishes a silent sample, which clears `speaking` for the next conversation.
+    return engine.subscribeLevels((levels) => {
+      setSpeaking(levels.speaker > SPEAKING_LEVEL);
+      if (prefersReducedMotion) return;
+      applyMeterLevel(microphoneMeterRef.current, levels.microphone);
+      applyMeterLevel(speakerMeterRef.current, levels.speaker);
+    });
+  }, [engine, active, prefersReducedMotion]);
+
+  return {
+    speaking,
+    microphoneMeterRef,
+    speakerMeterRef,
+    // Reduced motion keeps the meters still: full while a channel is live, low while muted.
+    staticMicrophoneLevel: prefersReducedMotion && active && !muted ? 0.4 : 0,
+    staticSpeakerLevel: prefersReducedMotion && speaking ? 0.4 : 0,
+  };
+}
+
 /**
  * Live status for the thread's voice conversation: state, mic and speaker
  * meters, mute and stop, and the latest captions. Meters are written straight
@@ -94,36 +137,18 @@ export const VoiceModeStrip = memo(function VoiceModeStrip({
   const state = useSyncExternalStore(engine.subscribe, engine.getState, engine.getState);
   const isOnThread = isVoiceTargetFor(state, target) && state.phase !== "idle";
   const isActive = isOnThread && state.phase === "active";
-  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const microphoneMeterRef = useRef<HTMLSpanElement>(null);
-  const speakerMeterRef = useRef<HTMLSpanElement>(null);
-  const [speaking, setSpeaking] = useState(false);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe visible meters to the audio level stream.
-  useEffect(() => {
-    if (!isActive) return;
-    // Teardown publishes a silent sample, which clears `speaking` for the next conversation.
-    return engine.subscribeLevels((levels) => {
-      setSpeaking(levels.speaker > SPEAKING_LEVEL);
-      if (prefersReducedMotion) return;
-      applyMeterLevel(microphoneMeterRef.current, levels.microphone);
-      applyMeterLevel(speakerMeterRef.current, levels.speaker);
-    });
-  }, [engine, isActive, prefersReducedMotion]);
+  const {
+    speaking,
+    microphoneMeterRef,
+    speakerMeterRef,
+    staticMicrophoneLevel,
+    staticSpeakerLevel,
+  } = useVoiceMeters(engine, isActive, state.muted);
 
   if (!isOnThread) return null;
 
-  const status = !isActive
-    ? "Connecting…"
-    : speaking
-      ? "Speaking"
-      : state.muted
-        ? "Muted"
-        : "Listening";
+  const status = voiceStripStatus({ active: isActive, speaking, muted: state.muted });
   const captions = state.captions.slice(-VISIBLE_CAPTIONS);
-  // Reduced motion keeps the meters still: full while a channel is live, low while muted.
-  const staticMicrophoneLevel = prefersReducedMotion && isActive && !state.muted ? 0.4 : 0;
-  const staticSpeakerLevel = prefersReducedMotion && speaking ? 0.4 : 0;
 
   return (
     <ComposerBanner.Root data-chat-composer-voice-strip="true">

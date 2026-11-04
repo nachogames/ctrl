@@ -1,20 +1,36 @@
 import type { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   VoiceModeController,
   makeVoiceSessionOpener,
   makeVoiceSessionValidator,
+  recoverMissingVoiceSession,
   type VoiceModePhase,
+  type VoiceModeState,
   type VoicePeerConnection,
+  type VoiceSessionTarget,
 } from "@t3tools/client-runtime/voice-mode";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
-import { AppState, NativeModules } from "react-native";
+import { Alert, AppState, NativeModules } from "react-native";
 import type * as WebRTC from "react-native-webrtc";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { serverEnvironment } from "../../state/server";
+import { environmentThreadShells } from "../../state/threads";
 import { setVoiceAudioActive } from "./voiceAudio";
+import {
+  onVoiceCallAction,
+  prepareVoiceCall,
+  startVoiceCall,
+  stopVoiceCall,
+  updateVoiceCall,
+  voiceCallSupported,
+} from "./voiceCall";
+import { resolveVoiceModeNotice } from "./voiceModePresentation";
 
 /**
  * False on binaries built before react-native-webrtc was added. Importing the
@@ -60,24 +76,66 @@ export const voiceMode = new VoiceModeController({
   openSession: makeVoiceSessionOpener(runOnConnectionRuntime),
 });
 
+/** Who the call is with: Shift, or the thread's title. */
+function voiceCaller(target: VoiceSessionTarget): string {
+  const environmentId = EnvironmentId.make(target.environmentId);
+  const threadId = ThreadId.make(target.threadId);
+  const settings = appAtomRegistry.get(serverEnvironment.settingsValueAtom(environmentId));
+  if (settings?.home.threadId === threadId) return "Shift";
+  const thread = appAtomRegistry.get(
+    environmentThreadShells.threadShellAtom(scopeThreadRef(environmentId, threadId)),
+  );
+  return thread?.title || "Voice conversation";
+}
+
+function voiceCallStatus(state: VoiceModeState): string {
+  if (state.phase !== "active") return "Connecting…";
+  return state.muted ? "Muted" : "Listening";
+}
+
 const KEEP_AWAKE_TAG = "voice-mode";
 let previousPhase: VoiceModePhase = "idle";
 let routedAudio = false;
 let keepAwake: Promise<void> | null = null;
 
-voiceMode.subscribe(({ phase }) => {
+let previousCallStatus: string | null = null;
+
+voiceMode.subscribe((state) => {
+  const { phase } = state;
+  // Captions change the state many times a second; the call shows only its status.
+  const callStatus = phase === "idle" ? null : voiceCallStatus(state);
+  if (callStatus !== null && callStatus !== previousCallStatus) {
+    updateVoiceCall({ status: callStatus, muted: state.muted });
+  }
+  previousCallStatus = callStatus;
   if (phase === previousPhase) return;
   previousPhase = phase;
   if (phase === "active" && !routedAudio) {
     routedAudio = true;
     // WebRTC resets iOS routing when its audio unit starts, so route after activation.
     setVoiceAudioActive(true).catch(() => undefined);
+    // Started once the microphone is granted: Android refuses a microphone service before.
+    if (state.target !== null) {
+      startVoiceCall({
+        caller: voiceCaller(state.target),
+        status: voiceCallStatus(state),
+        muted: state.muted,
+      });
+      // Asked after the microphone so the two prompts never overlap; a granted
+      // prompt reposts the notification Android dropped while it was denied.
+      void prepareVoiceCall().then(() => {
+        const current = voiceMode.getState();
+        if (current.phase === "idle") return;
+        updateVoiceCall({ status: voiceCallStatus(current), muted: current.muted });
+      });
+    }
   }
-  if (phase !== "idle" && !keepAwake) {
-    // A hands-free conversation must not auto-lock: backgrounding ends it.
+  if (phase !== "idle" && !voiceCallSupported && !keepAwake) {
+    // Without a call to hold it, backgrounding ends the conversation, so the screen must not lock.
     keepAwake = activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => undefined);
   }
   if (phase === "idle") {
+    stopVoiceCall();
     if (routedAudio) {
       routedAudio = false;
       setVoiceAudioActive(false).catch(() => undefined);
@@ -91,9 +149,35 @@ voiceMode.subscribe(({ phase }) => {
   }
 });
 
-// iOS cuts the microphone in the background (the app has no background audio
-// mode), and Android restricts background capture without a foreground
-// service. End the conversation rather than leave it silently deaf.
+onVoiceCallAction((action) => {
+  if (action === "end") voiceMode.stop();
+  else voiceMode.toggleMuted();
+});
+
+// A conversation runs like a phone call: it outlives its thread screen, the
+// app going to the background, and the screen locking. Android binaries built
+// before the call service cannot capture in the background, so there it ends
+// rather than stay silently deaf.
 AppState.addEventListener("change", (state) => {
-  if (state === "background") voiceMode.stop();
+  if (state === "background" && !voiceCallSupported) voiceMode.stop();
+});
+
+// Failures and remote endings are reported once, wherever the user is.
+voiceMode.subscribe(() => {
+  // Reads the live state: dismissing notifies listeners re-entrantly.
+  const state = voiceMode.getState();
+  // A thread that can open its own session, such as Shift's row, retries instead.
+  if (
+    state.phase === "idle" &&
+    state.target !== null &&
+    state.error !== null &&
+    recoverMissingVoiceSession({ target: state.target, error: state.error })
+  ) {
+    voiceMode.dismiss();
+    return;
+  }
+  const notice = resolveVoiceModeNotice(state);
+  if (!notice) return;
+  voiceMode.dismiss();
+  Alert.alert(notice.title, notice.message);
 });

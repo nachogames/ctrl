@@ -116,7 +116,7 @@ import { useVoiceInputController } from "../voice-input/useVoiceInputController"
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import type { ExistingThreadSettingsRouteParams } from "./ThreadSettingsSheet";
 import { ComposerVoiceModeButton, ComposerVoiceStrip } from "../voice-mode/ComposerVoiceMode";
-import { useVoiceModePhase, useVoiceModeThreadLifecycle } from "../voice-mode/useVoiceMode";
+import { useVoiceModePhase } from "../voice-mode/useVoiceMode";
 import { voiceMode, voiceModeSupported } from "../voice-mode/voiceMode";
 import {
   useThreadSettingsSheetPresentation,
@@ -566,7 +566,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   });
   const voiceTarget = { environmentId: props.environmentId, threadId: props.selectedThread.id };
   const voicePhase = useVoiceModePhase(voiceTarget);
-  useVoiceModeThreadLifecycle(voiceTarget);
   // Dictation and a voice conversation both need the microphone.
   const voiceConversationLive = voicePhase !== "idle";
   const voiceInput = useVoiceInputController({

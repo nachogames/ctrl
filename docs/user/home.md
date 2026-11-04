@@ -30,7 +30,11 @@ so choose a model you trust with that.
 
 ## Talk to Shift
 
-Click the waveform button in Shift's composer, or press `F8`, and talk. Shift
+Click the waveform button on Shift's row in the sidebar, or in Shift's composer,
+or press `F8`, and talk. The sidebar button talks to Shift without opening its
+chat; while you talk, a strip under Shift's row shows whether Shift is listening
+or speaking, with Mute and End. If Shift has no session yet, it first sends a
+one-line starter message. Shift
 answers quick questions itself and hands bigger thinking to a stronger agent,
 then tells you the short version. It works like [voice](./composer.md#voice) in
 any thread:
@@ -40,6 +44,14 @@ any thread:
 - With any other model, turn on **Dictation** and **Spoken replies** in
   **Settings → Devices** first. They run on your machine at no cost, and download
   a local voice the first time (dictation downloads nothing on macOS 26 or later).
+  The sidebar button needs a Codex model; with other models, talk from Shift's
+  composer.
+
+On your phone, tap the waveform on Shift's row, or in any Codex thread's composer.
+The same strip appears under Shift's row. The conversation works like a phone call: it keeps going when you leave the
+thread, switch apps, or lock the screen. A call notification on Android, and a
+Live Activity on the iPhone Lock Screen and Dynamic Island, show the call's time
+with Mute and End.
 
 ## Other machines
 

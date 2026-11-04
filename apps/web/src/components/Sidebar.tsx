@@ -266,6 +266,7 @@ import {
   type SidebarV2TopStatusKind,
 } from "./Sidebar.logic";
 import { ShiftKeyIcon } from "./home/ShiftKeyIcon";
+import { ShiftVoiceButton, ShiftVoiceStrip, useShiftVoice } from "./home/ShiftVoiceButton";
 import {
   createSidebarCollisionDetection,
   createSidebarSortingStrategy,
@@ -470,7 +471,7 @@ const HOME_ROW_STATUS: Record<
 
 /**
  * The fixed row for the current Home thread, above every other row. Home has
- * no project, settle, or pin affordances, so it only shows its status.
+ * no project, settle, or pin affordances, so it shows its status and voice.
  */
 const SidebarHomeRow = memo(function SidebarHomeRow(props: {
   threadRef: ScopedThreadRef;
@@ -502,6 +503,7 @@ const SidebarHomeRow = memo(function SidebarHomeRow(props: {
           ? "done"
           : null;
   const topStatus = topStatusKind === null ? null : HOME_ROW_STATUS[topStatusKind];
+  const voice = useShiftVoice(threadRef);
   const activate = () => onActivate(threadRef);
   return (
     <li className="list-none">
@@ -542,7 +544,9 @@ const SidebarHomeRow = memo(function SidebarHomeRow(props: {
             <span role="status">{topStatus.label}</span>
           </span>
         ) : null}
+        <ShiftVoiceButton voice={voice} />
       </div>
+      <ShiftVoiceStrip voice={voice} />
     </li>
   );
 });

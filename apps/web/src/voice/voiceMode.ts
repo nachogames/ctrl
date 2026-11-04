@@ -5,6 +5,7 @@ import {
   describeVoiceEnd,
   makeVoiceSessionOpener,
   makeVoiceSessionValidator,
+  recoverMissingVoiceSession,
   type VoiceMediaStream,
   type VoiceModePhase,
   type VoiceModePlatform,
@@ -129,6 +130,14 @@ voiceMode.subscribe((state) => {
   lastPhase = state.phase;
   if (state.phase !== "idle" || state.target === null) return;
   if (state.error === null && state.endedReason === null) return;
+  if (
+    state.error !== null &&
+    previousPhase !== "active" &&
+    recoverMissingVoiceSession({ target: state.target, error: state.error })
+  ) {
+    voiceMode.dismiss();
+    return;
+  }
   const threadRef = scopeThreadRef(
     EnvironmentId.make(state.target.environmentId),
     ThreadId.make(state.target.threadId),
@@ -151,6 +160,3 @@ voiceMode.subscribe((state) => {
   }
   voiceMode.dismiss();
 });
-
-/** The first message a thread sends when voice starts it, so Codex has a session to talk in. */
-export const VOICE_STARTER_MESSAGE = "Starting a voice conversation. Reply with one word: Ready.";
