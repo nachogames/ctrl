@@ -10,6 +10,7 @@ import { useMemo, useState } from "react";
 import { Platform, useWindowDimensions } from "react-native";
 
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   pickableProjectGroups,
   resolveScratchProjectScopeKey,
@@ -74,6 +75,11 @@ export function HomeRouteScreen() {
     selectDetail({
       name: "Thread",
       params: { environmentId: String(thread.environmentId), threadId: String(thread.id) },
+    });
+  const handleOpenShift = (environmentId: EnvironmentId, threadId: ThreadId) =>
+    selectDetail({
+      name: "Thread",
+      params: { environmentId: String(environmentId), threadId: String(threadId) },
     });
   const selectThreadRoute = (params: ReactNavigation.RootParamList["Thread"]) =>
     selectDetail({ name: "Thread", params });
@@ -255,6 +261,7 @@ export function HomeRouteScreen() {
           onOpenSettings={() => selectTab("settings")}
           onSearchQueryChange={setSearchQuery}
           onSelectThread={handleSelectThread}
+          onOpenShift={handleOpenShift}
           onSelectPendingTask={openPendingTask}
           onDeletePendingTask={confirmDeletePendingTask}
           onNewThreadOnBranch={handleNewThreadOnBranch}
