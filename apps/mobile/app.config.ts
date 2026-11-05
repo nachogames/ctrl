@@ -12,6 +12,8 @@ type AppVariant = "development" | "preview" | "production";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
+// Expo's TypeScript setup otherwise installs `typescript` on every start; we typecheck with tsrs.
+process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
@@ -149,6 +151,8 @@ const appIconPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
     },
   },
 ];
+// Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
+const HOSTED_APP_HOST = "app.t3.codes";
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
@@ -307,6 +311,7 @@ const config: ExpoConfig = {
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
       `webcredentials:${variant.relyingParty}`,
+      `applinks:${HOSTED_APP_HOST}`,
     ],
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
@@ -362,6 +367,14 @@ const config: ExpoConfig = {
     blockedPermissions: [
       "android.permission.ACTIVITY_RECOGNITION",
       "android.permission.SYSTEM_ALERT_WINDOW",
+    ],
+    intentFilters: [
+      {
+        action: "VIEW",
+        autoVerify: true,
+        data: [{ scheme: "https", host: HOSTED_APP_HOST, pathPrefix: "/threads/" }],
+        category: ["BROWSABLE", "DEFAULT"],
+      },
     ],
   },
   web: {
@@ -448,9 +461,14 @@ const config: ExpoConfig = {
         recordAudioAndroid: false,
       },
     ],
-    // `microphonePermission: false` would block RECORD_AUDIO on Android for every
-    // package, including voice conversations, so share the app's usage string.
-    ["expo-image-picker", { photosPermission: false, microphonePermission: MICROPHONE_PERMISSION }],
+    [
+      "expo-image-picker",
+      {
+        photosPermission: false,
+        // `false` makes this plugin add RECORD_AUDIO to blockedPermissions, breaking Android dictation.
+        microphonePermission: MICROPHONE_PERMISSION,
+      },
+    ],
     [
       "expo-splash-screen",
       {

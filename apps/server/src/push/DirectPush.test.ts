@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { DirectPushDeviceRegistration } from "@t3tools/contracts";
@@ -76,7 +77,7 @@ function fakeRelay(status: number) {
   return { requests, layer };
 }
 
-it.layer(NodeServices.layer)("DirectPush", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("DirectPush", (it) => {
   it.effect("persists registrations and reports which platforms have keys", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -1,9 +1,6 @@
 /**
- * DirectPush sends agent alerts from this server straight to APNs and FCM,
- * for phones that reach the environment directly (LAN, Tailscale) and are not
- * signed in to T3 Connect. Credentials are files the owner drops into
- * `<stateDir>/push/` (see `docs/user/mobile-notifications.md`); phones register
- * their push tokens over the `push.registerDevice` RPC.
+ * Sends agent alerts straight to APNs and FCM for phones not signed in to T3 Connect.
+ * Credentials are files in `<stateDir>/push/` (docs/user/mobile-notifications.md).
  */
 import {
   type DirectPushAlertKind,
@@ -27,6 +24,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Signature from "effect/crypto/Signature";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -129,6 +127,7 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
 }) {
   const httpClientLayer = options?.httpClientLayer ?? FetchHttpClient.layer;
   const fileSystem = yield* FileSystem.FileSystem;
+  const signature = yield* Signature.Signature;
   const pathService = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
@@ -205,12 +204,8 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
     } satisfies PushCredentials;
   });
 
-  const sendToDevice = (
-    device: StoredDevice,
-    message: PushRelayMessage,
-    credentials: PushCredentials,
-  ) =>
-    Effect.gen(function* () {
+  const sendToDevice = Effect.fn("DirectPush.sendToDevice")(
+    function* (device: StoredDevice, message: PushRelayMessage, credentials: PushCredentials) {
       const nowMs = yield* Clock.currentTimeMillis;
       let result: PushSendResult;
       if (usesRelay(device)) {
@@ -266,12 +261,16 @@ export const make = Effect.fn("DirectPush.make")(function* (options?: {
           },
         );
       }
-    }).pipe(
-      Effect.provide(httpClientLayer),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Direct push delivery failed", { label: device.label, cause }),
+    },
+    (effect, device) =>
+      effect.pipe(
+        Effect.provide(httpClientLayer),
+        Effect.provideService(Signature.Signature, signature),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Direct push delivery failed", { label: device.label, cause }),
+        ),
       ),
-    );
+  );
 
   const sendToDevices = Effect.fn("DirectPush.sendToDevices")(function* (
     kind: DirectPushAlertKind,

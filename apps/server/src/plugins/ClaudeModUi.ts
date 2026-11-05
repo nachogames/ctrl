@@ -12,11 +12,17 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as PluginUiStore from "./PluginUiStore.ts";
 
 /** Sends one control request on the thread's live Claude query. */
 export type ClaudeControlRequest = (request: Record<string, unknown>) => Promise<unknown>;
+
+class ClaudeModUiRequestError extends Schema.TaggedError<ClaudeModUiRequestError>()(
+  "ClaudeModUiRequestError",
+  { subtype: Schema.String, cause: Schema.Defect() },
+) {}
 
 const BAND_INSTANCE_ID = "above-prompt";
 const BAND_MAX_ROWS = 12;
@@ -105,21 +111,23 @@ export const make = Effect.gen(function* () {
 
   /** Asks the CLI to draw the AbovePrompt band and stores it if this query is still current. */
   const renderBand = (threadId: ThreadId, request: ClaudeControlRequest) =>
-    Effect.tryPromise(() =>
-      request({
-        subtype: "ui_render",
-        surface: "desktop",
-        component: "AbovePrompt",
-        instance_id: BAND_INSTANCE_ID,
-        props: {
-          hasSurvey: false,
-          isWorking: false,
-          maxRows: BAND_MAX_ROWS,
-          bodyColumns: PLUGIN_BAND_COLUMNS,
-          scroll: { offset: 0, bodyRows: BAND_MAX_ROWS },
-        },
-      }),
-    ).pipe(
+    Effect.tryPromise({
+      try: () =>
+        request({
+          subtype: "ui_render",
+          surface: "desktop",
+          component: "AbovePrompt",
+          instance_id: BAND_INSTANCE_ID,
+          props: {
+            hasSurvey: false,
+            isWorking: false,
+            maxRows: BAND_MAX_ROWS,
+            bodyColumns: PLUGIN_BAND_COLUMNS,
+            scroll: { offset: 0, bodyRows: BAND_MAX_ROWS },
+          },
+        }),
+      catch: (cause) => new ClaudeModUiRequestError({ subtype: "ui_render", cause }),
+    }).pipe(
       Effect.flatMap((response) =>
         threads.get(threadId)?.request === request
           ? store.setBand(threadId, CLAUDE_MOD_BAND_SOURCE, bandFromRenderResponse(response))
@@ -227,15 +235,17 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => {
       const request = threads.get(input.threadId)?.request;
       if (request === undefined) return Effect.void;
-      return Effect.tryPromise(() =>
-        request({
-          subtype: "ui_press",
-          plugin: input.plugin,
-          handle: input.handle,
-          surface: "desktop",
-          ...(input.key === undefined ? {} : { key: input.key }),
-        }),
-      ).pipe(
+      return Effect.tryPromise({
+        try: () =>
+          request({
+            subtype: "ui_press",
+            plugin: input.plugin,
+            handle: input.handle,
+            surface: "desktop",
+            ...(input.key === undefined ? {} : { key: input.key }),
+          }),
+        catch: (cause) => new ClaudeModUiRequestError({ subtype: "ui_press", cause }),
+      }).pipe(
         Effect.catchCause((cause) =>
           Effect.logDebug("claude-mod-ui.press-failed", { threadId: input.threadId, cause }),
         ),
