@@ -1,3 +1,4 @@
+import * as AssetSigner from "../../../assets/AssetSigner.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
@@ -231,6 +232,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+        Layer.mock(AssetSigner.AssetSigner)({}),
       ),
     ),
   ),
@@ -323,6 +325,7 @@ it.effect("proxies remote MCP tools to every agent", () =>
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+        Layer.mock(AssetSigner.AssetSigner)({}),
       ),
     ),
   ),

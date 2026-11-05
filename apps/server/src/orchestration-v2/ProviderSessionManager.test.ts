@@ -671,8 +671,7 @@ function layerTest(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-          // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
-          getInstance: () => Effect.succeed(undefined),
+          getInstance: () => Effect.undefined,
         }),
         layerConfiguredEventSink,
         IdAllocator.layer,
@@ -1422,7 +1421,7 @@ it.effect(
             state,
             idleTimeoutMs: 60_000,
             instanceBuild,
-            hasPendingBackgroundWork: Ref.get(probe).pipe(Effect.flatMap((check) => check)),
+            hasPendingBackgroundWork: Ref.get(probe).pipe(Effect.flatten),
           }),
         ),
       );
@@ -1479,7 +1478,7 @@ it.effect("ProviderSessionManagerV2 retires a session whose idle activity probe 
           state,
           idleTimeoutMs: 1_000,
           instanceBuild,
-          hasPendingBackgroundWork: Ref.get(probe).pipe(Effect.flatMap((check) => check)),
+          hasPendingBackgroundWork: Ref.get(probe).pipe(Effect.flatten),
         }),
       ),
     );

@@ -26,6 +26,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.remoteMcpAuthorize]: AuthSettingsWriteScope,
   [WS_METHODS.remoteMcpReconnect]: AuthSettingsWriteScope,
   [WS_METHODS.remoteMcpRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,
