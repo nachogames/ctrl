@@ -3,10 +3,13 @@ import * as NodeHttp2 from "node:http2";
 import { type PushRelayMessage, PushRelaySendRequest } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { importPKCS8, SignJWT } from "jose";
+import * as Jwk from "effect/jose/Jwk";
+import type * as Jws from "effect/jose/Jws";
+import * as Jwt from "effect/jose/Jwt";
 
 /**
  * Minimal APNs and FCM senders for direct push. Volume is a handful of alerts
@@ -51,20 +54,43 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 // expires them after an hour.
 const apnsTokens = new Map<string, { readonly token: string; readonly issuedAt: number }>();
 
+/** Signs `claims` with a PKCS#8 PEM private key as a compact JWT. */
+const signJwt = <S extends Schema.Top & { readonly EncodingServices: never }>(
+  schema: S,
+  claims: S["Type"],
+  privateKeyPem: string,
+  algorithm: "ES256" | "RS256",
+  header: Jws.Header,
+) =>
+  Jwk.importPkcs8(Redacted.make(privateKeyPem), algorithm).pipe(
+    Effect.flatMap((key) => Jwt.sign(schema, claims, key, header)),
+    Effect.map(Redacted.value),
+  );
+
+const ApnsClaims = Schema.Struct({ iss: Schema.String, iat: Schema.Number });
+const FcmClaims = Schema.Struct({
+  scope: Schema.String,
+  iss: Schema.String,
+  aud: Schema.String,
+  iat: Schema.Number,
+  exp: Schema.Number,
+});
+
 const apnsProviderToken = (credentials: ApnsCredentials, nowMs: number) => {
   const cacheKey = `${credentials.teamId}:${credentials.keyId}`;
   const cached = apnsTokens.get(cacheKey);
   if (cached && nowMs - cached.issuedAt < 40 * 60_000) return Effect.succeed(cached.token);
-  return Effect.tryPromise({
-    try: async () =>
-      new SignJWT({})
-        .setProtectedHeader({ alg: "ES256", kid: credentials.keyId })
-        .setIssuer(credentials.teamId)
-        .setIssuedAt(Math.floor(nowMs / 1000))
-        .sign(await importPKCS8(credentials.privateKeyPem, "ES256")),
-    catch: (cause) =>
-      new PushSendError({ service: "apns", status: null, reason: "InvalidSigningKey", cause }),
-  }).pipe(
+  return signJwt(
+    ApnsClaims,
+    { iss: credentials.teamId, iat: Math.floor(nowMs / 1000) },
+    credentials.privateKeyPem,
+    "ES256",
+    { kid: credentials.keyId },
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new PushSendError({ service: "apns", status: null, reason: "InvalidSigningKey", cause }),
+    ),
     Effect.tap((token) => Effect.sync(() => apnsTokens.set(cacheKey, { token, issuedAt: nowMs }))),
   );
 };
@@ -162,17 +188,19 @@ const fcmAccessToken = Effect.fn("DirectPush.fcmAccessToken")(function* (
   const issuedAt = Math.floor(nowMs / 1000);
   const fail = (cause: unknown, status: number | null = null) =>
     new PushSendError({ service: "fcm", status, reason: "OAuth", cause });
-  const assertion = yield* Effect.tryPromise({
-    try: async () =>
-      new SignJWT({ scope: "https://www.googleapis.com/auth/firebase.messaging" })
-        .setProtectedHeader({ alg: "RS256", typ: "JWT" })
-        .setIssuer(account.client_email)
-        .setAudience("https://oauth2.googleapis.com/token")
-        .setIssuedAt(issuedAt)
-        .setExpirationTime(issuedAt + 3600)
-        .sign(await importPKCS8(account.private_key, "RS256")),
-    catch: (cause) => fail(cause),
-  });
+  const assertion = yield* signJwt(
+    FcmClaims,
+    {
+      scope: "https://www.googleapis.com/auth/firebase.messaging",
+      iss: account.client_email,
+      aud: "https://oauth2.googleapis.com/token",
+      iat: issuedAt,
+      exp: issuedAt + 3600,
+    },
+    account.private_key,
+    "RS256",
+    { typ: "JWT" },
+  ).pipe(Effect.mapError((cause) => fail(cause)));
   const response = yield* client
     .execute(
       HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
