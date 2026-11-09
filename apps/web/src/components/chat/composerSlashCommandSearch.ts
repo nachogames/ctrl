@@ -25,7 +25,7 @@ function isMidMessageSkill(item: SlashSearchItem): boolean {
 /**
  * Mid-message, skills lead: picking one inserts a `$` mention the server dispatches
  * anywhere. Commands that only expand at the message start stay listed last, with a hint.
- * `/side` and `/btw` work only at the message start, so they are left out.
+ * `/side`, `/btw` and `/clear` work only at the message start, so they are left out.
  */
 export function slashCommandItemsForPromptPosition(
   items: ReadonlyArray<SlashSearchItem>,
@@ -36,10 +36,13 @@ export function slashCommandItemsForPromptPosition(
   }
   const skills = items.filter(isMidMessageSkill);
   // Built-in and plugin commands act on the composer or the app, so they work anywhere;
-  // `/side` and `/btw` work only at the message start.
+  // `/side`, `/btw` and `/clear` work only at the message start.
   const builtIns = items.filter(
     (item) =>
-      (item.type === "slash-command" && item.command !== "side" && item.command !== "btw") ||
+      (item.type === "slash-command" &&
+        item.command !== "side" &&
+        item.command !== "btw" &&
+        item.command !== "clear") ||
       item.type === "plugin-command",
   );
   const startOnly = items.flatMap((item) =>

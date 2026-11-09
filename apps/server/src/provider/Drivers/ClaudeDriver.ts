@@ -181,6 +181,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                 ]),
             ),
           ),
+        modelCatalog,
       },
     ).pipe(
       Effect.mapError(

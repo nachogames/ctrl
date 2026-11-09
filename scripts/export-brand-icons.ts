@@ -15,6 +15,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   APP_ICON_DESIGNS,
+  BRAND_ASSET_PATHS,
   DEVELOPMENT_PUBLIC_ICON_OVERRIDES,
   resolveAppIconDesignAssetPaths,
 } from "./lib/brand-assets.ts";
@@ -53,6 +54,9 @@ interface VariantOutputs {
   readonly macos: string;
   readonly universal: string;
   readonly appleTouch: string;
+  /** Manifest icons; only the bundled (solid) design ships them. */
+  readonly webIcon192: string | null;
+  readonly webIcon512: string | null;
   readonly favicon16: string;
   readonly favicon32: string;
   readonly faviconIco: string | null;
@@ -208,29 +212,47 @@ export class IconExportAssetsStaleError extends Schema.TaggedError<IconExportAss
 }
 
 const ICON_BRANDS = [
-  { brand: "development", label: "development" },
-  { brand: "nightly", label: "preview" },
-  { brand: "production", label: "production" },
+  {
+    brand: "development",
+    label: "development",
+    webIcon192: BRAND_ASSET_PATHS.developmentWebIcon192Png,
+    webIcon512: BRAND_ASSET_PATHS.developmentWebIcon512Png,
+  },
+  {
+    brand: "nightly",
+    label: "preview",
+    webIcon192: BRAND_ASSET_PATHS.nightlyWebIcon192Png,
+    webIcon512: BRAND_ASSET_PATHS.nightlyWebIcon512Png,
+  },
+  {
+    brand: "production",
+    label: "production",
+    webIcon192: BRAND_ASSET_PATHS.productionWebIcon192Png,
+    webIcon512: BRAND_ASSET_PATHS.productionWebIcon512Png,
+  },
 ] as const;
 
-const ICON_VARIANTS: ReadonlyArray<IconVariant> = ICON_BRANDS.flatMap(({ brand, label }) =>
-  APP_ICON_DESIGNS.map((design) => {
-    const paths = resolveAppIconDesignAssetPaths(brand, design);
-    return {
-      label: design === "solid" ? label : `${label}-${design}`,
-      source: paths.iconComposerProject,
-      outputs: {
-        ios: paths.iosPng,
-        macos: paths.macPng,
-        universal: paths.universalPng,
-        appleTouch: paths.webAppleTouchPng,
-        favicon16: paths.webFavicon16Png,
-        favicon32: paths.webFavicon32Png,
-        faviconIco: paths.webFaviconIco,
-        windowsIco: paths.windowsIco,
-      },
-    };
-  }),
+const ICON_VARIANTS: ReadonlyArray<IconVariant> = ICON_BRANDS.flatMap(
+  ({ brand, label, webIcon192, webIcon512 }) =>
+    APP_ICON_DESIGNS.map((design) => {
+      const paths = resolveAppIconDesignAssetPaths(brand, design);
+      return {
+        label: design === "solid" ? label : `${label}-${design}`,
+        source: paths.iconComposerProject,
+        outputs: {
+          ios: paths.iosPng,
+          macos: paths.macPng,
+          universal: paths.universalPng,
+          appleTouch: paths.webAppleTouchPng,
+          webIcon192: design === "solid" ? webIcon192 : null,
+          webIcon512: design === "solid" ? webIcon512 : null,
+          favicon16: paths.webFavicon16Png,
+          favicon32: paths.webFavicon32Png,
+          faviconIco: paths.webFaviconIco,
+          windowsIco: paths.windowsIco,
+        },
+      };
+    }),
 );
 
 export class IconExportMacosRenderError extends Schema.TaggedError<IconExportMacosRenderError>()(
@@ -592,6 +614,12 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     [variant.outputs.universal, ios],
     [variant.outputs.macos, macos],
     [variant.outputs.appleTouch, yield* render("iOS", 180)],
+    ...(variant.outputs.webIcon192 === null
+      ? []
+      : [[variant.outputs.webIcon192, yield* render("iOS", 192)] as const]),
+    ...(variant.outputs.webIcon512 === null
+      ? []
+      : [[variant.outputs.webIcon512, yield* render("iOS", 512)] as const]),
     [variant.outputs.favicon16, yield* render("iOS", 16)],
     [variant.outputs.favicon32, yield* render("iOS", 32)],
     ...(variant.outputs.faviconIco === null ? [] : [[variant.outputs.faviconIco, ico] as const]),

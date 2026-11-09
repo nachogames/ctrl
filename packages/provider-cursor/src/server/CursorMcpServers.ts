@@ -262,7 +262,7 @@ export const shareCursorMcpSignIns = Effect.fn("CursorMcpServers.shareSignIns")(
   if (!changed) return;
   const temporaryFile = `${targetFile}.ctrl.tmp`;
   yield* fileSystem.makeDirectory(targetDirectory, { recursive: true, mode: 0o700 });
-  // @effect-diagnostics-next-line preferSchemaOverJson:off - Cursor's own file format.
+  // @effect-diagnostics-next-line globalJsonInEffect:off - Cursor's own file format.
   yield* fileSystem.writeFileString(temporaryFile, JSON.stringify(next), { mode: 0o600 });
   yield* fileSystem.rename(temporaryFile, targetFile);
 });
@@ -472,7 +472,7 @@ const make = Effect.gen(function* () {
     const temporaryPath = `${userConfigPath}.ctrl.tmp`;
     yield* Effect.gen(function* () {
       yield* fileSystem.makeDirectory(path.dirname(userConfigPath), { recursive: true });
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - a hand-edited file keeps Cursor's indentation.
+      // @effect-diagnostics-next-line globalJsonInEffect:off - a hand-edited file keeps Cursor's indentation.
       yield* fileSystem.writeFileString(temporaryPath, `${JSON.stringify(config, null, 2)}\n`);
       yield* fileSystem.rename(temporaryPath, userConfigPath);
     }).pipe(

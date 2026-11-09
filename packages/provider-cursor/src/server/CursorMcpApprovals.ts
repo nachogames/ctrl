@@ -1,10 +1,7 @@
 /**
- * Ctrl: approval cards for Cursor MCP tool calls. Cursor's SDK cannot ask the
- * user anything and ignores Cursor's allowlist, but it runs the user's
- * `beforeMCPExecution` hooks. Ctrl installs one hook that asks this server; the
- * server checks the allowlist in `~/.cursor/cli-config.json` and, for a call it
- * does not cover, shows an approval card in the thread and answers the hook
- * with the user's decision.
+ * Ctrl: approval cards for Cursor MCP calls. Cursor's SDK ignores the allowlist but runs
+ * `beforeMCPExecution` hooks, so Ctrl's hook asks this server, which checks
+ * `~/.cursor/cli-config.json` and shows a card for any call the allowlist does not cover.
  */
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -431,7 +428,7 @@ export const setCursorApprovalHookInstalled = Effect.fn("CursorMcpApprovals.setH
       if (!entries.some(isOurs)) return;
       yield* fileSystem.remove(scriptPath).pipe(Effect.ignore);
     }
-    // @effect-diagnostics-next-line preferSchemaOverJson:off - Cursor's own file, kept readable.
+    // @effect-diagnostics-next-line globalJsonInEffect:off - Cursor's own file, kept readable.
     const serialized = `${JSON.stringify(next, null, 2)}\n`;
     if (Option.isSome(existingText) && existingText.value === serialized) return;
     // A unique temp file per write, so two turns installing at once cannot collide.

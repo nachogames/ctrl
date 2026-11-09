@@ -526,6 +526,9 @@ const config: ExpoConfig = {
   ],
   extra: {
     appVariant: APP_VARIANT,
+    secretsFeatureEnabled: ["1", "true"].includes(
+      process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
+    ),
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     // Ctrl's push relay (apps/push-relay). Public: a send token, not this URL, is the permission.
     pushRelayUrl: repoEnv.CTRL_PUSH_RELAY_URL ?? "https://ctrl-push-relay.mceachinm.workers.dev",

@@ -5,6 +5,10 @@ export type VoiceTranscriptionOptions = {
   readonly signal: AbortSignal;
 };
 
+export type VoiceStreamingSession = {
+  readonly finish: (options: VoiceTranscriptionOptions) => Promise<string>;
+};
+
 /** Text with the language an engine detected while transcribing it. */
 export type VoiceTranscript = {
   readonly text: string;
@@ -13,11 +17,19 @@ export type VoiceTranscript = {
 
 export type PreparedVoiceTranscription = {
   readonly locale: string;
+  /**
+   * Runs alongside capture once recording starts. Resolves with the transcript when it
+   * transcribed live, or null when `transcribe` still runs after the recording stops.
+   * A rejection stops the recording.
+   */
+  readonly start?: (uri: string, options: VoiceTranscriptionOptions) => Promise<string | null>;
   /** A `VoiceTranscript` locale replaces `locale` when the engine detects the language itself. */
   readonly transcribe: (
     uri: string,
     options: VoiceTranscriptionOptions,
   ) => Promise<string | VoiceTranscript>;
+  /** Present when audio streams during capture; `finish` then replaces `transcribe`. */
+  readonly streaming?: VoiceStreamingSession;
 };
 
 export type VoiceTranscriber = {

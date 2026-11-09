@@ -9,9 +9,12 @@ import { RadioIndicator } from "./RadioIndicator";
 import { RowPressable } from "./RowPressable";
 
 export function ListChoiceRow(props: {
-  readonly leading?: ReactNode;
+  /** Large artwork before the row, such as an app icon. */
+  readonly artwork?: ReactNode;
   readonly label: string;
+  readonly leading?: ReactNode;
   readonly description?: string;
+  readonly meta?: ReactNode;
   readonly selected: boolean;
   readonly separated?: boolean;
   readonly disabled?: boolean;
@@ -32,9 +35,11 @@ export function ListChoiceRow(props: {
       className={cn("bg-grouped-card", props.separated && "border-t border-border-subtle")}
     >
       <ListRowLayout
-        leading={props.leading}
+        artwork={props.artwork}
         label={props.label}
+        leading={props.leading}
         description={props.description}
+        meta={props.meta}
         disabled={props.disabled}
         accessory={
           <View

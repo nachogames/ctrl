@@ -63,14 +63,14 @@ import {
   useNativeColumnLayoutMetrics,
   useNativeLayoutMetrics,
 } from "../../native/native-layout-metrics";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { useWorkspaceListEmptyTopInset } from "../layout/workspace/workspace-list-insets";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatches";
 import { useThreadListV2 } from "../threads/useThreadListV2";
 import { useThreadListNow } from "../threads/use-thread-list-now";
-import { useSearchScrollRestoration } from "../workspace/useSearchScrollRestoration";
+import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollRestoration";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
@@ -106,7 +106,7 @@ import {
 import { createSwipeRowActivation } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { useFabScroll } from "./FabScrollContext";
-import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import {
   ProjectFilterChips,
   ThreadListFilters,
@@ -120,9 +120,10 @@ import {
   homeListItemsAreEqual,
   mergeArrangedKeys,
   moveKey,
+  projectDragSlot,
   type HomeListItem,
 } from "./homeProjectSections";
-import { ListFilterChip } from "../workspace/ListFilterMenu";
+import { ListFilterChip } from "../layout/workspace/ListFilterMenu";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { homeArrangesInPlaceAtom, threadArrangementOpenAtom } from "../../state/thread-order";
@@ -310,6 +311,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const homeScrollGesture = useNativeGesture();
   const insets = useSafeAreaInsets();
+  const emptyTopInset = useWorkspaceListEmptyTopInset();
   const { fabClearance } = useAndroidControlSizing();
   const screenMetrics = useNativeLayoutMetrics();
   const contentSideInsets = usesNativeWorkspaceColumns
@@ -631,34 +633,14 @@ export function HomeScreen(props: HomeScreenProps) {
     readonly key: string;
     readonly order: ReadonlyArray<string>;
     readonly from: number;
-    readonly startTop: number;
-    readonly liftedTop: number | null;
     readonly translation: number;
   } | null>(null);
-  const [projectHeaderHeight, setProjectHeaderHeight] = useState(40);
-  const projectDragLayout = (() => {
-    if (projectDrag === null) return null;
-    const delta =
-      projectDrag.startTop +
-      projectDrag.translation -
-      (projectDrag.liftedTop ?? projectDrag.startTop);
-    const target = Math.max(
-      0,
-      Math.min(
-        projectDrag.order.length - 1,
-        projectDrag.from + Math.round(delta / projectHeaderHeight),
-      ),
-    );
-    const order = projectDrag.order.filter((key) => key !== projectDrag.key);
-    order.splice(target, 0, projectDrag.key);
-    return {
-      order,
-      liftOffset:
-        projectDrag.liftedTop === null
-          ? 0
-          : delta - (target - projectDrag.from) * projectHeaderHeight,
-    };
-  })();
+  // Kept out of state: a header growing its handle must not redraw the whole list.
+  const [projectHeaderHeight] = useState(() => ({ value: 40 }));
+  const projectDragLayout =
+    projectDrag === null
+      ? null
+      : projectDragSlot({ ...projectDrag, headerHeight: projectHeaderHeight.value });
   // Row heights vary, so a dragged row's slot comes from measured heights.
   const [rowHeights] = useState(() => new Map<string, number>());
   const [rowDrag, setRowDrag] = useState<{
@@ -788,14 +770,12 @@ export function HomeScreen(props: HomeScreenProps) {
     };
   });
   const projectDragHandlers = {
-    onStart: (key: string, top: number) => {
+    onStart: (key: string) => {
       const order = latest.current.projectKeys;
       const from = order.indexOf(key);
       if (from < 0) return;
-      setProjectDrag({ key, order, from, startTop: top, liftedTop: null, translation: 0 });
+      setProjectDrag({ key, order, from, translation: 0 });
     },
-    onLifted: (top: number) =>
-      setProjectDrag((current) => (current === null ? null : { ...current, liftedTop: top })),
     onMove: (translation: number) =>
       setProjectDrag((current) => (current === null ? null : { ...current, translation })),
     onEnd: (cancelled: boolean) => {
@@ -967,20 +947,17 @@ export function HomeScreen(props: HomeScreenProps) {
     label: string,
     row: ReactNode,
     interactive = false,
-  ) =>
-    arrange === undefined ? (
-      row
-    ) : (
-      <HomeArrangeRow
-        itemKey={key}
-        label={label}
-        handlers={arrangeHandlers}
-        interactive={interactive}
-        {...(arrange.liftOffset === undefined ? {} : { liftOffset: arrange.liftOffset })}
-      >
-        {row}
-      </HomeArrangeRow>
-    );
+  ) => (
+    <HomeArrangeRow
+      itemKey={key}
+      label={label}
+      interactive={interactive}
+      {...(arrange === undefined ? {} : { handlers: arrangeHandlers })}
+      {...(arrange?.liftOffset === undefined ? {} : { liftOffset: arrange.liftOffset })}
+    >
+      {row}
+    </HomeArrangeRow>
+  );
 
   const renderV2Item = ({ item }: { readonly item: ListItem }) => {
     if (item.type === "home-section") {
@@ -1002,7 +979,9 @@ export function HomeScreen(props: HomeScreenProps) {
           count={item.count ?? 0}
           pane={primaryColumn ? "sidebar" : "screen"}
           onToggle={toggleProject}
-          onHeight={setProjectHeaderHeight}
+          onHeight={(height) => {
+            projectHeaderHeight.value = height;
+          }}
           {...(item.arrange ? { drag: projectDragHandlers } : {})}
           {...(item.arrange?.liftOffset === undefined
             ? {}
@@ -1217,7 +1196,7 @@ export function HomeScreen(props: HomeScreenProps) {
             style={{
               paddingBottom:
                 Platform.OS === "ios" ? iosBottomClearance : Math.max(insets.bottom, 24),
-              paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
+              paddingTop: emptyTopInset,
               paddingLeft: 32 + (contentSideInsets?.left ?? 0),
               paddingRight: 32 + (contentSideInsets?.right ?? 0),
             }}
@@ -1358,7 +1337,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 onTouchStart={(event) => trackListTouches(event, true)}
                 onTouchEnd={(event) => trackListTouches(event, false)}
                 onTouchCancel={(event) => trackListTouches(event, false)}
-                renderScrollComponent={Platform.OS === "ios" ? renderHomeScrollView : undefined}
+                renderScrollComponent={renderHomeScrollView}
                 scrollEnabled={projectDrag === null && rowDrag === null}
                 data={homeListItems}
                 renderItem={renderV2Item}
@@ -1367,10 +1346,13 @@ export function HomeScreen(props: HomeScreenProps) {
                 itemsAreEqual={homeItemsAreEqual}
                 estimatedItemSize={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
                 drawDistance={THREAD_LIST_V2_DRAW_DISTANCE}
-                // Edit mode inserts and wraps rows; reused cells kept stale content there.
-                recycleItems={!arrangeMode}
+                // LegendList keys its cells by item when this is off, so toggling it
+                // with Edit mode remounted every rendered row.
+                recycleItems
                 extraData={v2ExtraData}
                 ListHeaderComponent={v2ListHeader}
+                // Lifted above the rows so an iOS filter menu's dismissal morph is not covered.
+                ListHeaderComponentStyle={{ zIndex: 1 }}
                 ListFooterComponent={
                   settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
                     <ThreadListV2ShowMoreRow
@@ -1389,7 +1371,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 }
                 ListEmptyComponent={v2ListEmpty}
                 style={{ flex: 1 }}
-                automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
+                automaticallyAdjustsScrollIndicatorInsets
                 // UIKit owns the bar's inset, so a minimizing bar and a resized column move
                 // the list in the same frame as the bar.
                 contentInsetAdjustmentBehavior="automatic"

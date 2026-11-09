@@ -146,11 +146,9 @@ type ProjectRow =
     };
 
 /**
- * Regroups the leading card block (pinned + active) of the flat v2 list:
- * Needs you first, then Pinned, then one section per project. Inside a
- * project, chat groups and ungrouped threads share one order, as on desktop;
- * a group with two or more chats in the section collapses into one row placed
- * where its first chat would be. Pending tasks and the shelves stay as they were.
+ * Regroups the leading card block (pinned + active): Needs you, Pinned, then one
+ * section per project. A project's groups and threads share one order, as on desktop;
+ * a group of two or more chats collapses into one row where its first chat would be.
  */
 export function buildHomeProjectSections(input: HomeProjectSectionsInput): HomeProjectSections {
   let leadEnd = 0;
@@ -344,6 +342,27 @@ export function moveKey(
   const next = [...keys];
   [next[from], next[to]] = [next[to]!, next[from]!];
   return next;
+}
+
+/**
+ * Where a dragged project header lands among the folded headers, and its offset
+ * from that slot. Only finger travel counts: the fold moves a low header far
+ * from the finger, and its position under the finger would pick the wrong slot.
+ */
+export function projectDragSlot(drag: {
+  readonly key: string;
+  readonly order: ReadonlyArray<string>;
+  readonly from: number;
+  readonly translation: number;
+  readonly headerHeight: number;
+}): { readonly order: string[]; readonly liftOffset: number } {
+  const target = Math.max(
+    0,
+    Math.min(drag.order.length - 1, drag.from + Math.round(drag.translation / drag.headerHeight)),
+  );
+  const order = drag.order.filter((key) => key !== drag.key);
+  order.splice(target, 0, drag.key);
+  return { order, liftOffset: drag.translation - (target - drag.from) * drag.headerHeight };
 }
 
 /**

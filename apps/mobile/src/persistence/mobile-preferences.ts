@@ -17,6 +17,7 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { isAppIcon } from "../lib/appIconPreference";
+import { ToolCallVisibility } from "@t3tools/contracts/settings";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
@@ -124,7 +125,7 @@ export interface Preferences {
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
-  readonly planModeEnabled?: boolean;
+  readonly toolCallVisibility?: ToolCallVisibility;
   readonly workingShelfEnabled?: boolean;
   /** Home list sections by project with chat groups stacked. On unless set to false. */
   readonly threadListByProject?: boolean;
@@ -187,6 +188,8 @@ export class MobilePreferencesStore extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/mobile-preferences/MobilePreferencesStore") {}
 
+const isToolCallVisibility = Schema.is(ToolCallVisibility);
+
 export function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     navigationTabOrder?: readonly string[];
@@ -217,7 +220,7 @@ export function sanitizePreferences(parsed: Preferences): Preferences {
     microphones?: ReadonlyArray<MicrophoneEntry>;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
-    planModeEnabled?: boolean;
+    toolCallVisibility?: ToolCallVisibility;
     workingShelfEnabled?: boolean;
     threadListByProject?: boolean;
     threadListProjectOrder?: ReadonlyArray<string>;
@@ -354,8 +357,8 @@ export function sanitizePreferences(parsed: Preferences): Preferences {
   ) {
     preferences.projectGroupingMode = parsed.projectGroupingMode;
   }
-  if (typeof parsed.planModeEnabled === "boolean") {
-    preferences.planModeEnabled = parsed.planModeEnabled;
+  if (isToolCallVisibility(parsed.toolCallVisibility)) {
+    preferences.toolCallVisibility = parsed.toolCallVisibility;
   }
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;

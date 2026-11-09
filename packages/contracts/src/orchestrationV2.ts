@@ -527,6 +527,13 @@ export const OrchestrationV2AppThread = Schema.Struct({
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
+/** A thread another agent drives: a local subagent or a task delegated from a linked environment. */
+export const isDelegatedAppThread = (
+  thread: Pick<OrchestrationV2AppThread, "lineage" | "delegatedFrom">,
+): boolean =>
+  // MCP-launched threads store `delegatedFrom: null` at runtime, so check both absent shapes.
+  thread.lineage.relationshipToParent === "subagent" || thread.delegatedFrom != null;
+
 /** Provider-native children cannot receive messages; T3 delegate_task children can. */
 export function isProviderNativeSubagentThread(
   thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
@@ -702,6 +709,7 @@ export const OrchestrationV2Run = Schema.Struct({
   checkpointId: Schema.NullOr(CheckpointId),
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   restartContinuationOfRunId: Schema.optional(RunId),
+  usageLimitContinuationOfRunId: Schema.optional(RunId),
   delegatedTaskId: Schema.optional(NodeId),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
   restartCancelledBackgroundWork: Schema.optional(
@@ -715,6 +723,8 @@ export const OrchestrationV2Run = Schema.Struct({
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
+  freshContext: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -961,6 +971,14 @@ export const OrchestrationV2ProviderSession = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   model: Schema.NullOr(TrimmedNonEmptyString),
   capabilities: OrchestrationV2ProviderCapabilities,
+  extensionStatuses: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        key: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+        text: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+      }),
+    ).check(Schema.isMaxLength(32)),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   lastError: Schema.NullOr(Schema.String),
@@ -1561,6 +1579,7 @@ const OrchestrationV2SecretRequestFields = {
   type: Schema.Literal("secret_request"),
   label: TrimmedNonEmptyString,
   reason: Schema.String,
+  url: Schema.optional(Schema.String),
   placeholder: Schema.optional(Schema.String),
   delivery: Schema.optional(OrchestrationV2SecretRequestDelivery),
   secretStatus: OrchestrationV2SecretRequestStatus,
@@ -1617,6 +1636,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
+    freshContext: OrchestrationV2Run.fields.freshContext,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     /** Same as the text of message `messageId`. */
@@ -2254,6 +2274,13 @@ export const OrchestrationV2ShellStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("synchronized"),
   }),
+  /**
+   * The only item of a resume the server cannot replay when the client asked for
+   * `httpSnapshotFallback`: load the HTTP snapshot and subscribe again from its cursor.
+   */
+  Schema.Struct({
+    kind: Schema.Literal("snapshot-required"),
+  }),
   Schema.Struct({
     kind: Schema.Literal("snapshot"),
     snapshot: OrchestrationV2ShellSnapshot,
@@ -2476,6 +2503,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
+    freshContext: OrchestrationV2Run.fields.freshContext,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     context: Schema.optional(OrchestrationMessageContext),
@@ -3003,6 +3031,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.settle"),
     commandId: CommandId,
     threadId: ThreadId,
+    expectedLatestRunId: Schema.optional(RunId),
     settledAt: Schema.optional(Schema.DateTimeUtc),
   }),
   /** Rejects changes since snapshotAt or any explicit settled override to preserve user actions. */
@@ -3204,6 +3233,8 @@ export const OrchestrationV2Command = Schema.Union([
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
+    /** Start a new provider session without the thread's earlier context. Never steers. */
+    freshContext: Schema.optional(Schema.Boolean),
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,
@@ -3589,6 +3620,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     turnItemId: TurnItemId,
     label: TrimmedNonEmptyString,
     reason: Schema.String,
+    url: Schema.optional(Schema.String),
     placeholder: Schema.optional(Schema.String),
     delivery: Schema.optional(OrchestrationV2SecretRequestDelivery),
     secretStatus: OrchestrationV2SecretRequestStatus,
@@ -3639,6 +3671,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadFamily: "orchestration.getThreadFamily",
   getThreadTitles: "orchestration.getThreadTitles",
+  getThreadLinkMetadata: "orchestration.getThreadLinkMetadata",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
@@ -3651,6 +3684,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
+  subscribePromptSuggestion: "orchestration.subscribePromptSuggestion",
 } as const;
 
 export const OrchestrationV2SubscribeCommandOutputInput = Schema.Struct({
@@ -3679,6 +3713,16 @@ export class OrchestrationV2CommandOutputError extends Schema.TaggedError<Orches
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+export const OrchestrationV2SubscribePromptSuggestionInput = Schema.Struct({
+  threadId: ThreadId,
+});
+
+/** Unpersisted predicted next prompt for the run that produced it; null when there is none. */
+export const OrchestrationV2PromptSuggestion = Schema.NullOr(
+  Schema.Struct({ runId: RunId, text: Schema.String }),
+);
+export type OrchestrationV2PromptSuggestion = typeof OrchestrationV2PromptSuggestion.Type;
 
 export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
   schemaVersion: PositiveInt,
@@ -3735,6 +3779,11 @@ export type OrchestrationV2GetThreadProjectionInput =
 
 export const OrchestrationV2SubscribeShellInput = Schema.Struct({
   afterSequence: Schema.optionalKey(NonNegativeInt),
+  /**
+   * With `afterSequence`, a gap the server cannot replay answers `snapshot-required` instead of
+   * a socket snapshot, which clients without transport compression download over gzip HTTP.
+   */
+  httpSnapshotFallback: Schema.optionalKey(Schema.Literal(true)),
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
    * Snapshots leave out idle subagent children; read them with `getThreadFamily`. Send only to
@@ -3771,6 +3820,12 @@ export const OrchestrationV2GetThreadTitlesInput = Schema.Struct({
 
 /** Titles of the requested threads that exist, archived ones included. Deleted and unknown ids are absent. */
 export const OrchestrationV2ThreadTitles = Schema.Record(ThreadId, Schema.String);
+
+export const OrchestrationV2ThreadLinkMetadata = Schema.Struct({
+  title: Schema.String,
+  projectId: Schema.NullOr(ProjectId),
+});
+export type OrchestrationV2ThreadLinkMetadata = typeof OrchestrationV2ThreadLinkMetadata.Type;
 
 export const OrchestrationV2GetWorktreeThreadIdsInput = Schema.Struct({
   worktreePath: TrimmedNonEmptyString,
@@ -4298,6 +4353,10 @@ export const OrchestrationV2RpcSchemas = {
     input: OrchestrationV2GetThreadTitlesInput,
     output: OrchestrationV2ThreadTitles,
   },
+  getThreadLinkMetadata: {
+    input: OrchestrationV2GetThreadTitlesInput,
+    output: Schema.Record(ThreadId, OrchestrationV2ThreadLinkMetadata),
+  },
   getWorktreeThreadIds: {
     input: OrchestrationV2GetWorktreeThreadIdsInput,
     output: OrchestrationV2WorktreeThreadIds,
@@ -4345,6 +4404,10 @@ export const OrchestrationV2RpcSchemas = {
   subscribeCommandOutput: {
     input: OrchestrationV2SubscribeCommandOutputInput,
     output: OrchestrationV2CommandOutputFrame,
+  },
+  subscribePromptSuggestion: {
+    input: OrchestrationV2SubscribePromptSuggestionInput,
+    output: OrchestrationV2PromptSuggestion,
   },
 } as const;
 

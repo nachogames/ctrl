@@ -1,13 +1,26 @@
 import type { ReactNode } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { ListFilterChip, ListFilterMenu } from "../workspace/ListFilterMenu";
-import type { HomeHeaderProps } from "./HomeHeader.types";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { ListFilterChip, ListFilterMenu } from "../layout/workspace/ListFilterMenu";
+import type {
+  HomeListFilterMenuEnvironment,
+  HomeListFilterMenuProject,
+} from "./home-list-filter-menu";
+
+interface ThreadListFilterProps {
+  readonly environments: ReadonlyArray<HomeListFilterMenuEnvironment>;
+  readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly selectedProjectKey: string | null;
+  readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
+  readonly onProjectChange: (projectKey: string | null) => void;
+}
 
 export type ProjectChipIndicator = "attention" | "working";
 
 type ProjectChipProps = Pick<
-  HomeHeaderProps,
+  ThreadListFilterProps,
   "projects" | "selectedProjectKey" | "onProjectChange"
 > & {
   readonly indicatorByProjectKey?: ReadonlyMap<string, ProjectChipIndicator>;
@@ -54,6 +67,7 @@ function ChipRow(props: {
         horizontal
         showsHorizontalScrollIndicator={false}
         className="flex-1"
+        style={{ overflow: "visible" }}
         contentContainerStyle={ROW_STYLE}
       >
         {props.children}
@@ -74,15 +88,7 @@ export function ProjectFilterChips(props: ProjectChipProps) {
 }
 
 export function ThreadListFilters(
-  props: Pick<
-    HomeHeaderProps,
-    | "environments"
-    | "projects"
-    | "selectedEnvironmentId"
-    | "selectedProjectKey"
-    | "onEnvironmentChange"
-    | "onProjectChange"
-  > &
+  props: ThreadListFilterProps &
     Pick<ProjectChipProps, "indicatorByProjectKey" | "trailing" | "gutter">,
 ) {
   const selectedEnvironment = props.environments.find(
