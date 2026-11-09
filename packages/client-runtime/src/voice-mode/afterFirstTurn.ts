@@ -36,8 +36,8 @@ export const VOICE_STARTER_MESSAGE = "Starting a voice conversation. Reply with 
 const sessionRecoveries = new Map<string, () => boolean>();
 
 /**
- * Lets `target` recover when voice finds no running provider session, as after
- * the session idled out: `recover` starts one and returns true, or returns
+ * Lets `target` recover when voice finds no provider session to talk in, as
+ * before its first turn: `recover` starts one and returns true, or returns
  * false to report the failure. Returns the unregister function.
  */
 export function onVoiceSessionMissing(target: VoiceSessionTarget, recover: () => boolean) {

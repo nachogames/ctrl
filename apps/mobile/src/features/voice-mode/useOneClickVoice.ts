@@ -22,8 +22,9 @@ import { voiceMode } from "./voiceMode";
 
 /**
  * Codex voice on a thread from a single button, with no chat open. Voice talks
- * in the thread's provider session; when there is none yet, or it idled out,
- * a one-line starter turn opens it and voice connects once that turn ends.
+ * in the thread's provider session, which the server reopens if it idled out;
+ * when there is none yet, a one-line starter turn opens it and voice connects
+ * once that turn ends.
  */
 export function useOneClickVoice(input: {
   readonly environmentId: EnvironmentId;

@@ -48,6 +48,7 @@ import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
 import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as ProviderVoiceService from "./ProviderVoiceService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
@@ -183,6 +184,15 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
 
 const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStore.layer, layerProviderSessionManagerProvided)),
+);
+const layerProviderVoiceServiceProvided = ProviderVoiceService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectionStore.layer,
+      layerProviderSessionManagerProvided,
+      layerRuntimePolicyProvided,
+    ),
+  ),
 );
 const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStore.layer, layerProviderSessionManagerProvided)),
@@ -390,6 +400,7 @@ export const layer = Layer.mergeAll(
   layerEffectWorkerProvided,
   layerProviderSessionManagerProvided,
   layerProviderAuthServiceProvided,
+  layerProviderVoiceServiceProvided,
   layerProviderRuntimeRecoveryProvided,
   layerProjectionMaintenanceProvided,
   layerLegacyV1ThreadImporterProvided,
