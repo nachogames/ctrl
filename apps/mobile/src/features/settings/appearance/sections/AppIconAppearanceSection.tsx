@@ -25,7 +25,7 @@ export function AppIconAppearanceSection() {
         {APP_ICONS.map((design, index) => (
           <SettingsChoiceRow
             key={design}
-            leading={
+            artwork={
               <View className="overflow-hidden rounded-xl bg-black p-1">
                 <AppIconMark design={design} tone="color" size={36} />
               </View>

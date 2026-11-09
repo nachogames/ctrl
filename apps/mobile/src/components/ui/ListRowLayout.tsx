@@ -7,23 +7,30 @@ import { SymbolView, type AppSymbolName } from "./AppSymbol";
 
 export interface ListRowContentProps {
   readonly icon?: AppSymbolName;
+  /** Drawn in the icon column for marks a single symbol can't express. */
+  readonly leading?: ReactNode;
   readonly label: string;
   readonly description?: string;
   readonly detail?: string;
+  /** Rich secondary content under the description, such as scores with emphasized values. */
+  readonly meta?: ReactNode;
   readonly disabled?: boolean;
 }
 
 export function ListRowLayout({
   icon,
+  artwork,
   label,
   description,
   detail,
+  meta,
   disabled,
   leading,
   accessory,
   tone = "default",
 }: ListRowContentProps & {
-  readonly leading?: ReactNode;
+  /** Large artwork before the icon column, such as an app icon. */
+  readonly artwork?: ReactNode;
   readonly accessory?: ReactNode;
   readonly tone?: "default" | "danger";
 }) {
@@ -37,7 +44,7 @@ export function ListRowLayout({
         disabled && "opacity-45",
       )}
     >
-      {leading}
+      {artwork}
       {icon ? (
         <View className="size-6 items-center justify-center">
           <SymbolView
@@ -48,6 +55,8 @@ export function ListRowLayout({
             weight="regular"
           />
         </View>
+      ) : leading ? (
+        <View className="size-6 items-center justify-center">{leading}</View>
       ) : null}
       <View className="min-w-0 flex-1 gap-1">
         <AppText
@@ -61,6 +70,7 @@ export function ListRowLayout({
             {description}
           </AppText>
         ) : null}
+        {meta}
         {detail && stackDetail ? (
           <AppText textRole="footnote" className="text-foreground-muted">
             {detail}

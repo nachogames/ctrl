@@ -22,7 +22,12 @@ export function androidHeaderMenuActions(items: ReadonlyArray<AppBarMenuItem>): 
             image: item.icon,
             imageColor: item.iconColor,
             state: item.selected ? "on" : undefined,
-            attributes: item.disabled ? { disabled: true } : undefined,
+            // MaterialMenuPopup draws this, with its percent, after the title.
+            ...(item.battery === undefined ? {} : { battery: item.battery }),
+            attributes:
+              item.disabled || item.destructive
+                ? { disabled: item.disabled, destructive: item.destructive }
+                : undefined,
           },
         ],
   );
