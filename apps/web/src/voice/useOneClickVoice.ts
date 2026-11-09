@@ -23,8 +23,9 @@ export type OneClickVoicePhase = "idle" | "connecting" | "active";
 
 /**
  * Codex voice on `threadRef` from a single button, with no chat open. Voice
- * talks in the thread's provider session; when there is none yet, or it idled
- * out, a one-line starter turn opens it and voice connects once that turn ends.
+ * talks in the thread's provider session, which the server reopens if it idled
+ * out; when there is none yet, a one-line starter turn opens it and voice
+ * connects once that turn ends.
  */
 export function useOneClickVoice(threadRef: ScopedThreadRef, availability: VoiceAvailability) {
   const thread = useThreadShell(threadRef);

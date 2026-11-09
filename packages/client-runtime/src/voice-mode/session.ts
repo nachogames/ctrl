@@ -82,10 +82,8 @@ export function makeVoiceSessionValidator(
           const providerThread = projection.providerThreads.find(
             (thread) => thread.id === projection.thread.activeProviderThreadId,
           );
-          const session = projection.providerSessions.find(
-            (session) => session.id === providerThread?.providerSessionId,
-          );
-          if (!session || !["ready", "running", "waiting"].includes(session.status)) {
+          // The server reopens an idled-out session for voice; it needs a native thread to resume.
+          if (!providerThread?.providerSessionId || !providerThread.nativeThreadRef) {
             return yield* new VoiceSessionUnavailable({
               message: "The provider session is no longer running. Send a message first.",
             });

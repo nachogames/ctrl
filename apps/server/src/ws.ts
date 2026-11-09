@@ -137,6 +137,7 @@ import * as ThreadManagementService from "./orchestration-v2/ThreadManagementSer
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
+import * as ProviderVoiceService from "./orchestration-v2/ProviderVoiceService.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
@@ -1719,6 +1720,7 @@ export const layerWsRpc = (
       );
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const providerVoice = yield* ProviderVoiceService.ProviderVoiceServiceV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
       const analytics = yield* AnalyticsService.AnalyticsService;
       const originProps = clientAnalyticsProps;
@@ -2967,7 +2969,7 @@ export const layerWsRpc = (
                 ),
               ),
           ),
-        [WS_METHODS.providerVoiceSession]: (input) => providerSessionsV2.startVoiceSession(input),
+        [WS_METHODS.providerVoiceSession]: (input) => providerVoice.start(input),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           providerMaintenanceRunner.updateProvider(input),
         [WS_METHODS.providerConsumeResetCredit]:
