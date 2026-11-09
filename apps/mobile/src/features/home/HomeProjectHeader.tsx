@@ -1,6 +1,6 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { memo, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
-import { Pressable, View, type ViewInstance } from "react-native";
+import { memo, useEffectEvent, useState } from "react";
+import { Pressable, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -9,10 +9,7 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { cn } from "../../lib/cn";
 
 export interface ProjectDragHandlers {
-  /** `top` is the header's top edge in the window when the drag began. */
-  readonly onStart: (projectKey: string, top: number) => void;
-  /** Reports where the lifted header landed once every project folded. */
-  readonly onLifted: (top: number) => void;
+  readonly onStart: (projectKey: string) => void;
   readonly onMove: (translation: number) => void;
   readonly onEnd: (cancelled: boolean) => void;
 }
@@ -37,26 +34,12 @@ export const HomeProjectHeader = memo(function HomeProjectHeader(props: {
   readonly onHeight?: (height: number) => void;
 }) {
   const sidebarPane = props.pane === "sidebar";
-  const view = useRef<ViewInstance>(null);
   const lifted = props.liftOffset !== undefined;
   // Gesture and measure callbacks fire outside render, so effect events give
   // them the latest props while the gesture object itself stays stable.
-  const onLifted = useEffectEvent((top: number) => props.drag?.onLifted(top));
-  const onStart = useEffectEvent(() =>
-    view.current?.measureInWindow((_x, y) => props.drag?.onStart(props.projectKey, y)),
-  );
+  const onStart = useEffectEvent(() => props.drag?.onStart(props.projectKey));
   const onMove = useEffectEvent((translation: number) => props.drag?.onMove(translation));
   const onEnd = useEffectEvent((cancelled: boolean) => props.drag?.onEnd(cancelled));
-
-  // After the drag folds the list, tell the parent where this header moved to
-  // so it can keep it under the finger.
-  const wasLifted = useRef(false);
-  useLayoutEffect(() => {
-    if (lifted && !wasLifted.current) {
-      view.current?.measureInWindow((_x, y) => onLifted(y));
-    }
-    wasLifted.current = lifted;
-  }, [lifted]);
 
   const [handleGesture] = useState(() =>
     Gesture.Pan()
@@ -70,8 +53,6 @@ export const HomeProjectHeader = memo(function HomeProjectHeader(props: {
 
   return (
     <View
-      ref={view}
-      collapsable={false}
       onLayout={(event) => props.onHeight?.(event.nativeEvent.layout.height)}
       className={cn("flex-row items-center", lifted && "rounded-xl border border-border bg-subtle")}
       style={

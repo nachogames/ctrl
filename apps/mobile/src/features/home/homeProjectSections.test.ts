@@ -8,6 +8,7 @@ import {
   buildHomeProjectSections,
   mergeArrangedKeys,
   moveKey,
+  projectDragSlot,
   type HomeListItem,
   type HomeProjectSectionsInput,
 } from "./homeProjectSections";
@@ -265,5 +266,15 @@ describe("arranging keys", () => {
       "h2",
     ]);
     expect(mergeArrangedKeys([], ["a", "b"], ["b", "a"])).toEqual(["b", "a"]);
+  });
+
+  it("moves a dragged project by finger travel, however far the fold lifted its header", () => {
+    // On a Pixel the fold lifted "No project" 274 points above the finger; that gap is not travel.
+    const drag = { key: "c", order: ["a", "b", "c", "d", "e"], from: 2, headerHeight: 40 };
+    expect(projectDragSlot({ ...drag, translation: -41 })).toEqual({
+      order: ["a", "c", "b", "d", "e"],
+      liftOffset: -1,
+    });
+    expect(projectDragSlot({ ...drag, translation: 0 }).order).toEqual(drag.order);
   });
 });

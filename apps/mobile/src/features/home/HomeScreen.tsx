@@ -120,6 +120,7 @@ import {
   homeListItemsAreEqual,
   mergeArrangedKeys,
   moveKey,
+  projectDragSlot,
   type HomeListItem,
 } from "./homeProjectSections";
 import { ListFilterChip } from "../layout/workspace/ListFilterMenu";
@@ -632,34 +633,13 @@ export function HomeScreen(props: HomeScreenProps) {
     readonly key: string;
     readonly order: ReadonlyArray<string>;
     readonly from: number;
-    readonly startTop: number;
-    readonly liftedTop: number | null;
     readonly translation: number;
   } | null>(null);
   const [projectHeaderHeight, setProjectHeaderHeight] = useState(40);
-  const projectDragLayout = (() => {
-    if (projectDrag === null) return null;
-    const delta =
-      projectDrag.startTop +
-      projectDrag.translation -
-      (projectDrag.liftedTop ?? projectDrag.startTop);
-    const target = Math.max(
-      0,
-      Math.min(
-        projectDrag.order.length - 1,
-        projectDrag.from + Math.round(delta / projectHeaderHeight),
-      ),
-    );
-    const order = projectDrag.order.filter((key) => key !== projectDrag.key);
-    order.splice(target, 0, projectDrag.key);
-    return {
-      order,
-      liftOffset:
-        projectDrag.liftedTop === null
-          ? 0
-          : delta - (target - projectDrag.from) * projectHeaderHeight,
-    };
-  })();
+  const projectDragLayout =
+    projectDrag === null
+      ? null
+      : projectDragSlot({ ...projectDrag, headerHeight: projectHeaderHeight });
   // Row heights vary, so a dragged row's slot comes from measured heights.
   const [rowHeights] = useState(() => new Map<string, number>());
   const [rowDrag, setRowDrag] = useState<{
@@ -789,14 +769,12 @@ export function HomeScreen(props: HomeScreenProps) {
     };
   });
   const projectDragHandlers = {
-    onStart: (key: string, top: number) => {
+    onStart: (key: string) => {
       const order = latest.current.projectKeys;
       const from = order.indexOf(key);
       if (from < 0) return;
-      setProjectDrag({ key, order, from, startTop: top, liftedTop: null, translation: 0 });
+      setProjectDrag({ key, order, from, translation: 0 });
     },
-    onLifted: (top: number) =>
-      setProjectDrag((current) => (current === null ? null : { ...current, liftedTop: top })),
     onMove: (translation: number) =>
       setProjectDrag((current) => (current === null ? null : { ...current, translation })),
     onEnd: (cancelled: boolean) => {
