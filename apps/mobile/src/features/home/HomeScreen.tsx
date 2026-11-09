@@ -635,11 +635,12 @@ export function HomeScreen(props: HomeScreenProps) {
     readonly from: number;
     readonly translation: number;
   } | null>(null);
-  const [projectHeaderHeight, setProjectHeaderHeight] = useState(40);
+  // Kept out of state: a header growing its handle must not redraw the whole list.
+  const [projectHeaderHeight] = useState(() => ({ value: 40 }));
   const projectDragLayout =
     projectDrag === null
       ? null
-      : projectDragSlot({ ...projectDrag, headerHeight: projectHeaderHeight });
+      : projectDragSlot({ ...projectDrag, headerHeight: projectHeaderHeight.value });
   // Row heights vary, so a dragged row's slot comes from measured heights.
   const [rowHeights] = useState(() => new Map<string, number>());
   const [rowDrag, setRowDrag] = useState<{
@@ -946,20 +947,17 @@ export function HomeScreen(props: HomeScreenProps) {
     label: string,
     row: ReactNode,
     interactive = false,
-  ) =>
-    arrange === undefined ? (
-      row
-    ) : (
-      <HomeArrangeRow
-        itemKey={key}
-        label={label}
-        handlers={arrangeHandlers}
-        interactive={interactive}
-        {...(arrange.liftOffset === undefined ? {} : { liftOffset: arrange.liftOffset })}
-      >
-        {row}
-      </HomeArrangeRow>
-    );
+  ) => (
+    <HomeArrangeRow
+      itemKey={key}
+      label={label}
+      interactive={interactive}
+      {...(arrange === undefined ? {} : { handlers: arrangeHandlers })}
+      {...(arrange?.liftOffset === undefined ? {} : { liftOffset: arrange.liftOffset })}
+    >
+      {row}
+    </HomeArrangeRow>
+  );
 
   const renderV2Item = ({ item }: { readonly item: ListItem }) => {
     if (item.type === "home-section") {
@@ -981,7 +979,9 @@ export function HomeScreen(props: HomeScreenProps) {
           count={item.count ?? 0}
           pane={primaryColumn ? "sidebar" : "screen"}
           onToggle={toggleProject}
-          onHeight={setProjectHeaderHeight}
+          onHeight={(height) => {
+            projectHeaderHeight.value = height;
+          }}
           {...(item.arrange ? { drag: projectDragHandlers } : {})}
           {...(item.arrange?.liftOffset === undefined
             ? {}
@@ -1346,8 +1346,9 @@ export function HomeScreen(props: HomeScreenProps) {
                 itemsAreEqual={homeItemsAreEqual}
                 estimatedItemSize={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
                 drawDistance={THREAD_LIST_V2_DRAW_DISTANCE}
-                // Edit mode inserts and wraps rows; reused cells kept stale content there.
-                recycleItems={!arrangeMode}
+                // LegendList keys its cells by item when this is off, so toggling it
+                // with Edit mode remounted every rendered row.
+                recycleItems
                 extraData={v2ExtraData}
                 ListHeaderComponent={v2ListHeader}
                 // Lifted above the rows so an iOS filter menu's dismissal morph is not covered.
