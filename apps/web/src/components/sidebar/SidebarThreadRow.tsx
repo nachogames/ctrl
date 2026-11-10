@@ -1246,6 +1246,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               Regenerating title
             </span>
           ) : null}
+          {/* A lone chat stands in for its group's row, so it shows the PR a group row would. */}
+          {props.tree === "solo" || props.tree === "root" ? prBadge : null}
           {props.onNewChatInGroup && !sortable?.isDragging ? (
             <SidebarGroupNewChatButton
               title={thread.title}
