@@ -144,6 +144,19 @@ describe("review progress", () => {
         headSha,
       }).gates.find((candidate) => candidate.label === "Since review")?.value;
     expect([gate("fff"), gate("abc")]).toEqual(["No new code", "New commits"]);
+    // An approval not known yet is never read as "not approved", nor as approved.
+    const unknown = reviewProgress({
+      role: "author",
+      viewerLogin: "neil",
+      authorLogin: "neil",
+      sources: [],
+      items: [],
+      approvalUnknown: true,
+    });
+    expect([unknown.headline, unknown.gates.find((g) => g.label === "Approval")?.value]).toEqual([
+      "Every comment is resolved",
+      "Unknown",
+    ]);
   });
 
   it("never counts a finding you skipped before it reached GitHub", () => {

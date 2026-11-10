@@ -485,15 +485,23 @@ export const reviewWaitsOnUser = (
   if (session.phase === "done") return false;
   const round = snapshot.rounds.find((candidate) => candidate.round === session.round);
   if (round?.state !== "collecting") return false;
+  // On someone else's pull request only your own reviews and points count; the rest is context.
+  const reviewer = reviewRole(session) === "reviewer";
   return (
     snapshot.sources.some(
       (source) =>
         source.round === session.round &&
         source.state === "done" &&
         source.failed !== true &&
-        !source.triaged,
+        !source.triaged &&
+        (!reviewer || source.kind === "local" || isViewerSource(source, session.viewerLogin)),
     ) ||
-    snapshot.items.some((item) => item.lastSeenRound === session.round && isActiveReviewItem(item))
+    snapshot.items.some(
+      (item) =>
+        item.lastSeenRound === session.round &&
+        isActiveReviewItem(item) &&
+        (!reviewer || isMinePoint(item)),
+    )
   );
 };
 

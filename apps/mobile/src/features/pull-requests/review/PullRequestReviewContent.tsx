@@ -96,7 +96,9 @@ export function PullRequestReviewContent({
       environmentId={environmentId}
       snapshot={snapshot}
       pr={pr}
-      reviewDecision={summary && "reviewDecision" in summary ? summary.reviewDecision : undefined}
+      reviewDecision={summary?.reviewDecision}
+      // A deep link opens with no summary, so its approval is not known here.
+      approvalUnknown={summary === undefined}
     />
   );
 }
@@ -107,12 +109,14 @@ function ReviewSession({
   snapshot,
   pr,
   reviewDecision,
+  approvalUnknown,
 }: {
   readonly params: PullRequestParams;
   readonly environmentId: EnvironmentId;
   readonly snapshot: ReviewSessionSnapshot;
   readonly pr: PullRequestDetail | null;
   readonly reviewDecision: PullRequestReviewDecision | null | undefined;
+  readonly approvalUnknown: boolean;
 }) {
   const navigation = useNavigation();
   const { session } = snapshot;
@@ -189,6 +193,7 @@ function ReviewSession({
     items: snapshot.items,
     checks: pr?.checks,
     reviewDecision,
+    approvalUnknown,
     headSha: pr?.headSha ?? session.headSha,
     reReview: reReviewReason(session, snapshot.sources),
   });
