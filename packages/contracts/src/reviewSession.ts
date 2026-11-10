@@ -502,6 +502,34 @@ export const reReviewReason = (
     : null;
 };
 
+/**
+ * Whether a review point still needs something. A point with a GitHub thread is open until the
+ * thread is resolved. One without a thread (an unposted finding) is open while undecided or
+ * decided to fix or post and not yet applied; a skipped or declined one never gets a thread
+ * and needs nothing more.
+ */
+export const isOpenReviewPoint = (
+  item: Pick<ReviewItem, "githubState" | "decision" | "applyState">,
+): boolean => {
+  if (item.githubState !== null) return item.githubState !== "resolved";
+  if (item.decision === "decline") return false;
+  return item.applyState === "pending" || item.applyState === "working";
+};
+
+/**
+ * Whether a finished review still waits for triage: untriaged, and something it raised is still
+ * open. Feedback all resolved on GitHub needs nothing; a review with no linked point yet (a
+ * review body) still does.
+ */
+export const sourceNeedsTriage = (
+  source: Pick<ReviewSource, "id" | "state" | "triaged" | "failed">,
+  items: ReadonlyArray<Pick<ReviewItem, "sourceIds" | "githubState" | "decision" | "applyState">>,
+): boolean => {
+  if (source.state !== "done" || source.triaged || source.failed === true) return false;
+  const raised = items.filter((item) => item.sourceIds.includes(source.id));
+  return raised.length === 0 || raised.some(isOpenReviewPoint);
+};
+
 /** The round being worked waits on the user: a review to triage or a point to decide. */
 export const reviewWaitsOnUser = (
   snapshot: Pick<ReviewSessionSnapshot, "session" | "rounds" | "sources" | "items">,
@@ -516,9 +544,7 @@ export const reviewWaitsOnUser = (
     snapshot.sources.some(
       (source) =>
         source.round === session.round &&
-        source.state === "done" &&
-        source.failed !== true &&
-        !source.triaged &&
+        sourceNeedsTriage(source, snapshot.items) &&
         (!reviewer || source.kind === "local" || isViewerSource(source, session.viewerLogin)),
     ) ||
     snapshot.items.some(

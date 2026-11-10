@@ -446,6 +446,7 @@ function RoundSection(props: {
                 round: view.round,
                 sources: view.sources,
                 items: view.items,
+                allItems: view.sessionItems,
                 reviewer: props.reviewer,
               })}
         </Text>

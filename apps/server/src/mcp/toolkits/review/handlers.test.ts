@@ -219,6 +219,14 @@ it.effect("lets any chat act on the review, keeping only a running local review 
         role: "side",
         scopedToItem: 1,
       });
+      // Words that name no point, in #1's own chat, decide #1 only.
+      expect(
+        yield* side("review_items_decide", {
+          number: 2,
+          decision: "decline",
+          quote: "decline, out of scope",
+        }),
+      ).toMatchObject({ code: "invalid_request", message: expect.stringContaining("#2") });
       // A side chat is an ordinary chat of the review: any point, any action.
       expect(
         yield* side("review_items_annotate", { number: 2, recommendation: "Skip it." }),

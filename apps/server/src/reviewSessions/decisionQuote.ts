@@ -58,6 +58,8 @@ export function checkDecisionQuote(input: {
   readonly latestUserMessage: string | null;
   readonly quote: string;
   readonly number: number;
+  /** The point the chat was started for, when it is a point's own chat. */
+  readonly chatPoint?: number | null;
 }): DecisionQuoteRefusal | null {
   if (input.latestUserMessage === null) return "no-user-message";
   const quote = stripQuoteMarks(normalize(input.quote));
@@ -67,6 +69,8 @@ export function checkDecisionQuote(input: {
   if (!body.includes(quote)) return "quote-not-in-message";
   const named = namedPoints(body);
   if (tag !== null) named.add(tag.number);
+  // A message that names no point, in a point's own chat, is about that point.
+  if (named.size === 0 && input.chatPoint != null) named.add(input.chatPoint);
   if (named.size > 0 && !named.has(input.number)) return "message-names-other-items";
   // The same words can appear twice; any place that justifies the decision will do.
   let refusal: DecisionQuoteRefusal | null = null;

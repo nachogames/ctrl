@@ -89,6 +89,19 @@ it.effect(
       );
       const access = yield* reviews.resolveForThread({ threadId: run.threadId, groupId });
       assert.deepEqual([access.role, access.localSourceId], ["local", running?.id ?? null]);
+      // Another chat handing in its own review leaves the running one independent.
+      const handedIn = yield* reviews.submitLocalFindings({
+        sessionId,
+        sourceId: null,
+        threadId: reviewThreadId,
+        headSha: "abc123",
+        findings: [],
+      });
+      assert.notEqual(handedIn.id, running?.id);
+      assert.equal(
+        (yield* reviews.read(sessionId)).sources.find((source) => source.id === running?.id)?.state,
+        "reviewing",
+      );
 
       const done = yield* reviews.submitLocalFindings({
         sessionId,
@@ -707,49 +720,74 @@ it.effect("hands the review to its reviewer chat, which then acts as the review 
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });
 
-it.effect("tracks a requested action until its own run ends, then frees a stopped apply", () => {
-  const harness = newHarness();
-  return Effect.gen(function* () {
-    const reviews = yield* service;
-    const { snapshot } = yield* reviews.open(openInput);
-    const sessionId = snapshot.session.id;
-    yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("local:a")] });
-    yield* reviews.decide({ sessionId, number: 1, decision: "fix", authority: { _tag: "panel" } });
-    yield* reviews.requestTurn({ sessionId, request: { _tag: "apply" } });
-    const own = harness.sent.at(-1)!.messageId;
-    const applying = yield* reviews.read(sessionId);
-    assert.deepEqual(
-      [applying.rounds[0]?.state, applying.session.pendingRequest?.tag],
-      ["applying", "apply"],
-    );
-    yield* reviews.recordApply({ sessionId, number: 1, applyState: "working" });
+it.effect(
+  "tracks a requested action until its chat is done with it, then frees a stopped apply",
+  () => {
+    const harness = newHarness();
+    const side = ThreadId.make("thread:side");
+    const runs = (thread: ThreadId, ...list: ReadonlyArray<[string, string]>) =>
+      harness.runs.set(
+        thread,
+        list.map(([status, userMessageId]) => ({ status, userMessageId })),
+      );
+    return Effect.gen(function* () {
+      const reviews = yield* service;
+      const { snapshot } = yield* reviews.open(openInput);
+      const sessionId = snapshot.session.id;
+      const state = Effect.map(reviews.read(sessionId), (read) => [
+        read.rounds[0]?.state,
+        read.session.pendingRequest?.tag ?? null,
+      ]);
+      yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("local:a")] });
+      yield* reviews.decide({
+        sessionId,
+        number: 1,
+        decision: "fix",
+        authority: { _tag: "panel" },
+      });
+      yield* reviews.requestTurn({ sessionId, request: { _tag: "apply" } });
+      const own = harness.sent.at(-1)!.messageId;
+      // Another run ending before the request got a run leaves it alone.
+      runs(reviewThreadId, ["completed", "message:before"]);
+      yield* reviews.settleRun({ threadId: reviewThreadId });
+      assert.deepEqual(yield* state, ["applying", "apply"]);
+      // A message queued and removed while the apply runs: the chat is still at work.
+      runs(reviewThreadId, ["running", own], ["cancelled", "message:removed"]);
+      yield* reviews.settleRun({ threadId: reviewThreadId });
+      assert.deepEqual(yield* state, ["applying", "apply"]);
+      // Its run ended without finishing: nothing is pending and the round collects again.
+      yield* reviews.recordApply({ sessionId, number: 1, applyState: "working" });
+      runs(reviewThreadId, ["completed", own]);
+      yield* reviews.settleRun({ threadId: reviewThreadId });
+      assert.deepEqual(yield* state, ["collecting", null]);
+      assert.equal((yield* reviews.read(sessionId)).items[0]?.applyState, "pending");
 
-    // Another run of the chat ending leaves a request still waiting for its own run alone.
-    yield* reviews.settleRun({ threadId: reviewThreadId, messageId: "message:other" });
-    assert.equal((yield* reviews.read(sessionId)).rounds[0]?.state, "applying");
+      // Steered into the running turn, the request's own run is cancelled while that turn goes on.
+      yield* reviews.requestTurn({ sessionId, request: { _tag: "apply" } });
+      const steered = harness.sent.at(-1)!.messageId;
+      runs(reviewThreadId, ["cancelled", steered], ["running", "message:user"]);
+      yield* reviews.settleRun({ threadId: reviewThreadId });
+      assert.deepEqual(yield* state, ["applying", "apply"]);
+      runs(reviewThreadId, ["cancelled", steered], ["completed", "message:user"]);
+      yield* reviews.settleRun({ threadId: reviewThreadId });
+      assert.deepEqual(yield* state, ["collecting", null]);
 
-    // Its own run ended without finishing: nothing is pending and the round collects again.
-    yield* reviews.settleRun({ threadId: reviewThreadId, messageId: own });
-    const settled = yield* reviews.read(sessionId);
-    assert.deepEqual(
-      [
-        settled.rounds[0]?.state,
-        settled.session.pendingRequest ?? null,
-        settled.items[0]?.applyState,
-      ],
-      ["collecting", null, "pending"],
-    );
-
-    // An apply the chat started itself ends with that chat's run.
-    yield* reviews.recordApply({ sessionId, number: 1, applyState: "working" });
-    assert.equal((yield* reviews.read(sessionId)).rounds[0]?.state, "applying");
-    yield* reviews.settleRun({ threadId: reviewThreadId, messageId: "message:chat" });
-    assert.equal((yield* reviews.read(sessionId)).rounds[0]?.state, "collecting");
-  }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
-});
+      // An apply another chat starts itself ends when that chat is done.
+      harness.shells.set(side, chatShell(side));
+      runs(side, ["running", "message:side"]);
+      yield* reviews.recordApply({ sessionId, number: 1, applyState: "working", threadId: side });
+      yield* reviews.settleRun({ threadId: reviewThreadId });
+      yield* reviews.settleRun({ threadId: side });
+      assert.deepEqual(yield* state, ["applying", "apply"]);
+      runs(side, ["completed", "message:side"]);
+      yield* reviews.settleRun({ threadId: side });
+      assert.deepEqual(yield* state, ["collecting", null]);
+    }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
+  },
+);
 
 it.effect(
-  "at start, frees an apply no run is finishing and drops a request whose chat is gone",
+  "at start, settles a request whose run ended at shutdown and frees an old stuck apply",
   () => {
     const harness = newHarness();
     return Effect.gen(function* () {
@@ -757,16 +795,34 @@ it.effect(
       const repo = yield* ReviewSessions.ReviewSessionRepository;
       const { snapshot } = yield* reviews.open(openInput);
       const sessionId = snapshot.session.id;
+      // An apply from before requests were recorded, while its chat is mid-turn, then idle.
       yield* repo.upsertRound(sessionId, { ...snapshot.rounds[0]!, state: "applying" });
-      // Mid-turn, the chat may still finish it.
       yield* reviews.reconcileRequests();
       assert.equal((yield* reviews.read(sessionId)).rounds[0]?.state, "applying");
       harness.shells.set(reviewThreadId, chatShell(reviewThreadId, { activeRunId: null }));
       yield* reviews.reconcileRequests();
       assert.equal((yield* reviews.read(sessionId)).rounds[0]?.state, "collecting");
 
-      yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("gh:T1")] });
-      yield* reviews.requestTurn({ sessionId, request: { _tag: "triage" } }).pipe(Effect.ignore);
+      // Startup recovery cancelled the request's run before the review listener started.
+      yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("local:a")] });
+      yield* reviews.decide({
+        sessionId,
+        number: 1,
+        decision: "fix",
+        authority: { _tag: "panel" },
+      });
+      yield* reviews.requestTurn({ sessionId, request: { _tag: "apply" } });
+      harness.runs.set(reviewThreadId, [
+        { status: "cancelled", userMessageId: harness.sent.at(-1)!.messageId },
+      ]);
+      yield* reviews.reconcileRequests();
+      const after = yield* reviews.read(sessionId);
+      assert.deepEqual(
+        [after.rounds[0]?.state, after.session.pendingRequest ?? null],
+        ["collecting", null],
+      );
+
+      // A request whose chat is gone can never finish.
       yield* repo.setPendingRequest(sessionId, {
         tag: "triage",
         threadId: ThreadId.make("thread:gone"),

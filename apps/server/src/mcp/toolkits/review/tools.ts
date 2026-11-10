@@ -133,7 +133,7 @@ const ReviewSessionReadTool = Tool.make("review_session_read", {
 const ReviewSourceSubmitTool = Tool.make("review_source_submit", {
   ...reviewTool,
   description:
-    "Hand in your independent local review's findings, once, from the chat the review was started in. Only that chat may call it.",
+    "Hand in a local review's findings. The chat running your independent review hands in its run, once; any other chat of the review hands in its own review as a new run.",
   parameters: Schema.Struct({
     ...SessionTarget,
     headSha: TrimmedNonEmptyString.annotate({ description: "git rev-parse HEAD." }),

@@ -197,7 +197,6 @@ export class ReviewSessionService extends Context.Service<
      */
     readonly settleRun: (input: {
       readonly threadId: ThreadId;
-      readonly messageId: string;
     }) => Effect.Effect<void, ReviewSessionError>;
     /** At start: drops requests whose chat is gone and frees applies that no run is finishing. */
     readonly reconcileRequests: () => Effect.Effect<void, ReviewSessionError>;
@@ -259,6 +258,8 @@ export class ReviewSessionService extends Context.Service<
     readonly recordApply: (
       input: PointInput & {
         readonly applyState: ReviewApplyState;
+        /** The chat recording it; an apply it starts ends with that chat's run. */
+        readonly threadId?: ThreadId | undefined;
         readonly githubThreadIds?: ReadonlyArray<string> | undefined;
         readonly conclusion?: string | undefined;
         readonly draftReply?: string | undefined;
@@ -285,7 +286,7 @@ export class ReviewSessionService extends Context.Service<
     /** The local review chat hands in its findings; its source becomes `done`. */
     readonly submitLocalFindings: (input: {
       readonly sessionId: ReviewSessionId;
-      /** The chat's own run; null hands in to the round's running review, or as a new run. */
+      /** The chat's own run; null hands in as a new run. */
       readonly sourceId: string | null;
       /** The chat handing in. */
       readonly threadId: ThreadId;
@@ -395,6 +396,11 @@ const namesOf = (names: ReadonlyArray<string>) => {
     ? (unique[0] ?? "")
     : `${unique.slice(0, -1).join(", ")} and ${unique[unique.length - 1]}`;
 };
+
+/** The messageId of an apply a chat started itself: it ends when that chat goes idle. */
+const CHAT_RUN = "chat-run";
+
+const ENDED_RUN = new Set(["completed", "interrupted", "failed", "cancelled", "rolled_back"]);
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -1114,10 +1120,15 @@ const make = Effect.gen(function* () {
         const message = yield* latestUserMessageText(input.authority.threadId).pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
         );
+        const sideChat = yield* repo.findSideChatItem(input.authority.threadId);
         const refusal = checkDecisionQuote({
           latestUserMessage: message,
           quote: input.authority.quote,
           number: input.number,
+          chatPoint:
+            Option.isSome(sideChat) && sideChat.value.sessionId === input.sessionId
+              ? sideChat.value.number
+              : null,
         });
         if (refusal !== null) {
           return yield* fail(decisionQuoteRefusalMessage(refusal, input.number), input.sessionId);
@@ -1207,6 +1218,14 @@ const make = Effect.gen(function* () {
         if (round.state === "collecting") {
           yield* applyGate(session, yield* repo.listItems(session.id));
           yield* repo.upsertRound(session.id, { ...round, state: "applying", updatedAt: at });
+          // An apply a chat starts itself ends with that chat's run.
+          if ((session.pendingRequest ?? null) === null && input.threadId !== undefined)
+            yield* repo.setPendingRequest(session.id, {
+              tag: "apply",
+              threadId: input.threadId,
+              messageId: CHAT_RUN,
+              requestedAt: at,
+            });
         }
         const next: ReviewItem = {
           ...item,
@@ -1231,9 +1250,10 @@ const make = Effect.gen(function* () {
   ) {
     const untriaged: Array<string> = [];
     const running: Array<string> = [];
+    const items = yield* repo.listItems(session.id);
     for (const source of yield* repo.listSources(session.id)) {
       if (source.round !== session.round) continue;
-      if (source.state === "done" && !source.triaged) untriaged.push(reviewSourceName(source));
+      if (sourceNeedsTriage(source, items)) untriaged.push(reviewSourceName(source));
       if (source.state !== "requested" && source.state !== "reviewing") continue;
       if (source.kind === "local") {
         if (source.threadId === null || (yield* liveThread(source.threadId)) === null) continue;
@@ -1665,18 +1685,14 @@ const make = Effect.gen(function* () {
         const session = yield* loadSession(input.sessionId);
         yield* requireLive(session);
         const sources = yield* repo.listSources(session.id);
-        // A chat with no run of its own hands in to the round's running review, or as a new run.
+        // A chat with no run of its own hands in as a new run; another chat's running review
+        // stays its own, independent.
         const source: ReviewSource | undefined =
           input.sourceId !== null
             ? sources.find(
                 (candidate) => candidate.id === input.sourceId && candidate.kind === "local",
               )
-            : (sources.find(
-                (candidate) =>
-                  candidate.kind === "local" &&
-                  candidate.round === session.round &&
-                  candidate.state === "reviewing",
-              ) ?? (yield* newLocalRun(session, input.threadId)));
+            : yield* newLocalRun(session, input.threadId);
         if (source === undefined) {
           return yield* fail("This chat is not running a review of this pull request.", session.id);
         }
@@ -1760,23 +1776,46 @@ const make = Effect.gen(function* () {
     yield* repo.upsertRound(session.id, { ...round, state: "collecting", updatedAt: at });
   });
 
+  /**
+   * Whether the chat has finished a request: nothing is running or queued in it, and the request's
+   * message got a run (so a run that ended before the request was sent never counts). A steered,
+   * restarted or removed request leaves its run behind too.
+   */
+  const requestFinished = Effect.fn("ReviewSessionService.requestFinished")(function* (
+    pending: ReviewPendingRequest,
+  ) {
+    const records = yield* threads
+      .getThreadRecords(pending.threadId, ["runs"])
+      .pipe(Effect.orElseSucceed(() => null));
+    // A chat whose records are gone cannot finish it.
+    if (records === null) return true;
+    const idle = records.runs.every((run) => ENDED_RUN.has(run.status));
+    const ran =
+      pending.messageId === CHAT_RUN ||
+      records.runs.some((run) => run.userMessageId === pending.messageId);
+    return idle && ran;
+  });
+
+  /** Clears a finished request; an apply that stopped before finishing collects again. */
+  const settleSession = Effect.fn("ReviewSessionService.settleSession")(function* (
+    sessionId: ReviewSessionId,
+  ) {
+    const session = yield* loadSession(sessionId);
+    const pending = session.pendingRequest ?? null;
+    if (pending === null) return;
+    const chat = yield* liveThread(pending.threadId);
+    if (chat !== null && !(yield* requestFinished(pending))) return;
+    yield* repo.setPendingRequest(session.id, null);
+    const round = yield* loadRound(session);
+    if (pending.tag === "apply" && round.state === "applying") yield* releaseApply(session, round);
+  });
+
   const settleRun: ReviewSessionService["Service"]["settleRun"] = Effect.fn(
     "ReviewSessionService.settleRun",
   )(function* (input) {
-    for (const held of yield* repo.listLiveSessionsForThread(input.threadId)) {
-      yield* write(
-        held.id,
-        Effect.gen(function* () {
-          const session = yield* loadSession(held.id);
-          const pending = session.pendingRequest ?? null;
-          const ownRun = pending !== null && pending.messageId === input.messageId;
-          // A request still waiting for its own run is untouched by another run ending.
-          if (pending !== null && !ownRun) return;
-          if (ownRun) yield* repo.setPendingRequest(session.id, null);
-          const round = yield* loadRound(session);
-          if (round.state === "applying") yield* releaseApply(session, round);
-        }),
-      );
+    for (const live of yield* repo.listLiveSessions()) {
+      if (live.pendingRequest?.threadId === input.threadId)
+        yield* write(live.id, settleSession(live.id));
     }
   }, Effect.mapError(keepReviewErrors()));
 
@@ -1787,16 +1826,14 @@ const make = Effect.gen(function* () {
       yield* write(
         live.id,
         Effect.gen(function* () {
+          yield* settleSession(live.id);
+          // An apply from before requests were recorded: free it once its chat is idle.
           const session = yield* loadSession(live.id);
-          const pending = session.pendingRequest ?? null;
-          const chat = yield* liveThread(pending?.threadId ?? session.reviewThreadId);
-          // A request whose chat is gone can never finish; a queued one will still run.
-          if (pending !== null && chat === null) yield* repo.setPendingRequest(session.id, null);
+          if ((session.pendingRequest ?? null) !== null) return;
           const round = yield* loadRound(session);
-          const stalled =
-            round.state === "applying" &&
-            (chat === null || (pending === null && chat.activeRunId === null));
-          if (stalled) yield* releaseApply(session, round);
+          if (round.state !== "applying") return;
+          const chat = yield* liveThread(session.reviewThreadId);
+          if (chat === null || chat.activeRunId === null) yield* releaseApply(session, round);
         }),
       );
     }
@@ -1967,8 +2004,6 @@ const make = Effect.gen(function* () {
             yield* repo.setPendingRequest(current.id, pending);
           }),
         );
-      } else {
-        yield* write(session.id, repo.setPendingRequest(session.id, pending));
       }
       // Re-review opens the next round before the agent starts on it, so the panel shows the
       // new round at once and a refusal reaches the user without a turn.
@@ -1980,6 +2015,9 @@ const make = Effect.gen(function* () {
               finish: false,
             })).session
           : session;
+      // After Re-review opened its round, so a refusal leaves nothing pending.
+      if (request._tag !== "apply")
+        yield* write(session.id, repo.setPendingRequest(session.id, pending));
       // The agent never got the request: nothing is pending, and an apply goes back to collecting.
       const moveBack = write(
         session.id,
@@ -2059,8 +2097,6 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(ReviewSessionService, make);
 
 /** Discover links after restart and as chats acquire PRs, without starting provider turns. */
-const ENDED_RUN = new Set(["completed", "interrupted", "failed", "cancelled", "rolled_back"]);
-
 export const layerStart = Layer.effectDiscard(
   Effect.gen(function* () {
     const reviews = yield* ReviewSessionService;
@@ -2072,7 +2108,7 @@ export const layerStart = Layer.effectDiscard(
           Stream.runForEach(engine.streamDomainEvents, (event) =>
             event.type === "run.updated" && ENDED_RUN.has(event.payload.status)
               ? reviews
-                  .settleRun({ threadId: event.threadId, messageId: event.payload.userMessageId })
+                  .settleRun({ threadId: event.threadId })
                   .pipe(
                     Effect.catchCause((cause) =>
                       Effect.logWarning("settling a review request failed", cause),

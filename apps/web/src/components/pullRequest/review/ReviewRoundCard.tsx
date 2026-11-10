@@ -137,6 +137,7 @@ export function ReviewRoundCard({
                   round: view.round,
                   sources: view.sources,
                   items: view.items,
+                  allItems: view.sessionItems,
                   reviewer,
                 })}
           </p>

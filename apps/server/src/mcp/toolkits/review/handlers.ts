@@ -95,7 +95,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
     Effect.gen(function* () {
       const caller = yield* callingChat;
       const sessions = yield* ReviewSessionService.ReviewSessionService;
-      // A side chat or your review's chat already belongs to a review and is no review chat.
+      // Only a local review that is still reviewing may not open the list.
       const existing = yield* sessions
         .resolveForThread({ threadId: caller.id, groupId: caller.groupId ?? null })
         .pipe(Effect.option);
@@ -280,6 +280,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           sessionId: access.session.id,
           number: input.number,
           applyState: input.applyState,
+          threadId: access.caller.id,
           githubThreadIds: input.githubThreadIds,
           conclusion: input.conclusion,
           draftReply: input.draftReply,
