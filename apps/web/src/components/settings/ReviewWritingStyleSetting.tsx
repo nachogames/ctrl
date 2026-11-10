@@ -36,8 +36,12 @@ export function ReviewWritingStyleSetting() {
   const [showDetails, setShowDetails] = useState(false);
   const { environment } = useSettingsScope();
   const save = (next: ReviewWritingStyleSettings) => {
-    updateSettings({ reviewWritingStyle: { selected: next.selected, custom: [...next.custom] } });
+    const open = draft;
     setDraft(null);
+    updateSettings(
+      { reviewWritingStyle: { selected: next.selected, custom: [...next.custom] } },
+      { onFailed: () => setDraft(open) },
+    );
   };
   const editor = (current: ReviewStyleDraft) => (
     <ReviewStyleEditor

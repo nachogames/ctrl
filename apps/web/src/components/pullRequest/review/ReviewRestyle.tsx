@@ -41,7 +41,12 @@ function useReviewWritingStyles(environmentId: EnvironmentId): {
   custom: ReadonlyArray<ReviewCustomWritingStyle>;
   readonly supported: boolean;
 } {
-  const setting = useEnvironment(environmentId)?.serverConfig?.settings.reviewWritingStyle;
+  const serverConfig = useEnvironment(environmentId)?.serverConfig;
+  // Clients decode a default for the setting, so only the capability tells an older server apart.
+  const setting =
+    serverConfig?.environment.capabilities.reviewWritingStyles === true
+      ? serverConfig.settings.reviewWritingStyle
+      : undefined;
   return setting === undefined
     ? {
         styles: REVIEW_WRITING_STYLE_PRESETS,

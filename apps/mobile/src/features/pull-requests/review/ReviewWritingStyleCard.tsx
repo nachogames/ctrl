@@ -11,9 +11,11 @@ import type {
 import {
   deleteReviewStyle,
   MAX_CUSTOM_REVIEW_STYLES,
+  MAX_REVIEW_STYLE_INSTRUCTIONS_LENGTH,
   MAX_REVIEW_STYLE_NAME_LENGTH,
   REVIEW_WRITING_STYLE_PRESETS,
   resolveReviewWritingStyle,
+  type ReviewStyleDraft,
   reviewWritingStyles,
   saveReviewStyleDraft,
 } from "@t3tools/shared/reviewWritingStyles";
@@ -41,7 +43,11 @@ export function ReviewWritingStyleCard(props: {
   readonly view: ReviewRoundView | undefined;
 }) {
   const { presentation } = useEnvironmentPresentation(props.environmentId);
-  const setting = presentation?.serverConfig?.settings?.reviewWritingStyle;
+  // Clients decode a default for the setting, so only the capability tells an older server apart.
+  const setting =
+    presentation?.serverConfig?.environment.capabilities.reviewWritingStyles === true
+      ? presentation.serverConfig.settings?.reviewWritingStyle
+      : undefined;
   const styles =
     setting === undefined ? REVIEW_WRITING_STYLE_PRESETS : reviewWritingStyles(setting);
   const selected =
@@ -58,12 +64,8 @@ export function ReviewWritingStyleCard(props: {
   });
   const rewrite = useReviewCommand(reviewSessionEnvironment.request, "Could not rewrite");
   const [showExample, setShowExample] = useState(false);
-  // The open form: a new style, or the selected custom style being edited.
-  const [form, setForm] = useState<{
-    readonly mode: "new" | "edit";
-    readonly name: string;
-    readonly instructions: string;
-  } | null>(null);
+  // The open form: a new style, or the custom style named `editing`, fixed when Edit opened.
+  const [form, setForm] = useState<ReviewStyleDraft | null>(null);
   // A server from before writing styles has no setting to save.
   const editable = setting !== undefined && canSave;
   const stale =
@@ -85,13 +87,7 @@ export function ReviewWritingStyleCard(props: {
   };
   const submit = () => {
     if (form === null || form.name.trim() === "" || form.instructions.trim() === "") return;
-    void saveStyles(
-      saveReviewStyleDraft(current, {
-        editing: form.mode === "new" ? null : selected.id,
-        name: form.name,
-        instructions: form.instructions,
-      }),
-    );
+    void saveStyles(saveReviewStyleDraft(current, form));
   };
   const fromLabel =
     from.size !== 1
@@ -99,6 +95,7 @@ export function ReviewWritingStyleCard(props: {
       : from.has(null)
         ? "the old format"
         : (styles.find((style) => from.has(style.id))?.label ?? "another style");
+  if (setting === undefined) return null;
   return (
     <PullRequestCardGroup>
       <View className="gap-3 p-4" accessibilityLabel="Writing style">
@@ -111,7 +108,7 @@ export function ReviewWritingStyleCard(props: {
               accessibilityRole="button"
               onPress={() =>
                 setForm({
-                  mode: "edit",
+                  editing: selected.id,
                   name: selected.label,
                   instructions: selected.instructions,
                 })
@@ -154,7 +151,7 @@ export function ReviewWritingStyleCard(props: {
             label="New style"
             accessibilityLabel="New writing style"
             disabled={!editable || full || form !== null}
-            onPress={() => setForm({ mode: "new", name: "", instructions: "" })}
+            onPress={() => setForm({ editing: null, name: "", instructions: "" })}
           />
         </View>
         {form === null ? null : (
@@ -173,10 +170,11 @@ export function ReviewWritingStyleCard(props: {
               onChangeText={(instructions) => setForm({ ...form, instructions })}
               placeholder="How should each finding read? For example: one sentence on what breaks, then the fix as a checklist."
               multiline
+              maxLength={MAX_REVIEW_STYLE_INSTRUCTIONS_LENGTH}
               autoCapitalize="sentences"
               className="min-h-32 rounded-xl px-3 py-2 text-base text-foreground"
             />
-            {form.mode === "new" ? (
+            {form.editing === null ? (
               <Pressable
                 accessibilityRole="button"
                 onPress={() => setForm({ ...form, instructions: selected.instructions })}
@@ -186,12 +184,12 @@ export function ReviewWritingStyleCard(props: {
               </Pressable>
             ) : null}
             <View className="flex-row items-center gap-2">
-              {form.mode === "edit" ? (
+              {form.editing !== null ? (
                 <Button
                   size="compact"
                   tone="danger"
                   label="Delete"
-                  onPress={() => void saveStyles(deleteReviewStyle(current, selected.id))}
+                  onPress={() => void saveStyles(deleteReviewStyle(current, form.editing ?? ""))}
                 />
               ) : null}
               <View className="flex-1" />

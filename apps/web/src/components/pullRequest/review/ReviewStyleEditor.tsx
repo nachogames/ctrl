@@ -1,4 +1,5 @@
 import {
+  MAX_REVIEW_STYLE_INSTRUCTIONS_LENGTH,
   MAX_REVIEW_STYLE_NAME_LENGTH,
   type ReviewStyleDraft,
   type ReviewWritingStyle,
@@ -39,6 +40,7 @@ export function ReviewStyleEditor({
       <Textarea
         size="sm"
         rows={6}
+        maxLength={MAX_REVIEW_STYLE_INSTRUCTIONS_LENGTH}
         aria-label="How findings read in this style"
         placeholder="How should each finding read? For example: one line on what breaks, then the fix as a checklist. No jargon."
         value={draft.instructions}

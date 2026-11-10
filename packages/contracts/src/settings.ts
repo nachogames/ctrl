@@ -1914,7 +1914,8 @@ export const ServerSettingsPatch = Schema.Struct({
   /** `custom` replaces the whole list. */
   reviewWritingStyle: Schema.optionalKey(
     Schema.Struct({
-      selected: Schema.optionalKey(ReviewWritingStyleSettings.fields.selected),
+      // Not the struct's field: its decoding default would select "outcome" on a custom-only patch.
+      selected: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(40))),
       custom: Schema.optionalKey(
         Schema.Array(ReviewCustomWritingStyle).check(Schema.isMaxLength(20)),
       ),

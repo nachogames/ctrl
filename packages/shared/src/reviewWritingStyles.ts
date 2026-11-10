@@ -17,6 +17,7 @@ export interface ReviewWritingStyle {
 export const DEFAULT_REVIEW_WRITING_STYLE = "outcome";
 export const MAX_CUSTOM_REVIEW_STYLES = 20;
 export const MAX_REVIEW_STYLE_NAME_LENGTH = 40;
+export const MAX_REVIEW_STYLE_INSTRUCTIONS_LENGTH = 8000;
 
 /** `base`, or `base 2`, `base 3`… when a style already has that name. */
 function freeReviewStyleName(base: string, taken: ReadonlyArray<string>): string {

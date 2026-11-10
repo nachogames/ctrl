@@ -117,6 +117,16 @@ describe("storage cleanup settings", () => {
   });
 });
 
+describe("ServerSettings review writing style", () => {
+  it("leaves the selected style alone when a patch only replaces custom styles", () => {
+    expect(
+      decodeServerSettingsPatch({
+        reviewWritingStyle: { custom: [{ name: "Terse", instructions: "One line." }] },
+      }),
+    ).toEqual({ reviewWritingStyle: { custom: [{ name: "Terse", instructions: "One line." }] } });
+  });
+});
+
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
 
