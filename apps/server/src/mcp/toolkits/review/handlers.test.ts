@@ -182,7 +182,7 @@ it.effect("a question through the tool changes nothing", () =>
   ),
 );
 
-it.effect("keeps a side chat to its point and the local review to its findings", () =>
+it.effect("lets any chat act on the review, keeping only a running local review blind", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { provided, as } = yield* harnessed;
@@ -219,28 +219,21 @@ it.effect("keeps a side chat to its point and the local review to its findings",
         role: "side",
         scopedToItem: 1,
       });
+      // Words that name no point, in #1's own chat, decide #1 only.
       expect(
         yield* side("review_items_decide", {
           number: 2,
           decision: "decline",
           quote: "decline, out of scope",
         }),
-      ).toMatchObject({ code: "invalid_request", message: expect.stringContaining("#1 only") });
+      ).toMatchObject({ code: "invalid_request", message: expect.stringContaining("#2") });
+      // A side chat is an ordinary chat of the review: any point, any action.
       expect(
         yield* side("review_items_annotate", { number: 2, recommendation: "Skip it." }),
-      ).toMatchObject({ code: "invalid_request", message: expect.stringContaining("#1 only") });
-      expect(yield* side("review_round_advance", { headSha: "def456" })).toMatchObject({
-        code: "invalid_request",
-      });
+      ).toMatchObject({ item: { number: 2, recommendation: "Skip it." } });
       expect(
         yield* side("review_items_import", { sourceIds: [], items: [toolItem("gh:T3")] }),
-      ).toMatchObject({ code: "invalid_request" });
-      expect(
-        yield* side("review_items_record_apply", { number: 1, applyState: "working" }),
-      ).toMatchObject({ code: "invalid_request" });
-      expect(yield* side("review_local_review_start", {})).toMatchObject({
-        code: "invalid_request",
-      });
+      ).toMatchObject({ created: [3] });
       expect(
         yield* side("review_items_annotate", { number: 1, recommendation: "Out of scope." }),
       ).toMatchObject({ item: { number: 1, recommendation: "Out of scope." } });
@@ -280,8 +273,7 @@ it.effect("keeps a side chat to its point and the local review to its findings",
         message: expect.stringContaining("independent"),
       });
       expect(yield* side("review_session_open", { url: prUrl })).toMatchObject({
-        code: "invalid_request",
-        message: expect.stringContaining("#1 only"),
+        brief: expect.stringContaining("Review brief"),
       });
       expect(
         yield* local("review_source_submit", {
@@ -297,12 +289,12 @@ it.effect("keeps a side chat to its point and the local review to its findings",
           ],
         }),
       ).toMatchObject({ source: { kind: "local", state: "done", commentCount: 1 } });
+      // Handed in, it is an ordinary chat again.
+      expect(yield* local("review_session_read", {})).toMatchObject({ role: "review" });
+      // Any chat may hand in a review of its own; it is recorded as a local run.
       expect(
         yield* review("review_source_submit", { headSha: "abc123", findings: [] }),
-      ).toMatchObject({ code: "invalid_request" });
-      expect(
-        yield* side("review_source_submit", { headSha: "abc123", findings: [] }),
-      ).toMatchObject({ code: "invalid_request" });
+      ).toMatchObject({ source: { kind: "local", state: "done", commentCount: 0 } });
     }),
   ),
 );

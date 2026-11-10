@@ -85,11 +85,11 @@ export function ReviewWritingStyleCard({
   const [showExample, setShowExample] = useState(false);
   // The style being written: a new one, or the selected custom one being edited.
   const [draft, setDraft] = useState<ReviewStyleDraft | null>(null);
-  // The style a Rewrite was sent for; the button stays busy until the points catch up.
-  const [sentFor, setSentFor] = useState<string | null>(null);
+  // Only while the click's request is on its way; the server's pending request takes over.
+  const [sendingRewrite, setSendingRewrite] = useState(false);
   if (!supported) return null;
   const stale = view === undefined ? [] : pointsToRestyle(view, selected.id);
-  const sending = sentFor === selected.id && stale.length > 0;
+  const sending = sendingRewrite || view?.pendingRequest?.tag === "restyle";
   const from = new Set(stale.map((item) => item.writeupStyle ?? null));
   const fromLabel =
     from.size !== 1
@@ -108,12 +108,12 @@ export function ReviewWritingStyleCard({
   };
   const setting = { selected: selected.id, custom };
   const rewrite = async () => {
-    setSentFor(selected.id);
-    const result = await request({
+    setSendingRewrite(true);
+    await request({
       environmentId,
       input: { sessionId, request: { _tag: "restyle", style: selected.id } },
     });
-    if (result._tag === "Failure") setSentFor(null);
+    setSendingRewrite(false);
   };
   return (
     <section

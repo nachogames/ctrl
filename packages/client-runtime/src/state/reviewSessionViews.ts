@@ -2,11 +2,12 @@ import { isActiveReviewItem, isReviewOverview, isViewerSource } from "@t3tools/c
 import type {
   ReviewDecision,
   ReviewItem,
+  ReviewPendingRequest,
   ReviewRound,
   ReviewSessionSnapshot,
   ReviewSource,
 } from "@t3tools/contracts";
-import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
+import { isOpenReviewPoint, sourceNeedsTriage } from "@t3tools/shared/reviewPoints";
 
 import {
   reviewHistoryRounds,
@@ -22,6 +23,10 @@ export interface ReviewRoundView {
   readonly items: ReadonlyArray<ReviewItem>;
   readonly reviewHistory?: ReadonlyArray<ReviewHistoryRound>;
   readonly history?: ReadonlyArray<ReviewItem>;
+  /** Every point of the review, so a review's triage can see what it raised in any round. */
+  readonly sessionItems?: ReadonlyArray<ReviewItem>;
+  /** The action the review's chat is working on, for busy states shared by every client. */
+  readonly pendingRequest?: ReviewPendingRequest | null;
 }
 
 /**
@@ -36,6 +41,8 @@ export function reviewRoundViews(snapshot: ReviewSessionSnapshot): ReadonlyArray
     return {
       round,
       current,
+      sessionItems: snapshot.items,
+      pendingRequest: session.pendingRequest ?? null,
       reviewHistory: history.filter((group) =>
         group.sources.some((source) => source.round === round.round),
       ),
@@ -132,29 +139,20 @@ export function sameReviewItem(a: ReviewItem, b: ReviewItem): boolean {
 }
 
 /**
- * A Triage the user sent is still running while any review it covered is untriaged. The request
- * resolves once the turn is queued; only the agent's import flips the reviews to triaged.
- */
-export function triageInFlight(
-  coveredIds: ReadonlyArray<string>,
-  sources: ReadonlyArray<Pick<ReviewSource, "id" | "triaged">>,
-): boolean {
-  return coveredIds.some((id) => sources.some((source) => source.id === id && !source.triaged));
-}
-
-/**
- * The round header's Triage button: shown disabled until a review is in, busy while a triage
- * runs, ready for every finished untriaged review, and gone once they are all triaged.
+ * The round header's Triage button, from the review's state alone: busy while a triage request's
+ * run is queued or running, ready for every finished review with something still open, shown
+ * disabled until a review is in, and gone once nothing waits.
  */
 export function triageButton(
   view: ReviewRoundView,
-  coveredIds: ReadonlyArray<string>,
+  items: ReadonlyArray<ReviewItem>,
+  pendingRequest: ReviewPendingRequest | null | undefined,
 ): { readonly label: string; readonly busy: boolean; readonly ready: boolean } | null {
   if (!view.current || view.round.state !== "collecting") return null;
-  if (triageInFlight(coveredIds, view.sources)) {
+  if (pendingRequest?.tag === "triage") {
     return { label: "Triaging…", busy: true, ready: false };
   }
-  const untriaged = view.sources.filter((source) => source.state === "done" && !source.triaged);
+  const untriaged = view.sources.filter((source) => sourceNeedsTriage(source, items));
   const recheck = (view.history ?? []).filter(
     (item) => item.stale && isOpenReviewPoint(item),
   ).length;

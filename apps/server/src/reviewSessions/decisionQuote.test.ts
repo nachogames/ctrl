@@ -28,6 +28,16 @@ describe("checkDecisionQuote", () => {
     expect(check("#3 decline: out of scope", "decline: out of scope", 2)).toBe(
       "message-names-other-items",
     );
+    // In a point's own chat, words that name no point are about that point only.
+    const inChatOf = (point: number, number: number) =>
+      checkDecisionQuote({
+        latestUserMessage: "fix it",
+        quote: "fix it",
+        number,
+        chatPoint: point,
+      });
+    expect(inChatOf(4, 4)).toBeNull();
+    expect(inChatOf(4, 2)).toBe("message-names-other-items");
   });
 
   it("does not take a point tag's label for the user's words", () => {

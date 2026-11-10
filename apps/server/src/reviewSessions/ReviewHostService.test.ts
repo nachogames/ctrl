@@ -45,6 +45,8 @@ function harness(
     live?: { localReview: boolean };
     /** Chats besides the authoring one, such as one the panel sits beside. */
     chats?: ReadonlyArray<OrchestrationV2ThreadShell>;
+    /** Groups that already hold a live review of another pull request. */
+    busyGroups?: ReadonlyArray<string>;
   } = {},
 ) {
   const shells = new Map<ThreadId, OrchestrationV2ThreadShell>();
@@ -144,6 +146,8 @@ function harness(
             Effect.succeed(options.live === undefined ? null : sessionFixture()),
           isAssignedChat: (id) => Effect.succeed(id === ThreadId.make("point")),
           hasLiveReviewChat: () => Effect.succeed(options.reviewChatLive !== false),
+          reviewsOtherPullRequest: (input) =>
+            Effect.succeed((options.busyGroups ?? []).includes(input.groupId)),
           read: () => Effect.succeed(snapshot),
           requestTurn: (input) =>
             Effect.sync(() => {
@@ -276,6 +280,39 @@ it.effect("hands the review to the open chat before its action runs there", () =
     assert.deepEqual(h.turns, ["triage", "apply", "triage", "triage"]);
   }).pipe(Effect.provide(h.layer));
 });
+it.effect("never pulls a review into a chat whose group reviews another pull request", () => {
+  const busy = ThreadGroupId.make("group:pr-6");
+  const h = harness({
+    chats: [chatShell(ThreadId.make("pr-6"), { groupId: busy })],
+    busyGroups: [busy],
+  });
+  return Effect.gen(function* () {
+    const host = yield* Host.ReviewHostService;
+    const sessionId = sessionFixture().id;
+    yield* host.request({
+      sessionId,
+      targetThreadId: ThreadId.make("pr-6"),
+      request: { _tag: "triage" },
+    });
+    yield* host.runLocalReview({ sessionId, targetThreadId: ThreadId.make("pr-6") });
+    // Its own live chat keeps it.
+    assert.deepEqual([h.moved, h.opened, h.launches], [[], [], []]);
+    assert.deepEqual([h.turns, h.counts().runs], [["triage"], 1]);
+  }).pipe(Effect.provide(h.layer));
+});
+it.effect(
+  "gives a review that shares its chat's group with other pull requests its own Review chat",
+  () => {
+    const h = harness({ linked: true, busyGroups: [sessionFixture().groupId] });
+    return Effect.gen(function* () {
+      const host = yield* Host.ReviewHostService;
+      yield* host.request({ sessionId: sessionFixture().id, request: { _tag: "triage" } });
+      assert.deepEqual(h.launches, [reviewChatId]);
+      assert.deepEqual(h.opened, [{ thread: reviewChatId, group: `review-group:${reviewChatId}` }]);
+      assert.deepEqual(h.turns, ["triage"]);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 it.effect("runs your review in the open chat's group after it takes the review over", () => {
   const other = ThreadGroupId.make("group:pr-6");
   const h = harness({ chats: [chatShell(ThreadId.make("pr-6"), { groupId: other })] });

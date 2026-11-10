@@ -99,6 +99,18 @@ export type ReviewVerdict = typeof ReviewVerdict.Type;
 export const ReviewReplyStyle = Schema.Literals(["shorter", "friendlier", "mention-commit"]);
 export type ReviewReplyStyle = typeof ReviewReplyStyle.Type;
 
+/**
+ * A review action sent to a chat and not finished yet: its run is queued or running. Cleared when
+ * that run ends, so every client shows the same busy state.
+ */
+export const ReviewPendingRequest = Schema.Struct({
+  tag: Schema.Literals(["triage", "apply", "re-review", "finish", "rewrite-reply", "restyle"]),
+  threadId: ThreadId,
+  messageId: TrimmedNonEmptyString,
+  requestedAt: IsoDateTime,
+});
+export type ReviewPendingRequest = typeof ReviewPendingRequest.Type;
+
 /** One live review per pull request per group; its review chat owns the list. */
 export const ReviewSession = Schema.Struct({
   id: ReviewSessionId,
@@ -116,6 +128,8 @@ export const ReviewSession = Schema.Struct({
   viewerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** The viewer is asked to review again (a re-request after their review). */
   viewerRequested: Schema.optional(Schema.Boolean),
+  /** Absent from servers that predate it. */
+  pendingRequest: Schema.optional(Schema.NullOr(ReviewPendingRequest)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -488,6 +502,34 @@ export const reReviewReason = (
     : null;
 };
 
+/**
+ * Whether a review point still needs something. A point with a GitHub thread is open until the
+ * thread is resolved. One without a thread (an unposted finding) is open while undecided or
+ * decided to fix or post and not yet applied; a skipped or declined one never gets a thread
+ * and needs nothing more.
+ */
+export const isOpenReviewPoint = (
+  item: Pick<ReviewItem, "githubState" | "decision" | "applyState">,
+): boolean => {
+  if (item.githubState !== null) return item.githubState !== "resolved";
+  if (item.decision === "decline") return false;
+  return item.applyState === "pending" || item.applyState === "working";
+};
+
+/**
+ * Whether a finished review still waits for triage: untriaged, and something it raised is still
+ * open. Feedback all resolved on GitHub needs nothing; a review with no linked point yet (a
+ * review body) still does.
+ */
+export const sourceNeedsTriage = (
+  source: Pick<ReviewSource, "id" | "state" | "triaged" | "failed">,
+  items: ReadonlyArray<Pick<ReviewItem, "sourceIds" | "githubState" | "decision" | "applyState">>,
+): boolean => {
+  if (source.state !== "done" || source.triaged || source.failed === true) return false;
+  const raised = items.filter((item) => item.sourceIds.includes(source.id));
+  return raised.length === 0 || raised.some(isOpenReviewPoint);
+};
+
 /** The round being worked waits on the user: a review to triage or a point to decide. */
 export const reviewWaitsOnUser = (
   snapshot: Pick<ReviewSessionSnapshot, "session" | "rounds" | "sources" | "items">,
@@ -502,9 +544,7 @@ export const reviewWaitsOnUser = (
     snapshot.sources.some(
       (source) =>
         source.round === session.round &&
-        source.state === "done" &&
-        source.failed !== true &&
-        !source.triaged &&
+        sourceNeedsTriage(source, snapshot.items) &&
         (!reviewer || source.kind === "local" || isViewerSource(source, session.viewerLogin)),
     ) ||
     snapshot.items.some(

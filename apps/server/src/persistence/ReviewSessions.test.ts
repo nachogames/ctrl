@@ -147,6 +147,11 @@ it.effect("links one point to every review that raised it", () =>
     yield* repo.setItemGithubState(session.id, 1, "resolved");
     yield* repo.upsertItem(session.id, { ...item, viewed: true });
     assert.equal((yield* repo.listItems(session.id))[0]?.githubState, "resolved");
+    // A handed-in run no longer marks its chat as your review's; only a running one does.
+    assert.isNull(
+      Option.getOrNull(yield* repo.findLocalSourceByThread(ThreadId.make("thread:local"))),
+    );
+    yield* repo.upsertSource(session.id, { ...local, state: "reviewing" }, []);
     assert.deepEqual(
       Option.getOrNull(yield* repo.findLocalSourceByThread(ThreadId.make("thread:local"))),
       { sessionId: session.id, sourceId: "local:run-1" },
@@ -253,6 +258,45 @@ it.effect("hands a review to another chat and its group", () =>
       [session.id],
     );
     assert.deepEqual(yield* repo.listLiveSessionsForThread(session.reviewThreadId), []);
+  }).pipe(
+    Effect.provide(ReviewSessions.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
+  ),
+);
+
+it.effect("marks only open, unhandled points stale when the code changes", () =>
+  Effect.gen(function* () {
+    const repo = yield* repository;
+    yield* repo.insertSession(session);
+    const points: ReadonlyArray<[Partial<ReviewItem>, "open" | "resolved" | null]> = [
+      [{}, null], // open, undecided
+      [{}, "open"], // its GitHub thread is open
+      [{}, "resolved"], // resolved on GitHub
+      [{ decision: "decline" }, null], // declined, no thread
+      [{ decision: "fix", applyState: "fixed" }, "open"], // the push being checked fixed it
+      [{ decision: "fix", applyState: "replied" }, "open"],
+    ];
+    for (const [index, [fields, githubState]] of points.entries()) {
+      const number = index + 1;
+      yield* repo.upsertItem(session.id, {
+        ...item,
+        ...fields,
+        number,
+        sourceKeys: [`gh:T${number}`],
+      });
+      if (githubState !== null) yield* repo.setItemGithubState(session.id, number, githubState);
+    }
+    yield* repo.markItemsStale(session.id);
+    assert.deepEqual(
+      (yield* repo.listItems(session.id)).map((point) => [point.number, point.stale]),
+      [
+        [1, true],
+        [2, true],
+        [3, false],
+        [4, false],
+        [5, false],
+        [6, false],
+      ],
+    );
   }).pipe(
     Effect.provide(ReviewSessions.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
   ),

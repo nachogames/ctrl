@@ -234,6 +234,15 @@ it.effect("keeps one live review per pull request across groups", () => {
     const reviews = yield* service;
     const first = yield* reviews.open(openInput);
     const again = yield* reviews.open(openInput);
+    // Another pull request reviewed in the same group makes it shared; this PR's own review does not.
+    const sessionId = first.snapshot.session.id;
+    assert.isFalse(
+      yield* reviews.reviewsOtherPullRequest({ sessionId, groupId: openInput.groupId }),
+    );
+    yield* reviews.open({ ...openInput, key: { ...openInput.key, number: 99 } });
+    assert.isTrue(
+      yield* reviews.reviewsOtherPullRequest({ sessionId, groupId: openInput.groupId }),
+    );
     assert.isTrue(first.created);
     assert.isFalse(again.created);
     assert.equal(again.snapshot.session.id, first.snapshot.session.id);
@@ -350,7 +359,15 @@ it.effect("applies decided points without requiring viewed marks", () =>
         [1, "applied", "def456"],
       ],
     );
-    assert.isTrue(advanced.items.every((item) => item.stale));
+    // Every point was fixed or declined, so the new code outdates none of them.
+    assert.deepEqual(
+      advanced.items.map((item) => [item.number, item.stale]),
+      [
+        [1, false],
+        [2, false],
+        [3, false],
+      ],
+    );
 
     const reraised = yield* reviews.importItems({
       sessionId,
@@ -855,6 +872,24 @@ it.effect("persists inline self-review thread IDs during apply and merges retrie
       "PRRT_existing",
       "PRRT_self",
     ]);
+  }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
+);
+
+it.effect("does not ask to triage feedback already resolved on GitHub", () =>
+  Effect.gen(function* () {
+    const reviews = yield* service;
+    const repo = yield* ReviewSessions.ReviewSessionRepository;
+    const { snapshot } = yield* reviews.open(openInput);
+    const sessionId = snapshot.session.id;
+    yield* repo.upsertSource(sessionId, localSourceFixture("PRR_dan", { kind: "human" }), [
+      sourceComment("gh:T1", "Rename this."),
+    ]);
+    yield* reviews.importItems({ sessionId, sourceIds: [], items: [importItem("gh:T1")] });
+    yield* repo.setItemGithubState(sessionId, 1, "resolved");
+    const nothing = yield* Effect.flip(
+      reviews.requestTurn({ sessionId, request: { _tag: "triage" } }),
+    );
+    assert.include(nothing.message, "No finished review");
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
 

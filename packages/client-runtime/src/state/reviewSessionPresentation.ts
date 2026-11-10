@@ -5,6 +5,7 @@ import {
   isViewerSource,
   reviewerAction,
   reviewerPointKind,
+  sourceNeedsTriage,
 } from "@t3tools/contracts";
 import type {
   ReviewerAction,
@@ -178,6 +179,10 @@ export function reviewRoundStatusLine(input: {
   readonly round: ReviewRound;
   readonly sources: ReadonlyArray<ReviewSource>;
   readonly items: ReadonlyArray<Pick<ReviewItem, "number" | "applyState">>;
+  /** Every point of the review, so a review whose points are all settled is not "ready". */
+  readonly allItems?:
+    | ReadonlyArray<Pick<ReviewItem, "sourceIds" | "githubState" | "decision" | "applyState">>
+    | undefined;
   /** Reviewing someone else's pull request: an applied round is a pending review, not a push. */
   readonly reviewer?: boolean;
 }): string {
@@ -200,7 +205,11 @@ export function reviewRoundStatusLine(input: {
     const doing = input.reviewer === true ? "Preparing your pending review" : "Applying";
     return working === undefined ? `${doing}…` : `${doing}: working on #${working.number}…`;
   }
-  const ready = sources.filter((source) => source.state === "done" && !source.triaged);
+  const ready = sources.filter((source) =>
+    input.allItems === undefined
+      ? source.state === "done" && !source.triaged
+      : sourceNeedsTriage(source, input.allItems),
+  );
   const waiting = sources.filter(
     (source) => source.state === "reviewing" || source.state === "requested",
   );

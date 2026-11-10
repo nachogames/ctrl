@@ -1,4 +1,9 @@
-import type { ReviewItem, ReviewSessionSnapshot, ReviewSource } from "@t3tools/contracts";
+import type {
+  ReviewItem,
+  ReviewPendingRequest,
+  ReviewSessionSnapshot,
+  ReviewSource,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -13,7 +18,6 @@ import {
   sameReviewItem,
   toggledDecision,
   triageButton,
-  triageInFlight,
   trimReviewExcerpt,
 } from "./reviewSessionViews.ts";
 
@@ -140,16 +144,10 @@ describe("review tab helpers", () => {
   });
 });
 
-describe("triage in flight", () => {
+describe("triage button", () => {
   const triaged = (id: string, done: boolean) =>
     ({ id, round: 1, kind: "copilot", state: "done", triaged: done }) as ReviewSource;
-
-  it("lasts until every review it covered is triaged, and ends if one is gone", () => {
-    expect(triageInFlight([], [triaged("A", false)])).toBe(false);
-    expect(triageInFlight(["A", "B"], [triaged("A", true), triaged("B", false)])).toBe(true);
-    expect(triageInFlight(["A", "B"], [triaged("A", true), triaged("B", true)])).toBe(false);
-    expect(triageInFlight(["A"], [])).toBe(false);
-  });
+  const pending = { tag: "triage" } as ReviewPendingRequest;
 
   it("shows Triage disabled before any review is in, busy while triaging, gone once done", () => {
     const view = (
@@ -157,24 +155,32 @@ describe("triage in flight", () => {
       state: "collecting" | "applying" = "collecting",
     ) => ({ round: round(1, state), current: true, sources, items: [] }) as never;
     const reviewing = { ...triaged("A", false), state: "reviewing" } as ReviewSource;
-    expect(triageButton(view([reviewing]), [])).toEqual({
+    expect(triageButton(view([reviewing]), [], null)).toEqual({
       label: "Triage",
       busy: false,
       ready: false,
     });
-    expect(triageButton(view([]), [])).toEqual({ label: "Triage", busy: false, ready: false });
-    expect(triageButton(view([triaged("A", false), triaged("B", false)]), [])).toEqual({
+    expect(triageButton(view([]), [], null)).toEqual({
+      label: "Triage",
+      busy: false,
+      ready: false,
+    });
+    expect(triageButton(view([triaged("A", false), triaged("B", false)]), [], null)).toEqual({
       label: "Triage both",
       busy: false,
       ready: true,
     });
-    expect(triageButton(view([triaged("A", false)]), ["A"])).toEqual({
+    // Busy from the review's own pending request, on any client.
+    expect(triageButton(view([triaged("A", false)]), [], pending)).toEqual({
       label: "Triaging…",
       busy: true,
       ready: false,
     });
-    expect(triageButton(view([triaged("A", true)]), ["A"])).toBeNull();
-    expect(triageButton(view([triaged("A", false)], "applying"), [])).toBeNull();
+    expect(triageButton(view([triaged("A", true)]), [], null)).toBeNull();
+    expect(triageButton(view([triaged("A", false)], "applying"), [], null)).toBeNull();
+    // Everything a review raised is resolved on GitHub: nothing to triage.
+    const resolved = { sourceIds: ["A"], githubState: "resolved" } as unknown as ReviewItem;
+    expect(triageButton(view([triaged("A", false)]), [resolved], null)).toBeNull();
   });
 });
 
@@ -236,7 +242,7 @@ it("carries points still open from an earlier round into the current round's rec
   expect(views).toHaveLength(2);
   expect(views[0]!.history?.map((item) => item.number)).toEqual([1, 2]);
   expect(views[1]!.items.map((item) => item.number)).toEqual([1]);
-  expect(triageButton(views[0]!, [])).toEqual({
+  expect(triageButton(views[0]!, snapshot.items, null)).toEqual({
     label: "Recheck 2 against the new code",
     ready: true,
     busy: false,
@@ -244,7 +250,8 @@ it("carries points still open from an earlier round into the current round's rec
   expect(
     triageButton(
       { ...views[0]!, history: [{ ...point(2, 2, true), githubState: "resolved" }] },
-      [],
+      snapshot.items,
+      null,
     ),
   ).toBeNull();
 });

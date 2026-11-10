@@ -15,6 +15,7 @@ import CtrlMigration0004 from "./CtrlMigrations/004_ReviewSourceHistory.ts";
 import CtrlMigration0005 from "./CtrlMigrations/005_ReviewViewer.ts";
 import CtrlMigration0006 from "./CtrlMigrations/006_ReviewPostAs.ts";
 import CtrlMigration0007 from "./CtrlMigrations/007_ReviewWriteup.ts";
+import CtrlMigration0008 from "./CtrlMigrations/008_ReviewPendingRequest.ts";
 
 export const CTRL_MIGRATIONS_TABLE = "ctrl_sql_migrations";
 
@@ -26,6 +27,7 @@ export const ctrlMigrationEntries = [
   [5, "ReviewViewer", CtrlMigration0005],
   [6, "ReviewPostAs", CtrlMigration0006],
   [7, "ReviewWriteup", CtrlMigration0007],
+  [8, "ReviewPendingRequest", CtrlMigration0008],
 ] as const;
 
 /**

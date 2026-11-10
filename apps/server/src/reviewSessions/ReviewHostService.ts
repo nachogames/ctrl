@@ -269,8 +269,9 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(failure));
 
   /**
-   * The chat beside the panel that a review action runs in: any live chat of the review's project.
-   * It takes the review over first, so the action never lands in a chat the user is not looking at.
+   * The chat beside the panel that a review action runs in: any live chat of the review's project
+   * whose group is not already reviewing another pull request. It takes the review over first, so
+   * the action never lands in a chat the user is not looking at.
    */
   const besideChat = Effect.fn("ReviewHostService.besideChat")(function* (
     threadId: ThreadId | undefined,
@@ -286,7 +287,42 @@ const make = Effect.gen(function* () {
       shell.lineage.relationshipToParent === "subagent"
     )
       return null;
+    if (
+      shell.groupId != null &&
+      (yield* reviews.reviewsOtherPullRequest({ sessionId: session.id, groupId: shell.groupId }))
+    )
+      return null;
     return shell;
+  });
+
+  /** Whether the review's own chat can keep it: live, in a group that reviews only this PR. */
+  const ownChatFits = Effect.fn("ReviewHostService.ownChatFits")(function* (
+    session: ReviewSession,
+  ) {
+    return (
+      (yield* reviews.hasLiveReviewChat(session.id)) &&
+      !(yield* reviews.reviewsOtherPullRequest({ sessionId: session.id, groupId: session.groupId }))
+    );
+  });
+
+  /** Moves the review into its pull request's own Review chat and group. */
+  const moveToReviewChat = Effect.fn("ReviewHostService.moveToReviewChat")(function* (
+    session: ReviewSession,
+  ) {
+    const { thread, groupId } = yield* ensureReviewChat({
+      projectId: session.projectId,
+      host: session.pullRequest.host,
+      repository: session.pullRequest.repository,
+      number: session.pullRequest.number,
+    });
+    yield* reviews.open({
+      key: session.pullRequest,
+      url: session.url,
+      projectId: thread.projectId,
+      groupId,
+      reviewThreadId: thread.id,
+      headSha: null,
+    });
   });
 
   const takeOver = Effect.fn("ReviewHostService.takeOver")(function* (
@@ -313,21 +349,7 @@ const make = Effect.gen(function* () {
             yield* takeOver(session, beside);
             return;
           }
-          if (yield* reviews.hasLiveReviewChat(input.sessionId)) return;
-          const { thread, groupId } = yield* ensureReviewChat({
-            projectId: session.projectId,
-            host: session.pullRequest.host,
-            repository: session.pullRequest.repository,
-            number: session.pullRequest.number,
-          });
-          yield* reviews.open({
-            key: session.pullRequest,
-            url: session.url,
-            projectId: thread.projectId,
-            groupId,
-            reviewThreadId: thread.id,
-            headSha: null,
-          });
+          if (!(yield* ownChatFits(session))) yield* moveToReviewChat(session);
         }),
       )
       .pipe(
@@ -342,6 +364,7 @@ const make = Effect.gen(function* () {
           const { session } = yield* reviews.read(input.sessionId);
           const beside = yield* besideChat(input.targetThreadId, session);
           if (beside !== null) yield* takeOver(session, beside);
+          else if (!(yield* ownChatFits(session))) yield* moveToReviewChat(session);
         }),
       )
       .pipe(
