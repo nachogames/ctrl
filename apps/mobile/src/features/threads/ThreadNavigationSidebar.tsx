@@ -40,6 +40,7 @@ import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-pref
 import { useThreadListNow } from "./use-thread-list-now";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
+import { useHostBatteries } from "../../state/environments";
 import { usePendingNewTasks, type PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
@@ -187,6 +188,7 @@ function ThreadNavigationSidebarPane(
       label: connection.environmentLabel,
     }))
     .sort((left, right) => left.label.localeCompare(right.label));
+  const batteries = useHostBatteries();
   const availableEnvironmentIds = new Set(
     environments.map((environment) => environment.environmentId),
   );
@@ -351,14 +353,19 @@ function ThreadNavigationSidebarPane(
           subtitle: "Show threads from every environment",
           state: options.selectedEnvironmentId === null ? "on" : "off",
         },
-        ...environments.map((environment) => ({
-          id: `environment:${environment.environmentId}`,
-          title: environment.label,
-          state:
-            options.selectedEnvironmentId === environment.environmentId
-              ? ("on" as const)
-              : ("off" as const),
-        })),
+        ...environments.map((environment) => {
+          const battery = batteries.get(environment.environmentId);
+          return {
+            id: `environment:${environment.environmentId}`,
+            title: environment.label,
+            state:
+              options.selectedEnvironmentId === environment.environmentId
+                ? ("on" as const)
+                : ("off" as const),
+            // MaterialMenuPopup draws this, with its percent, after the title.
+            ...(battery === undefined ? {} : { battery }),
+          };
+        }),
       ],
     },
     ...(projectFilterOptions.length === 0
