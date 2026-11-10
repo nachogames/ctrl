@@ -27,6 +27,7 @@ const PreferenceFields = {
     truncated: Schema.Boolean,
   }),
   reviewInstructions: ServerSettings.fields.reviewInstructions,
+  reviewWritingStyle: ServerSettings.fields.reviewWritingStyle,
 };
 const shared = {
   failure: OrchestratorMcpFailure,
@@ -42,7 +43,7 @@ const shared = {
 const EnvironmentReadTool = Tool.make("t3_environment_read", {
   ...shared,
   description:
-    "Read this server's identity and preferences. Providers and models: `orchestrator_capabilities`. reviewInstructions are the user's own rules for pull request reviews, added to every review brief.",
+    "Read this server's identity and preferences. Providers and models: `orchestrator_capabilities`. reviewInstructions are the user's own rules for pull request reviews, added to every review brief. reviewWritingStyle is how review findings are written: the selected style and the user's own styles.",
   parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
   success: Schema.Struct({
     environmentId: ExecutionEnvironmentDescriptor.fields.environmentId,
@@ -57,7 +58,7 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
 const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update", {
   ...shared,
   description:
-    "Update environment-wide preferences. Live full-access or default caller thread only. Omitted fields are unchanged; `customInstructions: ''` clears it. reviewInstructions replaces the whole text of the user's review rules; read it first and keep the rules you were not asked to change. A project that overrides review rules in Settings keeps its own.",
+    "Update environment-wide preferences. Live full-access or default caller thread only. Omitted fields are unchanged; `customInstructions: ''` clears it. reviewInstructions replaces the whole text of the user's review rules; read it first and keep the rules you were not asked to change. A project that overrides review rules in Settings keeps its own. reviewWritingStyle: selected is a built-in style (outcome, skimmable, plain) or a custom style's name; custom replaces the whole list of the user's own styles, so keep the ones you were not asked to change.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     defaultThreadEnvMode: ServerSettingsPatch.fields.defaultThreadEnvMode,
@@ -66,6 +67,7 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
     backgroundActivity: Schema.optionalKey(Schema.Struct({ profile: BackgroundActivityProfile })),
     sourceControlWritingStyle: ServerSettingsPatch.fields.sourceControlWritingStyle,
     reviewInstructions: ServerSettingsPatch.fields.reviewInstructions,
+    reviewWritingStyle: ServerSettingsPatch.fields.reviewWritingStyle,
   }),
   success: Schema.Struct(PreferenceFields),
 }).annotate(Tool.Destructive, true);

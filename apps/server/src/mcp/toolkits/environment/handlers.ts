@@ -16,6 +16,7 @@ export function preferences(settings: ServerSettings) {
     backgroundActivity,
     sourceControlWritingStyle,
     reviewInstructions,
+    reviewWritingStyle,
   } = settings;
   const characters = Array.from(sourceControlWritingStyle.customInstructions);
   return {
@@ -29,6 +30,7 @@ export function preferences(settings: ServerSettings) {
       truncated: characters.length > 4000,
     },
     reviewInstructions,
+    reviewWritingStyle,
   };
 }
 const access = Effect.gen(function* () {

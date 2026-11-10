@@ -116,6 +116,8 @@ interface ItemRow {
   readonly viewed: number;
   readonly side_thread_id: string | null;
   readonly post_as: string | null;
+  readonly writeup: string | null;
+  readonly writeup_style: string | null;
   readonly updated_at: string;
 }
 
@@ -245,6 +247,8 @@ const itemFromRow = Effect.fnUntraced(
       viewed: row.viewed === 1,
       sideThreadId: row.side_thread_id,
       postAs: row.post_as,
+      writeup: row.writeup,
+      writeupStyle: row.writeup_style,
       updatedAt: row.updated_at,
     });
   },
@@ -650,7 +654,7 @@ const make = Effect.gen(function* () {
             github_state, path, line, summary, short_name, problem, impact, solution, skip_reason,
             excerpt, recommendation, suggested_decision, already_fixed_in_json, decision,
             decided_by, reason, conclusion, draft_reply, draft_reply_revision, draft_reply_by,
-            apply_state, stale, viewed, side_thread_id, updated_at, post_as
+            apply_state, stale, viewed, side_thread_id, updated_at, post_as, writeup, writeup_style
           ) VALUES (
             ${sessionId}, ${item.number}, ${item.round}, ${item.lastSeenRound},
             ${encodeStringList(item.sources)}, ${encodeStringList(item.githubThreadIds)},
@@ -661,7 +665,8 @@ const make = Effect.gen(function* () {
             ${item.decision}, ${item.decidedBy}, ${item.reason}, ${item.conclusion},
             ${item.draftReply}, ${item.draftReplyRevision}, ${item.draftReplyBy},
             ${item.applyState}, ${item.stale ? 1 : 0}, ${item.viewed ? 1 : 0},
-            ${item.sideThreadId}, ${item.updatedAt}, ${item.postAs ?? null}
+            ${item.sideThreadId}, ${item.updatedAt}, ${item.postAs ?? null}, ${item.writeup ?? null},
+            ${item.writeupStyle ?? null}
           )
           ON CONFLICT (session_id, number) DO UPDATE SET
             round = excluded.round,
@@ -692,6 +697,8 @@ const make = Effect.gen(function* () {
             viewed = excluded.viewed,
             side_thread_id = excluded.side_thread_id,
             post_as = excluded.post_as,
+            writeup = excluded.writeup,
+            writeup_style = excluded.writeup_style,
             updated_at = excluded.updated_at
         `;
         for (const sourceKey of item.sourceKeys) {

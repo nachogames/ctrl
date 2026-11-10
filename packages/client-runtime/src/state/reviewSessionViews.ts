@@ -109,6 +109,22 @@ const sameValue = (a: unknown, b: unknown): boolean => {
  * Whether a point the subscription sent again is unchanged. Every review change re-sends the
  * whole snapshot as new objects, so rows compare by value to skip re-rendering the rest.
  */
+/**
+ * The round's live points not written in `style`, the selected writing style: the Review tab
+ * offers to rewrite them. Raw feedback triage has not explained yet has nothing to rewrite.
+ */
+export function pointsToRestyle(
+  view: Pick<ReviewRoundView, "current" | "round" | "items">,
+  style: string,
+): ReadonlyArray<ReviewItem> {
+  if (!view.current || view.round.state !== "collecting") return [];
+  return view.items.filter(
+    (item) =>
+      (item.writeup?.trim() || item.solution.trim()) !== "" &&
+      (item.writeupStyle ?? null) !== style,
+  );
+}
+
 export function sameReviewItem(a: ReviewItem, b: ReviewItem): boolean {
   if (a === b) return true;
   const keys = Object.keys(a) as Array<keyof ReviewItem>;

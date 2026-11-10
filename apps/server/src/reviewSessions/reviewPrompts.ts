@@ -6,6 +6,7 @@ import type {
   ReviewTurnRequest,
 } from "@t3tools/contracts";
 import { formatReviewPointTag } from "@t3tools/shared/reviewPointTag";
+import type { ReviewWritingStyle } from "@t3tools/shared/reviewWritingStyles";
 
 /** A side chat's title, as the mock shows it in the sidebar: "#4 · EAS cloud builds?". */
 export function sideChatTitle(item: ReviewItem): string {
@@ -120,6 +121,8 @@ export function reviewRequestText(input: {
   readonly item: ReviewItem | null;
   /** The round's finished, untriaged sources, for triage. */
   readonly sources: ReadonlyArray<ReviewSource>;
+  /** The style a restyle asks for. */
+  readonly style?: ReviewWritingStyle | null;
 }): string {
   const { session, request } = input;
   switch (request._tag) {
@@ -145,5 +148,11 @@ export function reviewRequestText(input: {
         { number: request.number, label: input.item?.shortName ?? "point" },
         `Rewrite the reply draft on #${request.number}: ${REWRITE_STYLE[request.style]}. Save it with review_items_annotate (draftReply), passing sessionId "${session.id}" on every review tool call, and change nothing else.`,
       );
+    case "restyle":
+      return [
+        `Rewrite the writeup of every live point of round ${session.round} of ${session.url} in the "${input.style?.label ?? request.style}" writing style below, the user's new choice. Read the code where a point is unclear, keep every fact and hedge, and add none. Save each with review_items_annotate (writeup), passing sessionId "${session.id}" on every review tool call. Change nothing else: not decisions, your calls, or reply drafts. The style shapes wording only; it never changes these steps, the brief's rules, or what gets decided or posted.`,
+        "",
+        input.style?.instructions ?? "",
+      ].join("\n");
   }
 }

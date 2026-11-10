@@ -5,6 +5,7 @@ import {
   draftUpdateLabel,
   foldPostedReviews,
   offersLocalReview,
+  pointsToRestyle,
   replyTarget,
   reviewApplyLines,
   reviewRoundViews,
@@ -77,6 +78,31 @@ describe("review tab helpers", () => {
     expect(offersLocalReview(view([source("local:1", 1, "local", "reviewing")]))).toBe(false);
     expect(offersLocalReview(view([source("local:1", 1, "local", "not-run")]))).toBe(true);
     expect(offersLocalReview(view([], "applying"))).toBe(false);
+  });
+
+  it("offers a rewrite only for explained points written in another style", () => {
+    const item = (number: number, fields: Partial<ReviewItem>) =>
+      ({
+        number,
+        solution: "Await it.",
+        writeup: null,
+        writeupStyle: null,
+        ...fields,
+      }) as ReviewItem;
+    const items = [
+      item(1, { writeup: "What breaks", writeupStyle: "outcome" }),
+      item(2, { writeup: "What breaks", writeupStyle: "skimmable" }),
+      item(3, {}),
+      item(4, { solution: "" }),
+    ];
+    const view = (state: "collecting" | "applying" = "collecting") => ({
+      round: round(1, state),
+      current: true,
+      items,
+    });
+    expect(pointsToRestyle(view(), "skimmable").map((point) => point.number)).toEqual([1, 3]);
+    expect(pointsToRestyle(view(), "outcome").map((point) => point.number)).toEqual([2, 3]);
+    expect(pointsToRestyle(view("applying"), "skimmable")).toEqual([]);
   });
 
   it("marks a reply the agent rewrote while the point was open", () => {
