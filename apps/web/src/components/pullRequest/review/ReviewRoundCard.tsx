@@ -31,8 +31,6 @@ import { ReviewWritingStyleCard } from "./ReviewRestyle";
 import { ReviewLocalOfferRow, ReviewSourceRow } from "./ReviewSourceRow";
 import { useReviewCommand } from "./useReviewCommand";
 
-const NO_SOURCE_IDS: ReadonlyArray<string> = [];
-
 const SECTION_LABEL =
   "px-1 pt-1 text-2xs font-medium tracking-wider text-muted-foreground uppercase";
 
@@ -71,12 +69,8 @@ export function ReviewRoundCard({
   openRounds?: ReadonlyArray<ReviewHistoryRound> | undefined;
 }) {
   const [collapsed, setCollapsed] = useState(!view.current);
-  // The reviews a Triage click covered. The request only queues the agent's turn; the triage
-  // runs until the agent marks each of them triaged. Keyed so a new round or session drops it.
-  const [triage, setTriage] = useState<{
-    readonly key: string;
-    readonly ids: ReadonlyArray<string>;
-  } | null>(null);
+  // Only while the click's request is on its way; the server's pending request takes over.
+  const [sendingTriage, setSendingTriage] = useState(false);
   const [startingLocal, setStartingLocal] = useState(false);
   const canRequest = useAtomValue(reviewSessionEnvironment.request.permissionAtom(environmentId));
   const canRunLocal = useAtomValue(
@@ -87,10 +81,10 @@ export function ReviewRoundCard({
     reviewSessionEnvironment.runLocalReview,
     "Could not start your review",
   );
-  const triageKey = `${sessionId}:${view.round.round}`;
   const triageButtonState = triageButton(
     view,
-    triage?.key === triageKey ? triage.ids : NO_SOURCE_IDS,
+    view.sessionItems ?? view.items,
+    view.pendingRequest,
   );
   const offerLocal = offersLocalReview(view);
   // Open points from an earlier commit wait here with the rest until a recheck brings them back.
@@ -110,20 +104,12 @@ export function ReviewRoundCard({
   const viewed = view.items.filter((item) => item.viewed).length;
 
   const startTriage = async () => {
-    const record = {
-      key: triageKey,
-      ids: view.sources
-        .filter((source) => source.state === "done" && !source.triaged)
-        .map((source) => source.id),
-    };
-    setTriage(record);
-    const result = await request({
+    setSendingTriage(true);
+    await request({
       environmentId,
       input: { sessionId, targetThreadId, request: { _tag: "triage" } },
     });
-    if (result._tag === "Failure") {
-      setTriage((current) => (current === record ? null : current));
-    }
+    setSendingTriage(false);
   };
   const startLocal = async () => {
     setStartingLocal(true);
@@ -157,7 +143,7 @@ export function ReviewRoundCard({
           {triageButtonState === null ? null : (
             <Button
               size="xs"
-              disabled={!canRequest || !triageButtonState.ready}
+              disabled={!canRequest || !triageButtonState.ready || sendingTriage}
               onClick={() => void startTriage()}
             >
               <SparklesIcon aria-hidden="true" />

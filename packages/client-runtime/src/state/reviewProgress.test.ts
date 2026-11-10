@@ -104,6 +104,14 @@ describe("review progress", () => {
     expect(reviewProgress({ ...reviewing, sources: [...reviewing.sources, local] }).headline).toBe(
       "Triage 3 findings from your review",
     );
+    // Everything it raised is already resolved on GitHub: nothing waits for triage.
+    expect(
+      reviewProgress({
+        ...reviewing,
+        sources: [...reviewing.sources, local],
+        items: [...reviewing.items, issue(90, "local:1")],
+      }).headline,
+    ).not.toBe("Triage 3 findings from your review");
     const running = { ...local, state: "reviewing", commitSha: null } as ReviewSource;
     expect(
       reviewProgress({ ...reviewing, sources: [...reviewing.sources, running] }).headline,

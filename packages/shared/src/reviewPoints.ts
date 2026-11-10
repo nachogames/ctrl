@@ -1,4 +1,4 @@
-import type { ReviewItem } from "@t3tools/contracts";
+import type { ReviewItem, ReviewSource } from "@t3tools/contracts";
 
 /**
  * Whether a review point still needs something. A point with a GitHub thread is open until the
@@ -12,4 +12,18 @@ export const isOpenReviewPoint = (
   if (item.githubState !== null) return item.githubState !== "resolved";
   if (item.decision === "decline") return false;
   return item.applyState === "pending" || item.applyState === "working";
+};
+
+/**
+ * Whether a finished review still waits for triage: untriaged, and something it raised is still
+ * open. Feedback all resolved on GitHub needs nothing; a review with no linked point yet (a
+ * review body) still does.
+ */
+export const sourceNeedsTriage = (
+  source: Pick<ReviewSource, "id" | "state" | "triaged" | "failed">,
+  items: ReadonlyArray<Pick<ReviewItem, "sourceIds" | "githubState" | "decision" | "applyState">>,
+): boolean => {
+  if (source.state !== "done" || source.triaged || source.failed === true) return false;
+  const raised = items.filter((item) => item.sourceIds.includes(source.id));
+  return raised.length === 0 || raised.some(isOpenReviewPoint);
 };

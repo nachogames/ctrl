@@ -1,5 +1,5 @@
 import { isMinePoint, isReviewOverview, isViewerSource } from "@t3tools/contracts";
-import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
+import { isOpenReviewPoint, sourceNeedsTriage } from "@t3tools/shared/reviewPoints";
 import type {
   PullRequestCheck,
   PullRequestReviewDecision,
@@ -127,10 +127,7 @@ export function reviewProgress(input: ReviewProgressInput): ReviewProgress {
     (source) => source.kind === "local" && source.state === "reviewing",
   );
   const untriaged = input.sources
-    .filter(
-      (source) =>
-        source.kind === "local" && source.state === "done" && !source.failed && !source.triaged,
-    )
+    .filter((source) => source.kind === "local" && sourceNeedsTriage(source, input.items))
     .reduce((count, source) => count + source.commentCount, 0);
 
   if (input.role === "reviewer") {

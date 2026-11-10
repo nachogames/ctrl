@@ -7,6 +7,7 @@ import {
   ReviewSource,
   ReviewSourceComment,
   ReviewAlreadyFixedIn,
+  ReviewPendingRequest,
   type ReviewGithubState,
   type ProjectId,
   type ThreadGroupId,
@@ -40,6 +41,7 @@ interface SessionRow {
   readonly author_login: string | null;
   readonly viewer_login: string | null;
   readonly viewer_requested: number;
+  readonly pending_request_json: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -141,24 +143,38 @@ const sqlError = (operation: string) => (cause: unknown) =>
 const decodeError = (operation: string) => (cause: Schema.SchemaError) =>
   PersistenceDecodeError.fromSchemaError(operation, cause);
 
-const sessionFromRow = (row: SessionRow) =>
-  decodeSession({
-    id: row.session_id,
-    projectId: row.project_id,
-    pullRequest: { host: row.host, repository: row.repository, number: row.number },
-    url: row.url,
-    groupId: row.group_id,
-    reviewThreadId: row.review_thread_id,
-    phase: row.phase,
-    round: row.round,
-    headSha: row.head_sha,
-    nextNumber: row.next_number,
-    authorLogin: row.author_login,
-    viewerLogin: row.viewer_login,
-    viewerRequested: row.viewer_requested === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }).pipe(Effect.mapError(decodeError("ReviewSession")));
+const decodePendingRequest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ReviewPendingRequest),
+);
+
+// Runs once per listed row; a span each would swamp the trace.
+const sessionFromRow = Effect.fnUntraced(
+  function* (row: SessionRow) {
+    const pendingRequest =
+      row.pending_request_json === null
+        ? null
+        : yield* decodePendingRequest(row.pending_request_json);
+    return yield* decodeSession({
+      id: row.session_id,
+      projectId: row.project_id,
+      pullRequest: { host: row.host, repository: row.repository, number: row.number },
+      url: row.url,
+      groupId: row.group_id,
+      reviewThreadId: row.review_thread_id,
+      phase: row.phase,
+      round: row.round,
+      headSha: row.head_sha,
+      nextNumber: row.next_number,
+      authorLogin: row.author_login,
+      viewerLogin: row.viewer_login,
+      viewerRequested: row.viewer_requested === 1,
+      pendingRequest,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+  },
+  Effect.mapError(decodeError("ReviewSession")),
+);
 
 const roundFromRow = (row: RoundRow) =>
   decodeRound({
@@ -263,6 +279,11 @@ export class ReviewSessionRepository extends Context.Service<
   {
     readonly insertSession: (session: ReviewSession) => Effect.Effect<void, E>;
     readonly updateSession: (session: ReviewSession) => Effect.Effect<void, E>;
+    /** Records or clears the action in flight; `updateSession` leaves it alone. */
+    readonly setPendingRequest: (
+      sessionId: ReviewSessionId,
+      pending: ReviewPendingRequest | null,
+    ) => Effect.Effect<void, E>;
     readonly getSession: (id: ReviewSessionId) => Effect.Effect<Option.Option<ReviewSession>, E>;
     /** Hands the review to another chat, and that chat's group. */
     readonly setSessionReviewThread: (input: {
@@ -364,6 +385,7 @@ export class ReviewSessionRepository extends Context.Service<
       readonly threadId: ThreadId | null;
       readonly updatedAt: string;
     }) => Effect.Effect<void, E>;
+    /** Marks the points new code may have outdated: open, and not yet handled by an apply. */
     readonly markItemsStale: (sessionId: ReviewSessionId) => Effect.Effect<void, E>;
     /** The live point a side chat was started for. */
     readonly findSideChatItem: (
@@ -429,6 +451,14 @@ const make = Effect.gen(function* () {
             updated_at = ${session.updatedAt}
         WHERE session_id = ${session.id}
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("updateReviewSession"))),
+    ),
+    setPendingRequest: Effect.fn("ReviewSessionRepository.setPendingRequest")(
+      (sessionId, pending) =>
+        sql`
+          UPDATE review_sessions
+          SET pending_request_json = ${pending === null ? null : JSON.stringify(pending)}
+          WHERE session_id = ${sessionId}
+        `.pipe(Effect.asVoid, Effect.mapError(sqlError("setReviewPendingRequest"))),
     ),
     getSession: Effect.fn("ReviewSessionRepository.getSession")((id) =>
       sql<SessionRow>`SELECT * FROM review_sessions WHERE session_id = ${id}`.pipe(
@@ -621,7 +651,8 @@ const make = Effect.gen(function* () {
         sql<{ readonly session_id: string; readonly source_id: string }>`
         SELECT r.session_id, r.source_id
         FROM review_sources r JOIN review_sessions s ON s.session_id = r.session_id
-        WHERE r.thread_id = ${threadId} AND r.kind = 'local' AND s.phase <> 'done'
+        WHERE r.thread_id = ${threadId} AND r.kind = 'local' AND r.state <> 'done'
+          AND s.phase <> 'done'
         LIMIT 1
       `.pipe(
           Effect.mapError(sqlError("findLocalReviewSource")),
@@ -740,10 +771,15 @@ const make = Effect.gen(function* () {
       `.pipe(Effect.asVoid, Effect.mapError(sqlError("setReviewItemSideThread"))),
     ),
     markItemsStale: Effect.fn("ReviewSessionRepository.markItemsStale")((sessionId) =>
-      sql`UPDATE review_items SET stale = 1 WHERE session_id = ${sessionId}`.pipe(
-        Effect.asVoid,
-        Effect.mapError(sqlError("markReviewItemsStale")),
-      ),
+      // Only a point still waiting on someone can be outdated by new code: not one resolved on
+      // GitHub, declined, or already fixed by an apply.
+      sql`
+        UPDATE review_items SET stale = 1
+        WHERE session_id = ${sessionId}
+          AND apply_state NOT IN ('fixed', 'replied', 'resolved')
+          AND CASE WHEN github_state IS NULL THEN decision <> 'decline'
+                   ELSE github_state <> 'resolved' END
+      `.pipe(Effect.asVoid, Effect.mapError(sqlError("markReviewItemsStale"))),
     ),
     findSideChatItem: Effect.fn("ReviewSessionRepository.findSideChatItem")((threadId) =>
       sql<{ readonly session_id: string; readonly number: number }>`

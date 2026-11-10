@@ -99,6 +99,18 @@ export type ReviewVerdict = typeof ReviewVerdict.Type;
 export const ReviewReplyStyle = Schema.Literals(["shorter", "friendlier", "mention-commit"]);
 export type ReviewReplyStyle = typeof ReviewReplyStyle.Type;
 
+/**
+ * A review action sent to a chat and not finished yet: its run is queued or running. Cleared when
+ * that run ends, so every client shows the same busy state.
+ */
+export const ReviewPendingRequest = Schema.Struct({
+  tag: Schema.Literals(["triage", "apply", "re-review", "finish", "rewrite-reply", "restyle"]),
+  threadId: ThreadId,
+  messageId: TrimmedNonEmptyString,
+  requestedAt: IsoDateTime,
+});
+export type ReviewPendingRequest = typeof ReviewPendingRequest.Type;
+
 /** One live review per pull request per group; its review chat owns the list. */
 export const ReviewSession = Schema.Struct({
   id: ReviewSessionId,
@@ -116,6 +128,8 @@ export const ReviewSession = Schema.Struct({
   viewerLogin: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** The viewer is asked to review again (a re-request after their review). */
   viewerRequested: Schema.optional(Schema.Boolean),
+  /** Absent from servers that predate it. */
+  pendingRequest: Schema.optional(Schema.NullOr(ReviewPendingRequest)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

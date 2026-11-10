@@ -64,6 +64,9 @@ export function ReviewWritingStyleCard(props: {
   });
   const rewrite = useReviewCommand(reviewSessionEnvironment.request, "Could not rewrite");
   const [showExample, setShowExample] = useState(false);
+  // Only while the press's request is on its way; the server's pending request takes over.
+  const [sendingRewrite, setSendingRewrite] = useState(false);
+  const rewriting = sendingRewrite || props.view?.pendingRequest?.tag === "restyle";
   // The open form: a new style, or the custom style named `editing`, fixed when Edit opened.
   const [form, setForm] = useState<ReviewStyleDraft | null>(null);
   // A server from before writing styles has no setting to save.
@@ -230,17 +233,19 @@ export function ReviewWritingStyleCard(props: {
             <Button
               size="compact"
               tone="primary"
-              label={`Rewrite open points in ${selected.label}`}
-              disabled={!canRequest}
-              onPress={() =>
-                void rewrite({
+              label={rewriting ? "Rewriting…" : `Rewrite open points in ${selected.label}`}
+              disabled={!canRequest || rewriting}
+              onPress={async () => {
+                setSendingRewrite(true);
+                await rewrite({
                   environmentId: props.environmentId,
                   input: {
                     sessionId: props.sessionId,
                     request: { _tag: "restyle", style: selected.id },
                   },
-                })
-              }
+                });
+                setSendingRewrite(false);
+              }}
             />
           </View>
         )}

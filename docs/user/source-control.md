@@ -353,16 +353,22 @@ a **Review #N** chat in its own group, with an isolated checkout, and start an i
 review. It does not join the group of the chat that made the PR.
 The review workspace lists every round that still has something open, each with its reviews,
 then all open points together under one Triage. A round moves to History once everything in it is
-resolved. When the PR head changes, open points from an earlier commit are marked **code changed**
-or **not touched** until you choose **Recheck N against the new code**. Their decisions and reply
-drafts remain.
+resolved. When the PR head changes (a push, a merge from the base branch, a rebase), points that
+are still open are marked **code changed** or **not touched** until you choose **Recheck N against
+the new code**, because the new code may have answered them. Points resolved on GitHub, declined, or
+already fixed by an apply are left alone. Decisions and reply drafts remain. Feedback that is all
+resolved on GitHub needs no triage.
 Ask the agent to triage when you want explanations and recommendations, or to run an
 independent local review.
 Review actions such as **Triage** and **Apply** run in the chat you have open, which takes the
-review over first, keeping its rounds and decisions; that is also how you move a review. Any chat
-in the project can hold it, including its reviewer chat or a point's chat. A review can't move
-while its current chat is mid-turn. If every chat for the PR is gone, its **Review #N** chat takes
-it over. Ask about `#3` in any
+review over first, keeping its rounds and decisions. A chat whose group already reviews a different
+PR is skipped: the action runs in the review's own chat, or in the PR's **Review #N** chat when the
+review shares a group with other PRs, so each PR keeps its own group. To move a review on purpose,
+ask a chat to open it (`review_session_open` with the PR's URL). A review can't move while its
+current chat is mid-turn. Any chat of the review can triage, apply, decide (with your words) or
+hand in its own review; only your independent review's chat stays blind to the other reviews while
+it is still reviewing. A button shows **Triaging…** or **Applying…** on every device until that
+chat's turn ends; an apply whose turn ends before it finishes goes back to collecting. Ask about `#3` in any
 chat in the review's group, or open a point's own chat. Questions leave decisions alone;
 say `#3 fix` or `#3 decline` to decide. Conclusions and reply drafts stay with the point.
 

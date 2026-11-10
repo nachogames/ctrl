@@ -53,8 +53,6 @@ import { ReviewProgressCard } from "./ReviewProgressCard";
 import { ReviewWritingStyleCard } from "./ReviewWritingStyleCard";
 import { useReviewCommand } from "./useReviewCommand";
 
-const NO_IDS: ReadonlyArray<string> = [];
-
 /**
  * The Review tab: the pull request's review session, live while the tab has been opened. The
  * server owns every decision; this renders it and sends the user's acts, as desktop does.
@@ -146,10 +144,8 @@ function ReviewSession({
     "Could not start your review",
   );
   const [openNumber, setOpenNumber] = useState<number | null>(null);
-  const [triageSent, setTriageSent] = useState<{
-    readonly key: string;
-    readonly ids: ReadonlyArray<string>;
-  } | null>(null);
+  // Only while the press's request is on its way; the server's pending request takes over.
+  const [sendingTriage, setSendingTriage] = useState(false);
   const [startingLocal, setStartingLocal] = useState(false);
   // The round an Apply was sent for. The request only queues the agent's turn, so Apply stays
   // busy until the subscription shows the round has left collecting, or the server refuses.
@@ -234,19 +230,14 @@ function ReviewSession({
     );
   };
 
-  const startTriage = async (view: ReviewRoundView) => {
-    const record = {
-      key: roundKey,
-      ids: view.sources
-        .filter((source) => source.state === "done" && !source.triaged)
-        .map((source) => source.id),
-    };
-    setTriageSent(record);
-    const result = await triage({
+  const startTriage = async () => {
+    if (sendingTriage) return;
+    setSendingTriage(true);
+    await triage({
       environmentId,
       input: { sessionId, targetThreadId, request: { _tag: "triage" } },
     });
-    if (result._tag === "Failure") setTriageSent((sent) => (sent === record ? null : sent));
+    setSendingTriage(false);
   };
   const startLocal = async () => {
     setStartingLocal(true);
@@ -330,9 +321,9 @@ function ReviewSession({
           openRounds={openRounds}
           reviewer={reviewer}
           viewerLogin={viewerLogin}
-          triage={triageButton(current, triageSent?.key === roundKey ? triageSent.ids : NO_IDS)}
+          triage={triageButton(current, snapshot.items, session.pendingRequest)}
           canRequest={canRequest}
-          onTriage={() => void startTriage(current)}
+          onTriage={() => void startTriage()}
           offerLocal={offersLocalReview(current)}
           localDisabled={!canRunLocal || startingLocal}
           onRunLocal={() => void startLocal()}
@@ -366,7 +357,7 @@ function ReviewSession({
                 ).length
               }
               reviewer={reviewer}
-              sending={applySent === roundKey}
+              sending={applySent === roundKey || session.pendingRequest?.tag === "apply"}
               disabled={!canRequest}
               onApply={confirmApply}
             />

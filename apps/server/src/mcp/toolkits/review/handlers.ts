@@ -80,27 +80,15 @@ const reviewAccess = Effect.fn("ReviewToolkit.reviewAccess")(function* (input: {
 const LOCAL_ONLY =
   "This chat runs your independent review: it may not read the list (it holds the other reviews' comments) and may only hand in findings with review_source_submit.";
 
-/** The review chat does everything; a side chat discusses its point; the local review submits. */
-const requireReviewChat = (access: ReviewSessionService.ReviewSessionAccess, what: string) => {
-  if (access.role === "review") return Effect.void;
-  if (access.role === "local") return Effect.fail(invalid(LOCAL_ONLY));
-  return Effect.fail(
-    invalid(
-      `This side chat is about #${access.scopedToItem} only; ${what} happens in the review chat.`,
-    ),
-  );
-};
+/**
+ * Any chat of the review may act on it. Only a local review still running stays blind to the
+ * list, so the other reviews' comments cannot shape it; once it hands in, it is an ordinary chat.
+ */
+const requireReviewChat = (access: ReviewSessionService.ReviewSessionAccess, _what: string) =>
+  access.role === "local" ? Effect.fail(invalid(LOCAL_ONLY)) : Effect.void;
 
-const requireItemInScope = (access: ReviewSessionService.ReviewSessionAccess, number: number) => {
-  if (access.role === "local") return Effect.fail(invalid(LOCAL_ONLY));
-  return access.role === "side" && access.scopedToItem !== number
-    ? Effect.fail(
-        invalid(
-          `This side chat is about #${access.scopedToItem} only. Discuss #${number} in the review chat.`,
-        ),
-      )
-    : Effect.void;
-};
+const requireItemInScope = (access: ReviewSessionService.ReviewSessionAccess, _number: number) =>
+  access.role === "local" ? Effect.fail(invalid(LOCAL_ONLY)) : Effect.void;
 
 export const layer = McpToolAccess.toLayer(ReviewToolkit, {
   review_session_open: McpToolAccess.actsAsCaller((input) =>
@@ -190,14 +178,12 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
   review_source_submit: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const access = yield* reviewAccess(input);
-      if (access.localSourceId === null) {
-        return yield* invalid("Only the chat your local review runs in hands in its findings.");
-      }
       const sessions = yield* ReviewSessionService.ReviewSessionService;
       const source = yield* sessions
         .submitLocalFindings({
           sessionId: access.session.id,
           sourceId: access.localSourceId,
+          threadId: access.caller.id,
           headSha: input.headSha,
           findings: input.findings.map((finding) => ({
             path: finding.path ?? null,

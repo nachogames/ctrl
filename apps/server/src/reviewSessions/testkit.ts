@@ -327,6 +327,8 @@ export const chatShell = (
 
 export interface ReviewServiceHarness extends SyncHarness {
   readonly launched: Array<ThreadGroupLaunchService.ThreadGroupNewThreadInput>;
+  /** Pull requests linked to chats, as `thread#number`. */
+  readonly linked: Array<string>;
   readonly sent: Array<ThreadManagementService.ThreadManagementSendInput>;
   readonly shells: Map<ThreadId, OrchestrationV2ThreadShell>;
   readonly projectThreads: Array<OrchestrationV2ThreadShell>;
@@ -340,6 +342,7 @@ export interface ReviewServiceHarness extends SyncHarness {
 export const newHarness = (): ReviewServiceHarness => ({
   read: null,
   launched: [],
+  linked: [],
   sent: [],
   shells: new Map([[reviewThreadId, chatShell(reviewThreadId)]]),
   projectThreads: [],
@@ -375,6 +378,12 @@ export const makeReviewServiceLayer = (harness: ReviewServiceHarness) =>
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadShell: (threadId) => Effect.sync(() => harness.shells.get(threadId) ?? null),
           listProjectThreads: () => Effect.sync(() => harness.projectThreads),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              if (command.type === "thread.pull-request.link")
+                harness.linked.push(`${command.threadId}#${command.number}`);
+              return {} as never;
+            }),
           sendToThread: (input) =>
             harness.sendFails
               ? Effect.fail(
