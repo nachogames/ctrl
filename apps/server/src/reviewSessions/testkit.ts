@@ -19,6 +19,7 @@ import type { ProviderChangeRequestReviewRound } from "@t3tools/source-control-c
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as ServerSettings from "../serverSettings.ts";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 import * as ThreadGroupLaunchService from "../orchestration-v2/ThreadGroupLaunchService.ts";
@@ -355,6 +356,7 @@ export const makeReviewServiceLayer = (harness: ReviewServiceHarness) =>
         ReviewSessions.layer,
         ReviewSessionChanges.layer,
         NodeCrypto.layer,
+        ServerSettings.layerTest(),
         Layer.mock(ThreadGroupService.ThreadGroupService)({
           create: (input) =>
             Effect.sync(() => {

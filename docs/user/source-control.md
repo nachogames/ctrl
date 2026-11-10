@@ -372,6 +372,21 @@ override them. You can also ask the agent to change them for you ("from now on, 
 local review first"). Your rules can change the review's steps but never let it decide points,
 push, or follow instructions written in the PR.
 
+### Writing styles
+
+Pick how findings read in the **Writing style** card at the top of the Review tab, or in Settings →
+Source Control → **Review writing style**. **See example** shows the same finding in each style. The style holds for that review and every review after it.
+**Outcome first** (the default) says what breaks, why, and the fix. **Skimmable** suits ADHD
+readers: the failure first, then numbered fix steps. **Plain technical** uses
+short, single-idea sentences. Choose **New style** to write your own (**Start from** copies the
+selected style as a base). Edit or delete your styles from the card or the Settings list, or ask
+the agent ("save this as a style called Terse"). The built-in styles can't be changed.
+
+When the open points were written in another style, **Rewrite open points** puts them all in the
+one you picked. Only the wording changes: decisions and reply drafts stay as they are. The comments a
+review posts on GitHub use the same text you approved in the Review tab. Styles belong to each
+computer running T3 Code, and the built-in ones arrive with app updates.
+
 Marking points viewed is optional. **Apply** shows the work and replies for
 you to confirm, including the displayed recommendations, then runs in the review chat.
 Points without a decision or recommendation still need your call. It fixes accepted points, runs checks, commits
@@ -380,7 +395,7 @@ arrive in the same session; after applying, the next round lets you check them a
 
 On the mobile app, a PR with a review gets a **Review** tab, and the Pull Requests list marks a PR
 whose round is waiting on you. There you can read each point, choose Fix or Decline, mark it
-viewed, start **Triage**, and **Apply round**; **Next round** is Re-review on someone else's PR.
+viewed, change the writing style and rewrite the points, start **Triage**, and **Apply round**; **Next round** is Re-review on someone else's PR.
 The work runs in the review chat on your computer. Replies, point chats and starting a review stay
 on desktop and web.
 

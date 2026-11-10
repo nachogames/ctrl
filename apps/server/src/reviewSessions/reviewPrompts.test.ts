@@ -1,3 +1,4 @@
+import { resolveReviewWritingStyle } from "@t3tools/shared/reviewWritingStyles";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -102,5 +103,23 @@ describe("reviewRequestText", () => {
         sources: [],
       }),
     ).toMatch(/^\[#3 refresh loop\]\nRewrite the reply draft on #3: mention the commit/);
+  });
+
+  it("asks for the whole round in the newly chosen style, carrying its rules", () => {
+    const style = resolveReviewWritingStyle({
+      selected: "Terse",
+      custom: [{ name: "Terse", instructions: "One sentence per part." }],
+    });
+    const text = reviewRequestText({
+      session,
+      request: { _tag: "restyle", style: "Terse" },
+      item: null,
+      sources: [],
+      style,
+    });
+    expect(text).toMatch(/^Rewrite the writeup of every live point of round 2 /);
+    expect(text).toContain('in the "Terse" writing style');
+    expect(text).toContain("One sentence per part.");
+    expect(text).toContain("review_items_annotate (writeup)");
   });
 });

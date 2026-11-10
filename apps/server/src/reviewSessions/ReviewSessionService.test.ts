@@ -63,6 +63,30 @@ it.effect("keeps numbers and decisions when the same points are imported again",
       ],
     );
     assert.equal(again.snapshot.session.nextNumber, 4);
+
+    // A point gains a writeup on reimport only when it has none; restyling goes through annotate.
+    // Each records the selected style, which the Review tab compares to offer a rewrite.
+    const written = yield* reviews.importItems({
+      sessionId,
+      sourceIds: [],
+      items: [importItem("gh:T1", { writeup: "First style." })],
+    });
+    assert.equal(written.snapshot.items[0]?.writeup, "First style.");
+    yield* reviews.importItems({
+      sessionId,
+      sourceIds: [],
+      items: [importItem("gh:T1", { writeup: "Second style." })],
+    });
+    yield* reviews.annotate({ sessionId, number: 3, annotation: { writeup: "Restyled." } });
+    const read = yield* reviews.read(sessionId);
+    assert.deepEqual(
+      read.items.map((item) => [item.number, item.writeup ?? null, item.writeupStyle ?? null]),
+      [
+        [1, "First style.", "outcome"],
+        [2, null, null],
+        [3, "Restyled.", "outcome"],
+      ],
+    );
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
 

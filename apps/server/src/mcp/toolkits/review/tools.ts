@@ -88,6 +88,10 @@ const ImportItem = Schema.Struct({
   suggestedDecision: Schema.optional(ReviewSuggestedDecision),
   alreadyFixedIn: Schema.optional(ReviewAlreadyFixedIn),
   draftReply: Schema.optional(LongText),
+  writeup: Schema.optional(LongText).annotate({
+    description:
+      "The point as the user reads it and GitHub receives it, in the brief's writing style.",
+  }),
 });
 
 const ReviewSessionOpenTool = Tool.make("review_session_open", {
@@ -183,7 +187,7 @@ const ReviewItemsImportTool = Tool.make("review_items_import", {
 const ReviewItemsAnnotateTool = Tool.make("review_items_annotate", {
   ...reviewTool,
   description:
-    "Rewrite a point's text, your call (suggestedDecision, recommendation), alreadyFixedIn, a conclusion or the reply draft. Never changes the decision. A changed suggestedDecision makes the user view the point again. null clears a field.",
+    "Rewrite a point's text (writeup and the fields behind it), your call (suggestedDecision, recommendation), alreadyFixedIn, a conclusion or the reply draft. Never changes the decision. A changed suggestedDecision makes the user view the point again. null clears a field.",
   parameters: Schema.Struct({
     ...SessionTarget,
     number: ItemNumber,
@@ -199,6 +203,7 @@ const ReviewItemsAnnotateTool = Tool.make("review_items_annotate", {
     alreadyFixedIn: Schema.optional(Schema.NullOr(ReviewAlreadyFixedIn)),
     conclusion: Schema.optional(Schema.NullOr(LongText)),
     draftReply: Schema.optional(Schema.NullOr(LongText)),
+    writeup: Schema.optional(Schema.NullOr(LongText)),
   }),
   success: ItemResult,
 })

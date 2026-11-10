@@ -37,6 +37,11 @@ import {
 } from "@t3tools/contracts";
 import { parseReviewPointTag } from "@t3tools/shared/reviewPointTag";
 import { isOpenReviewPoint } from "@t3tools/shared/reviewPoints";
+import {
+  resolveReviewWritingStyle,
+  type ReviewWritingStyle,
+  reviewWritingStyles,
+} from "@t3tools/shared/reviewWritingStyles";
 import { normalizeThreadPullRequestKey } from "../sourceControl/threadPullRequests.ts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -56,6 +61,7 @@ import * as ThreadGroupLaunchService from "../orchestration-v2/ThreadGroupLaunch
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ReviewSessions from "../persistence/ReviewSessions.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as Settings from "../serverSettings.ts";
 import { checkDecisionQuote, decisionQuoteRefusalMessage } from "./decisionQuote.ts";
 import { latestUserMessageText } from "./latestUserMessage.ts";
 import * as ReviewSessionChanges from "./ReviewSessionChanges.ts";
@@ -96,6 +102,7 @@ export interface ReviewImportItem {
   readonly suggestedDecision: ReviewSuggestedDecision | null;
   readonly alreadyFixedIn: ReviewAlreadyFixedIn | null;
   readonly draftReply: string | null;
+  readonly writeup?: string | null | undefined;
 }
 
 export interface ReviewImportResult {
@@ -118,6 +125,7 @@ export interface ReviewItemAnnotation {
   readonly alreadyFixedIn?: ReviewAlreadyFixedIn | null | undefined;
   readonly conclusion?: string | null | undefined;
   readonly draftReply?: string | null | undefined;
+  readonly writeup?: string | null | undefined;
 }
 
 /** One problem the local review found; `slug` names the defect so later rounds match it. */
@@ -380,6 +388,12 @@ const make = Effect.gen(function* () {
   const writeLock = yield* Semaphore.make(1);
   const launches = yield* ThreadGroupLaunchService.ThreadGroupLaunchService;
   const providers = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  const settings = yield* Settings.ServerSettingsService;
+  /** The style a writeup saved now is in: the review chat writes in the selected one. */
+  const selectedStyle = settings.getSettings.pipe(
+    Effect.map((current) => resolveReviewWritingStyle(current.reviewWritingStyle).id),
+    Effect.orElseSucceed(() => null),
+  );
   // Two quick clicks must not start two chats.
   const launchLock = yield* Semaphore.make(1);
 
@@ -894,6 +908,7 @@ const make = Effect.gen(function* () {
         }
         yield* repo.markSourcesTriaged(session.id, input.sourceIds);
         const at = yield* now;
+        const style = yield* selectedStyle;
         let nextNumber = session.nextNumber;
         const created: Array<number> = [];
         const matched: Array<number> = [];
@@ -931,6 +946,11 @@ const make = Effect.gen(function* () {
                         }
                       : {}),
                   }
+                : {}),
+              // A point written before writing styles gets one; an existing writeup changes only
+              // through review_items_annotate.
+              ...(!hasText(item.writeup ?? null) && hasText(incoming.writeup ?? null)
+                ? { writeup: incoming.writeup ?? null, writeupStyle: style }
                 : {}),
               sourceKeys: union(item.sourceKeys, incoming.sourceKeys),
               sources: union(item.sources, incoming.sources),
@@ -995,6 +1015,9 @@ const make = Effect.gen(function* () {
             stale: false,
             viewed: false,
             sideThreadId: null,
+            ...(hasText(incoming.writeup ?? null)
+              ? { writeup: incoming.writeup ?? null, writeupStyle: style }
+              : { writeup: null, writeupStyle: null }),
             updatedAt: at,
           });
           created.push(number);
@@ -1029,6 +1052,12 @@ const make = Effect.gen(function* () {
           alreadyFixedIn:
             patch.alreadyFixedIn === undefined ? item.alreadyFixedIn : patch.alreadyFixedIn,
           conclusion: patch.conclusion === undefined ? item.conclusion : patch.conclusion,
+          ...(patch.writeup === undefined
+            ? {}
+            : {
+                writeup: patch.writeup,
+                writeupStyle: patch.writeup === null ? null : yield* selectedStyle,
+              }),
           suggestedDecision,
           // A new suggestion is something the user has not seen yet.
           viewed: suggestedDecision === item.suggestedDecision ? item.viewed : false,
@@ -1673,7 +1702,9 @@ const make = Effect.gen(function* () {
       // chats; from a review-only chat, a point chat, or another group it goes to the review chat.
       let targetThreadId = session.reviewThreadId;
       const beside =
-        request._tag === "rewrite-reply" || input.targetThreadId === undefined
+        request._tag === "rewrite-reply" ||
+        request._tag === "restyle" ||
+        input.targetThreadId === undefined
           ? null
           : yield* liveThread(input.targetThreadId);
       const access =
@@ -1728,6 +1759,24 @@ const make = Effect.gen(function* () {
       if (request._tag === "rewrite-reply") {
         item = yield* loadItem(session.id, request.number);
         yield* requireCurrent(session, item);
+      }
+      let style: ReviewWritingStyle | null = null;
+      if (request._tag === "restyle") {
+        const styles = yield* settings.getSettings.pipe(
+          Effect.map((current) => current.reviewWritingStyle),
+          Effect.mapError(
+            (cause) =>
+              new ReviewSessionError({
+                message: "Your writing styles could not be read.",
+                sessionId: session.id,
+                cause,
+              }),
+          ),
+        );
+        style = reviewWritingStyles(styles).find((entry) => entry.id === request.style) ?? null;
+        if (style === null) {
+          return yield* fail(`There is no writing style named "${request.style}".`, session.id);
+        }
       }
       if (request._tag === "apply") {
         // The panel shows "Waiting" on every point from the moment the user confirms.
@@ -1802,7 +1851,13 @@ const make = Effect.gen(function* () {
           commandId: CommandId.make(`review-request:${id}`),
           threadId: targetThreadId,
           messageId: MessageId.make(`message:review-request:${id}`),
-          text: reviewRequestText({ session: turnSession, request, item, sources: untriaged }),
+          text: reviewRequestText({
+            session: turnSession,
+            request,
+            item,
+            sources: untriaged,
+            style,
+          }),
           attachments: [],
           mode: "queue",
           // Sent as the system so the quote guard never reads it as the user's words.

@@ -169,9 +169,20 @@ it.effect("sends Triage, Apply and rewrites to the review chat as the system", (
     });
     assert.match(harness.sent[1]?.text ?? "", /^\[#1 build cache key\]\n/);
 
+    const unknownStyle = yield* Effect.flip(
+      reviews.requestTurn({ sessionId, request: { _tag: "restyle", style: "Loud" } }),
+    );
+    assert.include(unknownStyle.message, 'no writing style named "Loud"');
+    yield* reviews.requestTurn({
+      sessionId,
+      request: { _tag: "restyle", style: "skimmable" },
+    });
+    assert.match(harness.sent[2]?.text ?? "", /^Rewrite the writeup of every live point/);
+    assert.include(harness.sent[2]?.text ?? "", "The reader has ADHD.");
+
     yield* reviews.decide({ sessionId, number: 1, decision: "fix", authority: { _tag: "panel" } });
     yield* reviews.requestTurn({ sessionId, request: { _tag: "apply" } });
-    assert.include(harness.sent[2]?.text ?? "", "Apply round 1");
+    assert.include(harness.sent[3]?.text ?? "", "Apply round 1");
     assert.equal((yield* reviews.read(sessionId)).rounds[0]?.state, "applying");
   }).pipe(Effect.provide(makeReviewServiceLayer(harness)));
 });

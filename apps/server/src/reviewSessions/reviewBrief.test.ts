@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { reviewBrief } from "./reviewBrief.ts";
+import { resolveReviewWritingStyle } from "@t3tools/shared/reviewWritingStyles";
+
 import { sessionFixture } from "./testkit.ts";
 
 describe("reviewBrief", () => {
@@ -63,11 +65,27 @@ describe("reviewBrief", () => {
   });
 });
 
+it("writes every point, and every comment it posts, in the selected writing style", () => {
+  const fallback = reviewBrief(sessionFixture());
+  expect(fallback).toContain("## Writing style: Outcome first");
+  const skimmable = resolveReviewWritingStyle({ selected: "skimmable", custom: [] });
+  const brief = reviewBrief(sessionFixture(), undefined, skimmable);
+  expect(brief).toContain("## Writing style: Skimmable");
+  expect(brief).toContain(skimmable.instructions);
+  expect(brief).not.toContain("## Writing style: Outcome first");
+  const reviewer = reviewBrief(
+    sessionFixture({ authorLogin: "dan", viewerLogin: "NeilMcEachin" }),
+    undefined,
+    skimmable,
+  );
+  expect(reviewer).toContain("The body is the point's writeup");
+  expect(reviewer).toContain(skimmable.instructions);
+});
+
 it("publishes inline findings before fixing, then replies and resolves their saved threads", () => {
   const brief = reviewBrief(sessionFixture());
   expect(brief).toContain("comments: [{path, line, side, body}]");
-  expect(brief).toContain("**Problem:**");
-  expect(brief).toContain("**Solution:**");
+  expect(brief).toContain("Each inline comment's body is the point's writeup");
   expect(brief).toContain("githubThreadIds and applyState");
   expect(brief).toContain("Do not use bare #N labels on GitHub");
   expect(brief).toContain("Publishing the finding itself does not count as replying");

@@ -41,6 +41,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { AdvancedSettings } from "./AdvancedSettings";
+import { ReviewWritingStyleSetting } from "./ReviewWritingStyleSetting";
 import { searchableSetting } from "./settingsSearch";
 
 const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
@@ -332,6 +333,8 @@ export function SourceControlWritingSettingsSection() {
           />
         </div>
       </SettingsRow>
+
+      <ReviewWritingStyleSetting />
 
       <SettingsRow
         serverScoped

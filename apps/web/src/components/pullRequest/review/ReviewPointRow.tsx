@@ -214,18 +214,29 @@ export const ReviewPointRow = memo(function ReviewPointRow({
           </div>
           <ReviewPointExcerpt path={item.path} line={item.line} excerpt={item.excerpt} />
           <div className="flex flex-col gap-4 text-sm leading-relaxed">
-            <ChatMarkdown
-              text={`**Problem:** ${[item.problem, item.impact].filter(Boolean).join(" ")}`}
-              cwd={undefined}
-              environmentId={environmentId}
-              parseRawHtml
-            />
-            <ChatMarkdown
-              text={`**Solution:** ${item.solution}`}
-              cwd={undefined}
-              environmentId={environmentId}
-              parseRawHtml
-            />
+            {item.writeup?.trim() ? (
+              <ChatMarkdown
+                text={item.writeup}
+                cwd={undefined}
+                environmentId={environmentId}
+                parseRawHtml
+              />
+            ) : (
+              <>
+                <ChatMarkdown
+                  text={`**Problem:** ${[item.problem, item.impact].filter(Boolean).join(" ")}`}
+                  cwd={undefined}
+                  environmentId={environmentId}
+                  parseRawHtml
+                />
+                <ChatMarkdown
+                  text={`**Solution:** ${item.solution}`}
+                  cwd={undefined}
+                  environmentId={environmentId}
+                  parseRawHtml
+                />
+              </>
+            )}
             {decision === "decline" && item.skipReason ? (
               <ChatMarkdown
                 text={`**${

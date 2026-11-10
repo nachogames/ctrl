@@ -50,6 +50,7 @@ import { PullRequestCardGroup } from "../PullRequestControls";
 import type { PullRequestParams } from "../usePullRequestDiff";
 import { ReviewPointCard } from "./ReviewPointCard";
 import { ReviewProgressCard } from "./ReviewProgressCard";
+import { ReviewWritingStyleCard } from "./ReviewWritingStyleCard";
 import { useReviewCommand } from "./useReviewCommand";
 
 const NO_IDS: ReadonlyArray<string> = [];
@@ -318,6 +319,7 @@ function ReviewSession({
   return (
     <View className="w-full max-w-[760px] gap-4 self-center">
       <ReviewProgressCard progress={progress} />
+      <ReviewWritingStyleCard environmentId={environmentId} sessionId={sessionId} view={current} />
       {current === undefined ? (
         <Text className="text-sm text-foreground-muted">
           This review is finished. Its rounds are below.

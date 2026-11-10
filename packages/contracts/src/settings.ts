@@ -1027,6 +1027,27 @@ const SourceControlWritingStyleSetting = Schema.Union([
   LegacySourceControlWritingStyle,
 ]);
 
+/** A style the user saved for review findings; `selected` names it. */
+export const ReviewCustomWritingStyle = Schema.Struct({
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(40)),
+  instructions: TrimmedString.check(Schema.isMaxLength(8000)),
+});
+export type ReviewCustomWritingStyle = typeof ReviewCustomWritingStyle.Type;
+
+/**
+ * How review findings read in the Review tab and on GitHub. `selected` is a built-in style id
+ * (see `@t3tools/shared/reviewWritingStyles`) or the name of one of `custom`.
+ */
+export const ReviewWritingStyleSettings = Schema.Struct({
+  selected: TrimmedNonEmptyString.check(Schema.isMaxLength(40)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("outcome")),
+  ),
+  custom: Schema.Array(ReviewCustomWritingStyle)
+    .check(Schema.isMaxLength(20))
+    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type ReviewWritingStyleSettings = typeof ReviewWritingStyleSettings.Type;
+
 export const BranchNamingMode = Schema.Literals(["static", "semantic", "custom"]);
 export type BranchNamingMode = typeof BranchNamingMode.Type;
 
@@ -1523,6 +1544,9 @@ export const ServerSettings = Schema.Struct({
    * win where they conflict with its steps, never with its safety rules.
    */
   reviewInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  reviewWritingStyle: ReviewWritingStyleSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   pullRequestMergeMethod: Schema.NullOr(PullRequestMergeMethod).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1887,6 +1911,16 @@ export const ServerSettingsPatch = Schema.Struct({
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   reviewInstructions: Schema.optionalKey(TrimmedString),
+  /** `custom` replaces the whole list. */
+  reviewWritingStyle: Schema.optionalKey(
+    Schema.Struct({
+      // Not the struct's field: its decoding default would select "outcome" on a custom-only patch.
+      selected: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(40))),
+      custom: Schema.optionalKey(
+        Schema.Array(ReviewCustomWritingStyle).check(Schema.isMaxLength(20)),
+      ),
+    }),
+  ),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   observability: Schema.optionalKey(
     Schema.Struct({

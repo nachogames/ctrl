@@ -1,15 +1,7 @@
 /**
- * Ctrl's own schema migrations, kept apart from upstream T3 Code's.
- *
- * Upstream migrations keep upstream's ids in `effect_sql_migrations`, so a T3
- * sync takes them unchanged. Ctrl migrations number from 1 in
- * `ctrl_sql_migrations` and run after upstream's. Add new Ctrl migrations here,
- * never to Migrations.ts: the migrator skips every id at or below the highest
- * one a database recorded, so a fork id in upstream's ledger hides upstream
- * migrations that arrive later.
- *
- * A Ctrl migration runs against whatever upstream schema is current, which on a
- * new database is the latest one. Keep them additive.
+ * Ctrl's migrations: numbered from 1 in `ctrl_sql_migrations`, after upstream's. Never add them to
+ * Migrations.ts: a fork id in upstream's ledger hides upstream migrations that arrive later.
+ * They run against the latest upstream schema on a new database, so keep them additive.
  */
 import * as Effect from "effect/Effect";
 import * as Migrator from "effect/sql/Migrator";
@@ -22,6 +14,7 @@ import CtrlMigration0003 from "./CtrlMigrations/003_ReviewSessions.ts";
 import CtrlMigration0004 from "./CtrlMigrations/004_ReviewSourceHistory.ts";
 import CtrlMigration0005 from "./CtrlMigrations/005_ReviewViewer.ts";
 import CtrlMigration0006 from "./CtrlMigrations/006_ReviewPostAs.ts";
+import CtrlMigration0007 from "./CtrlMigrations/007_ReviewWriteup.ts";
 
 export const CTRL_MIGRATIONS_TABLE = "ctrl_sql_migrations";
 
@@ -32,6 +25,7 @@ export const ctrlMigrationEntries = [
   [4, "ReviewSourceHistory", CtrlMigration0004],
   [5, "ReviewViewer", CtrlMigration0005],
   [6, "ReviewPostAs", CtrlMigration0006],
+  [7, "ReviewWriteup", CtrlMigration0007],
 ] as const;
 
 /**

@@ -260,6 +260,13 @@ export const ReviewItem = Schema.Struct({
   draftReplyRevision: NonNegativeInt,
   draftReplyBy: Schema.NullOr(ReviewEditor),
   applyState: ReviewApplyState,
+  /**
+   * The point as the Review tab shows it and GitHub receives it, in the user's writing style.
+   * Absent or null on points from before writing styles: they show problem, impact and solution.
+   */
+  writeup: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The writing style `writeup` was saved in, so the Review tab can offer to rewrite it. */
+  writeupStyle: Schema.optional(Schema.NullOr(Schema.String)),
   /** For a point someone else already raised: post it as a +1 reply (default) or your own comment. */
   postAs: Schema.optional(Schema.NullOr(ReviewPostAs)),
   /** Not raised again since the round moved on. */
@@ -337,6 +344,10 @@ export const ReviewTurnRequest = Schema.Union([
   /** Reviewer flow: you approved; finish the review. */
   Schema.TaggedStruct("finish", {}),
   Schema.TaggedStruct("rewrite-reply", { number: PositiveInt, style: ReviewReplyStyle }),
+  /** Rewrite every live point of the round in writing style `style`, the newly selected one. */
+  Schema.TaggedStruct("restyle", {
+    style: TrimmedNonEmptyString.check(Schema.isMaxLength(40)),
+  }),
 ]);
 export type ReviewTurnRequest = typeof ReviewTurnRequest.Type;
 

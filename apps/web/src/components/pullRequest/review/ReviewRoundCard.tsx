@@ -27,6 +27,7 @@ import {
   type ReviewRoundView,
   triageButton,
 } from "./pullRequestReview.logic";
+import { ReviewWritingStyleCard } from "./ReviewRestyle";
 import { ReviewLocalOfferRow, ReviewSourceRow } from "./ReviewSourceRow";
 import { useReviewCommand } from "./useReviewCommand";
 
@@ -131,155 +132,164 @@ export function ReviewRoundCard({
   };
 
   return (
-    <section
-      aria-label="Review workspace"
-      className="flex flex-col gap-2 rounded-xl border border-border/70 bg-background p-2.5 shadow-sm"
-    >
-      <header className="flex items-center gap-2.5 px-1">
-        <h3 className="text-sm font-semibold">
-          {view.current ? "Review workspace" : "Applied work"}
-        </h3>
-        <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          {triageButtonState?.busy
-            ? "Triaging the reviews…"
-            : reviewRoundStatusLine({
-                round: view.round,
-                sources: view.sources,
-                items: view.items,
-                reviewer,
-              })}
-        </p>
-        {triageButtonState === null ? null : (
-          <Button
-            size="xs"
-            disabled={!canRequest || !triageButtonState.ready}
-            onClick={() => void startTriage()}
-          >
-            <SparklesIcon aria-hidden="true" />
-            {triageButtonState.label}
-          </Button>
-        )}
-        {view.current ? null : (
-          <Button
-            size="xs"
-            variant="outline"
-            aria-expanded={!collapsed}
-            onClick={() => setCollapsed((value) => !value)}
-          >
-            {collapsed ? "Show" : "Hide"}
-          </Button>
-        )}
-      </header>
-      {collapsed ? null : (
-        <>
-          {view.current
-            ? (openRounds ?? []).map((group) => (
-                <section
-                  key={group.number}
-                  aria-label={`Review round ${group.number}`}
-                  className="flex flex-col gap-0.5 border-t border-border/60 pt-2 first:border-t-0 first:pt-0"
-                >
-                  <h4 className="flex items-center gap-2 px-1 text-xs">
-                    <span className="font-semibold">Round {group.number}</span>
-                    {group.commitSha === null ? null : (
-                      <span className="font-mono text-muted-foreground">
-                        {group.commitSha.slice(0, 7)}
-                      </span>
-                    )}
-                    <span className="ml-auto text-muted-foreground">
-                      {reviewResolutionLabel(group.items, group.sources)}
-                    </span>
-                  </h4>
-                  <ul className="flex flex-col gap-0.5">
-                    {group.sources
-                      .filter(
-                        (source) =>
-                          !folded.hidden.has(source.id) &&
-                          !(offerLocal && source.kind === "local" && source.state === "not-run"),
-                      )
-                      .map((source) => (
-                        <ReviewSourceRow
-                          key={source.id}
-                          source={source}
-                          environmentId={environmentId}
-                          sessionId={sessionId}
-                          ranOn={ranOnLabel(source.ranOn, providers)}
-                          viewerLogin={viewerLogin}
-                          posted={folded.postedFor.get(source.id)}
-                          resolution={
-                            source.state === "done"
-                              ? reviewResolutionLabel(
-                                  group.items.filter((item) => item.sourceIds.includes(source.id)),
-                                  [source],
-                                )
-                              : undefined
-                          }
-                        />
-                      ))}
-                  </ul>
-                </section>
-              ))
-            : view.reviewHistory?.map((group) => (
-                <ReviewHistoryGroup key={group.number} group={group}>
-                  <ul className="flex flex-col gap-0.5">
-                    {group.sources
-                      .filter(
-                        (source) =>
-                          source.round === view.round.round &&
-                          !folded.hidden.has(source.id) &&
-                          !(offerLocal && source.kind === "local" && source.state === "not-run"),
-                      )
-                      .map((source) => (
-                        <ReviewSourceRow
-                          key={source.id}
-                          source={source}
-                          environmentId={environmentId}
-                          sessionId={sessionId}
-                          ranOn={ranOnLabel(source.ranOn, providers)}
-                          viewerLogin={viewerLogin}
-                          posted={folded.postedFor.get(source.id)}
-                          resolution={
-                            source.state === "done"
-                              ? reviewResolutionLabel(
-                                  group.items.filter((item) => item.sourceIds.includes(source.id)),
-                                  [source],
-                                )
-                              : undefined
-                          }
-                        />
-                      ))}
-                  </ul>
-                </ReviewHistoryGroup>
-              ))}
-          <ul>
-            {offerLocal ? (
-              <ReviewLocalOfferRow
-                disabled={!canRunLocal || startingLocal}
-                onRun={() => void startLocal()}
-              />
-            ) : null}
-          </ul>
-          {view.items.length === 0 && recheck.length === 0 ? null : (
-            <>
-              <div className="flex items-center gap-2.5 border-t border-border/60 px-1 pt-2">
-                <p className={SECTION_LABEL}>Open points</p>
-                <span className="flex-1" />
-                <span className="text-xs text-muted-foreground">
-                  {recheck.length > 0 ? `${recheck.length} from an earlier commit · ` : ""}
-                  {reviewPointCounts({ total: view.items.length, viewed, discussed })}
-                </span>
-              </div>
-              <ul className="flex flex-col gap-1.5">
-                {recheck.map((item) => renderPoint(item, view))}
-                {view.items.map((item) => renderPoint(item, view))}
-              </ul>
-              {footer}
-            </>
+    <>
+      {view.current ? (
+        <ReviewWritingStyleCard environmentId={environmentId} sessionId={sessionId} view={view} />
+      ) : null}
+      <section
+        aria-label="Review workspace"
+        className="flex flex-col gap-2 rounded-xl border border-border/70 bg-background p-2.5 shadow-sm"
+      >
+        <header className="flex items-center gap-2.5 px-1">
+          <h3 className="text-sm font-semibold">
+            {view.current ? "Review workspace" : "Applied work"}
+          </h3>
+          <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {triageButtonState?.busy
+              ? "Triaging the reviews…"
+              : reviewRoundStatusLine({
+                  round: view.round,
+                  sources: view.sources,
+                  items: view.items,
+                  reviewer,
+                })}
+          </p>
+          {triageButtonState === null ? null : (
+            <Button
+              size="xs"
+              disabled={!canRequest || !triageButtonState.ready}
+              onClick={() => void startTriage()}
+            >
+              <SparklesIcon aria-hidden="true" />
+              {triageButtonState.label}
+            </Button>
           )}
-          {actions}
-        </>
-      )}
-    </section>
+          {view.current ? null : (
+            <Button
+              size="xs"
+              variant="outline"
+              aria-expanded={!collapsed}
+              onClick={() => setCollapsed((value) => !value)}
+            >
+              {collapsed ? "Show" : "Hide"}
+            </Button>
+          )}
+        </header>
+        {collapsed ? null : (
+          <>
+            {view.current
+              ? (openRounds ?? []).map((group) => (
+                  <section
+                    key={group.number}
+                    aria-label={`Review round ${group.number}`}
+                    className="flex flex-col gap-0.5 border-t border-border/60 pt-2 first:border-t-0 first:pt-0"
+                  >
+                    <h4 className="flex items-center gap-2 px-1 text-xs">
+                      <span className="font-semibold">Round {group.number}</span>
+                      {group.commitSha === null ? null : (
+                        <span className="font-mono text-muted-foreground">
+                          {group.commitSha.slice(0, 7)}
+                        </span>
+                      )}
+                      <span className="ml-auto text-muted-foreground">
+                        {reviewResolutionLabel(group.items, group.sources)}
+                      </span>
+                    </h4>
+                    <ul className="flex flex-col gap-0.5">
+                      {group.sources
+                        .filter(
+                          (source) =>
+                            !folded.hidden.has(source.id) &&
+                            !(offerLocal && source.kind === "local" && source.state === "not-run"),
+                        )
+                        .map((source) => (
+                          <ReviewSourceRow
+                            key={source.id}
+                            source={source}
+                            environmentId={environmentId}
+                            sessionId={sessionId}
+                            ranOn={ranOnLabel(source.ranOn, providers)}
+                            viewerLogin={viewerLogin}
+                            posted={folded.postedFor.get(source.id)}
+                            resolution={
+                              source.state === "done"
+                                ? reviewResolutionLabel(
+                                    group.items.filter((item) =>
+                                      item.sourceIds.includes(source.id),
+                                    ),
+                                    [source],
+                                  )
+                                : undefined
+                            }
+                          />
+                        ))}
+                    </ul>
+                  </section>
+                ))
+              : view.reviewHistory?.map((group) => (
+                  <ReviewHistoryGroup key={group.number} group={group}>
+                    <ul className="flex flex-col gap-0.5">
+                      {group.sources
+                        .filter(
+                          (source) =>
+                            source.round === view.round.round &&
+                            !folded.hidden.has(source.id) &&
+                            !(offerLocal && source.kind === "local" && source.state === "not-run"),
+                        )
+                        .map((source) => (
+                          <ReviewSourceRow
+                            key={source.id}
+                            source={source}
+                            environmentId={environmentId}
+                            sessionId={sessionId}
+                            ranOn={ranOnLabel(source.ranOn, providers)}
+                            viewerLogin={viewerLogin}
+                            posted={folded.postedFor.get(source.id)}
+                            resolution={
+                              source.state === "done"
+                                ? reviewResolutionLabel(
+                                    group.items.filter((item) =>
+                                      item.sourceIds.includes(source.id),
+                                    ),
+                                    [source],
+                                  )
+                                : undefined
+                            }
+                          />
+                        ))}
+                    </ul>
+                  </ReviewHistoryGroup>
+                ))}
+            <ul>
+              {offerLocal ? (
+                <ReviewLocalOfferRow
+                  disabled={!canRunLocal || startingLocal}
+                  onRun={() => void startLocal()}
+                />
+              ) : null}
+            </ul>
+            {view.items.length === 0 && recheck.length === 0 ? null : (
+              <>
+                <div className="flex items-center gap-2.5 border-t border-border/60 px-1 pt-2">
+                  <p className={SECTION_LABEL}>Open points</p>
+                  <span className="flex-1" />
+                  <span className="text-xs text-muted-foreground">
+                    {recheck.length > 0 ? `${recheck.length} from an earlier commit · ` : ""}
+                    {reviewPointCounts({ total: view.items.length, viewed, discussed })}
+                  </span>
+                </div>
+                <ul className="flex flex-col gap-1.5">
+                  {recheck.map((item) => renderPoint(item, view))}
+                  {view.items.map((item) => renderPoint(item, view))}
+                </ul>
+                {footer}
+              </>
+            )}
+            {actions}
+          </>
+        )}
+      </section>
+    </>
   );
 }
 

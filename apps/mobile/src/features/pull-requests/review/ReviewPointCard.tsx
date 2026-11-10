@@ -217,11 +217,17 @@ export const ReviewPointCard = memo(function ReviewPointCard({
             excerpt={item.excerpt}
             onOpen={item.path === null ? undefined : () => onOpenFile(item)}
           />
-          <PullRequestMarkdown
-            lineBreaks={false}
-            markdown={`**Problem:** ${[item.problem, item.impact].filter(Boolean).join(" ")}`}
-          />
-          <PullRequestMarkdown lineBreaks={false} markdown={`**Solution:** ${item.solution}`} />
+          {item.writeup?.trim() ? (
+            <PullRequestMarkdown lineBreaks={false} markdown={item.writeup} />
+          ) : (
+            <>
+              <PullRequestMarkdown
+                lineBreaks={false}
+                markdown={`**Problem:** ${[item.problem, item.impact].filter(Boolean).join(" ")}`}
+              />
+              <PullRequestMarkdown lineBreaks={false} markdown={`**Solution:** ${item.solution}`} />
+            </>
+          )}
           {decision === "decline" && item.skipReason ? (
             <PullRequestMarkdown
               lineBreaks={false}

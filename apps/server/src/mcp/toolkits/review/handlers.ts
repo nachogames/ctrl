@@ -4,6 +4,10 @@ import {
   type ReviewSessionError,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import {
+  REVIEW_WRITING_STYLE_PRESETS,
+  resolveReviewWritingStyle,
+} from "@t3tools/shared/reviewWritingStyles";
 import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
 import { normalizeThreadPullRequestKey } from "../../../sourceControl/threadPullRequests.ts";
 import * as Effect from "effect/Effect";
@@ -132,26 +136,33 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
           headSha: input.headSha ?? null,
         })
         .pipe(Effect.catch(reviewFailure));
-      // Unreadable settings still open the review; the brief just lacks the user's rules.
-      const userRules = yield* Settings.ServerSettingsService.pipe(
+      // Unreadable settings still open the review; the brief just lacks the user's rules and
+      // uses the default writing style.
+      const { userRules, style } = yield* Settings.ServerSettingsService.pipe(
         Effect.flatMap((service) => service.getSettings),
         Effect.map((settings) => {
           const resolved = resolveProjectSettings(settings, result.snapshot.session.projectId);
           return {
-            text: resolved.settings.reviewInstructions,
-            fromProject: resolved.sources.reviewInstructions === "project",
+            userRules: {
+              text: resolved.settings.reviewInstructions,
+              fromProject: resolved.sources.reviewInstructions === "project",
+            },
+            style: resolveReviewWritingStyle(settings.reviewWritingStyle),
           };
         }),
         Effect.catch((cause) =>
           Effect.logWarning("review rules unavailable", { cause }).pipe(
-            Effect.as({ text: "", fromProject: false }),
+            Effect.as({
+              userRules: { text: "", fromProject: false },
+              style: REVIEW_WRITING_STYLE_PRESETS[0]!,
+            }),
           ),
         ),
       );
       return {
         ...result.snapshot,
         created: result.created,
-        brief: reviewBrief(result.snapshot.session, userRules),
+        brief: reviewBrief(result.snapshot.session, userRules, style),
       };
     }),
   ),
@@ -236,6 +247,7 @@ export const layer = McpToolAccess.toLayer(ReviewToolkit, {
             suggestedDecision: item.suggestedDecision ?? null,
             alreadyFixedIn: item.alreadyFixedIn ?? null,
             draftReply: item.draftReply ?? null,
+            writeup: item.writeup ?? null,
           })),
         })
         .pipe(Effect.catch(reviewFailure));

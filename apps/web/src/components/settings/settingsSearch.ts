@@ -1264,6 +1264,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
+    id: "review-writing-style",
+    title: "Review writing style",
+    to: "/settings/source-control",
+    searchTerms: [
+      "pull request pr review findings writeup tone format adhd skimmable plain ste custom style",
+    ],
+    environmentOnly: true,
+  },
+  {
     id: "review-guides",
     title: "Review guides (beta)",
     to: "/settings/source-control",
