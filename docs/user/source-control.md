@@ -378,6 +378,12 @@ Points without a decision or recommendation still need your call. It fixes accep
 and pushes, and posts the approved replies. Human reviewers' threads stay open. New reviews
 arrive in the same session; after applying, the next round lets you check them again.
 
+On the mobile app, a PR with a review gets a **Review** tab, and the Pull Requests list marks a PR
+whose round is waiting on you. There you can read each point, choose Fix or Decline, mark it
+viewed, start **Triage**, and **Apply round**; **Next round** is Re-review on someone else's PR.
+The work runs in the review chat on your computer. Replies, point chats and starting a review stay
+on desktop and web.
+
 ### Reviewing someone else's PR
 
 When the PR was written by someone other than the GitHub account T3 Code uses, the **Review** tab

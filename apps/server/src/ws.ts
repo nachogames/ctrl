@@ -1456,6 +1456,8 @@ const layerReviewSessionsRpc = ServerReviewSessionsRpcGroup.toLayer(
       [WS_METHODS.reviewSessionsReadHost]: (input) => reviewHost.read(input),
       [WS_METHODS.reviewSessionsStartFromPullRequest]: (input) => reviewHost.start(input),
       [WS_METHODS.reviewSessionsSubscribe]: (input) => reviewSessions.subscribe(input),
+      [WS_METHODS.reviewSessionsListLive]: () =>
+        reviewSessions.listLive().pipe(Effect.map((pullRequests) => ({ pullRequests }))),
       [WS_METHODS.reviewSessionsReadSource]: (input) =>
         reviewSessions.readSourceComments(input).pipe(Effect.map((comments) => ({ comments }))),
       // The panel's decision is the user's own, so it carries no quote.

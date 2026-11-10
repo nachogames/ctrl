@@ -390,11 +390,9 @@ export const isMinePoint = (item: Pick<ReviewItem, "sources">): boolean =>
   item.sources.some((source) => source === "local-review" || source === "you");
 
 /**
- * What a point is to the viewer reviewing someone else's pull request:
- * - `context`: only others raised it; it needs nothing from you.
- * - `overlap`: you and someone else raised it; Post means a +1 on their thread.
- * - `follow-up`: yours from an earlier round with a thread; Post means resolve it.
- * - `finding`: yours alone; Post means a new comment.
+ * A point to the viewer on someone else's pull request: `context` (only others raised it),
+ * `overlap` (you and others; Post is a +1 on their thread), `follow-up` (yours from an earlier
+ * round with a thread; Post resolves it), `finding` (yours alone; Post is a new comment).
  */
 export type ReviewerPointKind = "context" | "overlap" | "follow-up" | "finding";
 
@@ -478,6 +476,46 @@ export const reReviewReason = (
     ? "head-moved"
     : null;
 };
+
+/** The round being worked waits on the user: a review to triage or a point to decide. */
+export const reviewWaitsOnUser = (
+  snapshot: Pick<ReviewSessionSnapshot, "session" | "rounds" | "sources" | "items">,
+): boolean => {
+  const { session } = snapshot;
+  if (session.phase === "done") return false;
+  const round = snapshot.rounds.find((candidate) => candidate.round === session.round);
+  if (round?.state !== "collecting") return false;
+  // On someone else's pull request only your own reviews and points count; the rest is context.
+  const reviewer = reviewRole(session) === "reviewer";
+  return (
+    snapshot.sources.some(
+      (source) =>
+        source.round === session.round &&
+        source.state === "done" &&
+        source.failed !== true &&
+        !source.triaged &&
+        (!reviewer || source.kind === "local" || isViewerSource(source, session.viewerLogin)),
+    ) ||
+    snapshot.items.some(
+      (item) =>
+        item.lastSeenRound === session.round &&
+        isActiveReviewItem(item) &&
+        (!reviewer || isMinePoint(item)),
+    )
+  );
+};
+
+/** Every pull request with a live review, and whether its round waits on the user. */
+export const ReviewLivePullRequest = Schema.Struct({
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  waiting: Schema.Boolean,
+});
+export type ReviewLivePullRequest = typeof ReviewLivePullRequest.Type;
+export const ReviewSessionsListLiveResult = Schema.Struct({
+  pullRequests: Schema.Array(ReviewLivePullRequest),
+});
+export type ReviewSessionsListLiveResult = typeof ReviewSessionsListLiveResult.Type;
 
 /** Review history before the user has created a review chat. */
 export const ReviewHostInput = PullRequestRef;

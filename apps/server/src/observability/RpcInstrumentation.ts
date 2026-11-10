@@ -118,6 +118,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.reviewSessionsReadHost]: "review-sessions",
   [WS_METHODS.reviewSessionsStartFromPullRequest]: "review-sessions",
   [WS_METHODS.reviewSessionsSubscribe]: "review-sessions",
+  [WS_METHODS.reviewSessionsListLive]: "review-sessions",
   [WS_METHODS.reviewSessionsReadSource]: "review-sessions",
   [WS_METHODS.reviewSessionsDecide]: "review-sessions",
   [WS_METHODS.reviewSessionsSetViewed]: "review-sessions",

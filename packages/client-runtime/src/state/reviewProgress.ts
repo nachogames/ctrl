@@ -46,6 +46,8 @@ export interface ReviewProgressInput {
   readonly checks?: ReadonlyArray<PullRequestCheck> | undefined;
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   readonly headSha?: string | null | undefined;
+  /** The approval could not be read (a link opened with no summary); never shown as missing. */
+  readonly approvalUnknown?: boolean | undefined;
   /** Why Re-review is offered on someone else's pull request, when it is. */
   readonly reReview?: "requested" | "head-moved" | null | undefined;
 }
@@ -236,7 +238,16 @@ export function reviewProgress(input: ReviewProgressInput): ReviewProgress {
       ),
     ),
   ];
-  const needsApproval = input.reviewDecision !== "approved";
+  const approvalKnown = input.approvalUnknown !== true;
+  const needsApproval = approvalKnown && input.reviewDecision !== "approved";
+  // The head the latest finished review looked at, against the pull request's head now.
+  const reviewedSha = rounds.at(-1)?.commitSha ?? null;
+  const since: ReadonlyArray<ReviewGate> =
+    reviewedSha === null || input.headSha == null
+      ? []
+      : reviewedSha === input.headSha
+        ? [{ label: "Since review", value: "No new code", tone: "neutral" }]
+        : [{ label: "Since review", value: "New commits", tone: "waiting" }];
   const failing = ci?.tone === "blocked";
   const [headline, detail] = running
     ? ["Your self-review is running", "Its findings come here for triage when it finishes."]
@@ -254,7 +265,9 @@ export function reviewProgress(input: ReviewProgressInput): ReviewProgress {
           ? ["Fix the failing checks", "Every comment is resolved."]
           : needsApproval
             ? ["Waiting for an approval", "Every comment is resolved."]
-            : ["Ready to merge", "Approved, every comment resolved."];
+            : approvalKnown
+              ? ["Ready to merge", "Approved, every comment resolved."]
+              : ["Every comment is resolved", "Check its approval before merging."];
   return {
     goal: "merge",
     headline,
@@ -267,20 +280,23 @@ export function reviewProgress(input: ReviewProgressInput): ReviewProgress {
       },
       {
         label: "Approval",
-        value:
-          input.reviewDecision === "approved"
+        value: !approvalKnown
+          ? "Unknown"
+          : input.reviewDecision === "approved"
             ? "Approved"
             : input.reviewDecision === "changes-requested"
               ? "Changes requested"
               : "Not yet",
-        tone:
-          input.reviewDecision === "approved"
+        tone: !approvalKnown
+          ? "neutral"
+          : input.reviewDecision === "approved"
             ? "done"
             : input.reviewDecision === "changes-requested"
               ? "blocked"
               : "waiting",
       },
       ...(ci === null ? [] : [ci]),
+      ...since,
       {
         label: "Resolved so far",
         value: `${items.length - open.length} across ${quantity(rounds.length, "round")}`,

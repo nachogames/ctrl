@@ -36,6 +36,14 @@ it.effect(
         [snapshot.session.authorLogin, snapshot.session.viewerLogin],
         ["dan", "NeilMcEachin"],
       );
+      const waiting = reviews.listLive().pipe(Effect.map((live) => live.map((pr) => pr.waiting)));
+      // Copilot's point alone is context: nothing waits on you yet.
+      yield* reviews.importItems({
+        sessionId,
+        sourceIds: [],
+        items: [importItem("gh:T1", { suggestedDecision: null })],
+      });
+      assert.deepEqual(yield* waiting, [false]);
       yield* reviews.importItems({
         sessionId,
         sourceIds: [],
@@ -52,6 +60,7 @@ it.effect(
           }),
         ],
       });
+      assert.deepEqual(yield* waiting, [true]);
       yield* reviews.decide({
         sessionId,
         number: 2,
