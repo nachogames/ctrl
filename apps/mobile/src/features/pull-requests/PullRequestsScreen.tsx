@@ -23,6 +23,7 @@ import { useWorkspaceState } from "../../state/workspace";
 import { useProjects } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { PullRequestListRow } from "./PullRequestListRow";
+import { liveReviewKey, useLiveReviews } from "./review/useLiveReviews";
 import {
   PullRequestListFilters,
   usePullRequestListFilters,
@@ -162,6 +163,13 @@ export function PullRequestsScreen(
     [environments, environmentId, configs, controls, query],
   );
   const result = usePullRequestList(targets);
+  const liveReviews = useLiveReviews(targets.map((target) => target.environmentId));
+  const reviewWaiting = (item: EnvironmentPullRequestListEntry) =>
+    liveReviews.get(liveReviewKey(item.environmentId, item.repository, item.number)) === true;
+  const waitingKeys = [...liveReviews]
+    .filter(([, waiting]) => waiting)
+    .map(([key]) => key)
+    .join(",");
   const connectedTargets = targets.filter((target) =>
     environments.some(
       (environment) =>
@@ -265,6 +273,7 @@ export function PullRequestsScreen(
       busy={busyKey === pullRequestKey(item)}
       selected={selectedKey === pullRequestKey(item)}
       sidebar={sidebar}
+      reviewWaiting={reviewWaiting(item)}
     />
   );
   const list = (
@@ -272,7 +281,7 @@ export function PullRequestsScreen(
       <LegendList
         ref={listRef}
         data={entries}
-        extraData={`${selectedKey}:${busyKey}`}
+        extraData={`${selectedKey}:${busyKey}:${waitingKeys}`}
         keyExtractor={pullRequestKey}
         itemsAreEqual={pullRequestListRowsAreEqual}
         estimatedItemSize={88}

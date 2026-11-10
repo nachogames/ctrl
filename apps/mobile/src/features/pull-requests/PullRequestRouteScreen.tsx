@@ -4,6 +4,8 @@ import { pullRequestTabOffset } from "./pullRequestTabScroll";
 import { guideFocusedRows, type GuideDiffFocus } from "./guide/guideDiffFocus";
 import { PullRequestGuideContent } from "./guide/PullRequestGuideScreen";
 import { useReviewGuidesEnabled } from "./guide/useReviewGuide";
+import { PullRequestReviewContent } from "./review/PullRequestReviewContent";
+import { liveReviewKey, liveReviewsAtom, useLiveReviews } from "./review/useLiveReviews";
 import {
   filterPullRequestActivity,
   DEFAULT_ACTIVITY_FILTER,
@@ -45,6 +47,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import {
+  EnvironmentId,
   type PullRequestDetail,
   type PullRequestListEntry,
   type PullRequestSummary,
@@ -334,16 +337,26 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const params = route.params;
   usePullRequestEnvironmentFallback(params);
   const connected = usePullRequestConnected(params.environmentId);
-  const [chosenSection, setSection] = useState<"overview" | "activity" | "guide">("overview");
+  const [chosenSection, setSection] = useState<"overview" | "activity" | "guide" | "review">(
+    "overview",
+  );
   const requestedSection = useRef(chosenSection);
   const [listAnimationsReady, setListAnimationsReady] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const filesContent = usePullRequestFilesSection(params);
   const guidesEnabled = useReviewGuidesEnabled(params);
+  const environmentId = EnvironmentId.make(params.environmentId);
+  const liveReviews = useLiveReviews([environmentId]);
+  const refreshLiveReviews = useAtomRefresh(liveReviewsAtom(environmentId));
+  useFocusEffect(refreshLiveReviews);
+  // The Review tab shows while the pull request has a live review, and stays while it is open.
+  const reviewShown =
+    liveReviews.has(liveReviewKey(environmentId, params.repository, params.number)) ||
+    chosenSection === "review";
   // The guide tab goes away while guides are off and overview stands in. The pick is kept, so
   // guides coming back (a settings reload, a reconnect) return to the guide the user chose.
   const shown = (tab: typeof chosenSection) =>
-    !guidesEnabled && tab === "guide" ? "overview" : tab;
+    (!guidesEnabled && tab === "guide") || (!reviewShown && tab === "review") ? "overview" : tab;
   const section = shown(chosenSection);
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>(DEFAULT_ACTIVITY_FILTER);
   const activityContent = usePullRequestActivityRows(params, activityFilter);
@@ -368,6 +381,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
       overview: listRef("overview"),
       guide: listRef("guide"),
       activity: listRef("activity"),
+      review: listRef("review"),
     };
   });
   const selectSection = (next: typeof section) => {
@@ -439,6 +453,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
         .catch(() => undefined);
       if (signal.aborted) return;
       if (guidesEnabled) refreshGuide();
+      refreshLiveReviews();
       stack.refresh();
       refreshActivity();
       filesContent.refresh();
@@ -580,8 +595,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
           ]}
         />
         <ScreenContent onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}>
-          {(["overview", "guide", "activity"] as const)
-            .filter((tab) => tab !== "guide" || guidesEnabled)
+          {(["overview", "guide", "activity", "review"] as const)
+            .filter(
+              (tab) => (tab !== "guide" || guidesEnabled) && (tab !== "review" || reviewShown),
+            )
             .map((tab) => (
               <View
                 key={tab}
@@ -698,6 +715,13 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               visible={section === "guide"}
                             />
                           ) : null}
+                          {tab === "review" ? (
+                            <PullRequestReviewContent
+                              params={params}
+                              pr={pr}
+                              visible={section === "review"}
+                            />
+                          ) : null}
                           {tab === "activity" ? (
                             <PullRequestActivityFilters
                               value={activityFilter}
@@ -781,6 +805,9 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                                   ? [{ value: "guide" as const, label: "Guide" }]
                                   : []),
                                 { value: "activity", label: "Activity" },
+                                ...(reviewShown
+                                  ? [{ value: "review" as const, label: "Review" }]
+                                  : []),
                               ]}
                               selected={section}
                               onSelect={selectSection}

@@ -40,6 +40,8 @@ export const PullRequestListRow = memo(
     readonly selected: boolean;
     readonly sidebar: boolean;
     readonly busy: boolean;
+    /** The pull request's review has a round waiting on the user. */
+    readonly reviewWaiting: boolean;
     readonly getActions: (item: EnvironmentPullRequestListEntry) => MenuProps["actions"];
     readonly onAction: (item: EnvironmentPullRequestListEntry, action: string) => void;
   }) {
@@ -74,7 +76,7 @@ export const PullRequestListRow = memo(
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ selected: props.selected, busy: props.busy }}
-            accessibilityLabel={`${capitalizeTerm(sourceControlClients.get(item.provider).changeRequest.singular)} ${item.number}, ${item.title}, ${status.label}${conflict ? `, ${conflict.label.toLowerCase()}` : ""}, by ${item.author?.login ?? "unknown author"}${review ? `, ${review.accessibleLabel}` : ""}${item.checksState ? `, checks ${item.checksState}` : ""}${item.stack ? `, stack ${item.stack.position} of ${item.stack.size}` : ""}${item.labels.length ? `, ${item.labels.map((label) => label.name).join(", ")}` : ""}, ${item.additions} additions, ${item.deletions} deletions`}
+            accessibilityLabel={`${capitalizeTerm(sourceControlClients.get(item.provider).changeRequest.singular)} ${item.number}, ${item.title}, ${status.label}${conflict ? `, ${conflict.label.toLowerCase()}` : ""}, by ${item.author?.login ?? "unknown author"}${review ? `, ${review.accessibleLabel}` : ""}${props.reviewWaiting ? ", review waiting" : ""}${item.checksState ? `, checks ${item.checksState}` : ""}${item.stack ? `, stack ${item.stack.position} of ${item.stack.size}` : ""}${item.labels.length ? `, ${item.labels.map((label) => label.name).join(", ")}` : ""}, ${item.additions} additions, ${item.deletions} deletions`}
             accessibilityHint="Double tap to open. Touch and hold for quick actions."
             onPress={() => props.onSelect(item)}
             disabled={props.busy}
@@ -175,6 +177,14 @@ export const PullRequestListRow = memo(
                     </Text>
                   ) : null}
                 </View>
+                {props.reviewWaiting ? (
+                  <View className="shrink-0 flex-row items-center gap-1 rounded-md bg-adaptive-amber-500-a12-a16 px-1.5 py-0.5">
+                    <View className="h-1.5 w-1.5 rounded-full bg-adaptive-amber-700-300" />
+                    <Text className="text-2xs font-t3-medium text-adaptive-amber-700-300">
+                      Review
+                    </Text>
+                  </View>
+                ) : null}
                 {checks ? (
                   <View className="shrink-0" accessibilityLabel={`Checks ${item.checksState}`}>
                     <SymbolView name={checks.icon} size={13} tintColorClassName={checks.tint} />
@@ -204,6 +214,7 @@ export const PullRequestListRow = memo(
     previous.selected === next.selected &&
     previous.sidebar === next.sidebar &&
     previous.busy === next.busy &&
+    previous.reviewWaiting === next.reviewWaiting &&
     previous.onSelect === next.onSelect &&
     previous.onAction === next.onAction &&
     previous.getActions === next.getActions,

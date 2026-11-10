@@ -455,6 +455,7 @@ import {
   ReviewSessionSubscribeInput,
   ReviewHostInput,
   ReviewHostResult,
+  ReviewSessionsListLiveResult,
   ReviewSessionSubscribeResult,
   ReviewSideChatInput,
   ReviewSourceReadInput,
@@ -697,6 +698,7 @@ export const WS_METHODS = {
   reviewSessionsReadHost: "reviewSessions.readHost",
   reviewSessionsStartFromPullRequest: "reviewSessions.startFromPullRequest",
   reviewSessionsSubscribe: "reviewSessions.subscribe",
+  reviewSessionsListLive: "reviewSessions.listLive",
   reviewSessionsReadSource: "reviewSessions.readSource",
   reviewSessionsDecide: "reviewSessions.decide",
   reviewSessionsSetViewed: "reviewSessions.setViewed",
@@ -2346,6 +2348,13 @@ const WsReviewSessionsSubscribeRpc = Rpc.make(WS_METHODS.reviewSessionsSubscribe
   stream: true,
 });
 
+/** Pull requests with a live review, for the list's "review waiting" marker. */
+const WsReviewSessionsListLiveRpc = Rpc.make(WS_METHODS.reviewSessionsListLive, {
+  payload: Schema.Struct({}),
+  success: ReviewSessionsListLiveResult,
+  error: ReviewRpcError,
+});
+
 /** Exactly what one review said, read when the panel expands it. */
 const WsReviewSessionsReadSourceRpc = Rpc.make(WS_METHODS.reviewSessionsReadSource, {
   payload: ReviewSourceReadInput,
@@ -2514,6 +2523,7 @@ export const WsReviewSessionsRpcGroup = RpcGroup.make(
   WsReviewSessionsReadHostRpc,
   WsReviewSessionsStartFromPullRequestRpc,
   WsReviewSessionsSubscribeRpc,
+  WsReviewSessionsListLiveRpc,
   WsReviewSessionsReadSourceRpc,
   WsReviewSessionsDecideRpc,
   WsReviewSessionsSetViewedRpc,

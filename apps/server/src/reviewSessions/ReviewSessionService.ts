@@ -5,6 +5,7 @@ import {
   reReviewReason,
   reviewerPointKind,
   reviewRole,
+  reviewWaitsOnUser,
 } from "@t3tools/contracts";
 import {
   CommandId,
@@ -20,6 +21,7 @@ import {
   type ReviewEditor,
   type ReviewItem,
   type ReviewItemSource,
+  type ReviewLivePullRequest,
   type ReviewRound,
   type ReviewSession,
   type ReviewSessionSnapshot,
@@ -172,6 +174,11 @@ export class ReviewSessionService extends Context.Service<
     readonly findSessionForPullRequest: (
       key: ThreadPullRequestKey,
     ) => Effect.Effect<ReviewSession | null, ReviewSessionError>;
+    /** Every pull request with a live review, and whether its round waits on the user. */
+    readonly listLive: () => Effect.Effect<
+      ReadonlyArray<ReviewLivePullRequest>,
+      ReviewSessionError
+    >;
     /** Whether the chat runs a local review or discusses one point. */
     readonly isAssignedChat: (threadId: ThreadId) => Effect.Effect<boolean, ReviewSessionError>;
     /** Whether the review's own chat can still take a turn. */
@@ -797,6 +804,21 @@ const make = Effect.gen(function* () {
       ),
       Effect.mapError(keepReviewErrors()),
     );
+
+  const listLive: ReviewSessionService["Service"]["listLive"] = Effect.fn(
+    "ReviewSessionService.listLive",
+  )(function* () {
+    const sessions = yield* repo.listLiveSessions();
+    return yield* Effect.forEach(sessions, (session) =>
+      snapshotOf(session).pipe(
+        Effect.map((snapshot) => ({
+          repository: session.pullRequest.repository,
+          number: session.pullRequest.number,
+          waiting: reviewWaitsOnUser(snapshot),
+        })),
+      ),
+    );
+  }, Effect.mapError(keepReviewErrors()));
 
   const isAssignedChat: ReviewSessionService["Service"]["isAssignedChat"] = Effect.fn(
     "ReviewSessionService.isAssignedChat",
@@ -1810,6 +1832,7 @@ const make = Effect.gen(function* () {
     readSourceComments,
     resolveForThread,
     findSessionForPullRequest,
+    listLive,
     isAssignedChat,
     hasLiveReviewChat,
     agentView,

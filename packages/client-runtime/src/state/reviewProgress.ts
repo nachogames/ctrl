@@ -237,6 +237,14 @@ export function reviewProgress(input: ReviewProgressInput): ReviewProgress {
     ),
   ];
   const needsApproval = input.reviewDecision !== "approved";
+  // The head the latest finished review looked at, against the pull request's head now.
+  const reviewedSha = rounds.at(-1)?.commitSha ?? null;
+  const since: ReadonlyArray<ReviewGate> =
+    reviewedSha === null || input.headSha == null
+      ? []
+      : reviewedSha === input.headSha
+        ? [{ label: "Since review", value: "No new code", tone: "neutral" }]
+        : [{ label: "Since review", value: "New commits", tone: "waiting" }];
   const failing = ci?.tone === "blocked";
   const [headline, detail] = running
     ? ["Your self-review is running", "Its findings come here for triage when it finishes."]
@@ -281,6 +289,7 @@ export function reviewProgress(input: ReviewProgressInput): ReviewProgress {
               : "waiting",
       },
       ...(ci === null ? [] : [ci]),
+      ...since,
       {
         label: "Resolved so far",
         value: `${items.length - open.length} across ${quantity(rounds.length, "round")}`,

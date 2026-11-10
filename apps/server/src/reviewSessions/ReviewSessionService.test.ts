@@ -529,6 +529,8 @@ it.effect("requires decisions but not viewed marks to advance a collecting round
     const reviews = yield* service;
     const { snapshot } = yield* reviews.open(openInput);
     const sessionId = snapshot.session.id;
+    const waiting = reviews.listLive().pipe(Effect.map((live) => live.map((pr) => pr.waiting)));
+    assert.deepEqual(yield* waiting, [false]);
     yield* reviews.importItems({
       sessionId,
       sourceIds: [],
@@ -538,6 +540,7 @@ it.effect("requires decisions but not viewed marks to advance a collecting round
         importItem("gh:T3", { suggestedDecision: "decline" }),
       ],
     });
+    assert.deepEqual(yield* waiting, [true]);
     yield* reviews.setViewed({ sessionId, number: 1, viewed: true });
     yield* reviews.decide({
       sessionId,
@@ -562,9 +565,11 @@ it.effect("requires decisions but not viewed marks to advance a collecting round
 
     const advanced = yield* reviews.advanceRound({ sessionId, headSha: "abc123", finish: false });
     assert.equal(advanced.session.round, 2);
+    assert.deepEqual(yield* waiting, [false]);
     // Round 2 has no live points yet, so it can move on straight away.
     const finished = yield* reviews.advanceRound({ sessionId, headSha: "abc123", finish: true });
     assert.equal(finished.session.phase, "done");
+    assert.deepEqual(yield* waiting, []);
   }).pipe(Effect.provide(makeReviewServiceLayer(newHarness()))),
 );
 

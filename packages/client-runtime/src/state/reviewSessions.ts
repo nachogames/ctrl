@@ -10,6 +10,7 @@ import {
 
 export * from "./reviewSessionPresentation.ts";
 export * from "./reviewProgress.ts";
+export * from "./reviewSessionViews.ts";
 
 export function createReviewSessionEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
@@ -29,6 +30,13 @@ export function createReviewSessionEnvironmentAtoms<R, E>(
       tag: WS_METHODS.reviewSessionsSubscribe,
       // Nothing else needs the stream once the Review tab closes.
       idleTtlMs: 0,
+    }),
+    /** Pull requests with a live review, and whether each waits on the user. */
+    listLive: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:review-sessions-live",
+      tag: WS_METHODS.reviewSessionsListLive,
+      // A local read; it keeps the list's marker current while the list is shown.
+      refreshIntervalMs: 60_000,
     }),
     /** Exactly what one review said, read when it is expanded. */
     sourceComments: createEnvironmentRpcQueryAtomFamily(runtime, {
