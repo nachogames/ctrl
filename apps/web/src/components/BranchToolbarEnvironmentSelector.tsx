@@ -9,8 +9,8 @@ import { PlusIcon, ScaleIcon } from "lucide-react";
 import { memo } from "react";
 
 import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
+import { MachineStatusIcon } from "./ConnectionStatusDot";
 import { batteryLabel, EnvironmentBattery } from "./EnvironmentBattery";
-import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
   Select,
@@ -35,6 +35,9 @@ interface BranchToolbarEnvironmentSelectorProps {
 const AUTO_VALUE = "action:auto";
 const ADD_MACHINE_VALUE = "action:add-machine";
 const environmentValue = (id: EnvironmentId) => `env:${id}`;
+// This device is always reachable, so only other machines show a status.
+const statusPhase = (env: EnvironmentOption | null) =>
+  env === null || env.isPrimary ? null : env.connection;
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
   autoEnvironmentLabel,
@@ -74,9 +77,10 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
         data-composer-context-control
       >
-        <EnvironmentMachineIcon
+        <MachineStatusIcon
           kind={activeEnvironment?.machine ?? "server"}
-          className="size-3 shrink-0"
+          phase={statusPhase(activeEnvironment)}
+          className="size-3"
         />
         <ComposerContextLabel>{activeEnvironment?.label ?? "Run on"}</ComposerContextLabel>
         <EnvironmentBattery battery={activeBattery} tooltip={false} />
@@ -123,9 +127,10 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           {autoEnvironmentLabel ? (
             <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
           ) : (
-            <EnvironmentMachineIcon
+            <MachineStatusIcon
               kind={activeEnvironment?.machine ?? "server"}
-              className="size-3 shrink-0"
+              phase={statusPhase(activeEnvironment)}
+              className="size-3"
             />
           )}
           <ComposerContextLabel>
@@ -167,7 +172,11 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             >
               <span className="flex min-w-0 flex-col">
                 <span className="inline-flex items-center gap-1.5">
-                  <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+                  <MachineStatusIcon
+                    kind={env.machine}
+                    phase={statusPhase(env)}
+                    className="size-3"
+                  />
                   {env.label}
                   <EnvironmentBattery battery={env.battery} className="ml-1" />
                 </span>

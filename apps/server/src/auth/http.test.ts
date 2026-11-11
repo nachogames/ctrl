@@ -191,3 +191,16 @@ it.effect.each(["DPoP", "dpop"])("challenges a refused %s request with DPoP", (s
     );
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
+
+it.effect("a scope denial tells a Tailscale session what to add to its grant", () =>
+  Effect.gen(function* () {
+    const tailnet = yield* Effect.flip(
+      AuthHttp.failEnvironmentScopeRequired("access:write", "tailscale:nPhone"),
+    );
+    expect(tailnet.tailnetGrantFix).toContain('Add "access:write" or "admin"');
+    const paired = yield* Effect.flip(
+      AuthHttp.failEnvironmentScopeRequired("access:write", "bearer:laptop"),
+    );
+    expect(paired.tailnetGrantFix).toBeUndefined();
+  }),
+);

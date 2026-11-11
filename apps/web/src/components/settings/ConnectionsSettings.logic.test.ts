@@ -1,10 +1,12 @@
-import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
+import { type AdvertisedEndpoint, type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
+import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
   readPairingIntent,
   resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
+  resolveTailscaleHttpsRow,
   selectQrEndpointOption,
   togglePairingScopeSelection,
   withPairingIntent,
@@ -222,5 +224,94 @@ describe("pairing intent in a pairing link", () => {
   it("asks for both from a bare code or a link from an older machine", () => {
     expect(readPairingIntent("ABCD1234")).toEqual({ chats: true, agents: true });
     expect(readPairingIntent(link)).toEqual({ chats: true, agents: true });
+  });
+});
+
+describe("resolveTailscaleHttpsRow", () => {
+  const provider = {
+    id: "tailscale",
+    label: "Tailscale",
+    kind: "private-network",
+    isAddon: true,
+  } as const;
+  const httpsEndpoint = (status: AdvertisedEndpoint["status"]) =>
+    createAdvertisedEndpoint({
+      id: "tailscale-magicdns:https://desktop.tail.ts.net/",
+      label: "Tailscale HTTPS",
+      provider,
+      httpBaseUrl: "https://desktop.tail.ts.net/",
+      reachability: "private-network",
+      source: "desktop-addon",
+      status,
+    });
+  const tailscaleIp = createAdvertisedEndpoint({
+    id: "tailscale-ip:http://100.84.12.7:3773",
+    label: "Tailscale IP",
+    provider,
+    httpBaseUrl: "http://100.84.12.7:3773",
+    reachability: "private-network",
+    source: "desktop-addon",
+  });
+  const SERVE = "Off. Turn it on to reach this machine from your other devices on Tailscale.";
+  const START = "Start Tailscale to set up HTTPS access through MagicDNS.";
+  const NO_MAGIC_DNS =
+    "Tailscale is running, but its MagicDNS name could not be read. Make sure the tailscale command is installed and MagicDNS is on.";
+  const UNREACHABLE = "This URL does not reach this backend yet, so pairing links leave it out.";
+
+  it.each([
+    {
+      label: "keeps saved Serve on and shows the failed probe separately",
+      state: { mode: "network-accessible", tailscaleServeEnabled: true },
+      endpoints: [httpsEndpoint("unavailable")],
+      expected: {
+        description: "https://desktop.tail.ts.net/",
+        status: UNREACHABLE,
+        switchChecked: true,
+        working: false,
+      },
+    },
+    {
+      label: "keeps saved Serve disableable when its endpoint disappears",
+      state: { mode: "local-only", tailscaleServeEnabled: true },
+      endpoints: [],
+      expected: { description: START, status: null, switchChecked: true, working: false },
+    },
+    {
+      label: "shows Serve set up outside the app as working, with the switch at the setting",
+      state: { mode: "network-accessible", tailscaleServeEnabled: false },
+      endpoints: [httpsEndpoint("available")],
+      expected: {
+        description: "https://desktop.tail.ts.net/",
+        status: null,
+        switchChecked: false,
+        working: true,
+      },
+    },
+    {
+      label: "offers Serve while Network access is off and detection was skipped",
+      state: { mode: "local-only", tailscaleServeEnabled: false },
+      endpoints: [],
+      expected: { description: SERVE, status: null, switchChecked: false, working: false },
+    },
+    {
+      label: "does not ask to start Tailscale when its adapter is up without MagicDNS",
+      state: { mode: "network-accessible", tailscaleServeEnabled: false },
+      endpoints: [tailscaleIp],
+      expected: { description: NO_MAGIC_DNS, status: null, switchChecked: null, working: false },
+    },
+    {
+      label: "asks to start Tailscale when network access found none",
+      state: { mode: "network-accessible", tailscaleServeEnabled: false },
+      endpoints: [],
+      expected: { description: START, status: null, switchChecked: null, working: false },
+    },
+    {
+      label: "hides the switch while the exposure state is unknown",
+      state: null,
+      endpoints: [],
+      expected: { description: START, status: null, switchChecked: null, working: false },
+    },
+  ] as const)("$label", ({ state, endpoints, expected }) => {
+    expect(resolveTailscaleHttpsRow({ state, endpoints })).toEqual(expected);
   });
 });

@@ -110,6 +110,12 @@ export class ServerConfig extends Context.Service<
     readonly tailscaleServePort: number;
     /** Overrides the idle limit of sessions redeemed from pairing links; unset follows the setting. */
     readonly pairingSessionTtl?: Duration.Duration | undefined;
+    /** Tailscale devices may sign in with no pairing code: by grant, else the owner's own devices. */
+    readonly tailscaleSignInEnabled?: boolean | undefined;
+    /** The owner's Tailscale user ID on a tagged host, which has no user of its own. */
+    readonly tailscaleOwnerUserId?: string | undefined;
+    /** Accept only loopback and tailnet peers, and advertise no LAN routes. */
+    readonly tailscaleOnly?: boolean | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (

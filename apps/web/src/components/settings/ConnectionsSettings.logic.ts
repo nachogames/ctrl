@@ -59,14 +59,49 @@ export function isQrShareableEndpoint(endpoint: AdvertisedEndpoint): boolean {
   return endpoint.status !== "unavailable" && endpoint.reachability !== "loopback";
 }
 
-/** Desktop skips Tailscale probing until network/Serve is enabled to avoid macOS prompts; absence then
- * means unchecked. */
-export function missingTailscaleEndpointDescription(
-  state: Pick<DesktopServerExposureState, "mode" | "tailscaleServeEnabled"> | null,
-): string {
-  return state && state.mode !== "network-accessible" && !state.tailscaleServeEnabled
-    ? "Turn on Network access to detect Tailscale."
+/**
+ * The switch shows the saved Serve setting, so unreachable Serve can still be turned off; Serve
+ * that answers is working however it was set up. Detection is skipped while Network access and
+ * Serve are off (macOS prompts), so a missing endpoint still offers the switch.
+ */
+export function resolveTailscaleHttpsRow(input: {
+  readonly state: Pick<DesktopServerExposureState, "mode" | "tailscaleServeEnabled"> | null;
+  readonly endpoints: ReadonlyArray<AdvertisedEndpoint>;
+}): {
+  readonly description: string;
+  readonly status: string | null;
+  readonly switchChecked: boolean | null;
+  readonly working: boolean;
+} {
+  const { state, endpoints } = input;
+  const endpoint = endpoints.find(isTailscaleHttpsEndpoint) ?? null;
+  const working = endpoint?.status === "available";
+  const missingDescription = endpoints.some((candidate) => candidate.id.startsWith("tailscale-ip:"))
+    ? "Tailscale is running, but its MagicDNS name could not be read. Make sure the tailscale command is installed and MagicDNS is on."
     : "Start Tailscale to set up HTTPS access through MagicDNS.";
+  if (state?.tailscaleServeEnabled) {
+    return {
+      description: endpoint?.httpBaseUrl ?? missingDescription,
+      status:
+        endpoint !== null && !working
+          ? "This URL does not reach this backend yet, so pairing links leave it out."
+          : null,
+      switchChecked: true,
+      working,
+    };
+  }
+  if (working) {
+    return { description: endpoint.httpBaseUrl, status: null, switchChecked: false, working };
+  }
+  if (endpoint !== null || (state !== null && state.mode !== "network-accessible")) {
+    return {
+      description: "Off. Turn it on to reach this machine from your other devices on Tailscale.",
+      status: null,
+      switchChecked: false,
+      working,
+    };
+  }
+  return { description: missingDescription, status: null, switchChecked: null, working };
 }
 
 export function resolveTailscaleServeBaseUrl(

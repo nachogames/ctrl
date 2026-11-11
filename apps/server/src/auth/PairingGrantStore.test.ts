@@ -1,4 +1,4 @@
-import { AuthStandardClientScopes } from "@t3tools/contracts";
+import { AuthStandardClientScopes, tailnetSubject } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -232,6 +232,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
         expect(consumed.scopes).toEqual(change.pairingLink.scopes);
         expect(yield* Queue.take(changes)).toEqual({ type: "pairingLinkRemoved", id: issued.id });
       }
+
+      // Tailscale sign-in grants are neither listed nor streamed: the next change is the next link.
+      const signIn = yield* grants.issueOneTimeToken({ subject: tailnetSubject("nStudio") });
+      expect((yield* grants.listActive()).map((link) => link.id)).not.toContain(signIn.id);
+      yield* grants.consume(signIn.credential);
+      const next = yield* grants.issueOneTimeToken();
+      expect(yield* Queue.take(changes)).toMatchObject({
+        type: "pairingLinkUpserted",
+        pairingLink: { id: next.id },
+      });
     }).pipe(Effect.scoped, Effect.provide(layerPairingGrantStore())),
   );
 });

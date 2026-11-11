@@ -30,6 +30,7 @@ import { type AgentsOnMachine, MachineUseSwitches } from "./MachineUseSwitches";
 import {
   ConnectionDiagnosisPanel,
   ConnectionDiagnosisSummary,
+  HostTailscaleNotice,
   useConnectionDiagnosis,
 } from "./ConnectionDiagnosisDetails";
 import { usePreparedConnection } from "~/state/session";
@@ -298,6 +299,8 @@ export function SavedBackendListRow({
               expanded={diagnosisOpen}
               onToggle={() => setDiagnosisOpen((open) => !open)}
             />
+          ) : enabled ? (
+            <HostTailscaleNotice environment={environment} />
           ) : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="mt-1 max-w-md">

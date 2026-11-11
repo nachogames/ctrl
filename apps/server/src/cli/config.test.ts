@@ -51,6 +51,8 @@ const minimalDesktopFlags = (baseDir: string) => ({
   tailscaleServeEnabled: Option.none<boolean>(),
   tailscaleServePort: Option.none<number>(),
   lan: Option.none<boolean>(),
+  tailscaleSignInEnabled: Option.none<boolean>(),
+  tailscaleOwnerUserId: Option.none<string>(),
 });
 
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
@@ -234,6 +236,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
+        tailscaleSignInEnabled: Option.none<boolean>(),
+        tailscaleOwnerUserId: Option.none<string>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -279,6 +283,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
+        tailscaleSignInEnabled: Option.none<boolean>(),
+        tailscaleOwnerUserId: Option.none<string>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({ env: { T3CODE_DEV_AUTH_TOKEN: secret } }),
@@ -361,6 +367,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -438,6 +446,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -586,6 +596,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -635,6 +647,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -676,6 +690,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.none(),
         {
@@ -739,6 +755,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -779,6 +797,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     tailscaleServeEnabled: Option.none<boolean>(),
     tailscaleServePort: Option.none<number>(),
     lan: Option.none<boolean>(),
+    tailscaleSignInEnabled: Option.none<boolean>(),
+    tailscaleOwnerUserId: Option.none<string>(),
   });
 
   it.effect("uses the automatic port selector only when no port is configured", () =>
@@ -937,7 +957,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       }),
   );
 
-  it.effect("listens on private networks per T3CODE_LAN, else under the service launcher", () =>
+  it.effect("listens per T3CODE_LAN and Tailscale sign-in, else per the service launcher", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
       const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-service-host");
@@ -946,7 +966,11 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         readonly env?: Record<string, string>;
       }) =>
         resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
-          Effect.map(({ host, privateNetworkOnly }) => ({ host, privateNetworkOnly })),
+          Effect.map(({ host, privateNetworkOnly, tailscaleOnly }) => ({
+            host,
+            privateNetworkOnly,
+            tailscaleOnly,
+          })),
           Effect.provide(
             Layer.mergeAll(
               ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.env ?? {} })),
@@ -982,6 +1006,15 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         privateNetworkOnly: undefined,
       });
       expect(yield* resolveHost({ connected: false, env: { T3CODE_LAN: "true" } })).toEqual({
+        host: "0.0.0.0",
+        privateNetworkOnly: true,
+      });
+      // Tailscale sign-in without the local network accepts only the tailnet.
+      const signIn = { T3CODE_TAILSCALE_SIGN_IN: "true" };
+      expect(
+        yield* resolveHost({ connected: true, env: { ...signIn, T3CODE_LAN: "false" } }),
+      ).toEqual({ host: "0.0.0.0", privateNetworkOnly: undefined, tailscaleOnly: true });
+      expect(yield* resolveHost({ connected: true, env: signIn })).toEqual({
         host: "0.0.0.0",
         privateNetworkOnly: true,
       });

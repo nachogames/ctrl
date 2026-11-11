@@ -20,7 +20,11 @@ import { cn } from "../../lib/cn";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
 import { environmentPresentations } from "../../state/presentation";
-import { ConnectionDiagnosisDetails, useConnectionDiagnosis } from "./ConnectionDiagnosisDetails";
+import {
+  ConnectionDiagnosisDetails,
+  HostTailscaleNotice,
+  useConnectionDiagnosis,
+} from "./ConnectionDiagnosisDetails";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { EnvironmentBattery } from "./EnvironmentBattery";
@@ -137,7 +141,9 @@ export function ConnectionEnvironmentRow(props: {
               <Text className="text-xs text-danger-foreground">{diagnosis.headline}</Text>
               {connectionState.attempt > 0 ? (
                 <Text className="text-xs text-foreground-muted">
-                  {`Retrying · attempt ${connectionState.attempt}`}
+                  {connectionState.retryAt === null
+                    ? `Attempt ${connectionState.attempt}`
+                    : `Retrying · attempt ${connectionState.attempt}`}
                 </Text>
               ) : null}
             </>
@@ -159,6 +165,9 @@ export function ConnectionEnvironmentRow(props: {
                 />
               ) : null}
             </Text>
+          ) : null}
+          {!diagnosis && enabled && presentation !== null ? (
+            <HostTailscaleNotice presentation={presentation} />
           ) : null}
           {freeze ? (
             <Text

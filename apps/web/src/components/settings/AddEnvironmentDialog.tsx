@@ -6,10 +6,12 @@ import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 
 import {
   type DesktopDiscoveredSshHost,
   type DesktopSshEnvironmentTarget,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import {
   RelayConnectionRegistration,
   RelayConnectionTarget,
+  tailnetSignInBaseUrl,
 } from "@t3tools/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
@@ -47,6 +49,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import {
   connectPairing as connectPairingAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
+  connectTailnet as connectTailnetAtom,
 } from "~/connection/onboarding";
 import { useEnvironmentQuery } from "~/state/query";
 import { desktopSshHostsStateAtom, filterDiscoveredSshHosts } from "~/state/desktopSshHosts";
@@ -95,6 +98,7 @@ export function AddEnvironmentDialog({
   const desktopBridge = window.desktopBridge;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
+  const connectTailnet = useAtomCommand(connectTailnetAtom, { reportFailure: false });
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
     reportFailure: false,
   });
@@ -244,6 +248,37 @@ export function AddEnvironmentDialog({
 
     setIsAddingSavedBackend(true);
     onErrorChange(null);
+    // The desktop app signs in through Tailscale with no code when the machine offers it.
+    if (
+      desktopBridge !== undefined &&
+      savedBackendPairingCode.trim() === "" &&
+      tailnetSignInBaseUrl(savedBackendHost) !== null
+    ) {
+      const result = await connectTailnet({
+        address: savedBackendHost,
+        ...(routeTarget ? { expectedEnvironmentId: routeTarget.environmentId } : {}),
+      });
+      const signInBaseUrl = tailnetSignInBaseUrl(savedBackendHost);
+      if (result._tag === "Success" && Option.isSome(result.value) && signInBaseUrl !== null) {
+        await finishSavedBackend({
+          environmentId: result.value.value,
+          label: savedBackendHost.trim(),
+          httpBaseUrl: signInBaseUrl,
+        });
+        return;
+      }
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        onErrorChange(error instanceof Error ? error.message : "Failed to add backend.");
+      }
+      if (result._tag === "Success") {
+        onErrorChange(
+          "That machine does not offer Tailscale sign-in. Paste a pairing link from it instead.",
+        );
+      }
+      setIsAddingSavedBackend(false);
+      return;
+    }
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
     try {
       remotePairingInput = pastedLink
@@ -288,17 +323,25 @@ export function AddEnvironmentDialog({
       return;
     }
 
-    const environmentId = result.value;
+    await finishSavedBackend({
+      environmentId: result.value,
+      label: remotePairingInput.host,
+      httpBaseUrl: resolveRemotePairingTarget(remotePairingInput).httpBaseUrl,
+    });
+  };
+
+  const finishSavedBackend = async (added: {
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly httpBaseUrl: string;
+  }) => {
+    const { environmentId } = added;
     let agentsProblem: string | null = null;
     if (!routeTarget && letAgentsRun && primaryEnvironmentId !== null) {
       // Before hiding it: the code for the agents' link is minted over the new connection.
       agentsProblem = await linkAgentsTo({
         hostEnvironmentId: primaryEnvironmentId,
-        target: {
-          environmentId,
-          label: remotePairingInput.host,
-          urls: [resolveRemotePairingTarget(remotePairingInput).httpBaseUrl],
-        },
+        target: { environmentId, label: added.label, urls: [added.httpBaseUrl] },
       });
     }
     if (!routeTarget && !showChats) {
@@ -486,7 +529,9 @@ export function AddEnvironmentDialog({
             spellCheck={false}
           />
           <span className="mt-1 block text-2xs text-muted-foreground">
-            Only needed with a bare code. The link from Add a device already has it.
+            {desktopBridge
+              ? "Only needed with a bare code. On your tailnet, a machine name or 100.x address alone needs no code."
+              : "Only needed with a bare code. The link from Add a device already has it."}
           </span>
         </label>
       )}
@@ -577,7 +622,7 @@ export function AddEnvironmentDialog({
         </div>
       ) : null}
       {renderRemoteFields()}
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+      {error ? <p className="text-xs whitespace-pre-wrap text-destructive">{error}</p> : null}
       <Button
         variant="outline"
         className="w-full"
