@@ -68,9 +68,13 @@ cannot add more until you are under the limit again.
 
 Use direct pairing when the other device can reach the host's network address.
 
-On a desktop host, open **Settings → Sharing & access**, enable **Network access**,
-then create a pairing link using an address the other device can reach. Changing
-network access restarts the desktop app. You can turn it off in the same place.
+On a desktop host, open **Settings → Sharing & access**. Under **How other devices
+reach this Mac**, turn on **Tailscale** or **Local network**, then choose **Add a
+device**. It shows a one-time code, a QR code and a link that already carries this
+machine's address. Two switches ride along with it: whether the other device shows
+this machine's chats and projects, and whether its agents may run work here (each
+task still asks for approval here). Changing Local network restarts the desktop
+app. You can turn it off in the same place.
 
 For a command-line host, choose the local network in `t3 up`, or run:
 
@@ -88,9 +92,12 @@ If a server is already running, generate a fresh link without restarting it:
 t3 pair
 ```
 
-Scan the QR code on your phone or paste the pairing URL into **Add environment**
-in the receiving app. Connection settings are under **Settings → Environments**
-on web and desktop and **Settings → Environments** on mobile. A loopback address
+Scan the QR code on your phone, or paste the link into **Add a machine** in the
+receiving app (**Settings → Other machines** on web and desktop, **Settings →
+Environments** on mobile). A bare code also works with the machine's address.
+Each machine in **Other machines** has two switches: **Show its chats and
+projects here**, and **Agents here can run work there**, which links this
+machine's agents to it without a second code. A loopback address
 such as `127.0.0.1` reaches only the device opening the link.
 
 On a computer with the desktop app, you can open the printed `t3code://pair`
@@ -207,7 +214,7 @@ scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
 ## Desktop-managed SSH
 
-In the desktop app, open **Settings → Environments → Add environment**, choose
+In the desktop app, open **Settings → Other machines → Add a machine**, choose
 **SSH**, and enter a host or SSH alias such as `user@example.com`. T3 Code starts
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
@@ -330,8 +337,10 @@ off on either machine, agents start nothing over a link between them. A task
 already running on the other machine still finishes, and if that machine has it
 off, its result arrives once it is back on.
 
-On the machine you will work from, open **Settings → Environments → Linked environments**,
-choose **Link**, and pick the other machine or enter its address. The list
+On the machine you will work from, open **Settings → Other machines** and turn on
+**Agents here can run work there** on the other machine's row. For a machine you
+have not added, use **Add a machine** with that switch on; turn off **Show its chats
+and projects here** if you only want agents there. The list
 holds the machines this app knows and those on your T3 Connect account. If this
 app is connected to that machine with a session that manages access there, it
 makes the pairing code itself; otherwise paste one from that machine's
