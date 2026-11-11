@@ -66,7 +66,7 @@ directory, normally `~/.t3/service.env`. This file survives service installation
 and updates. For example:
 
 ```dotenv
-T3CODE_PORT=3773
+T3CODE_PORT=3774
 T3CODE_HOST=127.0.0.1
 ```
 

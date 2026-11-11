@@ -234,7 +234,7 @@ devices sign in to machines tagged `tag:t3-box`:
 "grants": [{
   "src": ["you@example.com"],
   "dst": ["tag:t3-box"],
-  "ip":  ["tcp:3773"],
+  "ip":  ["tcp:3774"],
   "app": { "t3.codes/cap/t3code": [{ "scopes": ["standard"] }] }
 }]
 ```
@@ -268,7 +268,7 @@ reconnect when Tailscale is back.
 
 To let your phone reach your laptop the same way, turn on **Tailscale sign-in** in
 **Settings → Sharing & access**. The app restarts and listens on your tailnet at
-port 3773; unless **Local network** is on, it still refuses LAN connections. If
+port 3774; unless **Local network** is on, it still refuses LAN connections. If
 that port is in use, Settings shows the port it uses, and other devices add the
 laptop by name with that port.
 
