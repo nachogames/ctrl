@@ -82,6 +82,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   const attemptScope = yield* Scope.Scope;
   let transient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
+  let expired: ConnectionAttemptError | undefined;
   // Each route gets its own scope so a half-open session closes before the next try.
   const attempt = Effect.fnUntraced(function* (route: ConnectionRoute) {
     const routeScope = yield* Scope.fork(attemptScope);
@@ -93,6 +94,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Failure") {
       if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
       else blocked ??= result.failure;
+      if (result.failure.failureCause === "session_expired") expired ??= result.failure;
     }
     return result;
   });
@@ -128,8 +130,11 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Success") return result.success;
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
+  // The host answered and said this device's sign-in lapsed: no retry fixes that, so a
+  // timeout on another route must not hide it.
   return yield* (
-    transient ??
+    expired ??
+      transient ??
       blocked ??
       new ConnectionTransientError({
         reason: "endpoint-unavailable",

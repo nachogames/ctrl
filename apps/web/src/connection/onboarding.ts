@@ -35,3 +35,16 @@ export const connectSshEnvironment = createRuntimeCommand(connectionAtomRuntime,
       Effect.flatMap((onboarding) => onboarding.registerSsh(input)),
     ),
 });
+
+export const pairEnvironmentAgain = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:pair-again",
+  scheduler: onboardingScheduler,
+  concurrency: {
+    mode: "singleFlight",
+    key: (input: ConnectionOnboarding.PairAgainInput) => input.environmentId,
+  },
+  execute: (input: ConnectionOnboarding.PairAgainInput) =>
+    ConnectionOnboarding.ConnectionOnboarding.pipe(
+      Effect.flatMap((onboarding) => onboarding.pairAgain(input)),
+    ),
+});

@@ -1711,6 +1711,31 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
+  it.effect("reports an expired sign-in over a timeout on another route", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        checkRoute: () => Effect.succeed("answered"),
+        prepare: (_attempt, target) =>
+          target._tag === "BearerConnectionTarget"
+            ? Effect.fail(
+                new ConnectionBlockedError({
+                  reason: "authentication",
+                  detail: "This device's sign-in expired.",
+                  hop: "server",
+                  failureCause: "session_expired",
+                }),
+              )
+            : Effect.fail(transient("Relay timed out.")),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const state = yield* awaitState(supervisor.state, (value) => value.phase === "blocked");
+      expect(state.lastFailure?.failureCause).toBe("session_expired");
+    }),
+  );
+
   it.effect("moves back to the LAN route when the network changes and it answers again", () =>
     Effect.gen(function* () {
       const lanReachable = yield* Ref.make(false);

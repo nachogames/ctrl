@@ -20,6 +20,7 @@ import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
+  type ConnectionCredential,
   PrimaryConnectionRegistration,
 } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
@@ -38,7 +39,7 @@ import {
 } from "./onboarding.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
-import { connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
+import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const layerClientPresentation = Layer.succeed(
@@ -162,6 +163,7 @@ function layerPairingHttp(
 function layerPairingOnboarding(
   options?: Parameters<typeof layerPairingHttp>[1],
   calls: Array<{ readonly url: string; readonly init: RequestInit }> = [],
+  credentialPuts: Array<readonly [string, ConnectionCredential]> = [],
 ) {
   const dependencies = Layer.mergeAll(
     layerClientPresentation,
@@ -178,7 +180,10 @@ function layerPairingOnboarding(
     Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({}),
     Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({
       get: () => Effect.succeedNone,
-      put: () => Effect.void,
+      put: (connectionId, credential) =>
+        Effect.sync(() => {
+          credentialPuts.push([connectionId, credential]);
+        }),
     }),
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
     Layer.succeed(
@@ -368,6 +373,62 @@ describe("connection onboarding", () => {
       expect(entry === undefined ? [] : connectionRoutes(entry).map(routeHttpBaseUrl)).toEqual(
         expect.arrayContaining(["https://remote.example.test/", "https://lan.example.test/"]),
       );
+    }).pipe(Effect.provide(layerPairingOnboarding())),
+  );
+
+  it.effect("pairs a signed-out environment again in place and shares the login", () => {
+    const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const credentialPuts: Array<readonly [string, ConnectionCredential]> = [];
+    return Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      yield* registerSwitchedOffEnvironment;
+      yield* onboarding.registerPairing({
+        host: "lan.example.test",
+        pairingCode: "first-code",
+        expectedEnvironmentId: PAIRED_ENVIRONMENT_ID,
+      });
+      const before = (yield* SubscriptionRef.get(registry.entries)).get(PAIRED_ENVIRONMENT_ID);
+      const routeIds =
+        before === undefined
+          ? []
+          : connectionRoutes(before).map((r) => connectionRouteId(r.target));
+      expect(routeIds).toHaveLength(2);
+      calls.length = 0;
+      credentialPuts.length = 0;
+
+      yield* onboarding.pairAgain({ environmentId: PAIRED_ENVIRONMENT_ID, code: " new-code " });
+
+      const after = (yield* SubscriptionRef.get(registry.entries)).get(PAIRED_ENVIRONMENT_ID);
+      // Same routes, same order: nothing removed or added.
+      expect(
+        after === undefined ? [] : connectionRoutes(after).map((r) => connectionRouteId(r.target)),
+      ).toEqual(routeIds);
+      expect(after?.enabled).toBe(true);
+      // The code is redeemed at the preferred saved address.
+      expect(calls.map((call) => new URL(call.url).host)).toContain(
+        new URL(routeHttpBaseUrl(connectionRoutes(before!)[0]!)!).host,
+      );
+      // Every other paired address gets the new login instead of keeping the lapsed one.
+      expect(credentialPuts).toEqual(
+        routeIds
+          .slice(1)
+          .map((id) => [id, new BearerConnectionCredential({ token: "bearer-token" })]),
+      );
+    }).pipe(Effect.provide(layerPairingOnboarding(undefined, calls, credentialPuts)));
+  });
+
+  it.effect("refuses to pair again with a link from a different machine", () =>
+    Effect.gen(function* () {
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      yield* registerSwitchedOffEnvironment;
+      const error = yield* onboarding
+        .pairAgain({
+          environmentId: EnvironmentId.make("another-environment"),
+          code: "https://remote.example.test/pair#token=abc",
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("different machine");
     }).pipe(Effect.provide(layerPairingOnboarding())),
   );
 
