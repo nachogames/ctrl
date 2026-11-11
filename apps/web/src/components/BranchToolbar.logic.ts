@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type {
   EnvironmentId,
   EnvironmentMachineKind,
@@ -22,6 +23,7 @@ export interface EnvironmentOption {
   battery?: HostBattery | null;
   /** Set when the machine is listed but cannot be picked, saying why. */
   disabledReason?: string;
+  connection: EnvironmentConnectionPhase;
 }
 
 /** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */

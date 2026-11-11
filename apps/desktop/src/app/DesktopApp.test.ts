@@ -69,6 +69,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
+import * as DesktopTailscaleStatus from "../backend/DesktopTailscaleStatus.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 
 it.effect.each([false, true])(
@@ -232,6 +233,7 @@ it.effect.each([false, true])(
             Layer.mock(ElectronTheme.ElectronTheme, {}),
             Layer.mock(ElectronWindow.ElectronWindow, {}),
             Layer.mock(MacPermissions.MacPermissions, {}),
+            Layer.mock(DesktopTailscaleStatus.DesktopTailscaleStatus, {}),
             Layer.mock(PreviewManager.PreviewManager, {
               isBrowserPartition: () => {
                 throw new Error("unexpected browser partition lookup");

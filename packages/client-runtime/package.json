@@ -251,6 +251,10 @@
       "types": "./src/state/home.ts",
       "default": "./src/state/home.ts"
     },
+    "./state/connectionOffers": {
+      "types": "./src/state/connectionOffers.ts",
+      "default": "./src/state/connectionOffers.ts"
+    },
     "./state/peerLinks": {
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"
@@ -258,6 +262,10 @@
     "./state/environmentHttpAuth": {
       "types": "./src/state/environmentHttpAuth.ts",
       "default": "./src/state/environmentHttpAuth.ts"
+    },
+    "./state/tailnet": {
+      "types": "./src/state/tailnet.ts",
+      "default": "./src/state/tailnet.ts"
     },
     "./state/peerPairingCode": {
       "types": "./src/state/peerPairingCode.ts",

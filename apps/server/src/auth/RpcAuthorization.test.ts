@@ -1,4 +1,5 @@
 import {
+  AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
@@ -22,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
@@ -293,6 +295,50 @@ it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as
       expect(handled).toBe(1);
     }).pipe(Effect.scoped),
 );
+
+describe("tailnet authorization", () => {
+  const tested = [WS_METHODS.tailnetPeersList, WS_METHODS.tailnetDevicesBlock] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+
+  it.effect.each([
+    {
+      scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+      peers: false,
+      block: false,
+    },
+    { scopes: [AuthAccessReadScope], peers: true, block: false },
+    { scopes: [AuthAccessReadScope, AuthAccessWriteScope], peers: true, block: true },
+  ])(
+    "lists peers only with access:read and blocks only with access:write: %o",
+    ({ scopes, peers, block }) =>
+      Effect.gen(function* () {
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.tailnetPeersList, () =>
+                Effect.succeed({ peers: [] }),
+              ),
+              group.toLayerHandler(WS_METHODS.tailnetDevicesBlock, () =>
+                Effect.succeed({ revokedSessionCount: 0 }),
+              ),
+              RpcAuthorization.layer(scopes),
+            ),
+          ),
+        );
+        const peersExit = yield* Effect.exit(client[WS_METHODS.tailnetPeersList]({}));
+        const blockExit = yield* Effect.exit(
+          client[WS_METHODS.tailnetDevicesBlock]({ stableNodeId: "nPhone" }),
+        );
+        expect(Exit.isSuccess(peersExit)).toBe(peers);
+        expect(Exit.isSuccess(blockExit)).toBe(block);
+      }).pipe(Effect.scoped),
+  );
+});
 
 describe("settings mutation authorization", () => {
   const group = WsRpcGroup.omit(

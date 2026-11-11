@@ -115,9 +115,16 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // A guest link hands thread access to someone outside, like a pairing link.
   [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksLink]: AuthAccessWriteScope,
+  // An offer makes this machine's app connect to another machine; taking one acts on it.
+  [WS_METHODS.connectionOffersOffer]: AuthAccessWriteScope,
+  [WS_METHODS.connectionOffersTake]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
+  // Blocking a device is access management, like revoking its session.
+  [WS_METHODS.tailnetDevicesList]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesBlock]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesUnblock]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

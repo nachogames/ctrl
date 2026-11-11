@@ -106,7 +106,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/scheduled-tasks": "Scheduled tasks",
   "/settings/source-control": "Source control",
   "/settings/worktrees": "Worktrees",
-  "/settings/connections": "Environments",
+  "/settings/connections": "Connections",
   "/settings/access": "Sharing & access",
   "/settings/secrets": "Secrets",
   "/settings/maintenance": "Maintenance",
@@ -153,7 +153,6 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: "Connections",
     paths: [
       "/settings/connections",
-      "/settings/access",
       ...(isSecretsFeatureEnabled ? (["/settings/secrets"] as const) : []),
     ],
   },
@@ -1307,7 +1306,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "environment-icon",
     title: "Environment icon",
-    to: "/settings/access",
+    to: "/settings/connections",
     targetId: "connections-environment",
     searchTerms: ["machine glyph sidebar mac mini studio laptop desktop server cloud vm"],
   },
@@ -1320,25 +1319,36 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "network-access",
-    title: "Network access",
-    to: "/settings/access",
+    title: "Local network",
+    to: "/settings/connections",
     targetId: "connections-environment",
-    searchTerms: ["expose backend remote pairing local machine interfaces host restart"],
+    searchTerms: [
+      "network access wifi lan expose backend remote pairing local machine interfaces host restart",
+    ],
     localBackendManagementOnly: true,
   },
   {
     id: "tailscale-https",
-    title: "Tailscale HTTPS",
-    to: "/settings/access",
+    title: "Tailscale",
+    to: "/settings/connections",
     targetId: "connections-environment",
-    searchTerms: ["serve magicdns endpoint remote secure network"],
+    searchTerms: ["tailscale https serve magicdns tailnet endpoint remote secure network"],
+    desktopOnly: true,
+    localBackendManagementOnly: true,
+  },
+  {
+    id: "tailscale-sign-in",
+    title: "Tailscale sign-in",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: ["tailnet no pairing code own devices phone port 3774 block"],
     desktopOnly: true,
     localBackendManagementOnly: true,
   },
   {
     id: "wsl-backend",
     title: "WSL backend",
-    to: "/settings/access",
+    to: "/settings/connections",
     searchTerms: [
       "windows subsystem linux distro second server projects stop windows backend restart wsl only",
     ],
@@ -1351,7 +1361,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "t3-connect",
     localEnvironmentOnly: true,
     title: "T3 Connect",
-    to: "/settings/access",
+    to: "/settings/connections",
     targetId: "connections-environment",
     searchTerms: ["managed tunnel cloud other devices remote tunnels limit t3 chat"],
     desktopOnly: true,
@@ -1361,7 +1371,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "hold-webhooks-while-offline",
     localEnvironmentOnly: true,
     title: "Hold webhooks while offline",
-    to: "/settings/access",
+    to: "/settings/connections",
     targetId: "connections-environment",
     searchTerms: ["webhook automations offline queue mailbox t3 connect"],
     cloudOnly: true,
@@ -1371,7 +1381,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "publish-agent-activity",
     localEnvironmentOnly: true,
     title: "Publish agent activity",
-    to: "/settings/access",
+    to: "/settings/connections",
     targetId: "connections-environment",
     searchTerms: ["mobile push notifications live activities cloud tunnel"],
     cloudOnly: true,
@@ -1379,7 +1389,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "connections-environment",
     title: "This machine",
-    to: "/settings/access",
+    to: "/settings/connections",
     searchTerms: [
       "connections server backend local remote access administrative permissions scope pairing links qr code authorized clients sessions revoke endpoint",
     ],
@@ -1394,9 +1404,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "remote-environments",
-    title: "Environments",
+    title: "Connected machines",
     to: "/settings/connections",
-    searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
+    searchTerms: [
+      "environments add a machine pair backend host code link ssh config agent tunnel saved t3 connect",
+    ],
   },
   {
     id: "load-balancing",
@@ -1489,7 +1501,7 @@ const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
 ]);
 // Section anchors that moved but are not search results themselves.
 const MOVED_SECTION_ANCHORS: Readonly<Record<string, SettingsPath>> = {
-  "authorized-clients": "/settings/access",
+  "authorized-clients": "/settings/connections",
   "text-generation": "/settings/threads",
   about: "/settings/about",
 };

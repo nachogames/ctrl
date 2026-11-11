@@ -29,6 +29,8 @@ import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPrompt
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
+import { TailnetDiscoveryCoordinator } from "../components/desktop/TailnetDiscoveryCoordinator";
+import { ConnectionOffersCoordinator } from "../components/ConnectionOffersCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
@@ -41,6 +43,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
 import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
 import { isElectron } from "../env";
+import { isLoopbackHostname } from "../environments/primary/target";
 import { cn } from "../lib/utils";
 import { useClientSettings } from "../hooks/useSettings";
 import {
@@ -137,6 +140,12 @@ function RootRouteView() {
   return (
     <ToastProvider>
       <AnchoredToastProvider>
+        {/* Runs through first-run setup too, so its machine list shows tailnet machines. */}
+        {isElectron ? <TailnetDiscoveryCoordinator /> : null}
+        {/* Only the machine's own app: taking an offer uses it up, and a browser elsewhere would pair itself. */}
+        {isElectron || isLoopbackHostname(window.location.hostname) ? (
+          <ConnectionOffersCoordinator />
+        ) : null}
         <RootRouteBranch />
       </AnchoredToastProvider>
     </ToastProvider>

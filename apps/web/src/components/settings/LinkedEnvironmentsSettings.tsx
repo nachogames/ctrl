@@ -53,14 +53,18 @@ export function LinkedEnvironmentsSettings({
   environmentId,
   environmentLabel,
   isSearchTarget,
+  hideWhenEmpty = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string | null;
   readonly isSearchTarget: boolean;
+  /** For another machine's own links, which only matter once it has some. */
+  readonly hideWhenEmpty?: boolean;
 }) {
   const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
   const search = searchableSetting("linked-environments");
+  if (hideWhenEmpty && (links.data?.links.length ?? 0) === 0) return null;
   return (
     <SettingsSection
       {...(isSearchTarget ? { id: search.id } : {})}
@@ -89,7 +93,7 @@ export function LinkedEnvironmentsSettings({
   );
 }
 
-function LinkedEnvironmentRow({
+export function LinkedEnvironmentRow({
   environmentId,
   link,
 }: {

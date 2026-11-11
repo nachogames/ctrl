@@ -387,6 +387,10 @@ export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.T
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthGrantScopes),
+  /** How long the code stays usable; the server default when omitted. At most a day. */
+  expiresInMinutes: Schema.optionalKey(
+    Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1440)),
+  ),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
@@ -396,6 +400,8 @@ export const AuthSessionState = Schema.Struct({
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
   permissions: authScopeResponseFields.permissions,
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
+  /** The session came from Tailscale sign-in, so its tailnet grant sets its scopes. */
+  signedInWithTailscale: Schema.optionalKey(Schema.Boolean),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;

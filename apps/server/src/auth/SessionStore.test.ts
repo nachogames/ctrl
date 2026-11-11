@@ -58,6 +58,12 @@ const relaySessionInput = {
   client: { label: "Relay desktop", deviceType: "desktop" },
 } as const;
 
+// Verified link-paired sessions always carry their stored expiry.
+const renewal = (session: SessionStore.VerifiedSession) => ({
+  sessionId: session.sessionId,
+  expiresAt: Option.getOrThrow(Option.fromUndefinedOr(session.expiresAt)),
+});
+
 const linkPairedSessionInput = {
   subject: SessionStore.PAIRING_LINK_SESSION_SUBJECT,
   method: "bearer-access-token",
@@ -91,7 +97,7 @@ const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(functio
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.layer", (it) => {
-  it.effect.each(["revoke", "revokeAllExcept", "replace"] as const)(
+  it.effect.each(["revoke", "revokeAllExcept", "revokeBySubject", "replace"] as const)(
     "invalidates every connection for a session on %s and leaves other sessions active",
     (operation) =>
       Effect.gen(function* () {
@@ -113,7 +119,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
           .pipe(Effect.forkScoped({ startImmediately: true }));
         if (operation === "revoke") yield* sessions.revoke(client.sessionId);
         else if (operation === "revokeAllExcept") yield* sessions.revokeAllExcept(owner.sessionId);
-        else yield* sessions.issue({ ...relaySessionInput, replaceSessionId: client.sessionId });
+        else if (operation === "revokeBySubject") {
+          const sibling = yield* sessions.issue(relaySessionInput);
+          expect(yield* sessions.revokeBySubject(relaySessionInput.subject)).toBe(2);
+          expect((yield* Effect.flip(sessions.verify(sibling.token)))._tag).toBe(
+            "SessionTokenRevokedError",
+          );
+        } else yield* sessions.issue({ ...relaySessionInput, replaceSessionId: client.sessionId });
         yield* Fiber.join(first);
         yield* Fiber.join(second);
         expect(yield* Deferred.isDone(ownerInvalidated)).toBe(false);
@@ -148,14 +160,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
 
       yield* TestClock.adjust(Duration.days(20));
       const beforeRenewal = yield* sessions.verify(issued.token);
-      const renewed = yield* sessions.renew(beforeRenewal, Duration.days(30));
+      const renewed = yield* sessions.renew(renewal(beforeRenewal), Duration.days(30));
       expect(Option.map(renewed, (at) => at.epochMilliseconds)).toEqual(
         Option.some(Duration.toMillis(Duration.days(50))),
       );
       // A renewal inside the granularity window does not write again.
       expect(
         Option.isNone(
-          yield* sessions.renew(yield* sessions.verify(issued.token), Duration.days(30)),
+          yield* sessions.renew(renewal(yield* sessions.verify(issued.token)), Duration.days(30)),
         ),
       ).toBe(true);
 
@@ -168,7 +180,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const lapsed = yield* sessions.verify(issued.token).pipe(Effect.flip);
       expect(lapsed._tag).toBe("SessionTokenExpiredError");
       // A lapsed session cannot be revived by a late renewal.
-      expect(Option.isNone(yield* sessions.renew(afterClaim, Duration.days(30)))).toBe(true);
+      expect(Option.isNone(yield* sessions.renew(renewal(afterClaim), Duration.days(30)))).toBe(
+        true,
+      );
       expect((yield* sessions.verify(issued.token).pipe(Effect.flip))._tag).toBe(
         "SessionTokenExpiredError",
       );
@@ -182,7 +196,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const verified = yield* sessions.verify(issued.token);
       yield* sessions.revoke(issued.sessionId);
       yield* TestClock.adjust(Duration.days(10));
-      expect(Option.isNone(yield* sessions.renew(verified, Duration.days(90)))).toBe(true);
+      expect(Option.isNone(yield* sessions.renew(renewal(verified), Duration.days(90)))).toBe(true);
       expect((yield* sessions.verify(issued.token).pipe(Effect.flip))._tag).toBe(
         "SessionTokenRevokedError",
       );
@@ -209,7 +223,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const issued = yield* sessions.issue({ ...input, ttl: Duration.days(30) });
       yield* TestClock.adjust(Duration.days(20));
       // Even a stored expiry moved by hand does not outlive the token's own claim.
-      yield* sessions.renew(yield* sessions.verify(issued.token), Duration.days(30));
+      yield* sessions.renew(renewal(yield* sessions.verify(issued.token)), Duration.days(30));
       yield* TestClock.adjust(Duration.days(10));
       expect((yield* sessions.verify(issued.token).pipe(Effect.flip))._tag).toBe(
         "SessionTokenExpiredError",
@@ -230,7 +244,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
           Effect.forkScoped({ startImmediately: true }),
         );
       yield* TestClock.adjust(Duration.minutes(50));
-      yield* sessions.renew(yield* sessions.verify(issued.token), Duration.hours(1));
+      yield* sessions.renew(renewal(yield* sessions.verify(issued.token)), Duration.hours(1));
       yield* TestClock.adjust(Duration.minutes(20));
       expect(yield* Deferred.isDone(invalidated)).toBe(false);
       yield* TestClock.adjust(Duration.minutes(40));

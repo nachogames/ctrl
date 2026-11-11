@@ -5,10 +5,12 @@
  */
 import { type AuthMcpClientAccess, mcpClientScopes } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as HttpClient from "effect/http/HttpClient";
 import * as Option from "effect/Option";
 import type { Atom } from "effect/reactivity";
+import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -20,6 +22,7 @@ import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAut
 import { createEnvironmentCommand } from "./runtime.ts";
 
 const MINT_TIMEOUT_MS = 8_000;
+const CONNECT_WAIT = Duration.seconds(15);
 const PEER_PAIRING_CODE_LABEL = "T3 Code link";
 
 /** Minting failed; the user can still paste a code from the other environment. */
@@ -85,7 +88,14 @@ export function createPeerPairingCodeCommand<R, E>(
     label: "environment-data:peer-pairing-code:mint",
     execute: Effect.fn(function* (access: AuthMcpClientAccess) {
       const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-      const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+      // A machine added a moment ago is still connecting; its code is minted once it is ready.
+      const prepared = yield* SubscriptionRef.changes(supervisor.prepared).pipe(
+        Stream.filter(Option.isSome),
+        Stream.runHead,
+        Effect.map(Option.flatten),
+        Effect.timeoutOption(CONNECT_WAIT),
+        Effect.map(Option.flatten),
+      );
       if (Option.isNone(prepared)) {
         return yield* new PeerPairingCodeError({
           reason: "unavailable",

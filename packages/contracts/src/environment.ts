@@ -189,6 +189,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can transcribe 16 kHz mono PCM audio on the environment machine. */
   voiceTranscription: Schema.optionalKey(Schema.Boolean),
   cloudVoiceTranscription: Schema.optionalKey(Schema.Boolean),
+  /** Sign-in is on, Tailscale runs, and the owner is known: the owner's own
+      untagged devices can sign in at `/api/auth/tailnet` over the direct tailnet address. */
+  tailnetSignIn: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

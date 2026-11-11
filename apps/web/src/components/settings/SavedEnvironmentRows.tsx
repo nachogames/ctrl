@@ -1,10 +1,5 @@
 import { SessionPermissions } from "./SessionPermissions";
-import {
-  ChevronRightIcon,
-  ChevronsLeftRightEllipsisIcon,
-  EllipsisIcon,
-  RouteIcon,
-} from "lucide-react";
+import { ChevronsLeftRightEllipsisIcon, EllipsisIcon, RouteIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import {
@@ -32,8 +27,14 @@ import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import { SignedOutEnvironmentPanel } from "./SignedOutEnvironmentPanel";
 import {
+  type AgentsOnMachine,
+  type MachineSignedInHere,
+  MachineUseSwitches,
+} from "./MachineUseSwitches";
+import {
   ConnectionDiagnosisPanel,
   ConnectionDiagnosisSummary,
+  HostTailscaleNotice,
   useConnectionDiagnosis,
 } from "./ConnectionDiagnosisDetails";
 import { usePreparedConnection } from "~/state/session";
@@ -76,6 +77,8 @@ type SavedBackendListRowProps = {
   onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   onRemove: (environment: EnvironmentPresentation) => void;
   onAddRoute: (environment: EnvironmentPresentation) => void;
+  agents: AgentsOnMachine | null;
+  signedInHere?: MachineSignedInHere | null;
 };
 
 function savedBackendStatus(environment: EnvironmentPresentation): {
@@ -115,6 +118,8 @@ export function SavedBackendListRow({
   onSetEnabled,
   onRemove,
   onAddRoute,
+  agents,
+  signedInHere = null,
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
@@ -282,43 +287,6 @@ export function SavedBackendListRow({
               {statusTooltip}
             </TooltipPopup>
           </Tooltip>
-          <span aria-hidden className="shrink-0">
-            ·
-          </span>
-          <button
-            type="button"
-            aria-expanded={routesOpen}
-            onClick={() => setRoutesOpen((open) => !open)}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            {routeCount === 1 ? "Routes" : `${routeCount} routes`}
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                routesOpen && "rotate-90",
-              )}
-            />
-          </button>
-          <span aria-hidden className="shrink-0">
-            ·
-          </span>
-          <button
-            type="button"
-            aria-expanded={permissionsOpen}
-            aria-controls={`remote-permissions-${environmentId}`}
-            onClick={() => setPermissionsOpen((open) => !open)}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            Permissions
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                permissionsOpen && "rotate-90",
-              )}
-            />
-          </button>
         </span>
       }
       below={
@@ -337,6 +305,8 @@ export function SavedBackendListRow({
               expanded={diagnosisOpen}
               onToggle={() => setDiagnosisOpen((open) => !open)}
             />
+          ) : enabled ? (
+            <HostTailscaleNotice environment={environment} />
           ) : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="mt-1 max-w-md">
@@ -347,6 +317,16 @@ export function SavedBackendListRow({
       }
       detail={
         <>
+          <MachineUseSwitches
+            environment={environment}
+            chats={{
+              checked: enabled,
+              disabled: isRemoving || blocked,
+              onCheckedChange: (checked) => onSetEnabled(environmentId, checked),
+            }}
+            agents={agents}
+            signedInHere={signedInHere}
+          />
           {diagnosis && diagnosisOpen ? (
             <ConnectionDiagnosisPanel
               hostLabel={environment.label}
@@ -399,22 +379,6 @@ export function SavedBackendListRow({
           appearance="icon"
         />
       ) : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Switch
-              size="sm"
-              checked={enabled}
-              disabled={isRemoving || blocked}
-              aria-label={`${enabled ? "Switch off" : "Switch on"} ${environment.label}`}
-              onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
-            />
-          }
-        />
-        <TooltipPopup side="top">
-          {blocked ? "Client not supported" : enabled ? "Switch off" : "Switch on"}
-        </TooltipPopup>
-      </Tooltip>
       <Menu>
         <MenuTrigger
           render={
@@ -436,7 +400,10 @@ export function SavedBackendListRow({
           />
           <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
             <RouteIcon />
-            {routesOpen ? "Hide routes" : "Routes"}
+            {routesOpen ? "Hide routes" : `Routes (${routeCount})`}
+          </MenuItem>
+          <MenuItem onClick={() => setPermissionsOpen((open) => !open)}>
+            {permissionsOpen ? "Hide permissions" : "Permissions"}
           </MenuItem>
           {mcpUrl ? (
             <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
@@ -783,11 +750,11 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <ChevronsLeftRightEllipsisIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No saved remote environments</EmptyTitle>
+        <EmptyTitle>No other machines yet</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from T3 Connect."
-            : "Click “Add environment” to pair another environment."}
+            ? "Click Add a machine and paste the link from Add a device on the other machine, or connect one from T3 Connect."
+            : "Click Add a machine and paste the link from Add a device on the other machine."}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -797,17 +764,20 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
 export function CloudRemoteEnvironmentRows({
   primaryEnvironmentId,
   savedEnvironments,
+  listsOtherMachines = false,
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
+  /** Machines linked only for agents also fill the list, so it is not empty. */
+  readonly listsOtherMachines?: boolean;
 }) {
   return hasCloudPublicConfig() ? (
     <CloudEnvironmentConnectRows
       primaryEnvironmentId={primaryEnvironmentId}
       savedEnvironments={savedEnvironments}
-      empty={<EmptyRemoteEnvironments />}
+      empty={listsOtherMachines ? null : <EmptyRemoteEnvironments />}
     />
-  ) : savedEnvironments.length === 0 ? (
+  ) : savedEnvironments.length === 0 && !listsOtherMachines ? (
     <EmptyRemoteEnvironments cloudEnabled={false} />
   ) : null;
 }
