@@ -122,6 +122,10 @@ export const EnvironmentAuthInvalidReason = Schema.Literals([
 ]);
 export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.Type;
 
+/** Why the host refused a session it issued: a lapsed session can be paired again in place. */
+export const EnvironmentSessionState = Schema.Literals(["expired", "revoked", "unknown"]);
+export type EnvironmentSessionState = typeof EnvironmentSessionState.Type;
+
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
 ]);
@@ -172,6 +176,7 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
     code: Schema.Literal("auth_invalid"),
     reason: EnvironmentAuthInvalidReason,
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
+    sessionState: Schema.optionalKey(EnvironmentSessionState),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },

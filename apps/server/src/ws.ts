@@ -3937,6 +3937,7 @@ export const layer = Layer.unwrap(
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthSessionState(error),
             ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
@@ -4054,7 +4055,10 @@ export const layer = Layer.unwrap(
           () =>
             Effect.raceFirst(
               framedRpcWebSocketHttpEffect,
-              sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint).pipe(
+              Effect.raceFirst(
+                serverAuth.renewWhileConnected(session),
+                sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint),
+              ).pipe(
                 Effect.as(HttpServerResponse.empty()),
                 Effect.catchTags({
                   SessionCredentialVerificationError: (error) =>

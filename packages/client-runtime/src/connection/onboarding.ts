@@ -32,7 +32,13 @@ import {
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
-import { connectionRoutes, routeEntry, sshTargetKey } from "./routes.ts";
+import {
+  connectionRouteId,
+  connectionRoutes,
+  routeEntry,
+  routeHttpBaseUrl,
+  sshTargetKey,
+} from "./routes.ts";
 
 export interface PairingConnectionInput {
   readonly pairingUrl?: string;
@@ -45,6 +51,12 @@ export interface SshConnectionInput {
   readonly target: DesktopSshEnvironmentTarget;
   readonly label?: string;
   readonly expectedEnvironmentId?: EnvironmentId;
+}
+
+export interface PairAgainInput {
+  readonly environmentId: EnvironmentId;
+  /** A pairing code, or a whole pairing link from the same machine. */
+  readonly code: string;
 }
 
 export interface BearerConnectionUpdateInput {
@@ -70,6 +82,10 @@ export class ConnectionOnboarding extends Context.Service<
     >;
     readonly updateBearer: (
       input: BearerConnectionUpdateInput,
+    ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
+    /** Signs a saved environment in again where it stands: same routes, no Remove and Add. */
+    readonly pairAgain: (
+      input: PairAgainInput,
     ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/connection/onboarding/ConnectionOnboarding") {}
@@ -166,6 +182,55 @@ const registerPairingConnection = Effect.fn(
     .setEnabled(registration.target.environmentId, true)
     .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
   return registration.target.environmentId;
+});
+
+/** Direct routes the user paired, each holding its own copy of the environment's login. */
+function pairedDirectRoutes(entry: ConnectionCatalogEntry) {
+  return connectionRoutes(entry).filter((route) => {
+    const profile = Option.getOrNull(route.profile);
+    return (
+      route.target._tag === "BearerConnectionTarget" &&
+      profile?._tag === "BearerConnectionProfile" &&
+      profile.learned !== true &&
+      profile.authorization !== "t3-connect"
+    );
+  });
+}
+
+const pairAgainConnection = Effect.fn("clientRuntime.connection.onboarding.pairAgain")(function* (
+  input: PairAgainInput,
+) {
+  const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const saved = (yield* SubscriptionRef.get(registry.entries)).get(input.environmentId);
+  const direct = saved === undefined ? [] : pairedDirectRoutes(saved);
+  const preferred = direct[0];
+  const preferredBaseUrl = preferred === undefined ? null : routeHttpBaseUrl(preferred);
+  const code = input.code.trim();
+  const isLink = /^[a-z][a-z0-9+.-]*:\/\//i.test(code);
+  if (!isLink && preferredBaseUrl === null) {
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "This environment has no saved address to pair again. Paste a pairing link instead.",
+    });
+  }
+  const registration = yield* preparePairingRegistration({
+    ...(isLink ? { pairingUrl: code } : { host: preferredBaseUrl ?? "", pairingCode: code }),
+    expectedEnvironmentId: input.environmentId,
+  });
+  // The host accepts one login on every address it answers, so every paired address gets the
+  // new one; an address left on the lapsed login would be refused again.
+  const pairedId = registration.target.connectionId;
+  yield* Effect.forEach(
+    direct.filter((route) => connectionRouteId(route.target) !== pairedId),
+    (route) => credentials.put(connectionRouteId(route.target), registration.credential),
+    { discard: true },
+  );
+  yield* registry.register(registration);
+  yield* registry.setCompatibility(input.environmentId, null);
+  yield* registry
+    .setEnabled(input.environmentId, true)
+    .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
 });
 
 const isBearerCredential = Schema.is(BearerConnectionCredential);
@@ -321,6 +386,15 @@ export const make = Effect.gen(function* () {
       },
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ClientCapabilities.SshEnvironmentGateway, ssh),
+    ),
+    pairAgain: Effect.fnUntraced(
+      function* (input) {
+        return yield* pairAgainConnection(input);
+      },
+      Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+      Effect.provideService(ConnectionCredentialStore.ConnectionCredentialStore, credentials),
+      Effect.provideService(ClientCapabilities.ClientPresentation, presentation),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
     ),
     updateBearer: Effect.fnUntraced(
       function* (input) {

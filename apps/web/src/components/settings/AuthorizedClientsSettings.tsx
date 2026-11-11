@@ -1,5 +1,5 @@
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
-import { PlusIcon, QrCodeIcon } from "lucide-react";
+import { EllipsisIcon, PlusIcon, QrCodeIcon } from "lucide-react";
 import { type ReactNode, memo, useId, useState } from "react";
 import {
   AuthAccessWriteScope,
@@ -14,6 +14,7 @@ import {
   type AuthPairingCredentialResult,
   type AdvertisedEndpoint,
   type EnvironmentId,
+  type PairedDeviceIdleLimit,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -22,10 +23,15 @@ import {
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
-import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
+import {
+  formatElapsedDurationLabel,
+  formatExpiresInLabel,
+  formatRelativeTimeLabel,
+} from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import {
   canRevokeOtherClients,
+  clientSignOutNotice,
   isQrShareableEndpoint,
   selectQrEndpointOption,
   togglePairingScopeSelection,
@@ -43,7 +49,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "../ui/dialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { QRCodeSvg } from "../ui/qr-code";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -58,6 +66,7 @@ import { authEnvironment } from "~/state/auth";
 import { readEnvironmentScope } from "~/state/session";
 import { useManagedPolicy, usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "~/hooks/useSettings";
 import { ManagedControl } from "../ManagedPolicy";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
@@ -527,6 +536,12 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
     clientSession.client.label ??
     ([clientSession.client.os, clientSession.client.browser].filter(Boolean).join(" · ") ||
       clientSession.subject);
+  const usage = isLive
+    ? "Connected now"
+    : lastConnectedAt
+      ? `Used ${formatRelativeTimeLabel(lastConnectedAt, nowMs)}`
+      : "Not used yet";
+  const signOutNotice = clientSignOutNotice(clientSession, nowMs);
 
   return (
     <div className={ITEM_ROW_CLASSNAME}>
@@ -546,6 +561,12 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
             ) : null}
           </div>
           <p className="text-xs text-muted-foreground">
+            {clientSession.current ? null : (
+              <>
+                {usage}
+                <span aria-hidden> · </span>
+              </>
+            )}
             {deviceInfoBits.length > 0 ? (
               <>
                 {deviceInfoBits.join(" · ")}
@@ -556,14 +577,17 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
           </p>
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          {signOutNotice ? (
+            <span className="text-xs text-warning-foreground">{signOutNotice}</span>
+          ) : null}
           {!clientSession.current ? (
             <Button
               size="xs"
-              variant="destructive-outline"
+              variant="outline"
               disabled={!canRevoke || revokingClientSessionId === clientSession.sessionId}
               onClick={() => void onRevokeSession(clientSession.sessionId)}
             >
-              {revokingClientSessionId === clientSession.sessionId ? "Revoking…" : "Revoke"}
+              {revokingClientSessionId === clientSession.sessionId ? "Signing out…" : "Sign out"}
             </Button>
           ) : null}
         </div>
@@ -571,6 +595,57 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
     </div>
   );
 });
+
+const IDLE_LIMIT_LABELS: Record<PairedDeviceIdleLimit, string> = {
+  days_30: "30 days",
+  days_90: "90 days",
+};
+
+/** How long a paired device may go unused on this environment before it is signed out. */
+export function PairedDeviceIdleLimitRow({
+  environmentId,
+  canWrite,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly canWrite: boolean;
+}) {
+  const idleLimit = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.pairedDeviceIdleLimit,
+  );
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  return (
+    <div className={cn(ITEM_ROW_CLASSNAME, "border-t border-border/50")}>
+      <div className={ITEM_ROW_INNER_CLASSNAME}>
+        <div className="min-w-0 flex-1 space-y-1">
+          <h3 className="text-sm font-medium text-foreground">Sign devices out when unused for</h3>
+          <p className="text-xs text-muted-foreground">
+            Each use resets the clock, so a device in regular use stays signed in.
+          </p>
+        </div>
+        <Select
+          value={idleLimit}
+          disabled={!canWrite}
+          onValueChange={(value) => {
+            if (value === null) return;
+            updateSettings({ pairedDeviceIdleLimit: value as PairedDeviceIdleLimit });
+          }}
+        >
+          <SelectTrigger aria-label="Sign devices out when unused for" className="w-28" size="sm">
+            <SelectValue>{IDLE_LIMIT_LABELS[idleLimit]}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup>
+            {(Object.keys(IDLE_LIMIT_LABELS) as PairedDeviceIdleLimit[]).map((limit) => (
+              <SelectItem key={limit} value={limit}>
+                {IDLE_LIMIT_LABELS[limit]}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      </div>
+    </div>
+  );
+}
 
 type AuthorizedClientsHeaderActionProps = {
   environmentId: EnvironmentId;
@@ -641,14 +716,29 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
 
   return (
     <div className="flex items-center gap-2">
-      <Button
-        size="xs"
-        variant="destructive-outline"
-        disabled={isRevokingOtherClients || !canRevokeOtherClients(clientSessions)}
-        onClick={() => void onRevokeOtherClients()}
-      >
-        {isRevokingOtherClients ? "Revoking…" : "Revoke others"}
-      </Button>
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost-muted"
+              size="icon-xs"
+              aria-label="More actions for authorized clients"
+            />
+          }
+        >
+          <EllipsisIcon className="size-3.5" />
+        </MenuTrigger>
+        <MenuPopup align="end">
+          <MenuItem
+            variant="destructive"
+            disabled={isRevokingOtherClients || !canRevokeOtherClients(clientSessions)}
+            onClick={() => void onRevokeOtherClients()}
+          >
+            {isRevokingOtherClients ? "Signing out…" : "Sign out all other devices"}
+          </MenuItem>
+        </MenuPopup>
+      </Menu>
       {pairingDenial !== undefined ? (
         <ManagedControl reason={pairingDenial}>
           <Button size="xs" variant="default" disabled>

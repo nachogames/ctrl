@@ -87,6 +87,8 @@ export const ConnectionFailureCause = Schema.Literals([
   "relay_error",
   "tunnel_pending",
   "tunnel_not_enabled",
+  // The host answered and refused a sign-in it had let lapse; pairing again fixes it.
+  "session_expired",
 ]);
 export type ConnectionFailureCause = typeof ConnectionFailureCause.Type;
 

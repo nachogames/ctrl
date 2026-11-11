@@ -191,10 +191,14 @@ export function mapRemoteEnvironmentError(
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
         reason: "authentication",
-        detail: "The environment credential is invalid.",
+        detail:
+          error.sessionState === "expired"
+            ? "This device's sign-in expired."
+            : "The environment credential is invalid.",
         traceId: error.traceId,
         hop: "server",
         via,
+        ...(error.sessionState === "expired" ? { failureCause: "session_expired" } : {}),
       });
     case "EnvironmentScopeRequiredError":
     case "EnvironmentOperationForbiddenError":

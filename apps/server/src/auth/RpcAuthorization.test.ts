@@ -1,4 +1,5 @@
 import {
+  AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
@@ -402,6 +403,12 @@ describe("settings mutation authorization", () => {
           patch: { secretProviders: { [SecretProviderId.make("personal")]: null } },
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+      // How long paired devices stay signed in is managed like signing one out.
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: { pairedDeviceIdleLimit: "days_30" },
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
       expect(handled).toBe(false);
     }).pipe(Effect.scoped),
   );

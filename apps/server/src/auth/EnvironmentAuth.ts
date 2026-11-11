@@ -21,7 +21,9 @@ import {
   type AuthWebSocketTicketUse,
   DpopFailureReason,
   type DpopFailureReason as DpopFailureReasonType,
+  EnvironmentSessionState,
   mcpClientScopes,
+  type PairedDeviceIdleLimit,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
@@ -49,6 +51,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { requestUrl } from "../requestUrl.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
@@ -76,6 +79,11 @@ export interface IssuedBearerSession {
 // MCP client tokens are restricted to /mcp; HTTP API and WebSocket RPC would bypass their access cap.
 const MCP_CLIENT_SUBJECT = "mcp-client";
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
+
+const PAIRED_DEVICE_IDLE_LIMITS: Record<PairedDeviceIdleLimit, Duration.Duration> = {
+  days_30: Duration.days(30),
+  days_90: Duration.days(90),
+};
 
 export interface McpClientSession {
   readonly sessionId: AuthSessionId;
@@ -375,6 +383,7 @@ export class ServerAuthInvalidCredentialError extends Schema.TaggedError<ServerA
   {
     diagnostic: Schema.optional(Schema.String),
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
+    sessionState: Schema.optionalKey(EnvironmentSessionState),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -398,6 +407,30 @@ export const serverAuthDpopFailureReason = (
   error: ServerAuthCredentialError,
 ): DpopFailureReasonType | undefined =>
   error._tag === "ServerAuthInvalidCredentialError" ? error.dpopFailureReason : undefined;
+
+export const serverAuthSessionState = (
+  error: ServerAuthCredentialError,
+): EnvironmentSessionState | undefined =>
+  error._tag === "ServerAuthInvalidCredentialError" ? error.sessionState : undefined;
+
+/** A websocket ticket's own five-minute expiry is not the device's session lapsing. */
+const sessionStateOf = (
+  cause: SessionStore.SessionCredentialInvalidError,
+): EnvironmentSessionState | undefined => {
+  switch (cause._tag) {
+    case "SessionTokenExpiredError":
+    case "WebSocketSessionExpiredError":
+      return "expired";
+    case "SessionTokenRevokedError":
+    case "WebSocketSessionRevokedError":
+      return "revoked";
+    case "UnknownSessionTokenError":
+    case "UnknownWebSocketSessionError":
+      return "unknown";
+    default:
+      return undefined;
+  }
+};
 
 export class ServerAuthInvalidScopeError extends Schema.TaggedError<ServerAuthInvalidScopeError>()(
   "ServerAuthInvalidScopeError",
@@ -536,6 +569,8 @@ export class EnvironmentAuth extends Context.Service<
       request: HttpServerRequest.HttpServerRequest,
       use: AuthWebSocketTicketUse,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
+    /** Keeps a paired device's session renewed while its socket stays open; never completes. */
+    readonly renewWhileConnected: (session: AuthenticatedSession) => Effect.Effect<never>;
     readonly issueWebSocketTicket: (
       session: Pick<AuthenticatedSession, "sessionId" | "proofKeyThumbprint">,
       input?: { readonly use?: AuthWebSocketTicketUse },
@@ -618,13 +653,21 @@ const rejectMcpClientAudience = <S extends { readonly subject: string }>(session
       ).pipe(Effect.tap(() => Effect.logWarning("Rejected an MCP client session outside /mcp.")))
     : Effect.succeed(session);
 
+const invalidSessionCredential = (cause: SessionStore.SessionCredentialInvalidError) => {
+  const sessionState = sessionStateOf(cause);
+  return new ServerAuthInvalidCredentialError({
+    cause,
+    ...(sessionState === undefined ? {} : { sessionState }),
+  });
+};
+
 const mapSessionVerificationErrors = <A, R>(
   effect: Effect.Effect<A, SessionStore.SessionCredentialError, R>,
 ): Effect.Effect<A, ServerAuthInvalidCredentialError | ServerAuthInternalError, R> =>
   effect.pipe(
     Effect.mapError((cause) =>
       SessionStore.isSessionCredentialInvalidError(cause)
-        ? new ServerAuthInvalidCredentialError({ cause })
+        ? invalidSessionCredential(cause)
         : new ServerAuthSessionCredentialValidationError({ cause }),
     ),
   );
@@ -719,6 +762,46 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
   const devAuth = resolveReusableDevAuth(config);
+  // Optional so the CLI's auth commands run without the settings service.
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const defaultIdleLimit = PAIRED_DEVICE_IDLE_LIMITS.days_90;
+  const pairedSessionIdleLimit: Effect.Effect<Duration.Duration> =
+    config.pairingSessionTtl !== undefined
+      ? Effect.succeed(config.pairingSessionTtl)
+      : Option.match(serverSettings, {
+          onNone: () => Effect.succeed(defaultIdleLimit),
+          onSome: (service) =>
+            service.getSettings.pipe(
+              Effect.map((settings) => PAIRED_DEVICE_IDLE_LIMITS[settings.pairedDeviceIdleLimit]),
+              Effect.orElseSucceed(() => defaultIdleLimit),
+            ),
+        });
+  const pairedSessionTtl = (subject: string, method: ServerAuthSessionMethod) =>
+    SessionStore.isRenewableSession({ subject, method })
+      ? pairedSessionIdleLimit.pipe(Effect.map((ttl) => ({ ttl })))
+      : Effect.succeed({});
+
+  const renewSession = <S extends AuthenticatedSession>(session: S): Effect.Effect<S> => {
+    const expiresAt = session.expiresAt;
+    if (!SessionStore.isRenewableSession(session) || expiresAt === undefined) {
+      return Effect.succeed(session);
+    }
+    return pairedSessionIdleLimit.pipe(
+      Effect.flatMap((idleLimit) =>
+        sessions.renew({ sessionId: session.sessionId, expiresAt }, idleLimit),
+      ),
+      Effect.map((renewed) =>
+        Option.isSome(renewed) ? { ...session, expiresAt: renewed.value } : session,
+      ),
+      // A failed renewal must not refuse a request the session already authorizes.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to renew a paired device session.", {
+          sessionId: session.sessionId,
+          cause,
+        }).pipe(Effect.as(session)),
+      ),
+    );
+  };
 
   const authenticateToken = (
     token: string,
@@ -818,7 +901,7 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
-        return Effect.succeed(session);
+        return renewSession(session);
       }),
     );
   };
@@ -881,11 +964,13 @@ export const make = Effect.gen(function* () {
     const grant = yield* bootstrapCredentials
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
+    const browserTtl = yield* pairedSessionTtl(grant.subject, "browser-session-cookie");
     const session = yield* sessions
       .issue({
         method: "browser-session-cookie",
         subject: grant.subject,
         scopes: grant.scopes,
+        ...browserTtl,
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
           : {}),
@@ -968,9 +1053,11 @@ export const make = Effect.gen(function* () {
             if (grantedScopes.length === 0) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
+            const method = input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token";
+            const pairedTtl = yield* pairedSessionTtl(grant.subject, method);
             return yield* sessions
               .issue({
-                method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+                method,
                 subject: grant.subject,
                 scopes: grantedScopes,
                 ...(input?.proofKeyThumbprint
@@ -978,7 +1065,7 @@ export const make = Effect.gen(function* () {
                       proofKeyThumbprint: input.proofKeyThumbprint,
                       ttl: Duration.hours(1),
                     }
-                  : {}),
+                  : pairedTtl),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
                 client: {
                   ...requestMetadata,
@@ -1341,6 +1428,23 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("EnvironmentAuth.issueMcpClientSession"),
       );
 
+  const renewWhileConnected: EnvironmentAuth["Service"]["renewWhileConnected"] = (session) =>
+    !SessionStore.isRenewableSession(session)
+      ? Effect.never
+      : Effect.gen(function* () {
+          let current = session;
+          while (true) {
+            const idleLimit = yield* pairedSessionIdleLimit;
+            current = yield* renewSession(current);
+            // An open socket is use; renew well inside the limit so it never lapses mid-connection.
+            yield* Effect.sleep(
+              Duration.millis(
+                Math.min(Duration.toMillis(Duration.hours(1)), Duration.toMillis(idleLimit) / 4),
+              ),
+            );
+          }
+        });
+
   const authenticateBrowserSession: EnvironmentAuth["Service"]["authenticateBrowserSession"] = (
     request,
   ) => {
@@ -1401,6 +1505,7 @@ export const make = Effect.gen(function* () {
     revokeOtherClientSessions,
     authenticateHttpRequest,
     authenticateWebSocketUpgrade,
+    renewWhileConnected,
     issueWebSocketTicket,
     issueStartupPairingUrl,
     authenticateMcpClient,

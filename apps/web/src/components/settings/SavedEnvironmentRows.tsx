@@ -30,6 +30,7 @@ import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
+import { SignedOutEnvironmentPanel } from "./SignedOutEnvironmentPanel";
 import {
   ConnectionDiagnosisPanel,
   ConnectionDiagnosisSummary,
@@ -197,7 +198,10 @@ export function SavedBackendListRow({
     state: connectionState,
     relayOnly,
   } = useConnectionDiagnosis(environment);
-  const diagnosis = resumingServerUpdate ? null : currentDiagnosis;
+  // A lapsed sign-in is not a reachability failure: no retry or diagnostics fix it, pairing does.
+  const signedOut =
+    currentDiagnosis !== null && connectionState.lastFailure?.failureCause === "session_expired";
+  const diagnosis = resumingServerUpdate || signedOut ? null : currentDiagnosis;
   const prepared = usePreparedConnection(environmentId);
   const connectedTarget = isConnected && prepared._tag === "Some" ? prepared.value.target : null;
   const mcpUrl = environmentMcpUrl({
@@ -213,7 +217,7 @@ export function SavedBackendListRow({
   const subtitleText = [
     environmentTransportLabel(environment, connectedTarget),
     // The headline below names the failure in full.
-    diagnosis ? null : resumingServerUpdate ? "Restarting" : status.text,
+    signedOut ? "Signed out" : diagnosis ? null : resumingServerUpdate ? "Restarting" : status.text,
     enabled && versionMismatch ? serverVersion : null,
   ]
     .filter((value): value is string => value !== null)
@@ -261,10 +265,12 @@ export function SavedBackendListRow({
                 <span
                   className={cn(
                     "min-w-0 truncate",
+                    signedOut && "text-warning-foreground",
                     enabled &&
                       status.tone === "error" &&
                       !resumingServerUpdate &&
                       !diagnosis &&
+                      !signedOut &&
                       "text-destructive",
                   )}
                 />
@@ -317,6 +323,12 @@ export function SavedBackendListRow({
       }
       below={
         <>
+          {signedOut ? (
+            <SignedOutEnvironmentPanel
+              environmentId={environmentId}
+              hostLabel={environment.label}
+            />
+          ) : null}
           {diagnosis ? (
             <ConnectionDiagnosisSummary
               diagnosis={diagnosis}

@@ -113,6 +113,8 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
       return `${host}'s tunnel is still being set up`;
     case "tunnel_not_enabled":
       return `T3 Connect is not turned on for ${host}`;
+    case "session_expired":
+      return `This device's sign-in to ${host} expired`;
     case "released":
     case "tunnel_down":
       return `${host}'s tunnel is offline`;
@@ -181,6 +183,11 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
       ];
     case "tunnel_not_enabled":
       return [`On ${host}, open Settings > Sharing & access and turn T3 Connect on.`];
+    case "session_expired":
+      return [
+        `On ${host}, open Settings > Connections and create a pairing link.`,
+        "Pair this device with that code again. Its routes and settings stay as they are.",
+      ];
     case "released":
     case "tunnel_down":
       return [
@@ -245,6 +252,7 @@ function helpSection(
     case "session_pending":
     case "not_linked":
     case "tunnel_not_enabled":
+    case "session_expired":
       return "sign-in-account-or-link-problems";
     case "relay_error":
       return "t3-connect-returned-an-error";

@@ -1,3 +1,4 @@
+import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
 import {
   RelayEnvironmentEndpointUnavailableError,
   type RelayProtectedError,
@@ -152,6 +153,39 @@ describe("presentConnectionDiagnosis", () => {
       detail: "Your cloud sign-in changed. Sign in again to authorize the environment.",
     });
     expect(results(backoff(failure))).not.toContainEqual(expect.stringMatching(/:ok$/));
+  });
+
+  it.each([
+    {
+      sessionState: "expired" as const,
+      cause: "session_expired",
+      headline: "This device's sign-in to Mac mini expired",
+    },
+    {
+      sessionState: "revoked" as const,
+      cause: "authentication",
+      headline: "T3 Code on Mac mini did not accept this device",
+    },
+    {
+      sessionState: undefined,
+      cause: "authentication",
+      headline: "T3 Code on Mac mini did not accept this device",
+    },
+  ])("says a lapsed sign-in expired, apart from a refused one: $sessionState", (testCase) => {
+    const failure = mapRemoteEnvironmentError(
+      new EnvironmentAuthInvalidError({
+        code: "auth_invalid",
+        reason: "invalid_credential",
+        ...(testCase.sessionState === undefined ? {} : { sessionState: testCase.sessionState }),
+        traceId: "trace-1",
+      }),
+    );
+    expect(failure.failureCause ?? null).toBe(
+      testCase.cause === "session_expired" ? "session_expired" : null,
+    );
+    const diagnosis = diagnose(backoff(failure), "direct");
+    expect(diagnosis?.headline).toBe(testCase.headline);
+    expect(diagnosis?.facts).toContainEqual(["Cause", testCase.cause]);
   });
 
   it("keeps the relay health status out of a failure that has its own cause", () => {
