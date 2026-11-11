@@ -89,7 +89,7 @@ export function LinkedEnvironmentsSettings({
   );
 }
 
-function LinkedEnvironmentRow({
+export function LinkedEnvironmentRow({
   environmentId,
   link,
 }: {

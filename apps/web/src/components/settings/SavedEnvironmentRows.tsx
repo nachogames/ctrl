@@ -1,10 +1,5 @@
 import { SessionPermissions } from "./SessionPermissions";
-import {
-  ChevronRightIcon,
-  ChevronsLeftRightEllipsisIcon,
-  EllipsisIcon,
-  RouteIcon,
-} from "lucide-react";
+import { ChevronsLeftRightEllipsisIcon, EllipsisIcon, RouteIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import {
@@ -31,6 +26,7 @@ import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import { SignedOutEnvironmentPanel } from "./SignedOutEnvironmentPanel";
+import { type AgentsOnMachine, MachineUseSwitches } from "./MachineUseSwitches";
 import {
   ConnectionDiagnosisPanel,
   ConnectionDiagnosisSummary,
@@ -76,6 +72,7 @@ type SavedBackendListRowProps = {
   onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   onRemove: (environment: EnvironmentPresentation) => void;
   onAddRoute: (environment: EnvironmentPresentation) => void;
+  agents: AgentsOnMachine | null;
 };
 
 function savedBackendStatus(environment: EnvironmentPresentation): {
@@ -115,6 +112,7 @@ export function SavedBackendListRow({
   onSetEnabled,
   onRemove,
   onAddRoute,
+  agents,
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
@@ -282,43 +280,6 @@ export function SavedBackendListRow({
               {statusTooltip}
             </TooltipPopup>
           </Tooltip>
-          <span aria-hidden className="shrink-0">
-            ·
-          </span>
-          <button
-            type="button"
-            aria-expanded={routesOpen}
-            onClick={() => setRoutesOpen((open) => !open)}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            {routeCount === 1 ? "Routes" : `${routeCount} routes`}
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                routesOpen && "rotate-90",
-              )}
-            />
-          </button>
-          <span aria-hidden className="shrink-0">
-            ·
-          </span>
-          <button
-            type="button"
-            aria-expanded={permissionsOpen}
-            aria-controls={`remote-permissions-${environmentId}`}
-            onClick={() => setPermissionsOpen((open) => !open)}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            Permissions
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                permissionsOpen && "rotate-90",
-              )}
-            />
-          </button>
         </span>
       }
       below={
@@ -347,6 +308,15 @@ export function SavedBackendListRow({
       }
       detail={
         <>
+          <MachineUseSwitches
+            environment={environment}
+            chats={{
+              checked: enabled,
+              disabled: isRemoving || blocked,
+              onCheckedChange: (checked) => onSetEnabled(environmentId, checked),
+            }}
+            agents={agents}
+          />
           {diagnosis && diagnosisOpen ? (
             <ConnectionDiagnosisPanel
               hostLabel={environment.label}
@@ -399,22 +369,6 @@ export function SavedBackendListRow({
           appearance="icon"
         />
       ) : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Switch
-              size="sm"
-              checked={enabled}
-              disabled={isRemoving || blocked}
-              aria-label={`${enabled ? "Switch off" : "Switch on"} ${environment.label}`}
-              onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
-            />
-          }
-        />
-        <TooltipPopup side="top">
-          {blocked ? "Client not supported" : enabled ? "Switch off" : "Switch on"}
-        </TooltipPopup>
-      </Tooltip>
       <Menu>
         <MenuTrigger
           render={
@@ -436,7 +390,10 @@ export function SavedBackendListRow({
           />
           <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
             <RouteIcon />
-            {routesOpen ? "Hide routes" : "Routes"}
+            {routesOpen ? "Hide routes" : `Routes (${routeCount})`}
+          </MenuItem>
+          <MenuItem onClick={() => setPermissionsOpen((open) => !open)}>
+            {permissionsOpen ? "Hide permissions" : "Permissions"}
           </MenuItem>
           {mcpUrl ? (
             <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>

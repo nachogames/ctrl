@@ -1,6 +1,7 @@
 import { SessionPermissions } from "./SessionPermissions";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import { type ReactNode, useState } from "react";
 import {
   AuthAccessReadScope,
@@ -43,9 +44,9 @@ import { searchableSetting } from "./settingsSearch";
 import { EnvironmentDisplayNameSetting } from "./EnvironmentDisplayNameSetting";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
-import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
+import { LinkedEnvironmentRow, LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 import { thisMachineNoun } from "./deviceNoun";
-import { usePeerLinkHosts } from "~/state/peerLinks";
+import { peerLinkEnvironment, usePeerLinkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
 import { DictationRoutingSettings } from "./DictationSettings";
@@ -145,6 +146,9 @@ import {
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+const noAgentLinkPermissionAtom = Atom.make(false).pipe(
+  Atom.withLabel("connections:agent-link-permission:none"),
+);
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
 
 // Colons are invalid in distro names, keeping picker sentinels collision-free.
@@ -257,6 +261,27 @@ function ConnectionsSettingsContent({
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const peerLinkHosts = usePeerLinkHosts();
+  // Agents run on this app's own machine, so its links are what each row's agents switch shows.
+  const agentsHost =
+    view === "environments"
+      ? (peerLinkHosts.find(
+          (environment) => environment.environmentId === primaryEnvironment?.environmentId,
+        ) ?? null)
+      : null;
+  const agentsHostId = agentsHost?.environmentId ?? null;
+  const agentLinks = useEnvironmentQuery(
+    agentsHostId === null
+      ? null
+      : peerLinkEnvironment.list({ environmentId: agentsHostId, input: {} }),
+  );
+  const canChangeAgentLinks = useAtomValue(
+    agentsHostId === null
+      ? noAgentLinkPermissionAtom
+      : peerLinkEnvironment.link.permissionAtom(agentsHostId),
+  );
+  const linkedEnvironmentIds = new Set(
+    (agentLinks.data?.links ?? []).map((link) => link.environmentId),
+  );
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
     reportFailure: false,
@@ -1624,7 +1649,7 @@ function ConnectionsSettingsContent({
       ) : null}
       <SettingsSection
         {...searchableSetting("remote-environments")}
-        title="Environments"
+        title="Other machines"
         headerAction={
           <div className="flex items-center gap-1">
             {savedServerUpdateTargets.length > 0 ? (
@@ -1653,8 +1678,33 @@ function ConnectionsSettingsContent({
               setSavedBackendError(null);
               setAddBackendDialogOpen(true);
             }}
+            agents={
+              agentsHostId === null || environment.environmentId === agentsHostId
+                ? null
+                : {
+                    hostEnvironmentId: agentsHostId,
+                    linked: linkedEnvironmentIds.has(environment.environmentId),
+                    canChange: canChangeAgentLinks && agentLinks.data !== null,
+                  }
+            }
           />
         ))}
+        {agentsHostId !== null
+          ? (agentLinks.data?.links ?? [])
+              .filter(
+                (link) =>
+                  !listedEnvironments.some(
+                    (environment) => environment.environmentId === link.environmentId,
+                  ),
+              )
+              .map((link) => (
+                <LinkedEnvironmentRow
+                  key={link.environmentId}
+                  environmentId={agentsHostId}
+                  link={link}
+                />
+              ))
+          : null}
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
@@ -1672,14 +1722,16 @@ function ConnectionsSettingsContent({
           }}
         />
       ) : null}
-      {peerLinkHosts.map((environment, index) => (
-        <LinkedEnvironmentsSettings
-          key={environment.environmentId}
-          environmentId={environment.environmentId}
-          environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
-          isSearchTarget={index === 0}
-        />
-      ))}
+      {peerLinkHosts
+        .filter((environment) => environment.environmentId !== agentsHostId)
+        .map((environment, index) => (
+          <LinkedEnvironmentsSettings
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
+            isSearchTarget={index === 0}
+          />
+        ))}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
       <DictationRoutingSettings environments={loadBalancingEnvironments} />
