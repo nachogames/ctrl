@@ -547,7 +547,7 @@ export const prepareBearerConnectionUpdate = Effect.fn(
       connectionId,
       environmentId: options.input.environmentId,
       label,
-      // The saved form keeps an explicit `:80`, which a bare Tailscale address would read as 3773.
+      // The saved form keeps an explicit `:80`, which a bare Tailscale address would read as 3774.
       httpBaseUrl: moved ? credential.signInBaseUrl : saved.httpBaseUrl,
       wsBaseUrl: moved ? deriveWsBaseUrl(httpBaseUrl) : saved.wsBaseUrl,
       ...(moved

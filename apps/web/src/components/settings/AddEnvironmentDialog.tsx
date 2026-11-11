@@ -7,6 +7,7 @@ import {
   type DesktopDiscoveredSshHost,
   type DesktopSshEnvironmentTarget,
   type EnvironmentId,
+  type TailnetPeerEnvironment,
 } from "@t3tools/contracts";
 import {
   RelayConnectionRegistration,
@@ -145,6 +146,25 @@ export function AddEnvironmentDialog({
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
   // Null follows the pasted link; a toggle overrides it.
+  const [tailnetMachines, setTailnetMachines] = useState<ReadonlyArray<TailnetPeerEnvironment>>([]);
+  const savedEnvironmentIds = new Set(savedEnvironments.map((saved) => saved.environmentId));
+  const unsavedTailnetMachines = tailnetMachines.filter(
+    (machine) => !savedEnvironmentIds.has(machine.environmentId),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks Tailscale, through the desktop bridge, which T3 machines are on this tailnet each time the dialog opens
+  useEffect(() => {
+    if (!open || desktopBridge === undefined || routeTarget !== null) return;
+    let cancelled = false;
+    void desktopBridge
+      .discoverTailnetEnvironments()
+      .catch(() => [])
+      .then((found) => {
+        if (!cancelled) setTailnetMachines(found);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, desktopBridge, routeTarget]);
   const [chatsChoice, setChatsChoice] = useState<boolean | null>(null);
   const [agentsChoice, setAgentsChoice] = useState<boolean | null>(null);
   const pastedLink = parsePairingUrlFields(savedBackendPairingCode);
@@ -535,6 +555,41 @@ export function AddEnvironmentDialog({
           </span>
         </label>
       )}
+      {pastedLink === null && unsavedTailnetMachines.length > 0 ? (
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted-foreground">Or pick one on your tailnet</p>
+          <div className="divide-y divide-border/60 rounded-lg border border-border/60">
+            {unsavedTailnetMachines.map((machine) => {
+              const address = machine.magicDnsName ?? machine.tailnetIpv4;
+              const selected = savedBackendHost.trim() === address;
+              return (
+                <button
+                  key={machine.environmentId}
+                  type="button"
+                  aria-pressed={selected}
+                  disabled={isAddingSavedBackend}
+                  onClick={() => setSavedBackendHost(address)}
+                  className={cn(
+                    "flex w-full items-center gap-3 px-3 py-2 text-left outline-none first:rounded-t-lg last:rounded-b-lg focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                    selected ? "bg-primary/10" : "hover:bg-muted/40",
+                  )}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium text-foreground">
+                      {machine.name}
+                    </span>
+                    <span className="block truncate text-2xs text-muted-foreground">{address}</span>
+                  </span>
+                  {selected ? <span className="text-xs text-primary">Selected</span> : null}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-2xs text-muted-foreground">
+            With no code, it signs in through Tailscale when that machine allows it.
+          </p>
+        </div>
+      ) : null}
       {routeTarget ? null : (
         <div className="divide-y divide-border/60 rounded-lg border border-border/60">
           <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5">

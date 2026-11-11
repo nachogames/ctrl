@@ -15,7 +15,8 @@ import { ConnectionBlockedError, ConnectionTransientError } from "./model.ts";
 import { connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
 
 /** Where `t3 up` and the desktop "Tailscale sign-in" switch listen. */
-export const TAILNET_SIGN_IN_PORT = 3773;
+// Ctrl's own port, so it runs beside T3 Code (3773) and tailnet discovery never finds the other app.
+export const TAILNET_SIGN_IN_PORT = 3774;
 
 const SINGLE_LABEL_HOST = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 

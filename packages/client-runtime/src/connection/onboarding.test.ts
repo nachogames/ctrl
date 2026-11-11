@@ -768,7 +768,7 @@ describe("connection onboarding", () => {
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
       const onboarding = yield* Onboarding.ConnectionOnboarding;
-      const connectionId = "tailnet:environment-paired:http://100.88.1.2:3773";
+      const connectionId = "tailnet:environment-paired:http://100.88.1.2:3774";
       yield* registry.register(
         new TailnetConnectionRegistration({
           target: new BearerConnectionTarget({
@@ -780,8 +780,8 @@ describe("connection onboarding", () => {
             connectionId,
             environmentId: PAIRED_ENVIRONMENT_ID,
             label: "studio",
-            httpBaseUrl: "http://100.88.1.2:3773/",
-            wsBaseUrl: "ws://100.88.1.2:3773/",
+            httpBaseUrl: "http://100.88.1.2:3774/",
+            wsBaseUrl: "ws://100.88.1.2:3774/",
             authorization: "tailnet",
             network: "tailscale",
           }),
@@ -800,7 +800,7 @@ describe("connection onboarding", () => {
       });
       expect(yield* savedProfile).toMatchObject({
         label: "Studio",
-        httpBaseUrl: "http://100.88.1.2:3773/",
+        httpBaseUrl: "http://100.88.1.2:3774/",
         authorization: "tailnet",
         network: "tailscale",
       });
@@ -822,11 +822,11 @@ describe("connection onboarding", () => {
       });
       expect(yield* savedProfile).toMatchObject({
         connectionId,
-        httpBaseUrl: "http://100.88.1.3:3773/",
+        httpBaseUrl: "http://100.88.1.3:3774/",
         authorization: "tailnet",
       });
 
-      // A bare Tailscale address means port 3773, so a typed `:80` must stay in the saved URL.
+      // A bare Tailscale address means port 3774, so a typed `:80` must stay in the saved URL.
       yield* onboarding.updateBearer({
         environmentId: PAIRED_ENVIRONMENT_ID,
         label: "Studio",
@@ -864,7 +864,7 @@ describe("connection onboarding", () => {
       expect((yield* onboarding.addDiscoveredTailnetMachines(found)).added).toEqual([]);
       yield* onboarding.addDiscoveredTailnetMachines(found);
       // Each sign-in mints a session on the host, so a save that cannot work is not retried.
-      expect(signIns).toEqual(["http://100.88.1.2:3773/"]);
+      expect(signIns).toEqual(["http://100.88.1.2:3774/"]);
     }).pipe(
       Effect.provide(layerPairingOnboarding({ tailnetSignIn: true, saveFails: true, signIns })),
     );

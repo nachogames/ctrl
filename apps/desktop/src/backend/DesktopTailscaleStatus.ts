@@ -29,7 +29,7 @@ import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
 
 const CACHE_TTL = Duration.seconds(60);
 /** Where `t3 up` boxes and desktops with Tailscale sign-in listen. */
-const PROBE_PORT = 3773;
+const PROBE_PORT = 3774;
 const PROBE_TIMEOUT = Duration.millis(1_500);
 const PROBE_CONCURRENCY = 4;
 

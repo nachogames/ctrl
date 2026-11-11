@@ -27,7 +27,8 @@ declare const __T3CODE_TELEMETRY_CHANNEL__: ReleaseChannel | undefined;
 export const telemetryChannel: ReleaseChannel =
   typeof __T3CODE_TELEMETRY_CHANNEL__ === "undefined" ? "dev" : __T3CODE_TELEMETRY_CHANNEL__;
 
-export const DEFAULT_PORT = 3773;
+// Ctrl's own port, so it runs beside T3 Code (3773) and tailnet discovery never finds the other app.
+export const DEFAULT_PORT = 3774;
 
 export const RuntimeMode = Schema.Literals(["web", "desktop"]);
 export type RuntimeMode = typeof RuntimeMode.Type;

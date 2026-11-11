@@ -537,7 +537,7 @@ export const DesktopServerExposureStateSchema = Schema.Struct({
   tailscaleServePort: Schema.Number,
   /** Your own Tailscale devices sign in with no code; the backend listens on the tailnet. */
   tailscaleSignInEnabled: Schema.optionalKey(Schema.Boolean),
-  /** The backend's port. Other devices find this machine on 3773 only. */
+  /** The backend's port. Other devices find this machine on 3774 only. */
   port: Schema.optionalKey(Schema.Number),
 });
 

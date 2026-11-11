@@ -62,7 +62,7 @@ function Owner() {
 
 function setup() {
   mocks.connectSshEnvironment.mockClear();
-  return stubGlobal("desktopBridge", {});
+  return stubGlobal("desktopBridge", { discoverTailnetEnvironments: async () => [] });
 }
 
 const remoteCard = () => page.getByRole("button", { name: /Link or code/ });

@@ -82,7 +82,7 @@ it.layer(NodeServices.layer)("TailnetPeers", (it) => {
           environmentId: "env-100.88.1.3",
         },
       ]);
-      expect(probed.toSorted()).toEqual(["100.88.1.2:3773", "100.88.1.3:3773", "100.88.1.7:3773"]);
+      expect(probed.toSorted()).toEqual(["100.88.1.2:3774", "100.88.1.3:3774", "100.88.1.7:3774"]);
       // Served from the cache, with no new probes.
       yield* peers.list;
       expect(probed).toHaveLength(3);

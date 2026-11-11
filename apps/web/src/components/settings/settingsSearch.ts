@@ -1342,7 +1342,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Tailscale sign-in",
     to: "/settings/access",
     targetId: "connections-environment",
-    searchTerms: ["tailnet no pairing code own devices phone port 3773 block"],
+    searchTerms: ["tailnet no pairing code own devices phone port 3774 block"],
     desktopOnly: true,
     localBackendManagementOnly: true,
   },

@@ -31,9 +31,9 @@ function savedAt(httpBaseUrl: string): ConnectionCatalogEntry {
 
 describe("tailnetSignInBaseUrl", () => {
   it.each([
-    ["studio", "http://studio:3773/"],
-    ["Studio.tail1234.ts.net", "http://studio.tail1234.ts.net:3773/"],
-    ["100.88.1.2", "http://100.88.1.2:3773/"],
+    ["studio", "http://studio:3774/"],
+    ["Studio.tail1234.ts.net", "http://studio.tail1234.ts.net:3774/"],
+    ["100.88.1.2", "http://100.88.1.2:3774/"],
     ["100.88.1.2:4000", "http://100.88.1.2:4000/"],
     ["100.88.1.2:80", "http://100.88.1.2:80/"],
     // The `t3 up` QR holds a plain URL with no secret.

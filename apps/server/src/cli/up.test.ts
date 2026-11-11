@@ -655,17 +655,17 @@ it("rewrites only the named service.env keys and keeps the user's lines", () => 
   expect(upsertServiceEnv("", { T3CODE_LAN: "false" })).toBe("T3CODE_LAN=false\n");
 });
 
-const RUNNING_SERVICE = { port: 3773, serviceManaged: true };
-const MANUAL = { port: 3773, serviceManaged: false };
+const RUNNING_SERVICE = { port: 3774, serviceManaged: true };
+const MANUAL = { port: 3774, serviceManaged: false };
 
 it.each([
   { configuredPort: undefined, free: true, running: null, expected: "ok" },
   { configuredPort: undefined, free: false, running: RUNNING_SERVICE, expected: "ok" },
   { configuredPort: undefined, free: false, running: null, expected: "taken" },
   { configuredPort: undefined, free: false, running: MANUAL, expected: "manual" },
-  // t3 up writes T3CODE_PORT=3773, so a later run still checks the port.
-  { configuredPort: "3773", free: false, running: null, expected: "taken" },
-  { configuredPort: "3773", free: false, running: RUNNING_SERVICE, expected: "ok" },
+  // t3 up writes T3CODE_PORT=3774, so a later run still checks the port.
+  { configuredPort: "3774", free: false, running: null, expected: "taken" },
+  { configuredPort: "3774", free: false, running: RUNNING_SERVICE, expected: "ok" },
   { configuredPort: "4000", free: true, running: null, expected: "custom" },
   { configuredPort: "4000", free: true, running: { ...MANUAL, port: 4000 }, expected: "manual" },
 ] as const)(
