@@ -1,4 +1,9 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { ServerClientSessionRecord } from "~/environments/primary";
+import { useNowSecond } from "../../hooks/useNowSecond";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { Button } from "../ui/button";
+import { thisMachineNoun } from "./deviceNoun";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -21,11 +26,18 @@ export interface AgentsOnMachine {
   readonly canChange: boolean;
 }
 
+/** The machine's own sign-in on this one, when it is connected both ways. */
+export interface MachineSignedInHere {
+  readonly session: ServerClientSessionRecord;
+  readonly onSignOut: (sessionId: ServerClientSessionRecord["sessionId"]) => Promise<void>;
+}
+
 /** The two things another machine is used for, each its own labeled switch. */
 export function MachineUseSwitches({
   environment,
   chats,
   agents,
+  signedInHere = null,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly chats: {
@@ -34,9 +46,13 @@ export function MachineUseSwitches({
     readonly onCheckedChange: (checked: boolean) => void;
   };
   readonly agents: AgentsOnMachine | null;
+  readonly signedInHere?: MachineSignedInHere | null;
 }) {
   return (
     <div className="mt-2 divide-y divide-border/50 border-t border-border/50">
+      {signedInHere ? (
+        <SignedInHereLine environment={environment} signedInHere={signedInHere} />
+      ) : null}
       <label className="flex min-h-9 cursor-pointer items-center gap-3 py-1.5">
         <span className="min-w-0 flex-1 text-xs font-medium text-foreground">
           Show its chats and projects here
@@ -50,6 +66,44 @@ export function MachineUseSwitches({
         />
       </label>
       {agents ? <AgentsSwitch environment={environment} agents={agents} /> : null}
+    </div>
+  );
+}
+
+function SignedInHereLine({
+  environment,
+  signedInHere,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly signedInHere: MachineSignedInHere;
+}) {
+  const nowMs = useNowSecond();
+  const [busy, setBusy] = useState(false);
+  const { session } = signedInHere;
+  const used = session.connected
+    ? "connected now"
+    : session.lastConnectedAt
+      ? `used ${formatRelativeTimeLabel(session.lastConnectedAt, nowMs)}`
+      : "not used yet";
+  const signOut = async () => {
+    const confirmed = await (requestConfirmDialog(
+      `Sign ${environment.label} out of this ${thisMachineNoun()}? It stops showing this ${thisMachineNoun()}'s chats until it pairs again.`,
+      { variant: "destructive" },
+    ) ?? Promise.resolve(false));
+    if (!confirmed) return;
+    setBusy(true);
+    await signedInHere.onSignOut(session.sessionId);
+    setBusy(false);
+  };
+  return (
+    <div className="flex min-h-9 items-center gap-3 py-1.5">
+      <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Signed in to this {thisMachineNoun()}</span> ·{" "}
+        {used}
+      </span>
+      <Button size="xs" variant="outline" disabled={busy} onClick={() => void signOut()}>
+        {busy ? "Signing out…" : "Sign out"}
+      </Button>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as TailnetSignIn from "./auth/TailnetSignIn.ts";
 import * as TailnetPeers from "./environment/TailnetPeers.ts";
+import * as ConnectionOffers from "./connectionOffers/ConnectionOffers.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -1852,6 +1853,7 @@ export const layerWsRpc = (
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const tailnetSignIn = yield* TailnetSignIn.TailnetSignIn;
       const tailnetPeers = yield* TailnetPeers.TailnetPeers;
+      const connectionOffers = yield* ConnectionOffers.ConnectionOffers;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -3118,6 +3120,9 @@ export const layerWsRpc = (
             .pipe(Effect.map((unblocked) => ({ unblocked }))),
         [WS_METHODS.tailnetPeersList]: (_input) =>
           tailnetPeers.list.pipe(Effect.map((peers) => ({ peers }))),
+        [WS_METHODS.connectionOffersOffer]: (offer) => connectionOffers.offer(offer),
+        [WS_METHODS.connectionOffersTake]: (_input) =>
+          connectionOffers.take.pipe(Effect.map((offers) => ({ offers }))),
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({ patch: clientPatch, providerInstanceMutation }) {
@@ -3979,6 +3984,7 @@ export const layer = Layer.unwrap(
     // Shared across connections, so the peer probe cache is too.
     const tailnetSignIn = yield* TailnetSignIn.TailnetSignIn;
     const tailnetPeers = yield* TailnetPeers.TailnetPeers;
+    const connectionOffers = yield* ConnectionOffers.ConnectionOffers;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -4093,6 +4099,7 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(Layer.succeed(TailnetSignIn.TailnetSignIn, tailnetSignIn)),
               Layer.provide(Layer.succeed(TailnetPeers.TailnetPeers, tailnetPeers)),
+              Layer.provide(Layer.succeed(ConnectionOffers.ConnectionOffers, connectionOffers)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

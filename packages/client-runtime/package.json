@@ -251,6 +251,10 @@
       "types": "./src/state/home.ts",
       "default": "./src/state/home.ts"
     },
+    "./state/connectionOffers": {
+      "types": "./src/state/connectionOffers.ts",
+      "default": "./src/state/connectionOffers.ts"
+    },
     "./state/peerLinks": {
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"

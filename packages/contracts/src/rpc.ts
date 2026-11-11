@@ -26,6 +26,7 @@ import {
   PeerLinkRequestError,
   PeerLinkSummary,
 } from "./peerLink.ts";
+import { ConnectionOffer, ConnectionOfferList } from "./connectionOffer.ts";
 import {
   TailnetAccessError,
   TailnetDeviceInput,
@@ -652,6 +653,8 @@ export const WS_METHODS = {
   tailnetDevicesBlock: "tailnetDevices.block",
   tailnetDevicesUnblock: "tailnetDevices.unblock",
   tailnetPeersList: "tailnetPeers.list",
+  connectionOffersOffer: "connectionOffers.offer",
+  connectionOffersTake: "connectionOffers.take",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -1040,6 +1043,19 @@ const WsTailnetDevicesUnblockRpc = Rpc.make(WS_METHODS.tailnetDevicesUnblock, {
 const WsTailnetPeersListRpc = Rpc.make(WS_METHODS.tailnetPeersList, {
   payload: Schema.Struct({}),
   success: TailnetPeerList,
+  error: EnvironmentAuthorizationError,
+});
+
+/** Leaves a pairing link back to the caller's machine, so this machine connects to it too. */
+const WsConnectionOffersOfferRpc = Rpc.make(WS_METHODS.connectionOffersOffer, {
+  payload: ConnectionOffer,
+  error: EnvironmentAuthorizationError,
+});
+
+/** Hands this machine's app the links other machines left, once each. */
+const WsConnectionOffersTakeRpc = Rpc.make(WS_METHODS.connectionOffersTake, {
+  payload: Schema.Struct({}),
+  success: ConnectionOfferList,
   error: EnvironmentAuthorizationError,
 });
 
@@ -2730,6 +2746,8 @@ export const WsBaseRpcGroup = RpcGroup.make(
   WsTailnetDevicesBlockRpc,
   WsTailnetDevicesUnblockRpc,
   WsTailnetPeersListRpc,
+  WsConnectionOffersOfferRpc,
+  WsConnectionOffersTakeRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,

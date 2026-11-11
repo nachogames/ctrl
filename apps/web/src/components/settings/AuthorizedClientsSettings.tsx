@@ -1238,3 +1238,28 @@ export function NetworkAccessDescription({
     </span>
   );
 }
+
+/**
+ * Pairs each connected machine with its own sign-in on this machine, by name: a machine that
+ * pairs both ways signs in here under the name this app shows it by. Phones, browsers and other
+ * unmatched sessions stay in the device list.
+ */
+export function matchMachineSessions<
+  Session extends { readonly current: boolean; readonly client: { readonly label?: string } },
+>(
+  machines: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>,
+  sessions: ReadonlyArray<Session>,
+): ReadonlyMap<EnvironmentId, Session> {
+  const byName = new Map<string, Session>();
+  for (const signIn of sessions) {
+    const name = signIn.client.label?.trim().toLowerCase();
+    // The newest session per name comes first in the sorted list; keep it.
+    if (!signIn.current && name && !byName.has(name)) byName.set(name, signIn);
+  }
+  const matched = new Map<EnvironmentId, Session>();
+  for (const machine of machines) {
+    const session = byName.get(machine.label.trim().toLowerCase());
+    if (session) matched.set(machine.environmentId, session);
+  }
+  return matched;
+}

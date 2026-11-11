@@ -26,7 +26,11 @@ import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import { SignedOutEnvironmentPanel } from "./SignedOutEnvironmentPanel";
-import { type AgentsOnMachine, MachineUseSwitches } from "./MachineUseSwitches";
+import {
+  type AgentsOnMachine,
+  type MachineSignedInHere,
+  MachineUseSwitches,
+} from "./MachineUseSwitches";
 import {
   ConnectionDiagnosisPanel,
   ConnectionDiagnosisSummary,
@@ -74,6 +78,7 @@ type SavedBackendListRowProps = {
   onRemove: (environment: EnvironmentPresentation) => void;
   onAddRoute: (environment: EnvironmentPresentation) => void;
   agents: AgentsOnMachine | null;
+  signedInHere?: MachineSignedInHere | null;
 };
 
 function savedBackendStatus(environment: EnvironmentPresentation): {
@@ -114,6 +119,7 @@ export function SavedBackendListRow({
   onRemove,
   onAddRoute,
   agents,
+  signedInHere = null,
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
@@ -319,6 +325,7 @@ export function SavedBackendListRow({
               onCheckedChange: (checked) => onSetEnabled(environmentId, checked),
             }}
             agents={agents}
+            signedInHere={signedInHere}
           />
           {diagnosis && diagnosisOpen ? (
             <ConnectionDiagnosisPanel

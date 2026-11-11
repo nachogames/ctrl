@@ -75,6 +75,7 @@ import { offersLinkedEnvironmentsAtom, peerLinkEnvironment } from "~/state/peerL
 import { usePrimaryEnvironment } from "~/state/environments";
 import { Switch } from "../ui/switch";
 import { useLinkAgentsTo } from "./useLinkAgentsTo";
+import { useOfferConnectionBack } from "./useOfferConnectionBack";
 
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 const noLinkPermissionAtom = Atom.make(false).pipe(
@@ -124,6 +125,8 @@ export function AddEnvironmentDialog({
   // Linked environments is a Labs beta; with it off the server refuses links.
   const canLinkAgents = mayLinkAgents && offersLinks;
   const linkAgentsTo = useLinkAgentsTo();
+  const offerConnectionBack = useOfferConnectionBack();
+  const [bothWays, setBothWays] = useState(true);
   const relayDiscoveryState = useRelayEnvironmentDiscovery();
   const savedDesktopSshEnvironmentKeys = (() => {
     const keys = new Set<string>();
@@ -214,6 +217,7 @@ export function AddEnvironmentDialog({
       setSavedBackendPairingCode("");
       setChatsChoice(null);
       setAgentsChoice(null);
+      setBothWays(true);
       setSavedBackendSshHost("");
       setSavedBackendSshUsername("");
       setSavedBackendSshPort("");
@@ -364,6 +368,11 @@ export function AddEnvironmentDialog({
         target: { environmentId, label: added.label, urls: [added.httpBaseUrl] },
       });
     }
+    // Before hiding it as well: the offer travels over the new connection.
+    const backProblem =
+      !routeTarget && bothWays
+        ? await offerConnectionBack({ environmentId, label: added.label })
+        : null;
     if (!routeTarget && !showChats) {
       await setEnvironmentEnabled({ environmentId, enabled: false });
     }
@@ -380,16 +389,25 @@ export function AddEnvironmentDialog({
             type: "success",
             title: "Machine added",
             description: showChats
-              ? "Its chats and projects show up here, and it reconnects on its own."
+              ? bothWays
+                ? "Its chats and projects show up here. This machine shows up there once its app is open."
+                : "Its chats and projects show up here, and it reconnects on its own."
               : "Agents here can run work there.",
           },
     );
+    if (backProblem !== null) {
+      toastManager.add({
+        type: "warning",
+        title: "Connected one way only",
+        description: backProblem,
+      });
+    }
     if (agentsProblem !== null) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title: "Agents here can't run work there yet",
-          description: `${agentsProblem} Turn it on from the machine's row in Other machines.`,
+          description: `${agentsProblem} Turn it on from the machine's row in Connected machines.`,
         }),
       );
     }
@@ -620,6 +638,22 @@ export function AddEnvironmentDialog({
                 disabled={isAddingSavedBackend}
                 onCheckedChange={setAgentsChoice}
                 aria-label="Agents here can run work there"
+              />
+            </label>
+          ) : null}
+          {primaryEnvironmentId !== null ? (
+            <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5">
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-medium text-foreground">Connect both ways</span>
+                <span className="block text-xs text-muted-foreground">
+                  That machine adds this one too, with no second code.
+                </span>
+              </span>
+              <Switch
+                checked={bothWays}
+                disabled={isAddingSavedBackend}
+                onCheckedChange={setBothWays}
+                aria-label="Connect both ways"
               />
             </label>
           ) : null}

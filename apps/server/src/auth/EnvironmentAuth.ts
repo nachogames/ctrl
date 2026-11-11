@@ -1241,6 +1241,7 @@ export const make = Effect.gen(function* () {
       scopes: input?.scopes ?? AuthStandardClientScopes,
       subject: "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
+      ...(input?.expiresInMinutes ? { ttl: Duration.minutes(input.expiresInMinutes) } : {}),
     }).pipe(
       Effect.map(toPairingCredential),
       Effect.withSpan("EnvironmentAuth.issuePairingCredential"),

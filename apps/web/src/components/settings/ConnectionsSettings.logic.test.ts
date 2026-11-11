@@ -11,6 +11,7 @@ import {
   togglePairingScopeSelection,
   withPairingIntent,
 } from "./ConnectionsSettings.logic";
+import { matchMachineSessions } from "./AuthorizedClientsSettings";
 
 describe("togglePairingScopeSelection", () => {
   it.each([
@@ -313,5 +314,34 @@ describe("resolveTailscaleHttpsRow", () => {
     },
   ] as const)("$label", ({ state, endpoints, expected }) => {
     expect(resolveTailscaleHttpsRow({ state, endpoints })).toEqual(expected);
+  });
+});
+
+describe("matchMachineSessions", () => {
+  const laptop = EnvironmentId.make("laptop");
+  const vps = EnvironmentId.make("vps");
+  const session = (label: string | undefined, current = false) => ({
+    current,
+    client: label === undefined ? {} : { label },
+  });
+
+  it("puts a machine's sign-in here on its row and leaves phones and unnamed devices out", () => {
+    const sessions = [
+      session("Work Laptop"),
+      session("work laptop"),
+      session("Pixel 7"),
+      session(undefined),
+      session("This Mac", true),
+    ];
+    const matched = matchMachineSessions(
+      [
+        { environmentId: laptop, label: "Work Laptop" },
+        { environmentId: vps, label: "VPS" },
+        { environmentId: EnvironmentId.make("self"), label: "This Mac" },
+      ],
+      sessions,
+    );
+    // The first (newest) of two same-named sessions wins; this device's own session never matches.
+    expect([...matched]).toEqual([[laptop, sessions[0]]]);
   });
 });

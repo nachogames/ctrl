@@ -76,6 +76,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.tailnetDevicesBlock]: "auth",
   [WS_METHODS.tailnetDevicesUnblock]: "auth",
   [WS_METHODS.tailnetPeersList]: "environment",
+  [WS_METHODS.connectionOffersOffer]: "environment",
+  [WS_METHODS.connectionOffersTake]: "environment",
   [WS_METHODS.serverUpdateSettings]: "server",
   [WS_METHODS.serverSearchAcpRegistry]: "server",
   [WS_METHODS.serverPrepareAcpRegistryAgent]: "server",

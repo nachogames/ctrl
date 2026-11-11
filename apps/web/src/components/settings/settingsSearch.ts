@@ -1404,7 +1404,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "remote-environments",
-    title: "Other machines",
+    title: "Connected machines",
     to: "/settings/connections",
     searchTerms: [
       "environments add a machine pair backend host code link ssh config agent tunnel saved t3 connect",

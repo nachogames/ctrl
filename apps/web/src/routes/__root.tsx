@@ -30,6 +30,7 @@ import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { TailnetDiscoveryCoordinator } from "../components/desktop/TailnetDiscoveryCoordinator";
+import { ConnectionOffersCoordinator } from "../components/ConnectionOffersCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
@@ -140,6 +141,7 @@ function RootRouteView() {
       <AnchoredToastProvider>
         {/* Runs through first-run setup too, so its machine list shows tailnet machines. */}
         {isElectron ? <TailnetDiscoveryCoordinator /> : null}
+        {isHostedStaticApp() ? null : <ConnectionOffersCoordinator />}
         <RootRouteBranch />
       </AnchoredToastProvider>
     </ToastProvider>

@@ -99,7 +99,10 @@ t3 pair
 Scan the QR code on your phone, or paste the link into **Add a machine** in the
 receiving app (**Settings → Connections** on web and desktop, **Settings →
 Environments** on mobile). A bare code also works with the machine's address.
-Each machine in **Other machines** has two switches: **Show its chats and
+With **Connect both ways** on (the default), the other machine adds this one
+too once its app is open, so one pairing connects both ways; a computer you
+pair both ways shows up once, under **Connected machines**, with its sign-in
+here. Each machine in **Connected machines** has two switches: **Show its chats and
 projects here**, and **Agents here can run work there**, which links this
 machine's agents to it without a second code. A loopback address
 such as `127.0.0.1` reaches only the device opening the link.

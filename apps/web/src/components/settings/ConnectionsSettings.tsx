@@ -133,6 +133,7 @@ import {
 import {
   AdvertisedEndpointListRow,
   AuthorizedClientsHeaderAction,
+  matchMachineSessions,
   PairedDeviceIdleLimitRow,
   NetworkAccessDescription,
   PairingClientsList,
@@ -483,6 +484,55 @@ function ConnectionsSettingsContent({
       ),
     );
   })();
+  // This machine's sign-ins, read on the machines list too, so a computer paired both ways shows
+  // once: on its row in Connected machines, not again among the devices.
+  const canReadPrimaryAccess = useEnvironmentScope(
+    view === "environments" ? primaryEnvironmentId : null,
+    AuthAccessReadScope,
+  );
+  const primaryAccessChanges = useEnvironmentQuery(
+    view === "environments" && canReadPrimaryAccess && primaryEnvironmentId !== null
+      ? authEnvironment.accessChanges({ environmentId: primaryEnvironmentId, input: null })
+      : null,
+  );
+  const thisMachineSessions =
+    view === "environments"
+      ? primaryAccessChanges.data?.type === "snapshot"
+        ? primaryAccessChanges.data.payload.clientSessions.map(toDesktopClientSessionRecord)
+        : []
+      : isPrimaryAccess
+        ? desktopClientSessions
+        : [];
+  const machineSessions = matchMachineSessions(
+    listedEnvironments,
+    sortDesktopClientSessions(thisMachineSessions),
+  );
+  const machineSessionIds = new Set(
+    [...machineSessions.values()].map((session) => session.sessionId),
+  );
+  const deviceClientSessions = desktopClientSessions.filter(
+    (session) => !machineSessionIds.has(session.sessionId),
+  );
+  const signOutMachine = async (sessionId: ServerClientSessionRecord["sessionId"]) => {
+    if (primaryEnvironmentId === null) return;
+    const result = await revokeClient({
+      environmentId: primaryEnvironmentId,
+      input: { sessionId },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not sign it out",
+          description: String(squashAtomCommandFailure(result)),
+        }),
+      );
+    }
+  };
+  const signedInHereFor = (environmentId: EnvironmentId) => {
+    const session = machineSessions.get(environmentId);
+    return session === undefined ? null : { session, onSignOut: signOutMachine };
+  };
   const isLocalBackendNetworkAccessible = desktopBridge
     ? desktopServerExposureState?.mode === "network-accessible"
     : currentAuthPolicy === "remote-reachable";
@@ -1108,7 +1158,7 @@ function ConnectionsSettingsContent({
           <p className="text-xs text-destructive">{desktopAccessManagementError}</p>
         </div>
       ) : null}
-      {renderPairingClientsList(visibleDesktopPairingLinks, desktopClientSessions)}
+      {renderPairingClientsList(visibleDesktopPairingLinks, deviceClientSessions)}
     </>
   );
   const renderNetworkAccessRow = () => (
@@ -1339,10 +1389,7 @@ function ConnectionsSettingsContent({
                   ? renderPairingClientsList([newestPairingLink], [])
                   : undefined
               }
-              summary={summarizeAuthorizedClients(
-                desktopClientSessions,
-                visibleDesktopPairingLinks,
-              )}
+              summary={summarizeAuthorizedClients(deviceClientSessions, visibleDesktopPairingLinks)}
               control={
                 canWriteAccess ? (
                   <AuthorizedClientsHeaderAction
@@ -1683,7 +1730,7 @@ function ConnectionsSettingsContent({
       ) : null}
       <SettingsSection
         {...searchableSetting("remote-environments")}
-        title="Other machines"
+        title="Connected machines"
         headerAction={
           <div className="flex items-center gap-1">
             {savedServerUpdateTargets.length > 0 ? (
@@ -1712,6 +1759,7 @@ function ConnectionsSettingsContent({
               setSavedBackendError(null);
               setAddBackendDialogOpen(true);
             }}
+            signedInHere={signedInHereFor(environment.environmentId)}
             agents={
               agentsHostId === null || environment.environmentId === agentsHostId
                 ? null

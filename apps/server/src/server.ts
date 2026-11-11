@@ -195,6 +195,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as EnvironmentAuthPolicy from "./auth/EnvironmentAuthPolicy.ts";
 import * as TailnetSignIn from "./auth/TailnetSignIn.ts";
 import * as TailnetPeers from "./environment/TailnetPeers.ts";
+import * as ConnectionOffers from "./connectionOffers/ConnectionOffers.ts";
 import * as TailscaleHost from "./tailscale/TailscaleHost.ts";
 import * as CloudHttp from "./cloud/http.ts";
 import * as GuestHttp from "./guest/http.ts";
@@ -939,10 +940,14 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
     Layer.provide(layerServerSettings),
     Layer.provide(PreviewAutomationBroker.layer),
-    // Tailscale sign-in (HTTP) and its device list and peer list (WebSocket).
+    // Tailscale sign-in (HTTP) and its device list and peer list (WebSocket), and the
+    // connections other machines offer back after pairing.
     Layer.provide(
-      Layer.mergeAll(TailnetSignIn.layer, TailnetPeers.layer).pipe(
-        Layer.provide(TailscaleHost.layer),
+      Layer.mergeAll(
+        Layer.mergeAll(TailnetSignIn.layer, TailnetPeers.layer).pipe(
+          Layer.provide(TailscaleHost.layer),
+        ),
+        ConnectionOffers.layer,
       ),
     ),
     Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
