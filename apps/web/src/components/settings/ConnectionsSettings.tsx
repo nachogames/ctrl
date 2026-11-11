@@ -1743,6 +1743,7 @@ function ConnectionsSettingsContent({
             environmentId={environment.environmentId}
             environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
             isSearchTarget={index === 0}
+            hideWhenEmpty
           />
         ))}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />

@@ -740,11 +740,11 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <ChevronsLeftRightEllipsisIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No saved remote environments</EmptyTitle>
+        <EmptyTitle>No other machines yet</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from T3 Connect."
-            : "Click “Add environment” to pair another environment."}
+            ? "Click Add a machine and paste the link from Add a device on the other machine, or connect one from T3 Connect."
+            : "Click Add a machine and paste the link from Add a device on the other machine."}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>

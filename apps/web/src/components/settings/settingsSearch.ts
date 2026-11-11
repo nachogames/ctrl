@@ -106,7 +106,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/scheduled-tasks": "Scheduled tasks",
   "/settings/source-control": "Source control",
   "/settings/worktrees": "Worktrees",
-  "/settings/connections": "Environments",
+  "/settings/connections": "Other machines",
   "/settings/access": "Sharing & access",
   "/settings/secrets": "Secrets",
   "/settings/maintenance": "Maintenance",

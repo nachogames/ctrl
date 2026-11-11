@@ -67,7 +67,7 @@ import {
   readPairingIntent,
 } from "./ConnectionsSettings.logic";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
-import { peerLinkEnvironment } from "~/state/peerLinks";
+import { offersLinkedEnvironmentsAtom, peerLinkEnvironment } from "~/state/peerLinks";
 import { usePrimaryEnvironment } from "~/state/environments";
 import { Switch } from "../ui/switch";
 import { useLinkAgentsTo } from "./useLinkAgentsTo";
@@ -106,11 +106,18 @@ export function AddEnvironmentDialog({
   });
   const primaryEnvironment = usePrimaryEnvironment();
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
-  const canLinkAgents = useAtomValue(
+  const mayLinkAgents = useAtomValue(
     primaryEnvironmentId === null
       ? noLinkPermissionAtom
       : peerLinkEnvironment.link.permissionAtom(primaryEnvironmentId),
   );
+  const offersLinks = useAtomValue(
+    primaryEnvironmentId === null
+      ? noLinkPermissionAtom
+      : offersLinkedEnvironmentsAtom(primaryEnvironmentId),
+  );
+  // Linked environments is a Labs beta; with it off the server refuses links.
+  const canLinkAgents = mayLinkAgents && offersLinks;
   const linkAgentsTo = useLinkAgentsTo();
   const relayDiscoveryState = useRelayEnvironmentDiscovery();
   const savedDesktopSshEnvironmentKeys = (() => {
