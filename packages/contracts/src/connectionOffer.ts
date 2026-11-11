@@ -12,6 +12,11 @@ export const ConnectionOffer = Schema.Struct({
   /** A pairing link to the offering machine, carrying its address and a one-time code. */
   pairingUrl: TrimmedNonEmptyString,
   expiresAt: Schema.DateTimeUtc,
+  /**
+   * A phone passed this link along: nothing has connected yet, so after connecting, this
+   * machine offers the connection back too.
+   */
+  connectBack: Schema.optionalKey(Schema.Boolean),
 });
 export type ConnectionOffer = typeof ConnectionOffer.Type;
 

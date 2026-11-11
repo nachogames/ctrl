@@ -29,6 +29,7 @@ import {
   useRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { connectComputerTo } from "../../state/connectComputers";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { autoConnectReport, devAutoConnectAttemptAtom } from "./devAutoConnect";
@@ -66,8 +67,15 @@ function PairingForm({
   readonly routePairingUrl: string;
   readonly routeFor: EnvironmentId | undefined;
 }) {
-  const { connectionPairingUrl, onChangeConnectionPairingUrl, onConnectPress } =
-    useRemoteConnections();
+  const {
+    connectionPairingUrl,
+    onChangeConnectionPairingUrl,
+    onConnectPress,
+    connectedEnvironments,
+  } = useRemoteConnections();
+  // The link as scanned, which may carry the computer's choices for the connection.
+  const [scannedPairingUrl, setScannedPairingUrl] = useState<string | null>(null);
+  const [relayingTo, setRelayingTo] = useState<EnvironmentId | null>(null);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [initialPairing] = useState(() => parsePairingUrl(routePairingUrl || connectionPairingUrl));
@@ -139,6 +147,7 @@ function PairingForm({
       setHostInput(host);
       setCodeInput(code);
       onChangeConnectionPairingUrl(pairingUrl);
+      setScannedPairingUrl(pairingUrl);
       setScanComplete(true);
       setScannerLocked(false);
     } catch (error) {
@@ -151,6 +160,29 @@ function PairingForm({
         setScannerLocked(false);
       }, 600);
     }
+  };
+
+  // Computers this phone can tell to connect to the scanned one; not when adding a route.
+  const relayTargets =
+    scannedPairingUrl === null || routeFor !== undefined
+      ? []
+      : connectedEnvironments.filter((environment) => environment.connectionState === "connected");
+
+  const handleConnectComputer = async (target: (typeof relayTargets)[number]) => {
+    if (scannedPairingUrl === null || relayingTo !== null) return;
+    setRelayingTo(target.environmentId);
+    const problem = await connectComputerTo(target.environmentId, scannedPairingUrl);
+    setRelayingTo(null);
+    void Haptics.notificationAsync(
+      problem === null
+        ? Haptics.NotificationFeedbackType.Success
+        : Haptics.NotificationFeedbackType.Error,
+    );
+    Dialog.alert(
+      problem === null ? `Connecting ${target.environmentLabel}` : "Could not connect them",
+      problem ??
+        `${target.environmentLabel} connects to the computer you scanned within a minute while Ctrl is open on it, then connects it back. Nothing to type on either.`,
+    );
   };
 
   const handleSubmit = async () => {
@@ -258,6 +290,36 @@ function PairingForm({
                 "For machines on your local network or tailnet. On your tailnet, a machine name needs no code."}
             </Text>
           </View>
+
+          {relayTargets.length > 0 ? (
+            <View collapsable={false} className="gap-2">
+              <Text className="px-4 text-sm font-t3-medium text-foreground-muted">
+                Or connect one of your computers to it
+              </Text>
+              <View
+                collapsable={false}
+                className="overflow-hidden rounded-[26px] border-continuous bg-grouped-card"
+              >
+                {relayTargets.map((target, index) => (
+                  <View key={target.environmentId} collapsable={false}>
+                    {index > 0 ? <View className="ml-4 border-t border-border-subtle" /> : null}
+                    <ListRow
+                      label={target.environmentLabel}
+                      description={
+                        relayingTo === target.environmentId
+                          ? "Connecting…"
+                          : "Connects both ways, with no code to type"
+                      }
+                      disabled={relayingTo !== null}
+                      onPress={() => {
+                        void handleConnectComputer(target);
+                      }}
+                    />
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
 
           {hasCloudPublicConfig() ? <T3ConnectSection /> : null}
         </View>

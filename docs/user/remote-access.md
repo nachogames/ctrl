@@ -99,6 +99,11 @@ t3 pair
 Scan the QR code on your phone, or paste the link into **Add a machine** in the
 receiving app (**Settings → Connections** on web and desktop, **Settings →
 Environments** on mobile). A bare code also works with the machine's address.
+To connect two computers without typing on either, scan the QR from **Add a
+device** on one of them with the phone app, then pick the other computer under
+**Or connect one of your computers to it**. That computer connects to the one you
+scanned within a minute while Ctrl is open on it, and connects it back.
+
 With **Connect both ways** on (the default), the other machine adds this one
 too once its app is open, so one pairing connects both ways; a computer you
 pair both ways shows up once, under **Connected machines**, with its sign-in
