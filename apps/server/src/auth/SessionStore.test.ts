@@ -58,6 +58,12 @@ const relaySessionInput = {
   client: { label: "Relay desktop", deviceType: "desktop" },
 } as const;
 
+const linkPairedSessionInput = {
+  subject: SessionStore.PAIRING_LINK_SESSION_SUBJECT,
+  method: "bearer-access-token",
+  client: { label: "Work laptop", deviceType: "desktop" },
+} as const;
+
 const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(function* (
   baseDir: string,
   token?: string,
@@ -132,6 +138,103 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       yield* TestClock.adjust(Duration.minutes(1));
       yield* Fiber.join(watcher);
       yield* sessions.awaitInvalidation(client.sessionId);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("slides a link-paired session past its signed expiry while it is used", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ ...linkPairedSessionInput, ttl: Duration.days(30) });
+
+      yield* TestClock.adjust(Duration.days(20));
+      const beforeRenewal = yield* sessions.verify(issued.token);
+      const renewed = yield* sessions.renew(beforeRenewal, Duration.days(30));
+      expect(Option.map(renewed, (at) => at.epochMilliseconds)).toEqual(
+        Option.some(Duration.toMillis(Duration.days(50))),
+      );
+      // A renewal inside the granularity window does not write again.
+      expect(
+        Option.isNone(
+          yield* sessions.renew(yield* sessions.verify(issued.token), Duration.days(30)),
+        ),
+      ).toBe(true);
+
+      // Past the token's own `exp` claim, the stored expiry still admits it.
+      yield* TestClock.adjust(Duration.days(29));
+      const afterClaim = yield* sessions.verify(issued.token);
+      expect(afterClaim.expiresAt?.epochMilliseconds).toBe(Duration.toMillis(Duration.days(50)));
+
+      yield* TestClock.adjust(Duration.days(1));
+      const lapsed = yield* sessions.verify(issued.token).pipe(Effect.flip);
+      expect(lapsed._tag).toBe("SessionTokenExpiredError");
+      // A lapsed session cannot be revived by a late renewal.
+      expect(Option.isNone(yield* sessions.renew(afterClaim, Duration.days(30)))).toBe(true);
+      expect((yield* sessions.verify(issued.token).pipe(Effect.flip))._tag).toBe(
+        "SessionTokenExpiredError",
+      );
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("never renews a revoked session", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue(linkPairedSessionInput);
+      const verified = yield* sessions.verify(issued.token);
+      yield* sessions.revoke(issued.sessionId);
+      yield* TestClock.adjust(Duration.days(10));
+      expect(Option.isNone(yield* sessions.renew(verified, Duration.days(90)))).toBe(true);
+      expect((yield* sessions.verify(issued.token).pipe(Effect.flip))._tag).toBe(
+        "SessionTokenRevokedError",
+      );
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect.each([
+    {
+      name: "a CLI bearer session",
+      input: { subject: "cli-issued-session", method: "bearer-access-token" },
+    },
+    {
+      name: "a desktop bootstrap session",
+      input: { subject: "desktop-bootstrap", method: "bearer-access-token" },
+    },
+    {
+      name: "a link-paired DPoP session",
+      input: { subject: "one-time-token", method: "dpop-access-token", proofKeyThumbprint: "key" },
+    },
+  ] as const)("keeps the signed expiry of $name", ({ input }) =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      expect(SessionStore.isRenewableSession(input)).toBe(false);
+      const issued = yield* sessions.issue({ ...input, ttl: Duration.days(30) });
+      yield* TestClock.adjust(Duration.days(20));
+      // Even a stored expiry moved by hand does not outlive the token's own claim.
+      yield* sessions.renew(yield* sessions.verify(issued.token), Duration.days(30));
+      yield* TestClock.adjust(Duration.days(10));
+      expect((yield* sessions.verify(issued.token).pipe(Effect.flip))._tag).toBe(
+        "SessionTokenExpiredError",
+      );
+    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("keeps a link-paired socket open across a renewal", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ ...linkPairedSessionInput, ttl: Duration.hours(1) });
+      yield* sessions.markConnected(issued.sessionId);
+      const invalidated = yield* Deferred.make<void>();
+      const watcher = yield* sessions
+        .awaitInvalidation(issued.sessionId)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      yield* TestClock.adjust(Duration.minutes(50));
+      yield* sessions.renew(yield* sessions.verify(issued.token), Duration.hours(1));
+      yield* TestClock.adjust(Duration.minutes(20));
+      expect(yield* Deferred.isDone(invalidated)).toBe(false);
+      yield* TestClock.adjust(Duration.minutes(40));
+      yield* Fiber.join(watcher);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 

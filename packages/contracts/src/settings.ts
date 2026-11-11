@@ -1329,6 +1329,11 @@ export const CloudSpeechCredentials = Schema.Struct({
   openrouter: CloudSpeechCredential,
 });
 
+/** How long a paired device may go unused before it is signed out. Never is not offered: a lost device must lapse. */
+export const PairedDeviceIdleLimit = Schema.Literals(["days_30", "days_90"]);
+export type PairedDeviceIdleLimit = typeof PairedDeviceIdleLimit.Type;
+const DEFAULT_PAIRED_DEVICE_IDLE_LIMIT: PairedDeviceIdleLimit = "days_90";
+
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1356,6 +1361,9 @@ export const ServerSettings = Schema.Struct({
   ),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  pairedDeviceIdleLimit: PairedDeviceIdleLimit.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PAIRED_DEVICE_IDLE_LIMIT)),
+  ),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
   ),
@@ -1810,6 +1818,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  pairedDeviceIdleLimit: Schema.optionalKey(PairedDeviceIdleLimit),
   cloudSpeechCredentials: Schema.optionalKey(
     Schema.Struct({
       openai: Schema.optionalKey(SettingsSecretValue),

@@ -338,6 +338,18 @@ export class SessionRevocationError extends Schema.TaggedError<SessionRevocation
   }
 }
 
+export class SessionRenewalError extends Schema.TaggedError<SessionRenewalError>()(
+  "SessionRenewalError",
+  {
+    sessionId: AuthSessionId,
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to renew session.";
+  }
+}
+
 export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessionsRevocationError>()(
   "OtherSessionsRevocationError",
   {
@@ -359,6 +371,7 @@ export const SessionCredentialInternalError = Schema.Union([
   ActiveSessionsListError,
   SessionRevocationError,
   OtherSessionsRevocationError,
+  SessionRenewalError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -419,12 +432,35 @@ export class SessionStore extends Context.Service<
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
+    /**
+     * Moves a renewable session's expiry to `idleLimit` from now. Returns the new expiry, or
+     * none when the session is revoked, lapsed, or was renewed too recently to need a write.
+     */
+    readonly renew: (
+      session: { readonly sessionId: AuthSessionId; readonly expiresAt: DateTime.DateTime },
+      idleLimit: Duration.Duration,
+    ) => Effect.Effect<Option.Option<DateTime.DateTime>, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
   }
 >()("t3/auth/SessionStore") {}
 
 const SIGNING_SECRET_NAME = "server-signing-key";
+/** Subject of sessions redeemed from a pairing link. */
+export const PAIRING_LINK_SESSION_SUBJECT = "one-time-token";
+const MAX_RENEWAL_GRANULARITY = Duration.hours(1);
+
+/**
+ * A device paired with a link stays signed in while it is used: its stored expiry slides and
+ * outranks the signed `exp` claim, so the token it holds never changes. DPoP sessions renew
+ * through their own short-lived tokens, and desktop, CLI and MCP sessions keep fixed lifetimes.
+ */
+export const isRenewableSession = (session: {
+  readonly subject: string;
+  readonly method: ServerAuthSessionMethod;
+}): boolean =>
+  session.subject === PAIRING_LINK_SESSION_SUBJECT &&
+  (session.method === "bearer-access-token" || session.method === "browser-session-cookie");
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 
@@ -808,7 +844,8 @@ const make = Effect.gen(function* () {
           expirationClaim: claims.exp,
         });
       }
-      if (claims.exp <= observedAt.epochMilliseconds) {
+      const renewable = isRenewableSession({ subject: claims.sub, method: claims.method });
+      if (!renewable && claims.exp <= observedAt.epochMilliseconds) {
         return yield* new SessionTokenExpiredError({
           sessionId: claims.sid,
           expiresAt: expiresAt.value,
@@ -832,13 +869,20 @@ const make = Effect.gen(function* () {
           revokedAt: row.value.revokedAt,
         });
       }
+      if (renewable && row.value.expiresAt.epochMilliseconds <= observedAt.epochMilliseconds) {
+        return yield* new SessionTokenExpiredError({
+          sessionId: claims.sid,
+          expiresAt: row.value.expiresAt,
+          observedAt,
+        });
+      }
 
       return {
         sessionId: claims.sid,
         token,
         method: claims.method,
         client: toClientMetadata(row.value.client),
-        expiresAt: expiresAt.value,
+        expiresAt: renewable ? row.value.expiresAt : expiresAt.value,
         subject: claims.sub,
         scopes: row.value.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
@@ -1039,6 +1083,36 @@ const make = Effect.gen(function* () {
     return revokedSessionIds.length;
   });
 
+  const renew: SessionStore["Service"]["renew"] = Effect.fn("SessionStore.renew")(
+    function* (session, idleLimit) {
+      const now = yield* DateTime.now;
+      const expiresAt = DateTime.add(now, { milliseconds: Duration.toMillis(idleLimit) });
+      // Each request would otherwise write the row; a tenth of the limit, at most an hour, is enough.
+      const granularity = Math.min(
+        Duration.toMillis(MAX_RENEWAL_GRANULARITY),
+        Duration.toMillis(idleLimit) / 10,
+      );
+      if (
+        Math.abs(expiresAt.epochMilliseconds - session.expiresAt.epochMilliseconds) < granularity
+      ) {
+        return Option.none<DateTime.DateTime>();
+      }
+      const extended = yield* authSessions
+        .extend({ sessionId: session.sessionId, now, expiresAt })
+        .pipe(
+          Effect.mapError(
+            (cause) => new SessionRenewalError({ sessionId: session.sessionId, cause }),
+          ),
+        );
+      if (!extended) return Option.none<DateTime.DateTime>();
+      const active = yield* loadActiveSession(session.sessionId).pipe(
+        Effect.orElseSucceed(() => Option.none<AuthClientSession>()),
+      );
+      if (Option.isSome(active)) yield* emitUpsert(active.value);
+      return Option.some(expiresAt);
+    },
+  );
+
   const awaitInvalidation = Effect.fn(function* (
     sessionId: AuthSessionId,
     proofKeyThumbprint?: string,
@@ -1071,6 +1145,9 @@ const make = Effect.gen(function* () {
         while (true) {
           const rows = yield* Effect.forEach(chain, readRow);
           if (rows.some((row) => Option.isNone(row) || row.value.revokedAt !== null)) return;
+          // A renewed session's row carries its moved expiry.
+          const latest = rows.at(-1);
+          if (latest !== undefined && Option.isSome(latest)) current = latest.value;
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
@@ -1112,6 +1189,7 @@ const make = Effect.gen(function* () {
     },
     revoke,
     revokeAllExcept,
+    renew,
     markConnected,
     markDisconnected,
   });

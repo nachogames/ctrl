@@ -11,9 +11,11 @@ import {
 } from "@t3tools/shared/dpop";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -23,6 +25,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const TEST_SERVER_PORT = 13_773;
 
@@ -307,6 +310,97 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           }),
         ),
       ),
+    );
+
+    it.effect.each([
+      { name: "the 90 day default", settings: {}, config: {}, idleDays: 90 },
+      {
+        name: "a 30 day setting",
+        settings: { pairedDeviceIdleLimit: "days_30" },
+        config: {},
+        idleDays: 30,
+      },
+      {
+        name: "T3CODE_PAIRING_SESSION_TTL",
+        settings: { pairedDeviceIdleLimit: "days_30" },
+        config: { pairingSessionTtl: Duration.days(7) },
+        idleDays: 7,
+      },
+    ] as const)("keeps a link-paired device signed in while it is used, with $name", (testCase) =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const idleLimit = Duration.days(testCase.idleDays);
+        const link = yield* serverAuth.issuePairingCredential();
+        const access = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          link.credential,
+          undefined,
+          requestMetadata,
+        );
+        expect(access.expires_in).toBe(Duration.toSeconds(idleLimit));
+
+        // Used every few days for far longer than the limit, it never lapses.
+        for (let day = 0; day < testCase.idleDays * 3; day += 2) {
+          yield* TestClock.adjust(Duration.days(2));
+          yield* serverAuth.authenticateHttpRequest(makeBearerRequest(access.access_token));
+        }
+        const now = yield* DateTime.now;
+        const [listed] = (yield* sessions.listActive()).filter(
+          (session) => session.subject === "one-time-token",
+        );
+        expect(listed?.expiresAt.epochMilliseconds).toBe(
+          now.epochMilliseconds + Duration.toMillis(idleLimit),
+        );
+
+        // Unused for the whole limit, it is signed out and says it expired.
+        yield* TestClock.adjust(idleLimit);
+        const lapsed = yield* serverAuth
+          .authenticateHttpRequest(makeBearerRequest(access.access_token))
+          .pipe(Effect.flip);
+        expect(
+          EnvironmentAuth.isServerAuthCredentialError(lapsed)
+            ? EnvironmentAuth.serverAuthSessionState(lapsed)
+            : lapsed._tag,
+        ).toBe("expired");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerEnvironmentAuth(testCase.config).pipe(
+              Layer.provide(ServerSettings.layerTest(testCase.settings)),
+            ),
+            TestClock.layer(),
+          ),
+        ),
+      ),
+    );
+
+    it.effect("tells a revoked device apart from an expired one", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const link = yield* serverAuth.issuePairingCredential();
+        const access = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          link.credential,
+          undefined,
+          requestMetadata,
+        );
+        const verified = yield* serverAuth.authenticateHttpRequest(
+          makeBearerRequest(access.access_token),
+        );
+        yield* serverAuth.revokeSession(verified.sessionId);
+        const revoked = yield* serverAuth
+          .authenticateHttpRequest(makeBearerRequest(access.access_token))
+          .pipe(Effect.flip);
+        const forged = yield* serverAuth
+          .authenticateHttpRequest(makeBearerRequest("not.a-token"))
+          .pipe(Effect.flip);
+        expect(
+          [revoked, forged].map((error) =>
+            EnvironmentAuth.isServerAuthCredentialError(error)
+              ? EnvironmentAuth.serverAuthSessionState(error)
+              : error._tag,
+          ),
+        ).toEqual(["revoked", undefined]);
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
     it.effect("prefers a bearer token over a stale legacy cookie", () =>
