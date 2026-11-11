@@ -1035,11 +1035,16 @@ function ConnectionsSettingsContent({
   const renderTailscaleRow = () => (
     <SettingsRow
       title={searchableSetting("tailscale-https").title}
+      status={
+        tailscaleHttpsEndpoint?.status === "available" ? (
+          <span className="block text-success">Working</span>
+        ) : null
+      }
       description={
         tailscaleHttpsEndpoint
           ? tailscaleHttpsEndpoint.status === "available"
             ? tailscaleHttpsEndpoint.httpBaseUrl
-            : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
+            : "Off. Turn it on to reach this machine from your other devices on Tailscale."
           : missingTailscaleEndpointDescription(desktopServerExposureState)
       }
       control={
@@ -1114,7 +1119,7 @@ function ConnectionsSettingsContent({
             }
           />
         ) : desktopServerExposureState ? (
-          "Limited to this machine."
+          `Off. Devices on your Wi-Fi can't reach this ${thisMachineNoun()} directly.`
         ) : (
           "Loading…"
         )
@@ -1174,7 +1179,10 @@ function ConnectionsSettingsContent({
           <SettingsSection
             {...searchableSetting("connections-environment")}
             title={
-              accessEnvironment?.label ?? (desktopBridge ? "This machine" : "Primary environment")
+              isPrimaryAccess && desktopBridge
+                ? `This ${thisMachineNoun()}${accessEnvironment ? ` · ${accessEnvironment.label}` : ""}`
+                : (accessEnvironment?.label ??
+                  (desktopBridge ? "This machine" : "Primary environment"))
             }
             icon={
               <EnvironmentMachineIcon
@@ -1210,6 +1218,27 @@ function ConnectionsSettingsContent({
               ) : null
             }
           >
+            {canManageLocalBackend || canReadRelay || canManageRelay ? (
+              <p className="px-3 pt-3 text-xs font-medium text-muted-foreground sm:px-4">
+                How other devices reach this {isPrimaryAccess ? thisMachineNoun() : "machine"}
+              </p>
+            ) : null}
+            {canManageLocalBackend && desktopBridge ? (
+              <>
+                {renderTailscaleRow()}
+                {renderNetworkAccessRow()}
+                {renderEndpointRows()}
+              </>
+            ) : canManageLocalBackend ? (
+              renderDisabledNetworkAccessRow()
+            ) : null}
+            {canReadRelay || canManageRelay ? (
+              <CloudLinkRow
+                environmentId={accessEnvironmentId}
+                canReadRelay={canReadRelay}
+                canManageRelay={canManageRelay}
+              />
+            ) : null}
             <EnvironmentDisplayNameSetting
               environmentId={accessEnvironmentId}
               serverConfig={accessServerConfig}
@@ -1262,23 +1291,7 @@ function ConnectionsSettingsContent({
                 }
               />
             ) : null}
-            {canManageLocalBackend && desktopBridge ? (
-              <>
-                {renderNetworkAccessRow()}
-                {renderEndpointRows()}
-                {renderTailscaleRow()}
-                {renderWslRow()}
-              </>
-            ) : canManageLocalBackend ? (
-              renderDisabledNetworkAccessRow()
-            ) : null}
-            {canReadRelay || canManageRelay ? (
-              <CloudLinkRow
-                environmentId={accessEnvironmentId}
-                canReadRelay={canReadRelay}
-                canManageRelay={canManageRelay}
-              />
-            ) : null}
+            {canManageLocalBackend && desktopBridge ? renderWslRow() : null}
             {accessEnvironment ? (
               <details className="group px-3 sm:px-4">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
