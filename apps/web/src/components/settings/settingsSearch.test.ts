@@ -346,14 +346,10 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/general", "text-generation-model")).toBe(
       "/settings/threads",
     );
-    expect(movedSettingsPath("/settings/connections", "authorized-clients")).toBe(
-      "/settings/access",
-    );
     expect(movedSettingsPath("/settings/source-control", "worktree-branch-naming")).toBe(
       "/settings/worktrees",
     );
     expect(movedSettingsPath("/settings/appearance", "diff-color-scheme")).toBe("/settings/diffs");
-    expect(movedSettingsPath("/settings/connections", "network-access")).toBe("/settings/access");
     expect(movedSettingsPath("/settings/storage", "storage-worktrees")).toBe("/settings/worktrees");
     expect(movedSettingsPath("/settings/storage", "")).toBe("/settings/maintenance");
     expect(movedSettingsPath("/settings/integrations", "devices")).toBe("/settings/devices");
@@ -364,6 +360,9 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/general", "time-format")).toBeNull();
     expect(movedSettingsPath("/settings/projects", "project-defaults")).toBeNull();
     expect(movedSettingsPath("/settings/connections", "remote-environments")).toBeNull();
+    // Sharing & access merged back into Connections, so its rows stay put.
+    expect(movedSettingsPath("/settings/connections", "authorized-clients")).toBeNull();
+    expect(movedSettingsPath("/settings/connections", "network-access")).toBeNull();
     expect(movedSettingsPath("/settings/appearance", "theme")).toBeNull();
   });
 });

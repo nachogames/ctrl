@@ -7,7 +7,7 @@ machine. That machine must stay running and reachable while you work.
 
 T3 Connect makes an environment available to your other devices without setting
 up router forwarding. In the desktop app on the host, open **Settings →
-Sharing & access**, sign in, and enable **T3 Connect** for that environment.
+Connections**, sign in, and enable **T3 Connect** for that environment.
 
 For a command-line host, run:
 
@@ -69,7 +69,7 @@ cannot add more until you are under the limit again.
 
 Use direct pairing when the other device can reach the host's network address.
 
-On a desktop host, open **Settings → Sharing & access**. Under **How other devices
+On a desktop host, open **Settings → Connections**. Under **How other devices
 reach this Mac**, turn on **Tailscale** or **Local network**, then choose **Add a
 device**. It shows a one-time code, a QR code and a link that already carries this
 machine's address. Two switches ride along with it: whether the other device shows
@@ -97,7 +97,7 @@ t3 pair
 ```
 
 Scan the QR code on your phone, or paste the link into **Add a machine** in the
-receiving app (**Settings → Other machines** on web and desktop, **Settings →
+receiving app (**Settings → Connections** on web and desktop, **Settings →
 Environments** on mobile). A bare code also works with the machine's address.
 Each machine in **Other machines** has two switches: **Show its chats and
 projects here**, and **Agents here can run work there**, which links this
@@ -115,7 +115,7 @@ Android app then trusts it.
 Pairing authorizes that device for future connections. Use a fresh one-time link
 for each new device; you do not need the original code to reconnect. Links
 created in Settings can only be copied from the client that created them while
-its Sharing & access page stays open. If you leave or reload that page, create
+its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
 ### Reach one machine several ways
@@ -267,12 +267,12 @@ adding it. When this device is off Tailscale, its machines stay saved and
 reconnect when Tailscale is back.
 
 To let your phone reach your laptop the same way, turn on **Tailscale sign-in** in
-**Settings → Sharing & access**. The app restarts and listens on your tailnet at
+**Settings → Connections**. The app restarts and listens on your tailnet at
 port 3774; unless **Local network** is on, it still refuses LAN connections. If
 that port is in use, Settings shows the port it uses, and other devices add the
 laptop by name with that port.
 
-To cut off one device on one machine, open **Settings → Other machines** on a
+To cut off one device on one machine, open **Settings → Connections** on a
 device that can manage access there, and **Block** it under **Tailscale devices
 on <machine>**. On that machine itself, the list is in **Settings → Sharing &
 access**. A device can manage access when its scopes include `access:write` and
@@ -282,13 +282,13 @@ includes `admin`, or your own devices while your policy grants none and
 
 A blocked device's Tailscale sessions on that machine end now, and **Unblock**
 undoes it. Sessions it made with a pairing code stay until you revoke them in
-**Settings → Sharing & access** there. A browser preview or device screen it
+**Settings → Connections** there. A browser preview or device screen it
 already has open keeps working, clicks and typing included, until it closes. A
 device that rejoins Tailscale gets a new ID, so block it again or remove it from
 your tailnet.
 
 To turn Tailscale sign-in off, run `t3 up --no-tailscale` for the background
-service, or turn it off in **Settings → Sharing & access** in the desktop app.
+service, or turn it off in **Settings → Connections** in the desktop app.
 Either restarts and ends every Tailscale session and unused Tailscale sign-in
 code. A server you started by hand keeps its access until you stop it.
 
@@ -317,7 +317,7 @@ and other containers; `t3 up` tells you when it finds any of these.
 ### Tailscale HTTPS
 
 Join both devices to the same tailnet. In the desktop app, turn on **Tailscale**
-under **How other devices reach this Mac** in **Settings → Sharing & access**. It
+under **How other devices reach this Mac** in **Settings → Connections**. It
 shows **Working** once Tailscale Serve answers as this machine, even when Serve was
 set up outside the app. Turn it off there to remove that route.
 
@@ -346,7 +346,7 @@ If that port is already in use, choose another with
 
 ### Tailscale troubleshooting
 
-When a Tailscale route fails, the machine's row in **Settings → Other machines** says
+When a Tailscale route fails, the machine's row in **Settings → Connections** says
 why, using what the host last reported about its own Tailscale: signed out, off,
 waiting for approval, or a node key that has expired or expires soon. The desktop
 app also checks Tailscale on this device and whether the host is online on your
@@ -373,7 +373,7 @@ scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
 ## Desktop-managed SSH
 
-In the desktop app, open **Settings → Other machines → Add a machine**, choose
+In the desktop app, open **Settings → Connections → Add a machine**, choose
 **SSH**, and enter a host or SSH alias such as `user@example.com`. T3 Code starts
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
@@ -395,7 +395,7 @@ running is left alone.
 
 Each desktop app keeps one session on the host for its SSH connection and reuses
 it when it reconnects. Sign out sessions you no longer use in **Settings →
-Sharing & access** on the host, or on a headless host with `t3 auth session list` and
+Connections** on the host, or on a headless host with `t3 auth session list` and
 `t3 auth session revoke <id>`. A desktop that can still sign in over SSH pairs
 again on its next connect.
 
@@ -496,14 +496,14 @@ off on either machine, agents start nothing over a link between them. A task
 already running on the other machine still finishes, and if that machine has it
 off, its result arrives once it is back on.
 
-On the machine you will work from, open **Settings → Other machines** and turn on
+On the machine you will work from, open **Settings → Connections** and turn on
 **Agents here can run work there** on the other machine's row. For a machine you
 have not added, use **Add a machine** with that switch on; turn off **Show its chats
 and projects here** if you only want agents there. The list
 holds the machines this app knows and those on your T3 Connect account. If this
 app is connected to that machine with a session that manages access there, it
 makes the pairing code itself; otherwise paste one from that machine's
-**Settings → Sharing & access**. From a terminal, use
+**Settings → Connections**. From a terminal, use
 `t3 environment link <address> --pairing-code <code> --access <mode>`.
 
 You can also ask an agent to link a machine by name, such as "delegate this to
@@ -517,7 +517,7 @@ and the access, then approve.
   access, the link's agents can change only threads it started, not that
   machine's own threads, projects or settings, and they skip its project setup
   scripts.
-- The link shows up in that machine's **Settings → Sharing & access** like any
+- The link shows up in that machine's **Settings → Connections** like any
   outside agent. Revoke it there to end it. **Forget** on this machine only
   removes it here.
 - Links last 30 days. Link again with a new pairing code to renew one.
@@ -531,7 +531,7 @@ fails with that reason.
 
 ## Manage or revoke access
 
-On the host, **Settings → Sharing & access** lets authorized administrators create
+On the host, **Settings → Connections** lets authorized administrators create
 pairing links and sign devices out. Revoking an unused link prevents new
 pairings; **Sign out** on a device removes its existing access, and **Sign out all
 other devices** is in the section's menu. Command-line management is available
@@ -602,7 +602,7 @@ page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This
 revokes its cloud access and frees its host space even when the environment is
 offline or has been wiped. When T3 Connect rejects a host's link, the host
 shows that it was removed from T3 Connect. To link it again, turn on
-**T3 Connect** in **Settings → Sharing & access** on a desktop host, or run
+**T3 Connect** in **Settings → Connections** on a desktop host, or run
 `t3 connect link` on a command-line host and then restart T3 Code there. A
 command-line host that released its tunnel when it last stopped may link itself
 again on its next start; run `t3 connect unlink` on that host to keep it off.

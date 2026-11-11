@@ -87,7 +87,7 @@ export function SignedOutEnvironmentPanel({
         </div>
         {error ? <p className="text-destructive">{error}</p> : null}
         <p className="text-muted-foreground">
-          On {hostLabel}: Settings &gt; Sharing &amp; access &gt; Add a device.
+          On {hostLabel}: Settings &gt; Connections &gt; Add a device.
         </p>
       </form>
     </div>

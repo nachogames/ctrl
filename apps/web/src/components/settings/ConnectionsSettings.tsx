@@ -168,11 +168,13 @@ function LocalVersionStatusLabel() {
 }
 
 /** Environments lists the machines this app connects to; access covers who may reach one of them. */
-export function ConnectionsSettings({ view }: { readonly view: "environments" | "access" }) {
-  return view === "access" ? (
-    <AccessSettings />
-  ) : (
-    <ConnectionsSettingsContent view="environments" accessEnvironmentId={null} />
+/** One page, top to bottom: this machine, who can use it, then the other machines this app uses. */
+export function ConnectionsSettings() {
+  return (
+    <SettingsPageContainer>
+      <AccessSettings />
+      <ConnectionsSettingsContent view="environments" accessEnvironmentId={null} />
+    </SettingsPageContainer>
   );
 }
 
@@ -1322,6 +1324,7 @@ function ConnectionsSettingsContent({
           {canReadAccess || canWriteAccess ? (
             <FoldedSettingsSection
               id="authorized-clients"
+              defaultOpen
               title={
                 isPrimaryAccess
                   ? `Who can use this ${thisMachineNoun()}`
@@ -1665,10 +1668,10 @@ function ConnectionsSettingsContent({
     </>
   );
 
-  if (showsAccess) return <SettingsPageContainer>{primarySettings}</SettingsPageContainer>;
+  if (showsAccess) return primarySettings;
 
   return (
-    <SettingsPageContainer>
+    <>
       {desktopBridge ? (
         <SettingsSection id="this-app" title="This app">
           <LocalEnvironmentSetting />
@@ -1776,6 +1779,6 @@ function ConnectionsSettingsContent({
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
       <DictationRoutingSettings environments={loadBalancingEnvironments} />
-    </SettingsPageContainer>
+    </>
   );
 }
