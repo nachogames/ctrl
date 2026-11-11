@@ -126,7 +126,9 @@ export function AddEnvironmentDialog({
   const canLinkAgents = mayLinkAgents && offersLinks;
   const linkAgentsTo = useLinkAgentsTo();
   const offerConnectionBack = useOfferConnectionBack();
-  const [bothWays, setBothWays] = useState(true);
+  const [bothWaysChosen, setBothWays] = useState(true);
+  // The switch only shows when this app has a machine of its own to connect back to.
+  const bothWays = bothWaysChosen && primaryEnvironmentId !== null;
   const relayDiscoveryState = useRelayEnvironmentDiscovery();
   const savedDesktopSshEnvironmentKeys = (() => {
     const keys = new Set<string>();
@@ -650,7 +652,7 @@ export function AddEnvironmentDialog({
                 </span>
               </span>
               <Switch
-                checked={bothWays}
+                checked={bothWaysChosen}
                 disabled={isAddingSavedBackend}
                 onCheckedChange={setBothWays}
                 aria-label="Connect both ways"

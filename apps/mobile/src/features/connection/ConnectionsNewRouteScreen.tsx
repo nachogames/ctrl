@@ -44,6 +44,10 @@ type ConnectionsNewRouteParams = {
   readonly routeFor?: EnvironmentId;
 };
 
+// A QR without a code, such as one from `t3 up`, cannot connect another computer.
+const relayablePairingUrl = (pairingUrl: string, code: string) =>
+  code.trim() === "" ? null : pairingUrl;
+
 export function ConnectionsNewRouteScreen({
   route,
 }: StaticScreenProps<ConnectionsNewRouteParams | undefined>) {
@@ -147,7 +151,7 @@ function PairingForm({
       setHostInput(host);
       setCodeInput(code);
       onChangeConnectionPairingUrl(pairingUrl);
-      setScannedPairingUrl(pairingUrl);
+      setScannedPairingUrl(relayablePairingUrl(pairingUrl, code));
       setScanComplete(true);
       setScannerLocked(false);
     } catch (error) {

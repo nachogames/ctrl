@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
 import { BearerConnectionProfile, type ConnectionCatalogEntry } from "./catalog.ts";
-import { BearerConnectionTarget, RelayConnectionTarget } from "./model.ts";
+import { BearerConnectionTarget, PrimaryConnectionTarget, RelayConnectionTarget } from "./model.ts";
 import { discoveredMachineAction, tailnetSignInBaseUrl } from "./tailnet.ts";
 
 const STUDIO = EnvironmentId.make("environment-studio");
@@ -118,6 +118,23 @@ describe("discoveredMachineAction", () => {
         machine,
         entries: entries({
           target: new RelayConnectionTarget({ environmentId: STUDIO, label: "studio" }),
+          profile: Option.none(),
+          enabled: true,
+        }),
+        dismissed,
+      }),
+    ).toEqual({ _tag: "Skip" });
+    // This app's own machine, reported back by a peer, is saved only at loopback.
+    expect(
+      discoveredMachineAction({
+        machine,
+        entries: entries({
+          target: new PrimaryConnectionTarget({
+            environmentId: STUDIO,
+            label: "studio",
+            httpBaseUrl: "http://127.0.0.1:3774/",
+            wsBaseUrl: "ws://127.0.0.1:3774/",
+          }),
           profile: Option.none(),
           enabled: true,
         }),

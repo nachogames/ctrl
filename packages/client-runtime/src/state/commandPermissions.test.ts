@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -295,6 +296,59 @@ describe("command permissions", () => {
       registry.dispose();
     }
   });
+
+  it.effect("waits for a machine still connecting before sending its request", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthAccessWriteScope],
+            permissions: [AuthAccessWriteScope],
+          }),
+        );
+        const client = {
+          [WS_METHODS.connectionOffersOffer]: () => Effect.succeed({}),
+        };
+        const session = yield* SubscriptionRef.make(Option.none<RpcSession>());
+        const supervisor = {
+          target: new BearerConnectionTarget({
+            environmentId: env,
+            label: "Test",
+            connectionId: "test",
+          }),
+          session,
+        } as unknown as EnvironmentSupervisor["Service"];
+        const connectingRuntime = Atom.runtime(
+          Layer.succeed(EnvironmentRegistry, {
+            run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+          } as EnvironmentRegistry["Service"]),
+        );
+        const offer = createEnvironmentRpcCommand(connectingRuntime, {
+          label: "test.offer",
+          tag: WS_METHODS.connectionOffersOffer,
+          connectWait: Duration.seconds(15),
+        });
+        const result = Effect.promise(() =>
+          offer.run(registry, {
+            environmentId: env,
+            input: {
+              environmentId: other,
+              label: "Other",
+              pairingUrl: "http://other.test/pair#token=x",
+              expiresAt: DateTime.makeUnsafe(0),
+            },
+          }),
+        );
+        const fiber = yield* result.pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* SubscriptionRef.set(session, Option.some({ client } as unknown as RpcSession));
+        expect((yield* Fiber.join(fiber))._tag).toBe("Success");
+      }),
+    ),
+  );
 });
 
 it.effect(

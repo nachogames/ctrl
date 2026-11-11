@@ -1,4 +1,5 @@
 import { WS_METHODS } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import type { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -12,6 +13,8 @@ export function createConnectionOfferCommands<R, E>(
     offer: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:connection-offers:offer",
       tag: WS_METHODS.connectionOffersOffer,
+      // Offered right after adding the machine, before its connection is up.
+      connectWait: Duration.seconds(15),
     }),
     take: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:connection-offers:take",

@@ -656,7 +656,7 @@ const setUp = Effect.fn("cli.up")(function* (
       (state) => state.serviceManaged !== true && isProcessAlive(state.pid),
     );
     const runningElsewhere =
-      "T3 Code is running here outside the background service, with the access it started with. In the desktop app, turn access off in Settings → Sharing & access. Otherwise, stop the server.";
+      "T3 Code is running here outside the background service, with the access it started with. In the desktop app, turn access off in Settings → Connections. Otherwise, stop the server.";
     if (handStarted) return yield* Console.log(runningElsewhere);
     // Nothing runs here to remove a Serve mapping a stopped server left, so do it now,
     // holding the T3 home's lock so no server starts meanwhile.

@@ -156,7 +156,7 @@ stays on its route, even when an earlier route comes back. The route order
 applies the next time T3 Code has to reconnect.
 
 On web and desktop, select the route count under the machine's name in
-**Settings → Environments** to see its routes. Each route shows whether it
+**Settings → Connections** to see its routes. Each route shows whether it
 answered on the last try. Drag a route to change the order, or remove it. On mobile, open the machine under **Settings → Environments** and
 choose **Edit**. Signing out of T3 Connect removes only that route; a machine
 you can still reach another way stays saved.
@@ -171,7 +171,7 @@ different permissions.
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in
-**Settings → Environments → Load balancing** to automatically choose a machine for
+**Settings → Connections → Load balancing** to automatically choose a machine for
 new threads in projects grouped across connected environments. The section
 appears once two or more machines are switched on.
 Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
@@ -282,8 +282,8 @@ laptop by name with that port.
 
 To cut off one device on one machine, open **Settings → Connections** on a
 device that can manage access there, and **Block** it under **Tailscale devices
-on <machine>**. On that machine itself, the list is in **Settings → Sharing &
-access**. A device can manage access when its scopes include `access:write` and
+on <machine>**. On that machine itself, the list is under **Who can use this
+Mac**. A device can manage access when its scopes include `access:write` and
 `orchestration:read`: one paired with a default `t3 pair` code, one whose grant
 includes `admin`, or your own devices while your policy grants none and
 `--require-grant` is off.
@@ -645,7 +645,7 @@ error, where the problem is, and how to fix it.
 ## Using the Desktop App as a Remote Only
 
 If a computer should only drive work running elsewhere, turn off its local environment. In the
-desktop app, open **Settings → Environments** and switch off **Local
+desktop app, open **Settings → Connections** and switch off **Local
 environment**. T3 Code restarts without a local server: no local agents or terminals run, WSL
 backends stay off, and other devices can no longer connect to this computer. Your projects,
 history, and saved connections are kept, and you keep working through pairing, T3 Connect, or SSH.

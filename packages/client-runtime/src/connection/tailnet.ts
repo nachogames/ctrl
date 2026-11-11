@@ -126,6 +126,8 @@ export function discoveredMachineAction(input: {
   if (input.dismissed.has(machine.environmentId)) return { _tag: "Skip" };
   const saved = input.entries.get(machine.environmentId);
   if (saved === undefined) return { _tag: "Add" };
+  // This app's own machine: a peer reports it at its tailnet address, but it is saved at loopback.
+  if (saved.target._tag === "PrimaryConnectionTarget") return { _tag: "Skip" };
   const hosts = routeHosts(saved);
   const dnsName = machine.magicDnsName === null ? null : normalizeHostname(machine.magicDnsName);
   const known =

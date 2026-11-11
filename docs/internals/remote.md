@@ -37,12 +37,10 @@ network receives no credential. That check is not proof of a working route:
 when every route stays silent, each is still tried. A route that fails to
 connect, including a blocked one such as a signed-out T3 Connect, moves on to
 the next; only an incompatible server stops the walk, because it is the same
-server on every route. While connected over a later route the
-[supervisor](../../packages/client-runtime/src/connection/supervisor.ts)
-preflights the earlier ones and replaces the session when one would connect.
-Preflight includes authorization so a route that answers but rejects this
-client never costs a working session; a route that still fails afterwards is
-held back for a cooldown so a flaky network cannot bounce the connection.
+server on every route. A healthy session is never closed to try a better route:
+the [supervisor](../../packages/client-runtime/src/connection/supervisor.ts)
+uses the route order again on the next reconnect, so a route that comes back
+is picked up then without costing a working session.
 
 A connected server reports the LAN and tailnet addresses it is bound to, and the
 client saves them as learned routes. A learned route reuses the credential of
@@ -73,7 +71,7 @@ A [peer link](../../apps/server/src/peer/PeerLinks.ts) lets one environment's
 agents work in another. The linking environment signs in to the other's `/mcp`
 as an outside MCP client, with a pairing code from it, and keeps that session's
 token in its own secret store. The other environment needs nothing new: it
-sees one more OAuth client, lists it in Sharing & access, and revokes it there.
+sees one more OAuth client, lists it in Connections, and revokes it there.
 Unlinking on the linking side only forgets the token.
 
 - **The Linked environments beta (`linkedEnvironmentsEnabled`) gates both

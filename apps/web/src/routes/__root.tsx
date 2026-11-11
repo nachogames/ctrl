@@ -43,6 +43,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
 import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
 import { isElectron } from "../env";
+import { isLoopbackHostname } from "../environments/primary/target";
 import { cn } from "../lib/utils";
 import { useClientSettings } from "../hooks/useSettings";
 import {
@@ -141,7 +142,10 @@ function RootRouteView() {
       <AnchoredToastProvider>
         {/* Runs through first-run setup too, so its machine list shows tailnet machines. */}
         {isElectron ? <TailnetDiscoveryCoordinator /> : null}
-        {isHostedStaticApp() ? null : <ConnectionOffersCoordinator />}
+        {/* Only the machine's own app: taking an offer uses it up, and a browser elsewhere would pair itself. */}
+        {isElectron || isLoopbackHostname(window.location.hostname) ? (
+          <ConnectionOffersCoordinator />
+        ) : null}
         <RootRouteBranch />
       </AnchoredToastProvider>
     </ToastProvider>

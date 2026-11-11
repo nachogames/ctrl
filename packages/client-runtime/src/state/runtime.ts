@@ -9,6 +9,7 @@ import {
   type EnvironmentId as EnvironmentIdType,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -989,6 +990,20 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
   });
 }
 
+const awaitConnection = (wait: Duration.Duration | undefined) =>
+  wait === undefined
+    ? Effect.void
+    : EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+        Effect.flatMap((supervisor) =>
+          SubscriptionRef.changes(supervisor.session).pipe(
+            Stream.filter(Option.isSome),
+            Stream.runHead,
+            Effect.timeoutOption(wait),
+          ),
+        ),
+        Effect.asVoid,
+      );
+
 export function createEnvironmentRpcCommand<
   R,
   ER,
@@ -1000,6 +1015,8 @@ export function createEnvironmentRpcCommand<
   options: {
     readonly label: string;
     readonly tag: TTag;
+    /** Waits up to this long for a connection still being set up, as after adding a machine. */
+    readonly connectWait?: Duration.Duration;
     /** Runs once authorized, as the request starts; what it returns reaches `onSuccess`. */
     readonly onStart?: (
       target: {
@@ -1051,7 +1068,8 @@ export function createEnvironmentRpcCommand<
       let started: Started | undefined;
       // Routing requires consent on the origin as well as the actual destination.
       // The transport check below deliberately checks the destination again.
-      return permissions.authorize(registry, environmentId, input).pipe(
+      return awaitConnection(options.connectWait).pipe(
+        Effect.andThen(() => permissions.authorize(registry, environmentId, input)),
         Effect.andThen(() => {
           started = options.onStart?.(target, registry);
           return options.execute?.(input) ?? requestGuarded(options.tag, input);

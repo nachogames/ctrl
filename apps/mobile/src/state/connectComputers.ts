@@ -11,6 +11,7 @@ const connectionOffers = createConnectionOfferCommands(connectionAtomRuntime);
 
 // A code from Add a device lasts minutes; the other computer's app takes offers within one.
 const RELAY_LIFETIME_MINUTES = 10;
+const DESCRIPTOR_TIMEOUT_MS = 8_000;
 
 /**
  * Connects one of the user's computers (`targetEnvironmentId`, which this phone is connected to)
@@ -29,7 +30,11 @@ export async function connectComputerTo(
   }
   let scanned: { readonly environmentId: EnvironmentId; readonly label: string };
   try {
-    const response = await fetch(new URL("/.well-known/t3/environment", httpBaseUrl));
+    const request = new AbortController();
+    const timer = setTimeout(() => request.abort(), DESCRIPTOR_TIMEOUT_MS);
+    const response = await fetch(new URL("/.well-known/t3/environment", httpBaseUrl), {
+      signal: request.signal,
+    }).finally(() => clearTimeout(timer));
     if (!response.ok) throw new Error(String(response.status));
     const body: unknown = await response.json();
     if (
