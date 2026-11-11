@@ -4,6 +4,7 @@ import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
+  isLoopbackHostname,
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
@@ -335,10 +336,8 @@ export function summarizeAuthorizedClients(
   links: ReadonlyArray<ServerPairingLinkRecord>,
 ): string {
   const parts = [
-    `${sessions.length} ${sessions.length === 1 ? "client" : "clients"}`,
-    links.length > 0
-      ? `${links.length} ${links.length === 1 ? "pairing link" : "pairing links"}`
-      : null,
+    `${sessions.length} ${sessions.length === 1 ? "device" : "devices"}`,
+    links.length > 0 ? `${links.length} unused ${links.length === 1 ? "code" : "codes"}` : null,
   ];
   return parts.filter((part): part is string => part !== null).join(" · ");
 }
@@ -486,4 +485,64 @@ export function resolveAccessEnvironmentId(input: {
     (input.environments.find((environment) => environment.connected) ?? input.environments[0])
       ?.environmentId ?? null
   );
+}
+
+/**
+ * The pairing URL another device can open or scan, or null when this machine has no address
+ * another device can reach. The URL carries the address, so the other side types nothing else.
+ */
+export function resolveShareablePairingUrl(input: {
+  readonly credential: string;
+  readonly endpointUrl: string | null | undefined;
+  readonly endpoints: ReadonlyArray<AdvertisedEndpoint>;
+  readonly defaultEndpointKey: string | null;
+  readonly servedByEnvironment: boolean;
+  readonly currentHostname: string;
+}): string | null {
+  const endpoint = selectPairingEndpoint(input.endpoints, input.defaultEndpointKey);
+  if (endpoint) return resolveAdvertisedEndpointPairingUrl(endpoint, input.credential);
+  if (input.endpointUrl != null && input.endpointUrl !== "") {
+    return (
+      resolveHostedPairingUrl(input.endpointUrl, input.credential) ??
+      resolveDesktopPairingUrl(input.endpointUrl, input.credential)
+    );
+  }
+  if (!input.servedByEnvironment || isLoopbackHostname(input.currentHostname)) return null;
+  return resolveCurrentOriginPairingUrl(input.credential);
+}
+
+export interface PairingIntent {
+  /** The machine shows up in the other device's sidebar. */
+  readonly chats: boolean;
+  /** Agents on the other device may run work on this machine. */
+  readonly agents: boolean;
+}
+
+const PAIRING_INTENT_PARAMS = { chats: "chats", agents: "agents" } as const;
+
+/** Records the Add a device switches in the link's fragment; both default on, so only "off" is written. */
+export function withPairingIntent(pairingUrl: string, intent: PairingIntent): string {
+  const url = new URL(pairingUrl);
+  const hash = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+  for (const key of Object.keys(PAIRING_INTENT_PARAMS) as Array<keyof PairingIntent>) {
+    if (intent[key]) hash.delete(PAIRING_INTENT_PARAMS[key]);
+    else hash.set(PAIRING_INTENT_PARAMS[key], "0");
+  }
+  url.hash = hash.toString();
+  return url.toString();
+}
+
+/** The switches a pasted link asks for; a bare code, or a link without them, asks for both. */
+export function readPairingIntent(value: string): PairingIntent {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return { chats: true, agents: true };
+  }
+  const hash = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+  return {
+    chats: hash.get(PAIRING_INTENT_PARAMS.chats) !== "0",
+    agents: hash.get(PAIRING_INTENT_PARAMS.agents) !== "0",
+  };
 }

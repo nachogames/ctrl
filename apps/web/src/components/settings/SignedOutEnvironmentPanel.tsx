@@ -10,12 +10,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { toastManager } from "../ui/toast";
-
-function thisDeviceNoun(): string {
-  if (typeof navigator === "undefined") return "device";
-  // iPads report a Mac platform; touch tells them apart.
-  return /Mac/.test(navigator.platform) && navigator.maxTouchPoints <= 1 ? "Mac" : "device";
-}
+import { thisDeviceNoun } from "./deviceNoun";
 
 /**
  * The host answered and refused a sign-in it let lapse. Pairing again with a fresh code
@@ -92,7 +87,7 @@ export function SignedOutEnvironmentPanel({
         </div>
         {error ? <p className="text-destructive">{error}</p> : null}
         <p className="text-muted-foreground">
-          On {hostLabel}: Settings &gt; Connections &gt; Authorized clients &gt; Create link.
+          On {hostLabel}: Settings &gt; Sharing &amp; access &gt; Add a device.
         </p>
       </form>
     </div>

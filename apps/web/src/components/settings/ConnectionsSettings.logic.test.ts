@@ -2,10 +2,12 @@ import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  readPairingIntent,
   resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
   togglePairingScopeSelection,
+  withPairingIntent,
 } from "./ConnectionsSettings.logic";
 
 describe("togglePairingScopeSelection", () => {
@@ -199,5 +201,26 @@ describe("resolveAccessEnvironmentId", () => {
     expect(resolveAccessEnvironmentId({ primaryEnvironmentId, environments, selected })).toBe(
       expected,
     );
+  });
+});
+
+describe("pairing intent in a pairing link", () => {
+  const link = "https://box.tailnet.ts.net:8444/pair#token=ABCD1234";
+
+  it.each([
+    { chats: true, agents: true },
+    { chats: true, agents: false },
+    { chats: false, agents: true },
+    { chats: false, agents: false },
+  ])("carries chats=$chats agents=$agents from Add a device to Add a machine", (intent) => {
+    const shared = withPairingIntent(link, intent);
+    expect(readPairingIntent(shared)).toEqual(intent);
+    // The receiving side still finds the token and address it pairs with.
+    expect(new URLSearchParams(new URL(shared).hash.slice(1)).get("token")).toBe("ABCD1234");
+  });
+
+  it("asks for both from a bare code or a link from an older machine", () => {
+    expect(readPairingIntent("ABCD1234")).toEqual({ chats: true, agents: true });
+    expect(readPairingIntent(link)).toEqual({ chats: true, agents: true });
   });
 });

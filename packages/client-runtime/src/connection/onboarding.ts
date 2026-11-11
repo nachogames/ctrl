@@ -45,6 +45,8 @@ export interface PairingConnectionInput {
   readonly host?: string;
   readonly pairingCode?: string;
   readonly expectedEnvironmentId?: EnvironmentId;
+  /** Names this device in the host's list of who can use it, such as this machine's own name. */
+  readonly clientLabel?: string;
 }
 
 export interface SshConnectionInput {
@@ -154,10 +156,13 @@ export const preparePairingRegistration = Effect.fn(
   if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true) {
     return yield* compatibilityError;
   }
+  const clientLabel = input.clientLabel?.trim();
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
-    clientMetadata: presentation.metadata,
+    clientMetadata: clientLabel
+      ? { ...presentation.metadata, label: clientLabel }
+      : presentation.metadata,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
 
   return new BearerConnectionRegistration({

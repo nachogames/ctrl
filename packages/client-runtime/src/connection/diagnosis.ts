@@ -185,7 +185,7 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
       return [`On ${host}, open Settings > Sharing & access and turn T3 Connect on.`];
     case "session_expired":
       return [
-        `On ${host}, open Settings > Connections and create a pairing link.`,
+        `On ${host}, open Settings > Sharing & access and choose Add a device.`,
         "Pair this device with that code again. Its routes and settings stay as they are.",
       ];
     case "released":

@@ -1,6 +1,7 @@
 import { pipe } from "effect/Function";
 import { ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   type DesktopDiscoveredSshHost,
@@ -63,9 +64,18 @@ import {
   parsePairingUrlFields,
   parseRemotePairingFields,
   formatDesktopSshConnectionError,
+  readPairingIntent,
 } from "./ConnectionsSettings.logic";
+import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import { peerLinkEnvironment } from "~/state/peerLinks";
+import { usePrimaryEnvironment } from "~/state/environments";
+import { Switch } from "../ui/switch";
+import { useLinkAgentsTo } from "./useLinkAgentsTo";
 
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
+const noLinkPermissionAtom = Atom.make(false).pipe(
+  Atom.withLabel("add-machine:link-permission:none"),
+);
 
 export function AddEnvironmentDialog({
   open,
@@ -91,6 +101,17 @@ export function AddEnvironmentDialog({
   const registerEnvironment = useAtomCommand(environmentCatalog.register, {
     reportFailure: false,
   });
+  const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
+    reportFailure: false,
+  });
+  const primaryEnvironment = usePrimaryEnvironment();
+  const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  const canLinkAgents = useAtomValue(
+    primaryEnvironmentId === null
+      ? noLinkPermissionAtom
+      : peerLinkEnvironment.link.permissionAtom(primaryEnvironmentId),
+  );
+  const linkAgentsTo = useLinkAgentsTo();
   const relayDiscoveryState = useRelayEnvironmentDiscovery();
   const savedDesktopSshEnvironmentKeys = (() => {
     const keys = new Set<string>();
@@ -112,6 +133,13 @@ export function AddEnvironmentDialog({
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
+  // Null follows the pasted link; a toggle overrides it.
+  const [chatsChoice, setChatsChoice] = useState<boolean | null>(null);
+  const [agentsChoice, setAgentsChoice] = useState<boolean | null>(null);
+  const pastedLink = parsePairingUrlFields(savedBackendPairingCode);
+  const linkIntent = readPairingIntent(savedBackendPairingCode);
+  const showChats = chatsChoice ?? linkIntent.chats;
+  const letAgentsRun = canLinkAgents && (agentsChoice ?? linkIntent.agents);
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
@@ -153,6 +181,8 @@ export function AddEnvironmentDialog({
       setSavedBackendMode("remote");
       setSavedBackendHost("");
       setSavedBackendPairingCode("");
+      setChatsChoice(null);
+      setAgentsChoice(null);
       setSavedBackendSshHost("");
       setSavedBackendSshUsername("");
       setSavedBackendSshPort("");
@@ -209,10 +239,12 @@ export function AddEnvironmentDialog({
     onErrorChange(null);
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
     try {
-      remotePairingInput = parseRemotePairingFields({
-        host: savedBackendHost,
-        pairingCode: savedBackendPairingCode,
-      });
+      remotePairingInput = pastedLink
+        ? pastedLink
+        : parseRemotePairingFields({
+            host: savedBackendHost,
+            pairingCode: savedBackendPairingCode,
+          });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to add backend.";
       onErrorChange(message);
@@ -230,6 +262,7 @@ export function AddEnvironmentDialog({
     const result = await connectPairing({
       ...remotePairingInput,
       ...(routeTarget ? { expectedEnvironmentId: routeTarget.environmentId } : {}),
+      ...(primaryEnvironment ? { clientLabel: primaryEnvironment.label } : {}),
     });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
@@ -248,6 +281,23 @@ export function AddEnvironmentDialog({
       return;
     }
 
+    const environmentId = result.value;
+    let agentsProblem: string | null = null;
+    if (!routeTarget && letAgentsRun && primaryEnvironmentId !== null) {
+      // Before hiding it: the code for the agents' link is minted over the new connection.
+      agentsProblem = await linkAgentsTo({
+        hostEnvironmentId: primaryEnvironmentId,
+        target: {
+          environmentId,
+          label: remotePairingInput.host,
+          urls: [resolveRemotePairingTarget(remotePairingInput).httpBaseUrl],
+        },
+      });
+    }
+    if (!routeTarget && !showChats) {
+      await setEnvironmentEnabled({ environmentId, enabled: false });
+    }
+
     handleOpenChange(false);
     toastManager.add(
       routeTarget
@@ -258,10 +308,21 @@ export function AddEnvironmentDialog({
           }
         : {
             type: "success",
-            title: "Backend added",
-            description: "The environment is saved and will reconnect on app startup.",
+            title: "Machine added",
+            description: showChats
+              ? "Its chats and projects show up here, and it reconnects on its own."
+              : "Agents here can run work there.",
           },
     );
+    if (agentsProblem !== null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Agents here can't run work there yet",
+          description: `${agentsProblem} Turn it on from the machine's row in Other machines.`,
+        }),
+      );
+    }
     setIsAddingSavedBackend(false);
   };
 
@@ -391,33 +452,72 @@ export function AddEnvironmentDialog({
 
   const renderRemoteFields = () => (
     <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
+      <label className="block">
+        <span className="mb-1.5 block text-xs font-medium text-foreground">Link or code</span>
+        <Input
+          value={savedBackendPairingCode}
+          onChange={(event) => setSavedBackendPairingCode(event.target.value)}
+          placeholder="Paste the link from Add a device, or its code"
+          disabled={isAddingSavedBackend}
+          spellCheck={false}
+          autoFocus
+        />
+        {pastedLink ? (
+          <span className="mt-1 block text-xs text-success">Connects to {pastedLink.host}</span>
+        ) : null}
+      </label>
+      {pastedLink ? null : (
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">Host</span>
+          <span className="mb-1.5 block text-xs font-medium text-foreground">
+            Address of the other machine
+          </span>
           <Input
             value={savedBackendHost}
             onChange={(event) => handleSavedBackendHostChange(event.target.value)}
-            placeholder="backend.example.com"
+            placeholder="machine.tailnet.ts.net:8444"
             disabled={isAddingSavedBackend}
             spellCheck={false}
           />
+          <span className="mt-1 block text-2xs text-muted-foreground">
+            Only needed with a bare code. The link from Add a device already has it.
+          </span>
         </label>
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">Pairing code</span>
-          <Input
-            value={savedBackendPairingCode}
-            onChange={(event) => setSavedBackendPairingCode(event.target.value)}
-            placeholder="PAIRCODE"
-            disabled={isAddingSavedBackend}
-            spellCheck={false}
-          />
-        </label>
-      </div>
-      <div>
-        <span className="mt-1 block text-2xs text-muted-foreground">
-          Paste a full pairing URL here to fill both fields automatically.
-        </span>
-      </div>
+      )}
+      {routeTarget ? null : (
+        <div className="divide-y divide-border/60 rounded-lg border border-border/60">
+          <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5">
+            <span className="min-w-0 flex-1">
+              <span className="block text-xs font-medium text-foreground">
+                Show its chats and projects here
+              </span>
+            </span>
+            <Switch
+              checked={showChats}
+              disabled={isAddingSavedBackend}
+              onCheckedChange={setChatsChoice}
+              aria-label="Show its chats and projects here"
+            />
+          </label>
+          {canLinkAgents ? (
+            <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5">
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-medium text-foreground">
+                  Agents here can run work there
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  Each task asks for approval on that machine.
+                </span>
+              </span>
+              <Switch
+                checked={letAgentsRun}
+                disabled={isAddingSavedBackend}
+                onCheckedChange={setAgentsChoice}
+                aria-label="Agents here can run work there"
+              />
+            </label>
+          ) : null}
+        </div>
+      )}
     </div>
   );
   const relayRouteOffer =
@@ -478,7 +578,7 @@ export function AddEnvironmentDialog({
         onClick={() => void handleAddSavedBackend()}
       >
         <PlusIcon className="size-3.5" />
-        {isAddingSavedBackend ? "Adding…" : routeTarget ? "Add route" : "Add environment"}
+        {isAddingSavedBackend ? "Connecting…" : routeTarget ? "Add route" : "Connect"}
       </Button>
     </div>
   );
@@ -599,7 +699,7 @@ export function AddEnvironmentDialog({
           onClick={() => void handleAddSavedBackend()}
         >
           <PlusIcon className="size-3.5" />
-          {isAddingSavedBackend ? "Adding…" : routeTarget ? "Add route" : "Add environment"}
+          {isAddingSavedBackend ? "Connecting…" : routeTarget ? "Add route" : "Connect"}
         </Button>
       </div>
     </div>
@@ -612,25 +712,25 @@ export function AddEnvironmentDialog({
           render={
             <DialogTrigger
               render={
-                <Button size="xs" variant="ghost-muted" aria-label="Add environment">
+                <Button size="xs" variant="ghost-muted" aria-label="Add a machine">
                   <PlusIcon className="size-3" />
-                  <span>Add environment</span>
+                  <span>Add a machine</span>
                 </Button>
               }
             />
           }
         />
-        <TooltipPopup side="top">Add environment</TooltipPopup>
+        <TooltipPopup side="top">Add a machine</TooltipPopup>
       </Tooltip>
       <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
+            {routeTarget ? `Add a route to ${routeTarget.label}` : "Add a machine"}
           </DialogTitle>
           <DialogDescription>
             {routeTarget
               ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
-              : "Pair another environment to this client."}
+              : "Paste the link from Add a device on the other machine, or enter its code."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -638,8 +738,8 @@ export function AddEnvironmentDialog({
             <div className="grid gap-3 sm:grid-cols-2">
               {renderConnectionModeCard({
                 mode: "remote",
-                title: "Remote link",
-                description: "Enter a backend host and pairing code.",
+                title: "Link or code",
+                description: "From Add a device on the other machine.",
                 icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
               })}
               {desktopBridge

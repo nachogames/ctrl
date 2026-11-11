@@ -44,6 +44,7 @@ import { EnvironmentDisplayNameSetting } from "./EnvironmentDisplayNameSetting";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
+import { thisMachineNoun } from "./deviceNoun";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
@@ -1273,7 +1274,11 @@ function ConnectionsSettingsContent({
           {canReadAccess || canWriteAccess ? (
             <FoldedSettingsSection
               id="authorized-clients"
-              title="Authorized clients"
+              title={
+                isPrimaryAccess
+                  ? `Who can use this ${thisMachineNoun()}`
+                  : `Who can use ${accessEnvironment?.label ?? "this machine"}`
+              }
               collapsedContent={
                 canReadAccess && newestPairingLink
                   ? renderPairingClientsList([newestPairingLink], [])
@@ -1298,6 +1303,12 @@ function ConnectionsSettingsContent({
                     }
                     isRevokingOtherClients={isRevokingOtherDesktopClients}
                     onRevokeOtherClients={handleRevokeOtherDesktopClients}
+                    share={{
+                      servedByEnvironment: isPrimaryAccess,
+                      endpointUrl: desktopServerExposureState?.endpointUrl,
+                      endpoints: visibleDesktopAdvertisedEndpoints,
+                      defaultEndpointKey: defaultDesktopAdvertisedEndpointKey,
+                    }}
                   />
                 ) : undefined
               }
