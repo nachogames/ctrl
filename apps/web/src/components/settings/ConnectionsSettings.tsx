@@ -130,6 +130,7 @@ import {
 import {
   AdvertisedEndpointListRow,
   AuthorizedClientsHeaderAction,
+  PairedDeviceIdleLimitRow,
   NetworkAccessDescription,
   PairingClientsList,
 } from "./AuthorizedClientsSettings";
@@ -1313,6 +1314,12 @@ function ConnectionsSettingsContent({
                   </p>
                 )}
               </ScrollArea>
+              {canReadAccess ? (
+                <PairedDeviceIdleLimitRow
+                  environmentId={accessEnvironmentId}
+                  canWrite={canWriteAccess}
+                />
+              ) : null}
             </FoldedSettingsSection>
           ) : null}
           <AlertDialog

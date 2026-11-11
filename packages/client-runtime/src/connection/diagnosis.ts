@@ -186,7 +186,7 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
     case "session_expired":
       return [
         `On ${host}, open Settings > Connections and create a pairing link.`,
-        "Enter its code here and choose Pair again.",
+        "Pair this device with that code again. Its routes and settings stay as they are.",
       ];
     case "released":
     case "tunnel_down":

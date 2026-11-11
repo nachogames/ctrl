@@ -164,6 +164,27 @@ const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   timeStyle: "short",
 });
 
+const SIGN_OUT_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
+const signOutDayFormatter = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const signOutTimeFormatter = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
+
+/**
+ * "Signs out Nov 18" for a device within a week of being signed out for going unused. A
+ * connected device renews while it stays connected, so it gets none.
+ */
+export function clientSignOutNotice(
+  session: { readonly expiresAt: string; readonly connected: boolean; readonly current: boolean },
+  nowMs: number,
+): string | null {
+  if (session.connected || session.current) return null;
+  const expiresAtMs = new Date(session.expiresAt).getTime();
+  if (Number.isNaN(expiresAtMs) || expiresAtMs - nowMs > SIGN_OUT_NOTICE_MS) return null;
+  const expires = new Date(expiresAtMs);
+  return expiresAtMs - nowMs < 24 * 60 * 60 * 1000
+    ? `Signs out at ${signOutTimeFormatter.format(expires)}`
+    : `Signs out ${signOutDayFormatter.format(expires)}`;
+}
+
 export function formatAccessTimestamp(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {

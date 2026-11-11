@@ -3,6 +3,7 @@ import { DictationSettings, DictationSettingsPatch } from "./dictation.ts";
 import { SpeechSettings, SpeechSettingsPatch } from "./speech.ts";
 import { VoiceFrontSettings, VoiceFrontSettingsPatch } from "./voiceFront.ts";
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
@@ -1965,8 +1966,11 @@ export function requiredScopesForServerSettingsPatch(
 ): ReadonlyArray<AuthEnvironmentScope> {
   let changesProviders = false;
   let changesSettings = false;
+  let changesAccess = false;
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
+    // How long paired devices stay signed in is access control, like signing one out.
+    if (key === "pairedDeviceIdleLimit") changesAccess = true;
     if (
       key === "providers" ||
       key === "providerInstances" ||
@@ -1985,6 +1989,7 @@ export function requiredScopesForServerSettingsPatch(
   return [
     ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
     ...(changesProviders ? [AuthProvidersManageScope] : []),
+    ...(changesAccess ? [AuthAccessWriteScope] : []),
   ];
 }
 
