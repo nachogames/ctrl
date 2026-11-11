@@ -306,6 +306,10 @@ function ConnectionsSettingsContent({
   const listedEnvironments = savedEnvironments.filter(
     (environment) => !isDesktopLocalConnectionTarget(environment.entry.target),
   );
+  const agentOnlyLinks = (agentLinks.data?.links ?? []).filter(
+    (link) =>
+      !listedEnvironments.some((environment) => environment.environmentId === link.environmentId),
+  );
   const savedUpdateStates = useAtomValue(
     environmentUpdateStatesAtom(
       environmentIdsKey(savedEnvironments.map(({ environmentId }) => environmentId)),
@@ -1720,24 +1724,18 @@ function ConnectionsSettingsContent({
           />
         ))}
         {agentsHostId !== null
-          ? (agentLinks.data?.links ?? [])
-              .filter(
-                (link) =>
-                  !listedEnvironments.some(
-                    (environment) => environment.environmentId === link.environmentId,
-                  ),
-              )
-              .map((link) => (
-                <LinkedEnvironmentRow
-                  key={link.environmentId}
-                  environmentId={agentsHostId}
-                  link={link}
-                />
-              ))
+          ? agentOnlyLinks.map((link) => (
+              <LinkedEnvironmentRow
+                key={link.environmentId}
+                environmentId={agentsHostId}
+                link={link}
+              />
+            ))
           : null}
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
+          listsOtherMachines={agentOnlyLinks.length > 0}
         />
       </SettingsSection>
       {hasCloudPublicConfig() ? (
