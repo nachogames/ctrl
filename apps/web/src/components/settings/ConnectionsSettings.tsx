@@ -5,6 +5,7 @@ import { type ReactNode, useState } from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthSettingsWriteScope,
   AuthEnvironmentMaintainScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
@@ -389,6 +390,7 @@ function ConnectionsSettingsContent({
   );
   const canReadAccess = useEnvironmentScope(accessEnvironmentId, AuthAccessReadScope);
   const canWriteAccess = useEnvironmentScope(accessEnvironmentId, AuthAccessWriteScope);
+  const canWriteSettings = useEnvironmentScope(accessEnvironmentId, AuthSettingsWriteScope);
   const canReadRelay = useEnvironmentScope(accessEnvironmentId, AuthRelayReadScope);
   const canMaintain = useEnvironmentScope(accessEnvironmentId, AuthEnvironmentMaintainScope);
   const canManageRelay = useEnvironmentScope(accessEnvironmentId, AuthRelayWriteScope);
@@ -1317,7 +1319,7 @@ function ConnectionsSettingsContent({
               {canReadAccess ? (
                 <PairedDeviceIdleLimitRow
                   environmentId={accessEnvironmentId}
-                  canWrite={canWriteAccess}
+                  canWrite={canWriteAccess && canWriteSettings}
                 />
               ) : null}
             </FoldedSettingsSection>

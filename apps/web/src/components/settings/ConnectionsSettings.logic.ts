@@ -173,10 +173,20 @@ const signOutTimeFormatter = new Intl.DateTimeFormat(undefined, { timeStyle: "sh
  * connected device renews while it stays connected, so it gets none.
  */
 export function clientSignOutNotice(
-  session: { readonly expiresAt: string; readonly connected: boolean; readonly current: boolean },
+  session: {
+    readonly subject: string;
+    readonly method: string;
+    readonly expiresAt: string;
+    readonly connected: boolean;
+    readonly current: boolean;
+  },
   nowMs: number,
 ): string | null {
-  if (session.connected || session.current) return null;
+  // Only link-paired devices lapse for going unused; others renew their own short tokens.
+  const renewable =
+    session.subject === "one-time-token" &&
+    (session.method === "bearer-access-token" || session.method === "browser-session-cookie");
+  if (!renewable || session.connected || session.current) return null;
   const expiresAtMs = new Date(session.expiresAt).getTime();
   if (Number.isNaN(expiresAtMs) || expiresAtMs - nowMs > SIGN_OUT_NOTICE_MS) return null;
   const expires = new Date(expiresAtMs);

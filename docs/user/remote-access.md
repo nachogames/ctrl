@@ -228,7 +228,7 @@ the connection stops a server that T3 Code launched; a server that was already
 running is left alone.
 
 Each desktop app keeps one session on the host for its SSH connection and reuses
-it when it reconnects. Revoke sessions you no longer use in **Settings →
+it when it reconnects. Sign out sessions you no longer use in **Settings →
 Sharing & access** on the host, or on a headless host with `t3 auth session list` and
 `t3 auth session revoke <id>`. A desktop that can still sign in over SSH pairs
 again on its next connect.
@@ -364,9 +364,17 @@ fails with that reason.
 ## Manage or revoke access
 
 On the host, **Settings → Sharing & access** lets authorized administrators create
-pairing links and revoke client sessions. Revoking an unused link prevents new
-pairings; revoke a device's session to remove its existing access. Command-line
-management is available through `t3 auth --help`.
+pairing links and sign devices out. Revoking an unused link prevents new
+pairings; **Sign out** on a device removes its existing access, and **Sign out all
+other devices** is in the section's menu. Command-line management is available
+through `t3 auth --help`.
+
+A device that paired with a link stays signed in while you use it. It is signed
+out once it goes unused for 90 days, or 30 if you choose that under **Sign devices
+out when unused for**. A device within a week of that shows the date it signs
+out. To set a different limit, start the server with `T3CODE_PAIRING_SESSION_TTL`,
+such as `14d`. A device that was signed out shows **Signed out** in its
+Environments list; enter a new pairing code there and choose **Pair again**.
 
 When the app connects to more than one environment, choose one at the top of the
 page. A desktop app with **Local environment** off can manage a background
