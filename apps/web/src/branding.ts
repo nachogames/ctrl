@@ -33,3 +33,5 @@ export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
 export const DESKTOP_DOWNLOAD_URL = "https://t3.codes/download";
 // Redirects to the App Store or Google Play to match the phone that opens it.
 export const MOBILE_APP_URL = "https://t3.codes/mobile";
+// Ctrl: the store app is T3 Code's, and Ctrl has no store listing, so the Welcome page hides it.
+export const MOBILE_APP_IN_STORES = false;

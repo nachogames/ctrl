@@ -40,7 +40,7 @@ import {
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
-import { APP_BASE_NAME, MOBILE_APP_URL } from "../../branding";
+import { APP_BASE_NAME, MOBILE_APP_IN_STORES, MOBILE_APP_URL } from "../../branding";
 import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
@@ -138,12 +138,15 @@ export function WelcomePage({
   // The same access Settings → Sharing & access checks.
   const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
   const canWriteRelay = useEnvironmentScope(environmentId, AuthRelayWriteScope);
-  const showPhone = welcomeOffersPhone({
-    isPrimary,
-    cloud: hasCloudPublicConfig(),
-    canShare: canReadRelay && canWriteRelay,
-    policy: useManagedPolicy(environmentId),
-  });
+  const policy = useManagedPolicy(environmentId);
+  const showPhone =
+    MOBILE_APP_IN_STORES &&
+    welcomeOffersPhone({
+      isPrimary,
+      cloud: hasCloudPublicConfig(),
+      canShare: canReadRelay && canWriteRelay,
+      policy,
+    });
   const scans = useProjectScans([environmentId]);
   const [storedSelection, storeSelection] = useLocalStorage(
     welcomeImportSelectionKey(environmentId),
