@@ -12,7 +12,11 @@ import {
   resolveSidebarEnvironmentScope,
   shouldCreateNewThreadInCurrentProject,
 } from "../components/Sidebar.logic";
-import { createNewThreadHandler, resolveDefaultProjectRef } from "../hooks/useHandleNewThread";
+import {
+  createNewThreadHandler,
+  readLastUsedProjectKey,
+  resolveDefaultProjectRef,
+} from "../hooks/useHandleNewThread";
 import { createScratchProjectActions } from "../hooks/useScratchProject";
 import { getClientSettings } from "../hooks/useSettings";
 import { startChatInGroup } from "../hooks/useThreadGroupActions";
@@ -23,6 +27,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { readProjects, readThreadShell } from "../state/entities";
+import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { environmentPresentations, environmentSummaries } from "../state/presentation";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { primaryServerConfigAtom } from "../state/server";
@@ -77,6 +82,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       ? readProjects()
       : readProjects().filter((project) => project.environmentId === environmentScopeId);
   const readThreadContext = () => {
+    const lastUsedProjectKey = readLastUsedProjectKey();
     const target = readRouteTarget();
     const drafts = useComposerDraftStore.getState();
     const activeThread = target?.kind === "server" ? readThreadShell(target.threadRef) : null;
@@ -98,11 +104,17 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         activeDraftThread,
         activeThread: activeThread ?? undefined,
         // Skips Shift's folder, as the new-thread button does.
-        defaultProjectRef: resolveDefaultProjectRef(readProjects(), projectOrder, {
-          primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
-          homeWorkspaceRoot:
-            appAtomRegistry.get(primaryServerConfigAtom)?.homeWorkspaceRoot ?? null,
-        }),
+        defaultProjectRef: resolveDefaultProjectRef(
+          readProjects(),
+          projectOrder,
+          lastUsedProjectKey,
+          appAtomRegistry.get(defaultProjectFallbackReadyAtom(lastUsedProjectKey)),
+          {
+            primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
+            homeWorkspaceRoot:
+              appAtomRegistry.get(primaryServerConfigAtom)?.homeWorkspaceRoot ?? null,
+          },
+        ),
         handleNewThread,
       },
       environmentScopeId,
@@ -219,6 +231,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "preview.zoomIn": previewCommand("zoom-in"),
       "preview.zoomOut": previewCommand("zoom-out"),
       "preview.resetZoom": previewCommand("reset-zoom"),
+      "preview.find": previewCommand("find"),
     },
     {
       when: () =>

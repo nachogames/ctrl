@@ -18,7 +18,7 @@ import { resolveScaledTextRole } from "../../lib/appearancePreferences";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import type { MenuPopupProps } from "./MenuPopup";
-import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol";
+import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol.android";
 import { EnvironmentBattery } from "../../features/connection/EnvironmentBattery";
 
 const isHostBattery = Schema.is(HostBattery);

@@ -1,6 +1,6 @@
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 import * as DateTime from "effect/DateTime";
-import { EllipsisIcon, PlusIcon, QrCodeIcon } from "lucide-react";
+import { EllipsisIcon, PlugIcon, PlusIcon, QrCodeIcon } from "lucide-react";
 import { type ReactNode, memo, useId, useState } from "react";
 import {
   AuthAccessWriteScope,
@@ -73,6 +73,7 @@ import { useManagedPolicy, usePrimaryManagedPolicy } from "~/state/managedPolicy
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "~/hooks/useSettings";
 import { ManagedControl } from "../ManagedPolicy";
+import { openUseInAnotherApp } from "../mcp/UseInAnotherAppDialog";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import {
@@ -680,6 +681,10 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
   const pairingDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "remoteClients");
   return (
     <div className="flex items-center gap-2">
+      <Button size="xs" variant="outline" onClick={() => openUseInAnotherApp(environmentId)}>
+        <PlugIcon className="size-3" />
+        Use in another app (MCP)
+      </Button>
       <Menu>
         <MenuTrigger
           render={

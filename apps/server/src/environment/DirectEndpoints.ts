@@ -16,17 +16,16 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerConfig from "../config.ts";
-import * as ServerEnvironment from "./ServerEnvironment.ts";
 import {
-  formatHostForUrl,
   isLoopbackHost,
   isPrivateNetworkAddress,
   isTailscaleInterface,
-  isWildcardHost,
   VIRTUAL_INTERFACE,
 } from "../startupAccess.ts";
+import * as ServerEnvironment from "./ServerEnvironment.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
