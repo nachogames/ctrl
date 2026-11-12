@@ -144,6 +144,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
           },
         })),
     authorizeDpopHttp: () => Effect.die("unused"),
+    rememberCheckedDescriptor: () => Effect.void,
     renewDpopBeforeExpiry: () => Effect.die("unused"),
     signInTailnet: options?.signInTailnet ?? (() => Effect.die("unused")),
     authorizeTailnet: options?.authorizeTailnet ?? (() => Effect.die("unused")),

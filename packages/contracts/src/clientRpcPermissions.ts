@@ -29,6 +29,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.remoteMcpAuthorize]: AuthSettingsWriteScope,
   [WS_METHODS.remoteMcpReconnect]: AuthSettingsWriteScope,
   [WS_METHODS.remoteMcpRemove]: AuthSettingsWriteScope,
+  // Listing models spends the stored API key, so only those who can choose a model may.
+  [WS_METHODS.serverListTextGeneratorModels]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,

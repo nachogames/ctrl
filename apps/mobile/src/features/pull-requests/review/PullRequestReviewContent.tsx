@@ -431,7 +431,7 @@ function RoundSection(props: {
             <Button
               size="compact"
               tone="primary"
-              icon="sparkles"
+              icon="robot"
               label={props.triage.label}
               loading={props.triage.busy}
               disabled={!props.canRequest || !props.triage.ready}
