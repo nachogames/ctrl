@@ -2120,8 +2120,7 @@ export function requiredScopesForServerSettingsPatch(
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
     // How long paired devices stay signed in is access control, like signing one out.
-    if (key === "pairedDeviceIdleLimit") changesAccess = true;
-    if (key === "requireConnectDeviceApproval") {
+    if (key === "pairedDeviceIdleLimit" || key === "requireConnectDeviceApproval") {
       changesAccess = true;
     } else if (
       key === "providers" ||

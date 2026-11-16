@@ -19,10 +19,6 @@
       "types": "./src/reviewPoints.ts",
       "import": "./src/reviewPoints.ts"
     },
-    "./orderKeys": {
-      "types": "./src/orderKeys.ts",
-      "import": "./src/orderKeys.ts"
-    },
     "./appHome": {
       "types": "./src/appHome.ts",
       "import": "./src/appHome.ts"

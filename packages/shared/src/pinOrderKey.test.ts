@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "./orderKeys.ts";
+import { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "./pinOrderKey.ts";
 
 describe("pinOrderKeyBetween", () => {
   it("returns a valid key for open bounds", () => {

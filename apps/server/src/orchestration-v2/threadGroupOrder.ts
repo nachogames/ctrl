@@ -1,5 +1,5 @@
 import { type GroupOrderItem, orderGroupMembers } from "@t3tools/shared/groupOrder";
-import { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/orderKeys";
+import { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/pinOrderKey";
 
 export interface GroupOrderAssignment<Id extends string> {
   readonly threadId: Id;
@@ -10,11 +10,9 @@ const keysOf = (members: ReadonlyArray<GroupOrderItem>) =>
   members.flatMap((member) => (member.groupOrderKey == null ? [] : [member.groupOrderKey]));
 
 /**
- * The keys a join writes so the joining chat shows first. In a fully keyed
- * group the joiner gets one key before the first. Otherwise none when it
- * already shows first as the newest keyless chat, else the group gets spread
- * keys with the joiner on top. `members` are the chats already in the group.
- * Write the plan in order: it runs bottom-up and ends with the joiner.
+ * Keys a join writes so the joiner (not in `members`) shows first: one key in a
+ * fully keyed group, none when it already leads as the newest keyless chat,
+ * else spread keys. Write in order: bottom-up, ending with the joiner.
  */
 export function planGroupJoin<Id extends string>(
   members: ReadonlyArray<GroupOrderItem<Id>>,
@@ -34,11 +32,9 @@ export function planGroupJoin<Id extends string>(
 }
 
 /**
- * Spread keys over `order`, skipping rows that already hold theirs. Writes run
- * bottom-up (last display position first): keyless chats sort above keyed
- * ones, so each written row lands below the unwritten ones in its planned
- * place and other clients never see rows reshuffle mid-write. `last` is
- * written last, so a retry that finds it unkeyed re-plans from what was written.
+ * Spread keys over `order`, bottom-up: keyless chats sort above keyed ones, so
+ * other clients never see rows reshuffle mid-write. `last` is written last, so
+ * a retry that finds it unkeyed re-plans from what was written.
  */
 function materialize<Id extends string>(
   members: ReadonlyArray<GroupOrderItem<Id>>,
@@ -60,11 +56,9 @@ function materialize<Id extends string>(
 }
 
 /**
- * The keys a handoff writes so the new chat sits directly above its source.
- * Unordered groups need none. A keyed source gets one key for the new chat;
- * otherwise the whole group gets spread keys in its display order with the
- * new chat inserted above the source. Members must include the new chat.
- * Write the plan in order: it runs bottom-up and ends with the new chat.
+ * Keys a handoff writes so the new chat (in `members`) sits above its source:
+ * none for unordered groups, one for a keyed source, else spread keys in
+ * display order. Write in order: bottom-up, ending with the new chat.
  */
 export function planGroupInsertAbove<Id extends string>(
   members: ReadonlyArray<GroupOrderItem<Id>>,
