@@ -2,7 +2,7 @@
 
 # Ctrl
 
-Ctrl is a control surface for the coding agents on your machine (Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity and fx), with web, desktop and mobile clients.
+Ctrl is a control surface for the coding agents on your machine (Claude Code, Codex, Cursor, OpenCode, Grok Build, Antigravity, Kiro, Pi, Muse Code, fx, and any [ACP](./docs/user/providers-acp.md) agent), with web, desktop and mobile clients.
 
 > [!NOTE]
 > **Ctrl is a personal fork of [T3 Code](https://github.com/pingdotgg/t3code).** Nearly everything here is the T3 team's work: Theo, Julius and every T3 Code contributor built the app, the server and the clients this fork stands on. Thank you. Ctrl adds a few features of its own (listed below) and tracks upstream closely. If you want the real thing, with support and the mobile apps in the stores, use [T3 Code](https://t3.codes). Bugs that also happen in T3 Code belong [upstream](https://github.com/pingdotgg/t3code/issues). T3 Code's MIT license and copyright notice are kept unchanged in [LICENSE](LICENSE).
@@ -62,7 +62,7 @@ Download the latest build from [Ctrl releases](https://github.com/nachogames/ctr
 There are no Windows, Linux or iOS builds. Build those from source (see the end of this page).
 
 > [!WARNING]
-> Ctrl, like T3 Code, supports Codex, Claude, Cursor, Grok Build, OpenCode, Antigravity, and fx. Install and authenticate at least one provider before use:
+> Ctrl, like T3 Code, supports Codex, Claude, Cursor, Grok Build, OpenCode, Antigravity, Kiro, Pi, Muse Code, fx, and any ACP agent. Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
 > - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
@@ -71,6 +71,8 @@ There are no Windows, Linux or iOS builds. Build those from source (see the end 
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 > - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
 > - fx: install [fx](https://fx.sh) and run `fx login` on the machine running the T3 Code server ([setup guide](./docs/user/providers-fx.md))
+>
+> [Provider setup](./docs/user/install.md#providers) has the steps for each agent.
 
 ### Official T3 Code
 
@@ -94,63 +96,25 @@ To try it once without installing, run `npx t3@latest`. It offers to install the
 
 #### Desktop app
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
+[Download T3 Code](https://t3.codes/download) for macOS, Windows, or Linux. You can also use a package manager:
 
-##### Windows (`winget`)
+| Platform       | Command                                                              |
+| -------------- | -------------------------------------------------------------------- |
+| macOS          | `brew install --cask t3-code`                                        |
+| Windows        | `winget install T3Tools.T3Code` or `scoop install extras/t3code`     |
+| Arch Linux     | `yay -S t3code-bin`                                                  |
+| Nix            | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code`         |
+| Debian, Ubuntu | `.deb` from [Releases](https://github.com/pingdotgg/t3code/releases) |
 
-```bash
-winget install T3Tools.T3Code
-```
+[Install T3 Code](./docs/user/install.md) covers nightly builds, AppImage, WSL, and NixOS.
 
-##### Windows (`scoop`)
+#### Phone
 
-```bash
-scoop install extras/t3code
-```
-
-##### macOS (Homebrew)
-
-```bash
-brew install --cask t3-code
-```
-
-##### Debian, Ubuntu (`.deb`)
-
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
-
-```bash
-sudo apt install ./T3-Code-*.deb
-```
-
-##### Arch Linux (AUR)
-
-Stable:
-
-```bash
-yay -S t3code-bin
-```
-
-Nightly:
-
-```bash
-yay -S t3code-nightly-bin
-```
-
-The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
-
-#### Nix (nixpkgs)
-
-```bash
-nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code
-```
-
-The package is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code)
-and includes the desktop app (`t3code-desktop`) and the `t3` command.
-See [Nix installation](./docs/user/install.md#nix-nixpkgs) for NixOS configuration and updates.
+Get the app from the [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or [Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code). Then follow [remote access](./docs/user/remote-access.md) to connect it to your computer.
 
 ## Documentation
 
-Full docs live in [docs/](./docs). There's no docs site yet.
+Full docs live in [docs/](./docs/README.md). There's no docs site yet.
 
 Ctrl's own features:
 
@@ -173,6 +137,8 @@ Inherited from T3 Code:
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
 - [Run the server as a background service](./docs/user/background-service.md)
 
+[All docs](./docs/README.md) has the full list.
+
 ## Building from source
 
 Ctrl uses [Vite+](https://viteplus.dev/guide/), so install the global `vp` tool first:
@@ -189,4 +155,4 @@ vp i
 vp run dev
 ```
 
-Start at [docs/internals/overview.md](./docs/internals/overview.md) for how it fits together. Ctrl is a personal fork and isn't looking for contributions. Bugs that also happen in T3 Code belong [upstream](https://github.com/pingdotgg/t3code/issues).
+The [development runbook](./docs/operations/development.md#first-checkout) has the details. Start at [docs/internals/overview.md](./docs/internals/overview.md) for how it fits together. Ctrl is a personal fork and isn't looking for contributions. Bugs that also happen in T3 Code belong [upstream](https://github.com/pingdotgg/t3code/issues).

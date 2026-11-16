@@ -16,16 +16,20 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
+import {
+  formatHostForUrl,
+  isTailnetHost,
+  isWildcardHost,
+} from "@t3tools/shared/hostClassification";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "./ServerEnvironment.ts";
 import {
   isLoopbackHost,
   isPrivateNetworkAddress,
   isTailscaleInterface,
-  VIRTUAL_INTERFACE,
+  isVirtualInterface,
 } from "../startupAccess.ts";
-import * as ServerEnvironment from "./ServerEnvironment.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
@@ -41,6 +45,7 @@ export class DirectEndpoints extends Context.Service<
 >()("t3/environment/DirectEndpoints") {}
 
 // Credentials travel over HTTP; public IPs leak them and hostnames can resolve differently per client.
+// Wildcard binds stay IPv4: the private-network listener check accepts only IPv4 peers.
 const isAdvertisableAddress = (address: string): boolean =>
   NodeNet.isIPv4(address) && !address.startsWith("127.") && isPrivateNetworkAddress(address);
 
@@ -65,7 +70,9 @@ export function resolveBoundEndpoints(input: {
   );
   const addresses = isWildcardHost(input.host)
     ? Object.entries(input.interfaces)
-        .flatMap(([name, entries]) => (VIRTUAL_INTERFACE.test(name) ? [] : (entries ?? [])))
+        .flatMap(([name, entries]) =>
+          isVirtualInterface(name, input.platform) ? [] : (entries ?? []),
+        )
         .filter(
           (entry) =>
             !entry.internal &&
@@ -74,7 +81,10 @@ export function resolveBoundEndpoints(input: {
             !(input.platform === "win32" && WINDOWS_HOST_ADAPTER_MAC.test(entry.mac)),
         )
         .map((entry) => entry.address)
-    : [input.host!].filter(isAdvertisableAddress);
+    : [input.host!].filter(
+        (address) =>
+          isAdvertisableAddress(address) || (NodeNet.isIPv6(address) && isTailnetHost(address)),
+      );
   return [...new Set(addresses)]
     .filter(
       (address) => !(input.onCloudVm || input.tailscaleOnly) || tailscaleAddresses.has(address),

@@ -25,6 +25,7 @@ vi.mock("@t3tools/tailscale", async (importOriginal) => ({
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
 import { upsertServiceEnv } from "./service.ts";
@@ -39,6 +40,7 @@ import {
 
 const TAGGED_HOST: Tailscale.TailscaleStatus = {
   version: "1.90.0",
+  running: true,
   magicDnsName: "box.example.ts.net",
   tailnetIpv4Addresses: ["100.64.0.2"],
   httpsServeEnabled: null,
@@ -221,7 +223,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     readonly reportStatus?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
-    readonly prints?: string;
+    /** Lines the run prints, with `<baseDir>` standing for the test's home. */
+    readonly prints?: ReadonlyArray<string>;
+    readonly omits?: string;
+    readonly json?: object;
     readonly env: string;
     readonly args: ReadonlyArray<string>;
     readonly installs: number;
@@ -239,7 +244,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     },
     {
       label: "the local network opens",
-      prints: "Run `t3 pair --base-dir <baseDir>`.",
+      prints: ["Run `t3 pair --base-dir <baseDir>`."],
       installed: true,
       env: "T3CODE_LAN=false\n",
       args: ["--lan"],
@@ -258,6 +263,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     },
     {
       label: "a route turns off with no service to run",
+      prints: ["Run `t3 --base-dir <baseDir>` to use T3 Code here."],
       installed: false,
       env: "T3CODE_LAN=true\n",
       args: ["--no-lan"],
@@ -278,8 +284,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     {
       label: "a failed update keeps service.env matching the old service",
       // The old service still runs, so no foreground server is offered.
-      prints:
+      prints: [
         "The service kept its old settings. Fix that, then run `t3 up --base-dir <baseDir>` again.",
+      ],
       fails: true,
       installed: true,
       status: { current: false },
@@ -328,6 +335,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       installed: true,
       status: { current: false, otherBaseDir: "/srv/t3 home" },
       reportStatus: true,
+      json: {
+        service: { otherBaseDir: "/srv/t3 home" },
+        lan: { enabled: false, inheritedDefault: false },
+      },
       env: "",
       args: ["--json"],
       installs: 0,
@@ -335,9 +346,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       envAfter: "",
     },
     {
+      label: "status hints keep the caller's --base-dir",
+      installed: true,
+      reportStatus: true,
+      prints: [
+        "Turn it off: `t3 up --base-dir <baseDir> --no-lan`.",
+        "Change access: `t3 up --base-dir <baseDir>`.",
+      ],
+      env: "",
+      args: [],
+      installs: 0,
+      restarts: 0,
+      envAfter: "",
+    },
+    {
+      label: "a host override gets no --no-lan hint it would ignore",
+      installed: true,
+      reportStatus: true,
+      prints: ["overridden · T3CODE_HOST=0.0.0.0"],
+      omits: "--no-lan",
+      env: "T3CODE_HOST=0.0.0.0\n",
+      args: [],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_HOST=0.0.0.0\n",
+    },
+    {
       label: "no service manager still records the choice",
       // Every choice is explicit, so the shell's environment cannot change it.
-      prints: "--lan --no-tailscale-sign-in --no-tailscale-serve",
+      prints: ["--lan --no-tailscale-sign-in --no-tailscale-serve"],
       installed: false,
       status: { supported: false },
       env: "",
@@ -422,7 +459,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     {
       // Only the background service reads service.env.
       label: "a server started by hand is named, not called off",
-      prints: "T3 Code is running here outside the background service",
+      prints: ["T3 Code is running here outside the background service"],
       installed: false,
       handStarted: true,
       env: "",
@@ -433,7 +470,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     },
     {
       label: "with nothing running, a Serve mapping a stopped server left is removed",
-      prints: "Removed a Tailscale Serve mapping an earlier run left.",
+      prints: ["Removed a Tailscale Serve mapping an earlier run left."],
       installed: false,
       tailscale: TAGGED_HOST,
       serveRecord: `{"n1":{"localPort":3773,"localHost":"127.0.0.1","servePort":443,"label":"n1"}}`,
@@ -445,7 +482,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     },
     {
       label: "a Serve record on another Tailscale account names it and the way out",
-      prints: "may remain on another Tailscale account: me@work.example on work.example. Switch",
+      prints: ["may remain on another Tailscale account: me@work.example on work.example. Switch"],
       fails: true,
       installed: false,
       tailscale: TAGGED_HOST,
@@ -459,7 +496,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     {
       // The record names a profile, but Tailscale did not list its profiles to tell whose.
       label: "a Serve record whose profile Tailscale cannot list says so",
-      prints: "Tailscale did not list its accounts",
+      prints: ["Tailscale did not list its accounts"],
       fails: true,
       installed: false,
       tailscale: TAGGED_HOST,
@@ -472,7 +509,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     },
     {
       label: "an unreadable Serve record is reported, not called off",
-      prints: "could not be read",
+      prints: ["could not be read"],
       fails: true,
       installed: false,
       serveRecord: "{",
@@ -485,7 +522,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     {
       // The server owns its Serve mapping, so cleanup waits for it to stop.
       label: "a server that started after the check keeps its Serve record",
-      prints: "T3 Code is running here outside the background service",
+      prints: ["T3 Code is running here outside the background service"],
       installed: false,
       serverHoldsLock: true,
       serveRecord: `{"n1":{"localPort":3773,"localHost":"127.0.0.1","servePort":443,"label":"n1"}}`,
@@ -542,6 +579,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         vi.spyOn(Tailscale, "releaseTailscaleServe").mockReturnValue(Effect.succeed(true));
       }
       if (input.serverHoldsLock === true) {
+        // A running server has already migrated its database, so the CLI has no migrations to run.
+        yield* Effect.void.pipe(
+          Effect.provide(SqlitePersistence.layerFromPath(`${baseDir}/userdata/statev2.sqlite`)),
+        );
         yield* ServerOwnership.acquireServerOwnership(
           `${baseDir}/userdata/server-runtime.json`,
         ).pipe(Effect.provide(ProcessRunner.layer));
@@ -623,17 +664,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
           ),
         ),
       );
-      if (input.prints !== undefined) {
-        const failure = exit._tag === "Failure" ? Cause.pretty(exit.cause) : "";
-        expect(`${lines.join("\n")}\n${failure}`).toContain(
-          input.prints.replace("<baseDir>", baseDir),
-        );
+      const failure = exit._tag === "Failure" ? Cause.pretty(exit.cause) : "";
+      for (const line of input.prints ?? []) {
+        expect(`${lines.join("\n")}\n${failure}`).toContain(line.replace("<baseDir>", baseDir));
       }
-      if (input.reportStatus) {
-        expect(JSON.parse(lines.join("\n"))).toMatchObject({
-          service: { otherBaseDir: "/srv/t3 home" },
-          lan: { enabled: false, inheritedDefault: false },
-        });
+      if (input.omits !== undefined) {
+        expect(lines.join("\n")).not.toContain(input.omits);
+      }
+      if (input.json !== undefined) {
+        expect(JSON.parse(lines.join("\n"))).toMatchObject(input.json);
       }
       expect(exit._tag).toBe(
         input.restartFails === true || input.fails === true ? "Failure" : "Success",
@@ -653,6 +692,20 @@ it("rewrites only the named service.env keys and keeps the user's lines", () => 
     ["# my settings", "T3CODE_PORT=4000", "T3CODE_LAN=true", ""].join("\n"),
   );
   expect(upsertServiceEnv("", { T3CODE_LAN: "false" })).toBe("T3CODE_LAN=false\n");
+  expect(
+    upsertServiceEnv('T3CODE_LAN="a\nb"\nCUSTOM="x\nT3CODE_LAN=y"\nT3CODE_LAN=true\n', {
+      T3CODE_LAN: "false",
+    }),
+  ).toBe('T3CODE_LAN=false\nCUSTOM="x\nT3CODE_LAN=y"\n');
+  expect(
+    upsertServiceEnv('T3CODE_LAN=\u00a0"unused\nCUSTOM=keep\nEND="\nT3CODE_LAN=true\n', {
+      T3CODE_LAN: "false",
+    }),
+  ).toBe('T3CODE_LAN=false\nCUSTOM=keep\nEND="\n');
+  const long = `CUSTOM="${"\n".repeat(130_000)}"\n`;
+  expect(upsertServiceEnv(`${long}T3CODE_LAN=true\n`, { T3CODE_LAN: "false" })).toBe(
+    `${long}T3CODE_LAN=false\n`,
+  );
 });
 
 const RUNNING_SERVICE = { port: 3774, serviceManaged: true };

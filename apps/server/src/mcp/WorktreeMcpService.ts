@@ -155,7 +155,6 @@ const make = Effect.gen(function* () {
           );
         return {
           commandId: CommandId.make(part("command", "worktree-handoff")),
-          continuationCommandId: CommandId.make(part("command", "worktree-continuation")),
           continuationMessageId: MessageId.make(part("message", "worktree-continuation")),
         };
       }),
@@ -301,7 +300,7 @@ const make = Effect.gen(function* () {
               `Thread '${scope.thread.threadId}' was archived while the worktree was being created; the handoff was rolled back.`,
             );
           }
-          yield* threadManagement
+          return yield* threadManagement
             .dispatch({
               type: "thread.metadata.update",
               commandId: ids.commandId,
@@ -309,6 +308,14 @@ const make = Effect.gen(function* () {
               branch: worktree.worktree.refName,
               worktreePath,
               expectedWorktreePath: null,
+              // Binding detaches the session and ends the caller; a later send could lose the race.
+              // Agents often omit the prompt, so a default one keeps the thread from stalling after the move.
+              continuation: {
+                messageId: ids.continuationMessageId,
+                text:
+                  input.continuationPrompt ??
+                  defaultContinuationPrompt({ worktreePath, branch: worktree.worktree.refName }),
+              },
             })
             .pipe(
               Effect.catchCause((cause) =>
@@ -329,34 +336,15 @@ const make = Effect.gen(function* () {
           ),
         );
 
-        // Queue continuation immediately after binding; detachment terminates the caller, so relaunch needs a durable message.
-        // Agents often omit the prompt, so a default one keeps the thread from stalling after the move.
-        const queueContinuation: Effect.Effect<WorktreeMcpContinuationStatus, WorktreeMcpFailure> =
-          Effect.suspend(() =>
-            threadManagement
-              .sendToThread({
-                projectId: projection.thread.projectId,
-                commandId: ids.continuationCommandId,
-                threadId: scope.thread.threadId,
-                messageId: ids.continuationMessageId,
-                text:
-                  input.continuationPrompt ??
-                  defaultContinuationPrompt({ worktreePath, branch: worktree.worktree.refName }),
-                attachments: [],
-                mode: "queue",
-                createdBy: "agent",
-                creationSource: "mcp",
-              })
-              .pipe(
-                Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
-                  status: "scheduled",
-                  delivery: sendResult.delivery,
-                })),
-                reportFailed("worktree handoff continuation failed to queue"),
-              ),
-          );
-
-        const continuation = yield* recheckAndBind.pipe(Effect.andThen(queueContinuation));
+        const bound = yield* recheckAndBind;
+        const continuation: WorktreeMcpContinuationStatus = {
+          status: "scheduled",
+          delivery: bound.storedEvents.some(
+            ({ event }) => event.type === "run.created" && event.payload.status !== "queued",
+          )
+            ? "started"
+            : "queued",
+        };
 
         yield* vcsStatusBroadcaster
           .refreshStatus(worktreePath)
@@ -399,10 +387,7 @@ const make = Effect.gen(function* () {
           startedFromOrigin,
           setupScript,
           continuation,
-          note:
-            continuation.status === "scheduled"
-              ? "Handoff recorded. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the queued continuation prompt then starts the next turn inside the worktree with the conversation preserved. The worktree is not removed automatically when the thread is deleted."
-              : "Handoff recorded, but the continuation could not be queued. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the conversation continues inside the worktree when the thread receives its next message. The worktree is not removed automatically when the thread is deleted.",
+          note: "Handoff recorded. Changing the workspace detaches this provider session, so the current turn ends shortly after this call; the queued continuation prompt then starts the next turn inside the worktree with the conversation preserved. The worktree is not removed automatically when the thread is deleted.",
         };
         return result;
       }),

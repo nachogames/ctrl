@@ -334,9 +334,7 @@ const make = Effect.gen(function* () {
 
   /** Not archived, not deleted, non-subagent threads of the project. */
   const listActive = (projectId: ProjectId, groupId?: ThreadGroupId) =>
-    threads
-      .listProjectThreads({ projectId, includeSubagents: false })
-      .pipe(Effect.mapError(readThreadsError(groupId)));
+    threads.listProjectThreadShells(projectId).pipe(Effect.mapError(readThreadsError(groupId)));
 
   /** Archived, not deleted, non-subagent threads of the project. Loads the whole archive, so read it last. */
   const listArchived = (projectId: ProjectId, groupId?: ThreadGroupId) =>

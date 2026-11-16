@@ -25,6 +25,7 @@ import { AsyncResult } from "effect/reactivity";
 import {
   use,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -70,6 +71,7 @@ import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatches";
 import { useThreadListV2 } from "../threads/useThreadListV2";
+import { useSidebarRowThreadKey } from "../threads/useSidebarRowThreadKey";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollRestoration";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
@@ -103,16 +105,19 @@ import {
   buildHomeProjectScopes,
   findHomeProjectScope,
   type HomeProjectSortOrder,
+  sortHomeProjectScopes,
 } from "./homeThreadList";
 import { createSwipeRowActivation } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { useFabScroll } from "./FabScrollContext";
+import { holdLaunchSplashForHomeRows, settleLaunchSplashHomeRows } from "./home-launch-splash";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import {
   ProjectFilterChips,
   ThreadListFilters,
   type ProjectChipIndicator,
 } from "./ThreadListFilters";
+import { deriveHomeEmptyState } from "./home-empty-state";
 import { HomeArrangeRow } from "./HomeArrangeRow";
 import { HomeGroupRow } from "./HomeGroupRow";
 import { HomeProjectHeader } from "./HomeProjectHeader";
@@ -140,6 +145,8 @@ type ListItem = HomeListItem & { readonly arrange?: ArrangeStamp };
 const NO_ARRANGE: Partial<ArrangeStamp> = {};
 
 interface HomeScreenProps {
+  /** Whether this list is the one on screen; see `useHomeRouteVisible`. */
+  readonly visible: boolean;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
@@ -194,73 +201,6 @@ const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
 // rows that are already built instead of rows still being rebuilt.
 const THREAD_LIST_V2_DRAW_DISTANCE = 1_000;
 
-function deriveEmptyState(props: {
-  readonly catalogState: WorkspaceState;
-  readonly projectCount: number;
-}): { readonly title: string; readonly detail: string; readonly loading: boolean } {
-  const { catalogState } = props;
-  if (catalogState.isLoadingConnections) {
-    return {
-      title: "Loading environments",
-      detail: "Checking saved environments on this device.",
-      loading: true,
-    };
-  }
-
-  if (!catalogState.hasConnections) {
-    return {
-      title: "No environments connected",
-      detail: "Add an environment to load projects and start coding sessions.",
-      loading: false,
-    };
-  }
-
-  if (
-    (catalogState.connectionState === "available" ||
-      catalogState.connectionState === "offline" ||
-      catalogState.connectionState === "error" ||
-      catalogState.connectionState === "unsupported") &&
-    !catalogState.hasLoadedShellSnapshot
-  ) {
-    return {
-      title:
-        catalogState.connectionState === "unsupported"
-          ? "Client not supported"
-          : "Environment unavailable",
-      detail:
-        catalogState.connectionError ??
-        "The saved environment is offline. Check the URL or start the environment, then retry.",
-      loading: false,
-    };
-  }
-
-  if (
-    catalogState.hasConnectingEnvironment &&
-    !catalogState.hasLoadedShellSnapshot &&
-    catalogState.connectionError === null
-  ) {
-    return {
-      title: "Connecting to environment",
-      detail: "Loading projects and threads from the saved environment.",
-      loading: true,
-    };
-  }
-
-  if (props.projectCount === 0 && catalogState.hasLoadedShellSnapshot) {
-    return {
-      title: "No projects found",
-      detail: "The connected environment did not report any projects.",
-      loading: false,
-    };
-  }
-
-  return {
-    title: "No threads yet",
-    detail: "Create a task to start a new coding runtime in one of your connected projects.",
-    loading: false,
-  };
-}
-
 function HomeTopContentSpacer() {
   return <View className="h-4" />;
 }
@@ -306,7 +246,8 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const columnMetrics = useNativeColumnLayoutMetrics();
   const activeNewTask = useActiveNewTask();
-  const selectedThreadKey = activeNewTask ? null : (primaryColumn?.selectedThreadKey ?? null);
+  const sidebarRowThreadKey = useSidebarRowThreadKey(primaryColumn?.selectedThreadKey ?? null);
+  const selectedThreadKey = activeNewTask ? null : sidebarRowThreadKey;
   const fullSwipeWidth = primaryColumn && columnMetrics ? columnMetrics.width - 20 : undefined;
   const queuedThreadKeys = useQueuedThreadKeys();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
@@ -932,7 +873,14 @@ export function HomeScreen(props: HomeScreenProps) {
     else if (status === "working") projectIndicators.set(scopeKey, "working");
   }
   // Archived projects stay out of the filters, as in the filter menu.
-  const chipProjects = pickableProjectGroups(projectScopes)
+  const chipProjects = pickableProjectGroups(
+    sortHomeProjectScopes({
+      scopes: projectScopes,
+      threads: props.threads,
+      pendingTasks: [],
+      projectSortOrder: "updated_at",
+    }),
+  )
     .filter((scope) => liveProjectKeys.has(scope.key) || scope.key === props.selectedProjectKey)
     .map((scope) => ({ key: scope.key, label: scope.title }));
 
@@ -1023,7 +971,6 @@ export function HomeScreen(props: HomeScreenProps) {
                 selectedThreadKey)
           }
           project={projectByKey.get(pendingScopeKey) ?? null}
-          projectTitle={v2ProjectTitleByProjectKey.get(pendingScopeKey)}
           environmentLabel={
             Object.keys(props.savedConnectionsById).length > 1
               ? (props.savedConnectionsById[item.pendingTask.environmentId]?.environmentLabel ??
@@ -1176,15 +1123,18 @@ export function HomeScreen(props: HomeScreenProps) {
     props.threads.some((thread) => thread.archivedAt === null) ||
     props.pendingTasks.length > 0 ||
     threadListV2Layout.settledCount > 0;
+  // A hidden list gets no layout, so it never reports its rows as laid out.
+  const hasRowsToLayOut = props.visible && hasAnyThreads && homeListItems.length > 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the native launch splash, which is outside React, until the rows are gone or this list unmounts; a layout effect runs before the splash hides in this commit
+  useLayoutEffect(() => {
+    return hasRowsToLayOut ? holdLaunchSplashForHomeRows() : undefined;
+  }, [hasRowsToLayOut]);
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null
       ? null
       : (props.savedConnectionsById[props.selectedEnvironmentId]?.environmentLabel ??
         "this environment");
-  const emptyState = deriveEmptyState({
-    catalogState: props.catalogState,
-    projectCount: props.projects.length,
-  });
+  const emptyState = deriveHomeEmptyState(props.catalogState, props.projects.length);
 
   if (!hasAnyThreads) {
     return (
@@ -1207,14 +1157,10 @@ export function HomeScreen(props: HomeScreenProps) {
               <EmptyState
                 title={emptyState.title}
                 detail={emptyState.detail}
-                actionLabel={
-                  !props.catalogState.hasReadyEnvironment ? "Add environment" : undefined
-                }
-                onAction={
-                  !props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined
-                }
+                actionLabel={emptyState.showsAddEnvironment ? "Add environment" : undefined}
+                onAction={emptyState.showsAddEnvironment ? props.onAddConnection : undefined}
                 action={
-                  Platform.OS === "android" && !props.catalogState.hasReadyEnvironment ? (
+                  Platform.OS === "android" && emptyState.showsAddEnvironment ? (
                     <FloatingActionButton
                       label="Add environment"
                       icon="plus"
@@ -1341,7 +1287,10 @@ export function HomeScreen(props: HomeScreenProps) {
               <AnimatedLegendList
                 itemLayoutAnimation={sidebarSurface ? THREAD_SIDEBAR_ROW_LAYOUT : undefined}
                 ref={listRef}
-                onLoad={() => activateVisibleRows(homeListItems)}
+                onLoad={() => {
+                  settleLaunchSplashHomeRows();
+                  activateVisibleRows(homeListItems);
+                }}
                 onTouchStart={(event) => trackListTouches(event, true)}
                 onTouchEnd={(event) => trackListTouches(event, false)}
                 onTouchCancel={(event) => trackListTouches(event, false)}

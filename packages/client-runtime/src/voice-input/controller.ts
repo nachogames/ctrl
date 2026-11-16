@@ -54,7 +54,6 @@ export type VoiceDraftSnapshot = {
   readonly ownerKey: string;
   readonly text: string;
   readonly selection: { readonly start: number; readonly end: number };
-  readonly revision: number;
 };
 
 export type VoiceRecorderStatus = {
@@ -132,18 +131,37 @@ function withFirstLetterCase(text: string, locale: string, upper: boolean): stri
   return cased + text.slice(1);
 }
 
+const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+
+// Where `position` in `before` lands in `text`, placed after anything inserted at it.
+function mapPosition(before: string, text: string, position: number, suffixFirst: boolean) {
+  const shared = Math.min(before.length, text.length);
+  const matchesFromEnd = (offset: number) =>
+    before[before.length - 1 - offset] === text[text.length - 1 - offset];
+  let prefix = 0;
+  let suffix = 0;
+  // Matching is per UTF-16 unit; never let a boundary split a surrogate pair.
+  const scanSuffix = (limit: number) => {
+    while (suffix < limit && matchesFromEnd(suffix)) suffix += 1;
+    if (suffix > 0 && isLowSurrogate(before.charCodeAt(before.length - suffix))) suffix -= 1;
+  };
+  if (suffixFirst) scanSuffix(shared);
+  while (prefix < shared - suffix && before[prefix] === text[prefix]) prefix += 1;
+  if (prefix > 0 && isHighSurrogate(before.charCodeAt(prefix - 1))) prefix -= 1;
+  if (!suffixFirst) scanSuffix(shared - prefix);
+  if (position < prefix) return position;
+  if (position >= before.length - suffix) return position + text.length - before.length;
+  return text.length - suffix;
+}
+
 export function resolveTranscriptCommit(
   captured: VoiceDraftSnapshot,
   current: VoiceDraftSnapshot | null,
   transcript: string,
   locale: string,
 ): TranscriptCommitResult {
-  if (
-    !current ||
-    current.ownerKey !== captured.ownerKey ||
-    current.text !== captured.text ||
-    current.revision !== captured.revision
-  ) {
+  if (!current || current.ownerKey !== captured.ownerKey) {
     return { kind: "stale" };
   }
 
@@ -152,15 +170,24 @@ export function resolveTranscriptCommit(
     return { kind: "empty" };
   }
 
-  const isEmptySelection = captured.selection.start === captured.selection.end;
+  const { text } = current;
+  // An edit made while recording (a citation, a paste) is never replaced. The edit's position is
+  // ambiguous over repeated text, so insert after the selection under both extreme alignments.
+  const unchanged = text === captured.text;
+  const end = unchanged
+    ? captured.selection.end
+    : Math.max(
+        mapPosition(captured.text, text, captured.selection.end, false),
+        mapPosition(captured.text, text, captured.selection.end, true),
+      );
+  const start = unchanged ? captured.selection.start : end;
+  const isEmptySelection = start === end;
   const language = locale.split(/[-_]/)[0]!.toLowerCase();
   // Models transcribe each recording as its own sentence; fit it to where it
   // lands. Capitalize at a draft, line, or sentence start; mid-sentence drop the
   // leading capital (English only) unless the word is "I" or has other capitals
   // ("iOS"). Drop a final period when the sentence goes on.
-  const atSentenceStart = /(^|[.!?]\s*|\n\s*)$/.test(
-    captured.text.slice(0, captured.selection.start),
-  );
+  const atSentenceStart = /(^|[.!?]\s*|\n\s*)$/.test(text.slice(0, start));
   const firstWord = /^\S+/.exec(replacement)?.[0] ?? "";
   let insertion = replacement;
   if (atSentenceStart) {
@@ -171,14 +198,13 @@ export function resolveTranscriptCommit(
       insertion = withFirstLetterCase(insertion, locale, false);
     }
   }
-  if (/^\s*\p{Ll}/u.test(captured.text.slice(captured.selection.end))) {
+  if (/^\s*\p{Ll}/u.test(text.slice(end))) {
     insertion = insertion.replace(/[.!?]$/u, "");
   }
   if (isEmptySelection && !WORD_SPACELESS_LANGUAGES.has(language)) {
     const auto = language === "auto";
-    const caret = captured.selection.start;
-    const left = captured.text.slice(Math.max(0, caret - 2), caret);
-    const right = captured.text.slice(caret, caret + 2);
+    const left = text.slice(Math.max(0, start - 2), start);
+    const right = text.slice(start, start + 2);
     const leftEdge = auto ? /[A-Za-z0-9.!?,:;)\]}'"]$/ : /(?:\p{L}|\p{M}|\p{N}|[.!?,:;)\]}'"])$/u;
     const rightEdge = auto ? /^[A-Za-z0-9([{'"]/ : /^[\p{L}\p{M}\p{N}([{'"]/u;
     const leftNeedsBoundary =
@@ -192,17 +218,12 @@ export function resolveTranscriptCommit(
     insertion = `${leftNeedsBoundary ? " " : ""}${insertion}${rightNeedsBoundary ? " " : ""}`;
   }
 
-  const result = replaceTextRange(
-    captured.text,
-    captured.selection.start,
-    captured.selection.end,
-    insertion,
-  );
+  const result = replaceTextRange(text, start, end, insertion);
   return {
     kind: "commit",
     text: result.text,
     selection: { start: result.cursor, end: result.cursor },
-    inserted: { start: captured.selection.start, end: result.cursor },
+    inserted: { start, end: result.cursor },
   };
 }
 

@@ -90,6 +90,7 @@ const resolveTailscaleMagicDnsAdvertisedEndpoint = Effect.fn(
     magicDnsName: input.dnsName,
     ...(input.servePort === undefined ? {} : { servePort: input.servePort }),
   });
+  // The backend may run elsewhere (WSL), so ask it for its id instead of reading the state dir.
   // Serve may front another server on this port, so the URL must answer as this backend.
   const probe =
     input.probe?.(httpBaseUrl) ??
@@ -127,7 +128,7 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
     readonly serveEnabled?: boolean;
     readonly servePort?: number;
     /** This desktop's backend, which reports the environment ID the Serve URL must match. */
-    readonly localHttpUrl: string;
+    readonly localHttpUrl?: string;
     /** That backend's environment ID, when the caller keeps it between calls. */
     readonly localEnvironmentId?: Effect.Effect<
       Option.Option<string>,
@@ -159,7 +160,7 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
     const magicDnsEndpoint = yield* resolveTailscaleMagicDnsAdvertisedEndpoint({
       dnsName: status?.magicDnsName ?? null,
       serveEnabled: input.serveEnabled === true,
-      localHttpUrl: input.localHttpUrl,
+      localHttpUrl: input.localHttpUrl ?? `http://127.0.0.1:${input.port}`,
       ...(input.localEnvironmentId === undefined
         ? {}
         : { localEnvironmentId: input.localEnvironmentId }),

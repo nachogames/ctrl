@@ -380,7 +380,7 @@ export const makeReviewServiceLayer = (harness: ReviewServiceHarness) =>
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadShell: (threadId) => Effect.sync(() => harness.shells.get(threadId) ?? null),
-          listProjectThreads: () => Effect.sync(() => harness.projectThreads),
+          listProjectThreadShells: () => Effect.sync(() => harness.projectThreads),
           getThreadRecords: (threadId) =>
             Effect.sync(() => ({ runs: harness.runs.get(threadId) ?? [] }) as never),
           dispatch: (command) =>

@@ -231,6 +231,7 @@ export const make = Effect.gen(function* () {
       fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
       pullRequests: true,
       pullRequestChecks: true,
+      linkedThreadRefreshes: true,
       sideChats: true,
       reviewWritingStyles: true,
       vcsBranchStatus: true,
@@ -242,6 +243,7 @@ export const make = Effect.gen(function* () {
       storageCleanupRun: true,
       databaseStorage: true,
       otlpEndpointCheck: true,
+      secretSourceCheck: true,
       projectWorktreeCleanup: true,
       settledWorktreeCleanup: true,
       worktreesDirectory: true,
@@ -280,6 +282,7 @@ export const make = Effect.gen(function* () {
       projectCloneTracking: true,
       projectOrganization: true,
       ignoredFileListing: true,
+      ignoredFileSearch: true,
       triage: true,
       oneTimeSchedules: true,
       freshContext: true,
@@ -292,6 +295,7 @@ export const make = Effect.gen(function* () {
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? { serverSelfUpdateProgress: true }
         : {}),
+      ...(serverSelfUpdate === "boot-service" ? { serverUpdateStaging: true } : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true, desktopAppChannelSwitch: true } : {}),
       serverBrowser: true,
       peerLinks: true,
@@ -299,6 +303,8 @@ export const make = Effect.gen(function* () {
       linkFence: true,
       mcpApprovalCodes: true,
       mcpHostedApproval: true,
+      shellThreadFamilies: true,
+      shellOlderSettled: true,
     },
   };
 

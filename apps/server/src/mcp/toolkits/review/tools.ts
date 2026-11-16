@@ -17,7 +17,7 @@ import {
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ReviewSessionService from "../../../reviewSessions/ReviewSessionService.ts";
@@ -108,7 +108,8 @@ const ReviewSessionOpenTool = Tool.make("review_session_open", {
   dependencies: [...reviewTool.dependencies, Settings.ServerSettingsService],
 })
   .annotate(Tool.Title, "Open a pull request review")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReviewSessionReadTool = Tool.make("review_session_read", {
   ...reviewTool,
@@ -128,7 +129,8 @@ const ReviewSessionReadTool = Tool.make("review_session_read", {
 })
   .annotate(Tool.Title, "Read the review list")
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReviewSourceSubmitTool = Tool.make("review_source_submit", {
   ...reviewTool,
@@ -152,7 +154,8 @@ const ReviewSourceSubmitTool = Tool.make("review_source_submit", {
   success: Schema.Struct({ source: ReviewSource }),
 })
   .annotate(Tool.Title, "Submit your review's findings")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReviewLocalReviewStartTool = Tool.make("review_local_review_start", {
   ...reviewTool,
@@ -162,7 +165,8 @@ const ReviewLocalReviewStartTool = Tool.make("review_local_review_start", {
   success: Schema.Struct({ threadId: ThreadId }),
 })
   .annotate(Tool.Title, "Run your review")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReviewItemsImportTool = Tool.make("review_items_import", {
   ...reviewTool,
@@ -182,7 +186,8 @@ const ReviewItemsImportTool = Tool.make("review_items_import", {
   }),
 })
   .annotate(Tool.Title, "Import review points")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReviewItemsAnnotateTool = Tool.make("review_items_annotate", {
   ...reviewTool,
@@ -208,7 +213,8 @@ const ReviewItemsAnnotateTool = Tool.make("review_items_annotate", {
   success: ItemResult,
 })
   .annotate(Tool.Title, "Annotate a review point")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReviewItemsDecideTool = Tool.make("review_items_decide", {
   ...reviewTool,
@@ -232,7 +238,8 @@ const ReviewItemsDecideTool = Tool.make("review_items_decide", {
   success: ItemResult,
 })
   .annotate(Tool.Title, "Record a review decision")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReviewItemsRecordApplyTool = Tool.make("review_items_record_apply", {
   ...reviewTool,
@@ -251,7 +258,8 @@ const ReviewItemsRecordApplyTool = Tool.make("review_items_record_apply", {
   success: ItemResult,
 })
   .annotate(Tool.Title, "Record a review result")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReviewRoundAdvanceTool = Tool.make("review_round_advance", {
   ...reviewTool,
@@ -267,7 +275,8 @@ const ReviewRoundAdvanceTool = Tool.make("review_round_advance", {
   success: Schema.Struct(Snapshot),
 })
   .annotate(Tool.Title, "Start the next review round")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const ReviewToolkit = Toolkit.make(
   ReviewSessionOpenTool,

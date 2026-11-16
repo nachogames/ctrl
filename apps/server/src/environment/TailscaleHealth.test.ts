@@ -23,6 +23,7 @@ const running: TailscaleStatus = {
   magicDnsName: "studio.tail1234.ts.net",
   tailnetIpv4Addresses: ["100.64.0.1"],
   httpsServeEnabled: true,
+  running: true,
   backendState: "Running",
   version: "1.102.2",
   users: [],

@@ -32,7 +32,6 @@ describe("planClaudeSkillDispatch", () => {
     ).toEqual({
       leadingText: "first /superpowers:brainstorming the idea",
       commandText: "/superpowers:brainstorming the idea",
-      skillName: "superpowers:brainstorming",
     });
   });
 
