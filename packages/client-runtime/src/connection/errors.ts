@@ -191,16 +191,24 @@ export function mapRemoteEnvironmentError(
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
         reason: "authentication",
-        detail: "The environment credential is invalid.",
+        detail:
+          error.sessionState === "expired"
+            ? "This device's sign-in expired."
+            : "The environment credential is invalid.",
         traceId: error.traceId,
         hop: "server",
         via,
+        ...(error.sessionState === "expired" ? { failureCause: "session_expired" } : {}),
       });
     case "EnvironmentScopeRequiredError":
     case "EnvironmentOperationForbiddenError":
       return new ConnectionBlockedError({
         reason: "permission",
-        detail: "The environment credential does not grant the required access.",
+        detail:
+          error._tag === "EnvironmentScopeRequiredError"
+            ? (error.tailnetGrantFix ??
+              `The environment credential does not grant ${error.requiredPermission ?? error.requiredScope}.`)
+            : "The environment credential does not grant the required access.",
         traceId: error.traceId,
         hop: "server",
         via,
@@ -234,6 +242,15 @@ export function mapRemoteEnvironmentError(
         detail: `${error.message}${networkHint}`,
         hop: unreachableHop,
         via,
+      });
+    case "EnvironmentConnectApprovalPendingError":
+      return new ConnectionTransientError({
+        reason: "approval-pending",
+        detail: "This device is waiting for approval on the host.",
+        traceId: error.traceId,
+        hop: "server",
+        via,
+        failureCause: "approval_pending",
       });
     case "EnvironmentInternalError":
       return new ConnectionTransientError({

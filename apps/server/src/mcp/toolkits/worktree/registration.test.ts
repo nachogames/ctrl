@@ -54,6 +54,8 @@ import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
+import * as EnvironmentTheme from "../../../environmentTheme.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -87,6 +89,8 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
   Layer.mock(PeerLinks.PeerLinks)({}),
   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+  Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
+  Layer.mock(PullRequestService.PullRequestService)({}),
   notHomeLayer,
   Layer.mock(RemoteMcpServers.RemoteMcpServers)({
     tools: () => [

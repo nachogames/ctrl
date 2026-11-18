@@ -2,8 +2,14 @@ import type { HostBattery, ServerConfig } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
+import { hostTailscaleNotice } from "./diagnosis.ts";
 import type { ConnectionTarget, SupervisorConnectionState } from "./model.ts";
-import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
+import {
+  connectionRouteId,
+  connectionRouteKind,
+  connectionRoutes,
+  routeHttpBaseUrl,
+} from "./routes.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -18,6 +24,11 @@ export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
   readonly traceId: string | null;
+  /**
+   * Set while reconnecting because the host has not approved this device yet. `error` then
+   * says where to approve it and shows the code, and is not a failure.
+   */
+  readonly awaitingApproval?: true;
 }
 
 /**
@@ -50,6 +61,17 @@ export function connectedHostBattery(
 export function presentConnectionState(
   state: SupervisorConnectionState,
 ): EnvironmentConnectionPresentation {
+  if (
+    (state.phase === "connecting" || state.phase === "backoff") &&
+    state.lastFailure?.reason === "approval-pending"
+  ) {
+    return {
+      phase: "reconnecting",
+      error: state.lastFailure.message,
+      traceId: state.lastFailure.traceId ?? null,
+      awaitingApproval: true,
+    };
+  }
   switch (state.phase) {
     case "available":
       return { phase: "available", error: null, traceId: null };
@@ -87,6 +109,9 @@ export function connectionStatusText(connection: EnvironmentConnectionPresentati
     case "connecting":
       return "Connecting...";
     case "reconnecting":
+      if (connection.awaitingApproval) {
+        return connection.error ?? "Waiting for approval on the host";
+      }
       return connection.error
         ? `Failed to connect. Reconnecting... Reason: ${connection.error}`
         : "Reconnecting...";
@@ -102,10 +127,31 @@ export function connectionStatusText(connection: EnvironmentConnectionPresentati
 }
 
 export function connectionStatusTitle(connection: EnvironmentConnectionPresentation): string {
+  if (connection.awaitingApproval) {
+    return "Waiting for approval";
+  }
   if (connection.phase === "reconnecting" && connection.error) {
     return "Failed to connect. Reconnecting...";
   }
   return connectionStatusText({ ...connection, error: null });
+}
+
+/**
+ * The host's Tailscale problem for its row, from the facts it last reported.
+ * Only for environments with a Tailscale route, where it can explain a failure.
+ */
+export function environmentTailscaleNotice(input: {
+  readonly hostLabel: string;
+  readonly entry: ConnectionCatalogEntry;
+  readonly serverConfig: Pick<ServerConfig, "tailscale"> | null;
+  readonly now: number;
+}) {
+  const tailnet = connectionRoutes(input.entry).some(
+    (route) => connectionRouteKind(route) === "tailnet",
+  );
+  return tailnet
+    ? hostTailscaleNotice(input.hostLabel, input.serverConfig?.tailscale, input.now)
+    : null;
 }
 
 /**

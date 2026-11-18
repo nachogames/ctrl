@@ -30,6 +30,10 @@ import {
   AuthPairingCredentialResult,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
+  AuthApproveConnectDeviceInput,
+  AuthApproveConnectDeviceResult,
+  AuthRevokeConnectDeviceInput,
+  AuthRevokeConnectDeviceResult,
   AuthEnvironmentScope,
   AuthTokenExchangeRequest,
   AuthSessionState,
@@ -42,6 +46,7 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "./environment.ts";
+import { AuthTailnetSignInResult, TailnetSignInRefusedReason } from "./tailnet.ts";
 import {
   DpopFailureReason,
   AuthSessionId,
@@ -56,6 +61,7 @@ import {
   CloudSpeechModels,
   CloudSpeechProvider,
   EnvironmentSpeechAccelerationRequest,
+  EnvironmentSpeechModelLinkRequest,
   EnvironmentSpeechModelRequest,
   EnvironmentSpeechModels,
   EnvironmentSpeechModelUnloadTimeoutRequest,
@@ -66,7 +72,8 @@ import {
 } from "./speech.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
-  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellHttpSnapshot,
+  OrchestrationV2ShellResumable,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadHistoryPage,
@@ -122,6 +129,10 @@ export const EnvironmentAuthInvalidReason = Schema.Literals([
 ]);
 export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.Type;
 
+/** Why the host refused a session it issued: a lapsed session can be paired again in place. */
+export const EnvironmentSessionState = Schema.Literals(["expired", "revoked", "unknown"]);
+export type EnvironmentSessionState = typeof EnvironmentSessionState.Type;
+
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
 ]);
@@ -138,6 +149,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "pairing_link_revoke_failed",
   "client_sessions_load_failed",
   "client_session_revoke_failed",
+  "connect_device_approve_failed",
+  "connect_device_revoke_failed",
   "project_snapshot_failed",
   "project_mutation_failed",
   "orchestration_snapshot_failed",
@@ -172,6 +185,7 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
     code: Schema.Literal("auth_invalid"),
     reason: EnvironmentAuthInvalidReason,
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
+    sessionState: Schema.optionalKey(EnvironmentSessionState),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },
@@ -191,6 +205,8 @@ export class EnvironmentScopeRequiredError extends Schema.TaggedError<Environmen
     code: Schema.Literal("insufficient_scope"),
     requiredScope: AuthEnvironmentScope,
     requiredPermission: Schema.optionalKey(Schema.String),
+    /** For a session from Tailscale sign-in: what to add to its tailnet grant, and where. */
+    tailnetGrantFix: Schema.optionalKey(TrimmedNonEmptyString),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 403 },
@@ -200,7 +216,30 @@ export class EnvironmentScopeRequiredError extends Schema.TaggedError<Environmen
   }
 
   override get message(): string {
-    return `This request needs the ${this.requiredPermission ?? this.requiredScope} scope, which this client does not have.`;
+    return (
+      this.tailnetGrantFix ??
+      `This request needs the ${this.requiredPermission ?? this.requiredScope} scope, which this client does not have.`
+    );
+  }
+}
+
+/** The host requires approval for this T3 Connect device and nobody has given it yet. */
+export class EnvironmentConnectApprovalPendingError extends Schema.TaggedError<EnvironmentConnectApprovalPendingError>()(
+  "EnvironmentConnectApprovalPendingError",
+  {
+    code: Schema.Literal("connect_approval_pending"),
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 403 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentConnectApprovalPendingError)(this, {
+      status: 403,
+    });
+  }
+
+  override get message(): string {
+    return "This device is waiting for approval on the host.";
   }
 }
 
@@ -240,6 +279,29 @@ export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInte
   }
 }
 
+/** Tailscale sign-in failed a check. A hard 403 that CORS cannot relax. */
+export class EnvironmentTailnetSignInRefusedError extends Schema.TaggedError<EnvironmentTailnetSignInRefusedError>()(
+  "EnvironmentTailnetSignInRefusedError",
+  {
+    code: Schema.Literal("tailnet_sign_in_refused"),
+    reason: TailnetSignInRefusedReason,
+    traceId: TrimmedNonEmptyString,
+    /** A tailnet policy grant that would let this device in, when one would. */
+    suggestedGrant: Schema.optionalKey(TrimmedNonEmptyString),
+  },
+  { httpApiStatus: 403 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentTailnetSignInRefusedError)(this, {
+      status: 403,
+    });
+  }
+
+  override get message(): string {
+    return `The environment refused Tailscale sign-in (${this.reason}).`;
+  }
+}
+
 export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
@@ -268,6 +330,7 @@ export const EnvironmentHttpCommonError = Schema.Union([
   EnvironmentOperationForbiddenError,
   EnvironmentResourceNotFoundError,
   EnvironmentInternalError,
+  EnvironmentConnectApprovalPendingError,
 ]);
 export type EnvironmentHttpCommonError = typeof EnvironmentHttpCommonError.Type;
 
@@ -357,6 +420,7 @@ const EnvironmentSessionCreationErrors = [
 const EnvironmentTokenExchangeErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentAuthInvalidError,
+  EnvironmentConnectApprovalPendingError,
   EnvironmentInternalError,
 ] as const;
 const EnvironmentScopedOperationErrors = [
@@ -523,6 +587,10 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   linkRevoked: Schema.optional(Schema.Boolean),
   /** The latest check the server ran on its own, absent until one finishes. */
   reachability: Schema.optional(EnvironmentConnectReachability),
+  /** The tunnel's public hostname, once cloudflared has connected. Older servers omit it. */
+  tunnelHostname: Schema.optional(Schema.String),
+  /** Whether this is the desktop app's own session, which may link from where it is. */
+  linkableHere: Schema.optional(Schema.Boolean),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 
@@ -616,12 +684,41 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("approveConnectDevice", "/api/auth/connect-devices/approve", {
+      headers: OptionalBearerHeaders,
+      payload: AuthApproveConnectDeviceInput,
+      success: AuthApproveConnectDeviceResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("revokeConnectDevice", "/api/auth/connect-devices/revoke", {
+      headers: OptionalBearerHeaders,
+      payload: AuthRevokeConnectDeviceInput,
+      success: AuthRevokeConnectDeviceResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("revokeOtherClients", "/api/auth/clients/revoke-others", {
       headers: OptionalBearerHeaders,
       success: AuthOtherClientSessionsRevokeResult,
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
+
+/** Tailscale sign-in: the owner's own devices get a grant to exchange at `/oauth/token`. */
+class EnvironmentTailnetHttpApi extends HttpApiGroup.make("tailnet").add(
+  HttpApiEndpoint.post("signIn", "/api/auth/tailnet", {
+    headers: OptionalDpopProofHeaders,
+    success: AuthTailnetSignInResult,
+    error: [
+      EnvironmentTailnetSignInRefusedError,
+      EnvironmentAuthInvalidError,
+      EnvironmentInternalError,
+    ],
+  }),
+) {}
 
 class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
   .add(
@@ -649,6 +746,8 @@ class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
   .add(HttpApiEndpoint.get("authorize", "/oauth/mcp/authorize"))
   .add(
     HttpApiEndpoint.post("approval", "/oauth/mcp/approval", {
+      // The hosted app sends the owner's T3 Connect credential; the environment's own page uses its cookie.
+      headers: OptionalBearerHeaders,
       payload: AuthMcpAuthorizationRequest,
       success: [AuthMcpApprovalDetails, AuthMcpApprovalRedirect],
       error: AuthMcpApprovalError,
@@ -656,6 +755,8 @@ class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
   )
   .add(
     HttpApiEndpoint.post("decision", "/oauth/mcp/decision", {
+      // The hosted app sends the owner's T3 Connect credential; the environment's own page uses its cookie.
+      headers: OptionalBearerHeaders,
       payload: AuthMcpApprovalDecisionRequest,
       success: AuthMcpApprovalRedirect,
       error: AuthMcpApprovalError,
@@ -673,19 +774,24 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
-const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
+export const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
   omitIdleSubagents: Schema.optionalKey(Schema.String),
   omitOlderSettled: Schema.optionalKey(Schema.String),
+  /**
+   * The cursor of rows the client holds, loaded with the same omissions. The server answers
+   * `resumable` instead of a snapshot when the socket can replay from it.
+   */
+  resumeFrom: Schema.optionalKey(Schema.String),
 });
 
-const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
+export const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
   deferWork: Schema.optionalKey(Schema.String),
   compactTurnItems: Schema.optionalKey(Schema.String),
   dedupeBodies: Schema.optionalKey(Schema.String),
   compactIds: Schema.optionalKey(Schema.String),
 });
 
-const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
+export const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
   cursor: TrimmedNonEmptyString,
   throughEntryId: Schema.optional(TrimmedNonEmptyString),
   view: Schema.optional(Schema.Literals(["conversation", "activity", "work"])),
@@ -705,7 +811,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
       headers: OrchestrationProtocolHeaders,
       query: EnvironmentOrchestrationShellSnapshotQuery,
-      success: OrchestrationV2ShellSnapshot,
+      success: [OrchestrationV2ShellHttpSnapshot, OrchestrationV2ShellResumable],
       error: EnvironmentOrchestrationSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -881,6 +987,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("linkModels", "/api/voice/models/link", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelLinkRequest,
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("updateAcceleration", "/api/voice/acceleration", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechAccelerationRequest,
@@ -999,6 +1113,7 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
+  .add(EnvironmentTailnetHttpApi)
   .add(EnvironmentMcpOAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)

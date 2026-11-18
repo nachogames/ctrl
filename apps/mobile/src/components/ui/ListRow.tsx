@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
-import { Platform } from "react-native";
+import { Platform, View } from "react-native";
 
 import { useResolveClassNames } from "uniwind";
 import { SymbolView } from "./AppSymbol";
 import { ListRowLayout, type ListRowContentProps } from "./ListRowLayout";
+import { RadioIndicator } from "./RadioIndicator";
 import { RowPressable } from "./RowPressable";
 
 export function ListRow(
@@ -11,6 +12,8 @@ export function ListRow(
     readonly onPress: () => void;
     /** A control before the chevron, such as a button with its own action. */
     readonly trailing?: ReactNode;
+    /** Marks the row as the chosen option while it still navigates. */
+    readonly selected?: boolean;
   },
 ) {
   const rippleStyle = useResolveClassNames("bg-subtle-strong");
@@ -18,7 +21,10 @@ export function ListRow(
     <RowPressable
       accessibilityRole="button"
       accessibilityLabel={[props.label, props.description, props.detail].filter(Boolean).join(", ")}
-      accessibilityState={{ disabled: Boolean(props.disabled) }}
+      accessibilityState={{
+        disabled: Boolean(props.disabled),
+        ...(props.selected === undefined ? {} : { checked: props.selected }),
+      }}
       disabled={props.disabled}
       onPress={props.onPress}
       android_ripple={{ color: rippleStyle.backgroundColor }}
@@ -28,8 +34,27 @@ export function ListRow(
       <ListRowLayout
         {...props}
         accessory={
-          <>
+          <View className="flex-row items-center gap-3">
             {props.trailing}
+            {props.selected === undefined ? null : (
+              <View
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                className="size-6 items-center justify-center"
+              >
+                {Platform.OS === "android" ? (
+                  <RadioIndicator selected={props.selected} />
+                ) : props.selected ? (
+                  <SymbolView
+                    name="checkmark"
+                    size={18}
+                    tintColorClassName="accent-primary-text"
+                    type="monochrome"
+                    weight="semibold"
+                  />
+                ) : null}
+              </View>
+            )}
             <SymbolView
               name="chevron.right"
               size={16}
@@ -37,7 +62,7 @@ export function ListRow(
               type="monochrome"
               weight="semibold"
             />
-          </>
+          </View>
         }
       />
     </RowPressable>

@@ -10,6 +10,7 @@ import {
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
+import { tailnetSignInBaseUrl } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
@@ -23,8 +24,12 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
 import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
-import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import {
+  signInOverTailnet,
+  useRemoteConnections,
+} from "../../state/use-remote-environment-registry";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { connectComputerTo } from "../../state/connectComputers";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { autoConnectReport, devAutoConnectAttemptAtom } from "./devAutoConnect";
@@ -38,6 +43,10 @@ type ConnectionsNewRouteParams = {
   readonly autoConnect?: string;
   readonly routeFor?: EnvironmentId;
 };
+
+// A QR without a code, such as one from `t3 up`, cannot connect another computer.
+const relayablePairingUrl = (pairingUrl: string, code: string) =>
+  code.trim() === "" ? null : pairingUrl;
 
 export function ConnectionsNewRouteScreen({
   route,
@@ -62,8 +71,15 @@ function PairingForm({
   readonly routePairingUrl: string;
   readonly routeFor: EnvironmentId | undefined;
 }) {
-  const { connectionPairingUrl, onChangeConnectionPairingUrl, onConnectPress } =
-    useRemoteConnections();
+  const {
+    connectionPairingUrl,
+    onChangeConnectionPairingUrl,
+    onConnectPress,
+    connectedEnvironments,
+  } = useRemoteConnections();
+  // The link as scanned, which may carry the computer's choices for the connection.
+  const [scannedPairingUrl, setScannedPairingUrl] = useState<string | null>(null);
+  const [relayingTo, setRelayingTo] = useState<EnvironmentId | null>(null);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [initialPairing] = useState(() => parsePairingUrl(routePairingUrl || connectionPairingUrl));
@@ -135,6 +151,7 @@ function PairingForm({
       setHostInput(host);
       setCodeInput(code);
       onChangeConnectionPairingUrl(pairingUrl);
+      setScannedPairingUrl(relayablePairingUrl(pairingUrl, code));
       setScanComplete(true);
       setScannerLocked(false);
     } catch (error) {
@@ -149,13 +166,40 @@ function PairingForm({
     }
   };
 
+  // Computers this phone can tell to connect to the scanned one; not when adding a route.
+  const relayTargets =
+    scannedPairingUrl === null || routeFor !== undefined
+      ? []
+      : connectedEnvironments.filter((environment) => environment.connectionState === "connected");
+
+  const handleConnectComputer = async (target: (typeof relayTargets)[number]) => {
+    if (scannedPairingUrl === null || relayingTo !== null) return;
+    setRelayingTo(target.environmentId);
+    const problem = await connectComputerTo(target.environmentId, scannedPairingUrl);
+    setRelayingTo(null);
+    void Haptics.notificationAsync(
+      problem === null
+        ? Haptics.NotificationFeedbackType.Success
+        : Haptics.NotificationFeedbackType.Error,
+    );
+    Dialog.alert(
+      problem === null ? `Connecting ${target.environmentLabel}` : "Could not connect them",
+      problem ??
+        `${target.environmentLabel} connects to the computer you scanned within a minute while Ctrl is open on it, then connects it back. Nothing to type on either.`,
+    );
+  };
+
   const handleSubmit = async () => {
     const pairingUrl = buildPairingUrl(hostInput, codeInput);
     setOwnAttempt(true);
     setSubmitError(null);
     setIsSubmitting(true);
     onChangeConnectionPairingUrl(pairingUrl);
-    const outcome = await onConnectPress(pairingUrl, routeFor);
+    // A machine name, 100.x address, or `t3 up` QR needs no code on your tailnet.
+    const outcome =
+      codeInput.trim() === "" && tailnetSignInBaseUrl(hostInput) !== null
+        ? await signInOverTailnet(hostInput, routeFor)
+        : await onConnectPress(pairingUrl, routeFor);
     setIsSubmitting(false);
     setSubmitError(outcome.error);
     void Haptics.notificationAsync(
@@ -223,7 +267,7 @@ function PairingForm({
               <PairingInputRow
                 label="Address"
                 keyboardType="url"
-                placeholder="192.168.1.100:3773"
+                placeholder="studio or 192.168.1.100:3774"
                 value={hostInput}
                 onChangeText={handleHostChange}
               />
@@ -247,9 +291,39 @@ function PairingForm({
               )}
             >
               {pairingConnectionError ??
-                "For machines on your local network or tailnet. The machine keeps its own provider credentials."}
+                "For machines on your local network or tailnet. On your tailnet, a machine name needs no code."}
             </Text>
           </View>
+
+          {relayTargets.length > 0 ? (
+            <View collapsable={false} className="gap-2">
+              <Text className="px-4 text-sm font-t3-medium text-foreground-muted">
+                Or connect one of your computers to it
+              </Text>
+              <View
+                collapsable={false}
+                className="overflow-hidden rounded-[26px] border-continuous bg-grouped-card"
+              >
+                {relayTargets.map((target, index) => (
+                  <View key={target.environmentId} collapsable={false}>
+                    {index > 0 ? <View className="ml-4 border-t border-border-subtle" /> : null}
+                    <ListRow
+                      label={target.environmentLabel}
+                      description={
+                        relayingTo === target.environmentId
+                          ? "Connecting…"
+                          : "Connects both ways, with no code to type"
+                      }
+                      disabled={relayingTo !== null}
+                      onPress={() => {
+                        void handleConnectComputer(target);
+                      }}
+                    />
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
 
           {hasCloudPublicConfig() ? <T3ConnectSection /> : null}
         </View>
@@ -343,7 +417,7 @@ function PairingScanCard(props: {
           )}
         </View>
         <Text className={cn("text-center text-sm", light ? "text-black/70" : "text-white/80")}>
-          Scan the code from t3 pair or desktop Connections settings
+          Scan the code from t3 up, t3 pair, or desktop Connections settings
         </Text>
       </View>
     </Pressable>

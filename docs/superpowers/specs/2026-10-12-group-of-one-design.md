@@ -125,7 +125,7 @@ goal), not a PR.
   - with a goal or links: creates the hidden group first;
   - with only `settled` or `pinned`: still requires a group.
 - **`t3_group_read` on a solo chat:** returns `{ group: null, threadIds:
-[self] }` instead of an error.
+  [self] }` instead of an error.
 - `t3_group_handoff` already works from a solo chat. It now gets the new
   naming and order.
 

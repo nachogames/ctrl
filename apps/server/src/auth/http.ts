@@ -5,6 +5,8 @@ import {
   AuthGrantScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
+  type EnvironmentSessionState,
+  EnvironmentConnectApprovalPendingError,
   EnvironmentHttpApi,
   EnvironmentHttpForbiddenError,
   EnvironmentInternalError,
@@ -15,8 +17,12 @@ import {
   EnvironmentResourceNotFoundError,
   type EnvironmentResourceNotFoundReason,
   EnvironmentScopeRequiredError,
+  EnvironmentTailnetSignInRefusedError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  TAILNET_SUBJECT_PREFIX,
+  tailnetScopeDenial,
+  mcpClientScopes,
 } from "@t3tools/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 import { parseOAuthScope } from "@t3tools/shared/oauthScope";
@@ -24,6 +30,7 @@ import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
@@ -33,9 +40,10 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as TailnetSignIn from "./TailnetSignIn.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
-import { verifyRequestDpopProof } from "./dpop.ts";
+import { checkRequestDpopProof } from "./dpop.ts";
 import { requestUrl } from "../requestUrl.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
@@ -97,6 +105,7 @@ export const annotateEnvironmentRequest =
 export function failEnvironmentAuthInvalid(
   reason: EnvironmentAuthInvalidReason,
   dpopFailureReason?: DpopFailureReason,
+  sessionState?: EnvironmentSessionState,
 ) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
@@ -105,6 +114,7 @@ export function failEnvironmentAuthInvalid(
           code: "auth_invalid",
           reason,
           ...(dpopFailureReason === undefined ? {} : { dpopFailureReason }),
+          ...(sessionState === undefined ? {} : { sessionState }),
           traceId,
         }),
       ),
@@ -120,13 +130,17 @@ export function failEnvironmentInvalidRequest(reason: EnvironmentRequestInvalidR
   );
 }
 
-export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope) {
+/** `subject` is the session's, so a Tailscale session's denial can point at its grant. */
+export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope, subject: string) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(
         new EnvironmentScopeRequiredError({
           code: "insufficient_scope",
           ...authScopeRequiredResponse(requiredScope),
+          ...(subject.startsWith(TAILNET_SUBJECT_PREFIX)
+            ? { tailnetGrantFix: tailnetScopeDenial(requiredScope) }
+            : {}),
           traceId,
         }),
       ),
@@ -173,6 +187,7 @@ export const authenticateMediaRequest =
             return yield* failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthSessionState(error),
             );
           }
           return yield* failEnvironmentInternal("internal_error", error);
@@ -180,7 +195,7 @@ export const authenticateMediaRequest =
       ),
     );
     if (!session.scopes.includes(requiredScope)) {
-      return yield* failEnvironmentScopeRequired(requiredScope);
+      return yield* failEnvironmentScopeRequired(requiredScope, session.subject);
     }
     return session;
   });
@@ -199,13 +214,24 @@ export const failEnvironmentInternal =
     return yield* new EnvironmentInternalError({ code: "internal_error", reason, traceId });
   });
 
-const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateTime.DateTime) =>
+// Plaintext LAN servers still need the cookie; TLS arrives through a proxy that sets X-Forwarded-Proto.
+const sessionCookieOptions = (request: HttpServerRequest.HttpServerRequest) => ({
+  httpOnly: true,
+  path: "/",
+  sameSite: "lax" as const,
+  secure: Option.exists(requestUrl(request), (url) => url.protocol === "https:"),
+});
+
+const appendSessionCookie = (
+  request: HttpServerRequest.HttpServerRequest,
+  cookieName: string,
+  token: string,
+  expiresAt: DateTime.DateTime,
+) =>
   Effect.fromResult(
     Cookies.set(Cookies.empty, cookieName, token, {
+      ...sessionCookieOptions(request),
       expires: DateTime.toDate(expiresAt),
-      httpOnly: true,
-      path: "/",
-      sameSite: "lax",
     }),
   ).pipe(
     Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
@@ -221,7 +247,7 @@ export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope"
 ) {
   const session = yield* EnvironmentAuthenticatedPrincipal;
   if (!session.scopes.has(scope)) {
-    return yield* failEnvironmentScopeRequired(scope);
+    return yield* failEnvironmentScopeRequired(scope, session.subject);
   }
   return session;
 });
@@ -239,6 +265,7 @@ export const layerAuthenticatedAuth = Layer.effect(
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthSessionState(error),
             ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
@@ -252,7 +279,7 @@ export const layerAuthenticatedAuth = Layer.effect(
             scopes: new Set(session.scopes),
           }),
         );
-        return yield* session.subject === "cloud-connect"
+        return yield* session.subject === EnvironmentAuth.CLOUD_CONNECT_SUBJECT
           ? traceAuthenticatedRelayRequest(handler, { startTime, endTime })
           : handler;
       }).pipe(Effect.catchTags({ EnvironmentAuthInvalidError: appendDpopChallengeOnUnauthorized }));
@@ -279,13 +306,19 @@ export const layer = HttpApiBuilder.group(
               sessions.cookieName,
               sessions.legacyCookieName,
             );
+            // Rewriting the cookie carries a renewed expiry to the browser, which drops it otherwise.
             if (
-              credential?.source === "legacy-cookie" &&
+              (credential?.source === "legacy-cookie" || credential?.source === "cookie") &&
               result.authenticated &&
               result.sessionMethod === "browser-session-cookie" &&
               result.expiresAt
             ) {
-              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
+              yield* appendSessionCookie(
+                request,
+                sessions.cookieName,
+                credential.token,
+                result.expiresAt,
+              );
               yield* appendCredentialResponseHeaders;
             }
             return result;
@@ -317,19 +350,17 @@ export const layer = HttpApiBuilder.group(
             const cookieName = result.cookieName ?? sessions.cookieName;
             const selectedCookie = yield* Effect.fromResult(
               Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
+                ...sessionCookieOptions(request),
                 expires: DateTime.toDate(result.response.expiresAt),
-                httpOnly: true,
-                path: "/",
-                sameSite: "lax",
               }),
             ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
             const sessionCookies = result.expireNormalCookie
               ? yield* Effect.fromResult(
-                  Cookies.expireCookie(selectedCookie, sessions.cookieName, {
-                    httpOnly: true,
-                    path: "/",
-                    sameSite: "lax",
-                  }),
+                  Cookies.expireCookie(
+                    selectedCookie,
+                    sessions.cookieName,
+                    sessionCookieOptions(request),
+                  ),
                 ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")))
               : selectedCookie;
 
@@ -343,6 +374,7 @@ export const layer = HttpApiBuilder.group(
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthSessionState(error),
             ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
@@ -363,8 +395,10 @@ export const layer = HttpApiBuilder.group(
             if (requestedScopes === null || requestedScopes?.length === 0) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
-            const proofKeyThumbprint = args.headers.dpop
-              ? yield* verifyRequestDpopProof({ request }).pipe(
+            // Not recorded: a replayer also holds the subject token and could sign its own proof.
+            // Recording would let anyone write replay state to disk.
+            const proof = args.headers.dpop
+              ? yield* checkRequestDpopProof({ request }).pipe(
                   Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
                     appendDpopChallengeHeader.pipe(
                       Effect.andThen(
@@ -394,7 +428,7 @@ export const layer = HttpApiBuilder.group(
                   ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
                 },
               }),
-              proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
+              proof ? { proofKeyThumbprint: proof.thumbprint } : undefined,
             );
           },
           traceRelayRequest,
@@ -402,8 +436,22 @@ export const layer = HttpApiBuilder.group(
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
               EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthSessionState(error),
             ),
           ),
+          Effect.catchTags({
+            ServerAuthConnectApprovalPendingError: () =>
+              currentEnvironmentTraceId.pipe(
+                Effect.flatMap((traceId) =>
+                  Effect.fail(
+                    new EnvironmentConnectApprovalPendingError({
+                      code: "connect_approval_pending",
+                      traceId,
+                    }),
+                  ),
+                ),
+              ),
+          }),
           Effect.catchIf(EnvironmentAuth.isServerAuthInvalidRequestError, (error) =>
             failEnvironmentInvalidRequest(EnvironmentAuth.serverAuthInvalidRequestReason(error)),
           ),
@@ -446,7 +494,9 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
-            const delegatedScopes = args.payload.scopes ?? AuthStandardClientScopes;
+            const delegatedScopes = args.payload.access
+              ? mcpClientScopes(args.payload.access)
+              : (args.payload.scopes ?? AuthStandardClientScopes);
             if (
               delegatedScopes.length === 0 ||
               new Set<AuthEnvironmentScope>(delegatedScopes).size !== delegatedScopes.length
@@ -455,7 +505,7 @@ export const layer = HttpApiBuilder.group(
             }
             for (const delegatedScope of delegatedScopes) {
               if (!session.scopes.has(delegatedScope)) {
-                return yield* failEnvironmentScopeRequired(delegatedScope);
+                return yield* failEnvironmentScopeRequired(delegatedScope, session.subject);
               }
             }
             return yield* serverAuth.issuePairingCredential(args.payload);
@@ -505,6 +555,34 @@ export const layer = HttpApiBuilder.group(
         ),
       )
       .handle(
+        "approveConnectDevice",
+        Effect.fn("environment.auth.approveConnectDevice")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const approved = yield* serverAuth.approveConnectDevice(args.payload.pairingLinkId);
+            return { approved };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("connect_device_approve_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "revokeConnectDevice",
+        Effect.fn("environment.auth.revokeConnectDevice")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const revoked = yield* serverAuth.revokeConnectDevice(args.payload.proofKeyThumbprint);
+            return { revoked };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("connect_device_revoke_failed", error),
+          ),
+        ),
+      )
+      .handle(
         "revokeOtherClients",
         Effect.fn("environment.auth.revokeOtherClients")(
           function* (args) {
@@ -518,5 +596,59 @@ export const layer = HttpApiBuilder.group(
           ),
         ),
       );
+  }),
+);
+
+export const layerTailnet = HttpApiBuilder.group(
+  EnvironmentHttpApi,
+  "tailnet",
+  Effect.fnUntraced(function* (handlers) {
+    const tailnetSignIn = yield* TailnetSignIn.TailnetSignIn;
+
+    return handlers.handle(
+      "signIn",
+      Effect.fn("environment.auth.tailnetSignIn")(
+        function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          yield* appendCredentialResponseHeaders;
+          return yield* tailnetSignIn.signIn(request);
+        },
+        Effect.catchTags({
+          TailnetSignInRefusedError: (error) =>
+            currentEnvironmentTraceId.pipe(
+              Effect.flatMap((traceId) =>
+                Effect.fail(
+                  new EnvironmentTailnetSignInRefusedError({
+                    code: "tailnet_sign_in_refused",
+                    reason: error.reason,
+                    traceId,
+                    ...(error.suggestedGrant === undefined
+                      ? {}
+                      : { suggestedGrant: error.suggestedGrant }),
+                  }),
+                ),
+              ),
+            ),
+          ServerAuthInvalidCredentialError: (error) =>
+            appendDpopChallengeHeader.pipe(
+              Effect.andThen(
+                failEnvironmentAuthInvalid(
+                  "invalid_credential",
+                  EnvironmentAuth.serverAuthDpopFailureReason(error),
+                ),
+              ),
+            ),
+          TailnetDeviceBlockLookupError: (error) =>
+            failEnvironmentInternal("internal_error", error),
+          // Unreachable in practice: a policy without remote clients keeps this server off the tailnet.
+          ManagedPolicyRefusedError: (error) =>
+            failEnvironmentInternal("pairing_credential_issuance_failed", error),
+        }),
+        Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+          failEnvironmentInternal("pairing_credential_issuance_failed", error),
+        ),
+      ),
+    );
   }),
 );

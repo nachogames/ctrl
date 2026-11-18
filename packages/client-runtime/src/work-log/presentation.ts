@@ -414,6 +414,13 @@ export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): strin
     : null;
 }
 
+/** Distinct images the agent opened across a tool group, in viewing order. */
+export function workEntriesViewedImagePaths(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+): string[] {
+  return [...new Set(entries.flatMap((entry) => workEntryViewedImagePath(entry) ?? []))];
+}
+
 export interface ViewedImageAsset {
   readonly resource: Extract<AssetResource, { readonly _tag: "media-file" }>;
   readonly alt: string;
@@ -549,6 +556,7 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "group-move-thread":
     case "group-resource":
     case "environment-update":
+    case "theme-set":
     case "attachment-prepare":
     case "attachment-discard":
     case "attachment-send":

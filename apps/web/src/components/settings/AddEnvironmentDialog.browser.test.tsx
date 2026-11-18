@@ -62,39 +62,53 @@ function Owner() {
 
 function setup() {
   mocks.connectSshEnvironment.mockClear();
-  return stubGlobal("desktopBridge", {});
+  return stubGlobal("desktopBridge", { discoverTailnetEnvironments: async () => [] });
 }
 
-const remoteCard = () => page.getByRole("button", { name: /Remote link/ });
+const remoteCard = () => page.getByRole("button", { name: /Link or code/ });
 const sshCard = () => page.getByRole("button", { name: /^SSH/ });
 
 async function openDialogOnSsh() {
-  await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+  await userEvent.click(page.getByRole("button", { name: "Add a machine" }));
   await userEvent.click(sshCard());
   await expect.element(sshCard()).toHaveAttribute("aria-pressed", "true");
 }
 
 async function expectDefaultModeAfterReopen() {
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-  await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+  await userEvent.click(page.getByRole("button", { name: "Add a machine" }));
   await expect.element(remoteCard()).toHaveAttribute("aria-pressed", "true");
   await expect.element(sshCard()).toHaveAttribute("aria-pressed", "false");
-  await expect.element(page.getByPlaceholder("backend.example.com")).toBeInTheDocument();
+  await expect.element(page.getByPlaceholder("machine.tailnet.ts.net:8444")).toBeInTheDocument();
 }
 
 describe("AddEnvironmentDialog", () => {
-  it("reopens on Remote link after adding an SSH environment", async () => {
+  it("reopens on Link or code after adding an SSH environment", async () => {
     using _bridge = setup();
     await using _screen = await render(<Owner />);
 
     await openDialogOnSsh();
-    await userEvent.type(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
-    await userEvent.click(
-      page.getByRole("dialog").getByRole("button", { name: "Add environment" }),
-    );
+    await userEvent.fill(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
+    await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Connect" }));
     expect(mocks.connectSshEnvironment).toHaveBeenCalledOnce();
 
     await expectDefaultModeAfterReopen();
+  });
+
+  it("drops an SSH error when switching to Remote link", async () => {
+    using _bridge = setup();
+    await using _screen = await render(<Owner />);
+
+    mocks.connectSshEnvironment.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("ssh: connection refused"))),
+    );
+    await openDialogOnSsh();
+    await userEvent.type(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
+    await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Connect" }));
+    await expect.element(page.getByText(/connection refused/)).toBeInTheDocument();
+
+    await userEvent.click(remoteCard());
+    await expect.element(page.getByText(/connection refused/)).not.toBeInTheDocument();
   });
 
   it("clears the form after dismissing it on SSH", async () => {
@@ -103,17 +117,25 @@ describe("AddEnvironmentDialog", () => {
 
     await openDialogOnSsh();
     await userEvent.click(remoteCard());
-    await userEvent.type(page.getByPlaceholder("backend.example.com"), "devbox.example.com");
-    await userEvent.type(page.getByPlaceholder("PAIRCODE"), "PAIRCODE");
+    await userEvent.fill(
+      page.getByPlaceholder("machine.tailnet.ts.net:8444"),
+      "devbox.example.com",
+    );
+    await userEvent.fill(
+      page.getByPlaceholder("Paste the link from Add a device, or its code"),
+      "PAIRCODE",
+    );
     await userEvent.click(sshCard());
-    await userEvent.type(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
-    await userEvent.type(page.getByPlaceholder("root"), "maria");
-    await userEvent.type(page.getByPlaceholder("22"), "2222");
+    await userEvent.fill(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
+    await userEvent.fill(page.getByPlaceholder("root"), "maria");
+    await userEvent.fill(page.getByPlaceholder("22"), "2222");
     await userEvent.keyboard("{Escape}");
 
     await expectDefaultModeAfterReopen();
-    await expect.element(page.getByPlaceholder("backend.example.com")).toHaveValue("");
-    await expect.element(page.getByPlaceholder("PAIRCODE")).toHaveValue("");
+    await expect.element(page.getByPlaceholder("machine.tailnet.ts.net:8444")).toHaveValue("");
+    await expect
+      .element(page.getByPlaceholder("Paste the link from Add a device, or its code"))
+      .toHaveValue("");
     await userEvent.click(sshCard());
     await expect.element(page.getByPlaceholder("Search hosts or type devbox")).toHaveValue("");
     await expect.element(page.getByPlaceholder("root")).toHaveValue("");
@@ -124,15 +146,13 @@ describe("AddEnvironmentDialog", () => {
       finishConnection = resolve;
     });
     mocks.connectSshEnvironment.mockImplementationOnce(() => pending);
-    await userEvent.type(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
-    await userEvent.click(
-      page.getByRole("dialog").getByRole("button", { name: "Add environment" }),
-    );
+    await userEvent.fill(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
+    await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Connect" }));
     await userEvent.keyboard("{Escape}");
     await expectDefaultModeAfterReopen();
     finishConnection(AsyncResult.failure(Cause.fail(new Error("dismissed SSH attempt"))));
     await expect
-      .element(page.getByRole("dialog").getByRole("button", { name: "Add environment" }))
+      .element(page.getByRole("dialog").getByRole("button", { name: "Connect" }))
       .toBeEnabled();
     await expect.element(page.getByText(/dismissed SSH attempt/)).not.toBeInTheDocument();
   });

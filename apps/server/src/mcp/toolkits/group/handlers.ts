@@ -138,10 +138,7 @@ const readMembers = Effect.fn("mcp.group.readMembers")(function* (
   context: Caller,
   group: OrchestrationThreadGroupShell,
 ) {
-  const active = yield* context.threads.listProjectThreads({
-    projectId: group.projectId,
-    includeSubagents: false,
-  });
+  const active = yield* context.threads.listProjectThreadShells(group.projectId);
   const archive = yield* context.threads.getShellSnapshot({ location: "archive" });
   const byId = new Map<ThreadId, OrchestrationV2ThreadShell>();
   for (const thread of [...active, ...archive.archivedThreads]) {
@@ -174,7 +171,7 @@ const setMembersSettled = Effect.fn("mcp.group.setMembersSettled")(function* (
   settled: boolean,
 ) {
   const active = yield* context.threads
-    .listProjectThreads({ projectId: group.projectId, includeSubagents: false })
+    .listProjectThreadShells(group.projectId)
     .pipe(Effect.mapError(unavailable));
   const pending = active.filter(
     (thread) =>

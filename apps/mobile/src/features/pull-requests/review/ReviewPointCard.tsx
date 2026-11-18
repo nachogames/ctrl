@@ -200,7 +200,7 @@ export const ReviewPointCard = memo(function ReviewPointCard({
           )}
           {kind === "context" ? null : (
             <View className="flex-row items-start gap-2">
-              <SymbolView name="sparkles" size={14} tintColorClassName="accent-icon-muted" />
+              <SymbolView name="robot" size={14} tintColorClassName="accent-icon-muted" />
               <Text className="min-w-0 flex-1 text-sm">
                 <Text className="text-sm font-t3-semibold">
                   {item.suggestedDecision === null

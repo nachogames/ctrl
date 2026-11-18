@@ -58,10 +58,13 @@ const layerServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExp
     httpBaseUrl: new URL("http://127.0.0.1:3773"),
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    tailscaleSignInEnabled: false,
+    tailscaleOnly: false,
   }),
   configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
   setMode: () => Effect.die("unexpected setMode"),
   setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
+  setTailscaleSignInEnabled: () => Effect.die("unexpected setTailscaleSignInEnabled"),
   getAdvertisedEndpoints: Effect.succeed([]),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
 
@@ -154,7 +157,7 @@ describe("DesktopWslBackend", () => {
       assert.equal(startCount, 1);
       assert.deepEqual(yield* backend.lastPreflightError, refusal);
 
-      yield* clearFailure(new URL("http://127.0.0.1:41773"));
+      yield* clearFailure(new URL("http://127.0.0.1:41773"), 123);
       assert.deepEqual(yield* backend.lastPreflightError, Option.none());
       yield* recordOwnershipFailure();
       const settings = yield* DesktopAppSettings.DesktopAppSettings;

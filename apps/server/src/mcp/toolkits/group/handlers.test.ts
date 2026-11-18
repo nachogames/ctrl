@@ -125,7 +125,7 @@ const makeHarness = (options: {
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
-        listProjectThreads: () =>
+        listProjectThreadShells: () =>
           Effect.succeed([...shells.values()].filter((shell) => shell.groupId === groupId)),
         settleThread: (input) => {
           recorded.settled.push(input);

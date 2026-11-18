@@ -64,6 +64,8 @@ describe("searchSettings", () => {
     expect(searchSettings("sharing", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
     expect(searchSettings("claude", ITEMS).map((item) => item.id)).toEqual(["providers"]);
     expect(searchSettings("long lines", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
+    const spanish = (message: string) => (message === "Word wrap" ? "Ajuste de línea" : message);
+    expect(searchSettings("ajuste", ITEMS, spanish).map((item) => item.id)).toEqual(["word-wrap"]);
     for (const query of ["fallback", "fallback agent", "fallback model"]) {
       expect(searchSettings(query)[0]).toMatchObject({
         id: "fallback-model",
@@ -76,6 +78,13 @@ describe("searchSettings", () => {
   it("hides the Secrets page from nav and search while the secrets feature is disabled", () => {
     expect(SETTINGS_NAV_GROUPS.flatMap((group) => group.paths)).not.toContain("/settings/secrets");
     expect(searchSettings("1password").map((item) => item.to)).not.toContain("/settings/secrets");
+  });
+
+  it("finds the Scheduled tasks page", () => {
+    expect(searchSettings("scheduled tasks")[0]).toMatchObject({
+      id: "scheduled-tasks",
+      to: "/settings/scheduled-tasks",
+    });
   });
 
   it("matches normalized title substrings", () => {
@@ -134,6 +143,7 @@ describe("searchSettings", () => {
       "t3-connect",
       "hold-webhooks-while-offline",
       "tailscale-https",
+      "tailscale-sign-in",
       "wsl-backend",
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
@@ -166,6 +176,25 @@ describe("searchSettings", () => {
         targetId: "linked-environments",
       }),
     );
+  });
+
+  it("finds the Welcome page only where a primary computer can open it", () => {
+    const availability = {
+      hasCloudPublicConfig: true,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const ids = (hasPrimaryEnvironment: boolean) =>
+      searchSettings(
+        "welcome page",
+        filterAvailableSettingsSearchItems({ ...availability, hasPrimaryEnvironment }),
+      ).map((item) => item.id);
+    // Hosted web reaches remote computers but has no primary one to set up.
+    expect(ids(false)).not.toContain("welcome-page");
+    expect(ids(true)).toContain("welcome-page");
   });
 
   it("finds keybinding commands by label, command id, and default key", () => {
@@ -345,14 +374,10 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/general", "text-generation-model")).toBe(
       "/settings/threads",
     );
-    expect(movedSettingsPath("/settings/connections", "authorized-clients")).toBe(
-      "/settings/access",
-    );
     expect(movedSettingsPath("/settings/source-control", "worktree-branch-naming")).toBe(
       "/settings/worktrees",
     );
     expect(movedSettingsPath("/settings/appearance", "diff-color-scheme")).toBe("/settings/diffs");
-    expect(movedSettingsPath("/settings/connections", "network-access")).toBe("/settings/access");
     expect(movedSettingsPath("/settings/storage", "storage-worktrees")).toBe("/settings/worktrees");
     expect(movedSettingsPath("/settings/storage", "")).toBe("/settings/maintenance");
     expect(movedSettingsPath("/settings/integrations", "devices")).toBe("/settings/devices");
@@ -363,6 +388,9 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/general", "time-format")).toBeNull();
     expect(movedSettingsPath("/settings/projects", "project-defaults")).toBeNull();
     expect(movedSettingsPath("/settings/connections", "remote-environments")).toBeNull();
+    // Sharing & access merged back into Connections, so its rows stay put.
+    expect(movedSettingsPath("/settings/connections", "authorized-clients")).toBeNull();
+    expect(movedSettingsPath("/settings/connections", "network-access")).toBeNull();
     expect(movedSettingsPath("/settings/appearance", "theme")).toBeNull();
   });
 });

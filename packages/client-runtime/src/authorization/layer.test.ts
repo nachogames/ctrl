@@ -2,6 +2,7 @@ import {
   AuthStandardClientScopes,
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
+  type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import { type RelayEnvironmentConnectResponse } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
@@ -19,7 +20,12 @@ import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "./service.ts";
 import * as TokenStore from "./tokenStore.ts";
-import { BearerConnectionCredential, BearerConnectionProfile } from "../connection/catalog.ts";
+import {
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  type ConnectionCredential,
+  TailnetConnectionCredential,
+} from "../connection/catalog.ts";
 import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
 import { BearerConnectionTarget } from "../connection/model.ts";
 import * as ConnectionProfileStore from "../connection/profileStore.ts";
@@ -50,13 +56,16 @@ const BOOTSTRAP: RelayEnvironmentConnectResponse = {
   expiresAt: "2026-06-06T01:00:00.000Z",
 };
 
-type RecordedResponse = Response | ((init: RequestInit) => Response);
+type RecordedResponse = Response | ((init: RequestInit) => Response | Promise<Response>);
 
-function recordedFetch(responses: ReadonlyArray<RecordedResponse>) {
+function recordedFetch(responses: ReadonlyArray<RecordedResponse>, descriptor?: object) {
   const calls: Array<readonly [RequestInfo | URL, RequestInit]> = [];
   let responseIndex = 0;
   const fetchFn = ((input, init) => {
     calls.push([input, init ?? {}]);
+    if (descriptor !== undefined && String(input).endsWith("/.well-known/t3/environment")) {
+      return Promise.resolve(Response.json(descriptor));
+    }
     const response = responses[responseIndex++];
     return response === undefined
       ? Promise.reject(new Error(`Unexpected fetch call to ${String(input)}`))
@@ -109,13 +118,35 @@ const persistedToken = (
     dpopThumbprint: input.dpopThumbprint ?? "thumbprint-1",
   });
 
+const PINNED = "http://100.88.1.2:3773/";
+const SERVE = {
+  httpBaseUrl: "https://studio.tail1234.ts.net/",
+  wsBaseUrl: "wss://studio.tail1234.ts.net/",
+};
+const tailnetSession = (accessToken: string, expiresAtEpochMs: number) =>
+  new TailnetConnectionCredential({
+    signInBaseUrl: PINNED,
+    accessToken,
+    expiresAtEpochMs,
+    dpopThumbprint: "thumbprint-1",
+  });
+const tailnetGrant = () =>
+  Response.json({ credential: "tailnet-grant", expiresAt: "2026-06-06T00:02:00.000Z" });
+const requestedUrls = (calls: ReadonlyArray<readonly [RequestInfo | URL, RequestInit]>) =>
+  calls.map(([url]) => String(url));
+
 const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (input: {
   readonly initialToken?: TokenStore.RemoteDpopAccessToken;
   readonly responses: ReadonlyArray<RecordedResponse>;
+  /** Answers every descriptor read, so one that runs beside a ticket does not shift `responses`. */
+  readonly descriptor?: object;
   readonly bootstrap?: RelayEnvironmentConnectResponse;
   readonly beforeBootstrap?: Effect.Effect<void, ManagedRelay.ManagedRelayClientError>;
   readonly beforePut?: Effect.Effect<void>;
+  readonly beforeCredentialPut?: Effect.Effect<void>;
   readonly clerkToken?: ClientCapabilities.CloudSession["Service"]["clerkToken"];
+  readonly credentials?: ReadonlyArray<readonly [string, ConnectionCredential]>;
+  readonly surface?: "desktop" | "mobile";
 }) {
   const tokens = yield* Ref.make(
     new Map(
@@ -140,7 +171,10 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
       readonly accessToken?: string;
     }>
   >([]);
-  const fetch = recordedFetch(input.responses);
+  const fetch = recordedFetch(input.responses, input.descriptor);
+  const credentials = yield* Ref.make(
+    new Map<string, ConnectionCredential>(input.credentials ?? []),
+  );
 
   const tokenStore = TokenStore.RemoteDpopAccessTokenStore.of({
     get: (environmentId) =>
@@ -211,6 +245,26 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
           deviceId: Effect.succeedSome("device-1"),
         }),
         Layer.succeed(TokenStore.RemoteDpopAccessTokenStore, tokenStore),
+        Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, {
+          get: (connectionId) =>
+            Ref.get(credentials).pipe(
+              Effect.map((current) => Option.fromUndefinedOr(current.get(connectionId))),
+            ),
+          put: (connectionId, credential) =>
+            (input.beforeCredentialPut ?? Effect.void).pipe(
+              Effect.andThen(
+                Ref.update(credentials, (current) =>
+                  new Map(current).set(connectionId, credential),
+                ),
+              ),
+            ),
+          remove: (connectionId) =>
+            Ref.update(credentials, (current) => {
+              const next = new Map(current);
+              next.delete(connectionId);
+              return next;
+            }),
+        }),
         Layer.succeed(
           ClientCapabilities.ClientPresentation,
           ClientCapabilities.ClientPresentation.of({
@@ -218,6 +272,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
               label: "T3 Code Test",
               deviceType: "mobile",
               os: "test",
+              ...(input.surface === undefined ? {} : { surface: input.surface }),
             },
           }),
         ),
@@ -226,6 +281,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   );
   return {
     layer,
+    credentials,
     tokens,
     bootstrapCalls,
     proofInputs,
@@ -236,6 +292,9 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     tokenReads,
   };
 });
+
+const requestsTo = (harness: Effect.Success<ReturnType<typeof makeHarness>>, path: string) =>
+  harness.fetch.calls.filter(([url]) => String(url).endsWith(path)).length;
 
 const prepareDirectBearer = Effect.fn("TestRemoteAuthorization.prepareDirectBearer")(function* (
   harness: Effect.Success<ReturnType<typeof makeHarness>>,
@@ -317,6 +376,83 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("reuses a matching descriptor a check just read, once, while fresh", () =>
+    Effect.gen(function* () {
+      const descriptor = {
+        ...DESCRIPTOR,
+        orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+      } as ExecutionEnvironmentDescriptor;
+      const harness = yield* makeHarness({
+        responses: [
+          websocketTicket("reused"),
+          ...Array.from({ length: 4 }, () => [
+            Response.json(descriptor),
+            websocketTicket("fresh"),
+          ]).flat(),
+          websocketTicket("reused over plain HTTP"),
+          Response.json(descriptor),
+          websocketTicket("fresh"),
+        ],
+      });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorizeAt = (httpBaseUrl: string) =>
+          remote.authorizeBearer({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            httpBaseUrl,
+            wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+            bearerToken: "bearer-token",
+            connectionMethod: "direct",
+          });
+        const authorize = authorizeAt(ENDPOINT.httpBaseUrl);
+        const remember = (value: Option.Option<ExecutionEnvironmentDescriptor>) =>
+          remote.rememberCheckedDescriptor(ENDPOINT.httpBaseUrl, value, true);
+
+        yield* remember(Option.some(descriptor));
+        yield* authorize;
+        // Used once.
+        yield* authorize;
+        // Stale.
+        yield* remember(Option.some(descriptor));
+        yield* TestClock.adjust("6 seconds");
+        yield* authorize;
+        // A mismatch reads again, so a host back on the right environment is not blocked.
+        yield* remember(Option.some({ ...descriptor, environmentId: "other" as never }));
+        yield* authorize;
+        // A failed check drops an older match.
+        yield* remember(Option.some(descriptor));
+        yield* remember(Option.none());
+        yield* authorize;
+        // Plain HTTP is no reason to read again where the address keeps its host.
+        yield* remote.rememberCheckedDescriptor(
+          "http://127.0.0.1:3773",
+          Option.some(descriptor),
+          true,
+        );
+        yield* authorizeAt("http://127.0.0.1:3773");
+        // After a network change, a plain LAN address can belong to another machine.
+        yield* remote.rememberCheckedDescriptor(
+          "http://192.168.1.2:3773",
+          Option.some(descriptor),
+          false,
+        );
+        yield* authorizeAt("http://192.168.1.2:3773");
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(harness.fetch.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+        "/api/auth/websocket-ticket/rpc",
+        ...Array.from({ length: 4 }, () => [
+          "/.well-known/t3/environment",
+          "/api/auth/websocket-ticket/rpc",
+        ]).flat(),
+        "/api/auth/websocket-ticket/rpc",
+        "/.well-known/t3/environment",
+        "/api/auth/websocket-ticket/rpc",
+      ]);
+    }),
+  );
+
   it.effect("blocks a warm direct bearer prepare when the environment changes identity", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -385,6 +521,44 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("gives up on a silent loopback or LAN address sooner than on a remote one", () =>
+    Effect.gen(function* () {
+      const silent = () => new Promise<Response>(() => {});
+      const harness = yield* makeHarness({ responses: [silent, silent, silent] });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorizeAt = (httpBaseUrl: string, connectionMethod: "direct" | "ssh" = "direct") =>
+          remote
+            .authorizeBearer({
+              expectedEnvironmentId: ENVIRONMENT_ID,
+              httpBaseUrl,
+              wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+              bearerToken: "bearer-token",
+              connectionMethod,
+            })
+            .pipe(Effect.flip, Effect.forkChild);
+        const lan = yield* authorizeAt("http://192.168.1.2:3773");
+        const tailnet = yield* authorizeAt("http://100.101.102.103:3773");
+        // An SSH forward listens on loopback but reaches a remote host.
+        const forwarded = yield* authorizeAt("http://127.0.0.1:4010", "ssh");
+
+        yield* TestClock.adjust("3 seconds");
+        expect(lan.pollUnsafe()).toBeDefined();
+        expect(tailnet.pollUnsafe()).toBeUndefined();
+        expect(forwarded.pollUnsafe()).toBeUndefined();
+        expect(yield* Fiber.join(lan)).toMatchObject({
+          _tag: "ConnectionTransientError",
+          reason: "timeout",
+        });
+
+        yield* TestClock.adjust("7 seconds");
+        expect(tailnet.pollUnsafe()).toBeDefined();
+        expect(forwarded.pollUnsafe()).toBeDefined();
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("reuses a same-account persisted environment token without contacting the relay", () =>
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({
@@ -398,6 +572,7 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
       const harness = yield* makeHarness({
         initialToken: cached,
+        descriptor: DESCRIPTOR,
         responses: [websocketTicket("cached-ticket")],
       });
 
@@ -411,10 +586,12 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(authorized.socketUrl).toContain("wsTicket=cached-ticket");
       expect(authorized.socketUrl).toContain("connectionMethod=relay");
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
-      expect(harness.fetch.calls).toHaveLength(1);
-      expect(String(harness.fetch.calls[0]?.[0])).toBe(
+      // The descriptor is read beside the ticket, so the connect needs no later read.
+      expect(authorized.descriptor).toMatchObject({ environmentId: ENVIRONMENT_ID });
+      expect(harness.fetch.calls.map(([url]) => String(url)).toSorted()).toEqual([
+        "https://environment.example.test/.well-known/t3/environment",
         "https://environment.example.test/api/auth/websocket-ticket/rpc",
-      );
+      ]);
     }),
   );
 
@@ -515,6 +692,8 @@ describe("RemoteEnvironmentAuthorization", () => {
       }).pipe(Effect.provide(harness.layer));
 
       expect(authorized.socketUrl).toContain("wsTicket=fresh-ticket");
+      // The mint already read the descriptor.
+      expect(authorized.descriptor).toMatchObject({ environmentId: ENVIRONMENT_ID });
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
       expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)).toEqual(
         expect.objectContaining({
@@ -668,9 +847,9 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
       const harness = yield* makeHarness({
         initialToken: cached,
+        descriptor: DESCRIPTOR,
         responses: [
           authInvalid(),
-          Response.json(DESCRIPTOR),
           accessToken("replacement-access-token"),
           websocketTicket("replacement-ticket"),
         ],
@@ -690,7 +869,8 @@ describe("RemoteEnvironmentAuthorization", () => {
           accessToken: "replacement-access-token",
         }),
       );
-      expect(harness.fetch.calls).toHaveLength(4);
+      expect(requestsTo(harness, "/api/auth/websocket-ticket/rpc")).toBe(2);
+      expect(requestsTo(harness, "/oauth/token")).toBe(1);
     }),
   );
 
@@ -707,9 +887,9 @@ describe("RemoteEnvironmentAuthorization", () => {
       });
       const harness = yield* makeHarness({
         initialToken: cached,
+        descriptor: DESCRIPTOR,
         responses: [
           new Response("endpoint unavailable", { status: 503 }),
-          Response.json(DESCRIPTOR),
           accessToken("replacement-access-token"),
           websocketTicket("replacement-ticket"),
         ],
@@ -729,7 +909,8 @@ describe("RemoteEnvironmentAuthorization", () => {
           accessToken: "replacement-access-token",
         }),
       );
-      expect(harness.fetch.calls).toHaveLength(4);
+      expect(requestsTo(harness, "/api/auth/websocket-ticket/rpc")).toBe(2);
+      expect(requestsTo(harness, "/oauth/token")).toBe(1);
     }),
   );
 
@@ -1102,6 +1283,156 @@ describe("RemoteEnvironmentAuthorization", () => {
         expect(cached).toEqual(authorized);
       }).pipe(Effect.provide(harness.layer));
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+    }),
+  );
+  it.effect("renews an expired Tailscale session at the pinned address, not the route in use", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        credentials: [["pinned", tailnetSession("expired-token", 0)]],
+        responses: [
+          Response.json({
+            ...DESCRIPTOR,
+            orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+          }),
+          tailnetGrant(),
+          accessToken("renewed-token"),
+          websocketTicket("serve-ticket"),
+        ],
+      });
+
+      const authorized = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeTailnet({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          credentialId: "pinned",
+          endpoint: SERVE,
+        });
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(requestedUrls(harness.fetch.calls)).toEqual([
+        "https://studio.tail1234.ts.net/.well-known/t3/environment",
+        "http://100.88.1.2:3773/api/auth/tailnet",
+        "http://100.88.1.2:3773/oauth/token",
+        "https://studio.tail1234.ts.net/api/auth/websocket-ticket/rpc",
+      ]);
+      expect(harness.fetch.calls[1]?.[1].headers).toMatchObject({
+        dpop: "proof:http://100.88.1.2:3773/api/auth/tailnet",
+      });
+      expect(authorized.socketUrl).toContain("connectionMethod=direct");
+      expect(authorized.httpAuthorization).toEqual({
+        _tag: "Dpop",
+        accessToken: "renewed-token",
+        expiresAtEpochMs: 3_600_000,
+        tailnetCredentialId: "pinned",
+      });
+      expect((yield* Ref.get(harness.credentials)).get("pinned")).toMatchObject({
+        signInBaseUrl: PINNED,
+        accessToken: "renewed-token",
+      });
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+    }),
+  );
+
+  it.effect(
+    "renews a live Tailscale socket by signing in again before expiry, not via T3 Connect",
+    () =>
+      Effect.gen(function* () {
+        const puts = yield* Queue.unbounded<void>();
+        const harness = yield* makeHarness({
+          credentials: [["pinned", tailnetSession("current-token", 3_600_000)]],
+          responses: [tailnetGrant(), accessToken("renewed-token")],
+          beforeCredentialPut: Queue.offer(puts, undefined).pipe(Effect.asVoid),
+        });
+
+        yield* Effect.gen(function* () {
+          const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+          yield* remote
+            .renewDpopBeforeExpiry({
+              expectedEnvironmentId: ENVIRONMENT_ID,
+              expiresAtEpochMs: 3_600_000,
+              tailnetCredentialId: "pinned",
+            })
+            .pipe(Effect.forkScoped);
+          yield* TestClock.adjust(3_540_000 - 1);
+          expect(harness.fetch.calls).toHaveLength(0);
+          yield* TestClock.adjust(1);
+          yield* Queue.take(puts);
+        }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+        expect(requestedUrls(harness.fetch.calls)).toEqual([
+          "http://100.88.1.2:3773/api/auth/tailnet",
+          "http://100.88.1.2:3773/oauth/token",
+        ]);
+        expect((yield* Ref.get(harness.credentials)).get("pinned")).toMatchObject({
+          accessToken: "renewed-token",
+        });
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      }),
+  );
+
+  it.effect("signs in again for HTTP only after the host rejects the Tailscale session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        credentials: [["pinned", tailnetSession("current-token", Number.MAX_SAFE_INTEGER)]],
+        responses: [tailnetGrant(), accessToken("renewed-token")],
+      });
+
+      const [current, renewed] = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return [
+          yield* remote.authorizeTailnetHttp({ credentialId: "pinned" }),
+          yield* remote.authorizeTailnetHttp({
+            credentialId: "pinned",
+            rejectedAccessToken: "current-token",
+          }),
+        ] as const;
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(current.accessToken).toBe("current-token");
+      expect(renewed.accessToken).toBe("renewed-token");
+      expect(requestedUrls(harness.fetch.calls)).toEqual([
+        "http://100.88.1.2:3773/api/auth/tailnet",
+        "http://100.88.1.2:3773/oauth/token",
+      ]);
+    }),
+  );
+
+  it.effect("keeps the Tailscale session when the host refuses or cannot be reached", () =>
+    Effect.gen(function* () {
+      const expired = tailnetSession("expired-token", 0);
+      const renew = (responses: ReadonlyArray<RecordedResponse>) =>
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({ credentials: [["pinned", expired]], responses });
+          const failure = yield* Effect.gen(function* () {
+            const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+            return yield* Effect.flip(remote.authorizeTailnetHttp({ credentialId: "pinned" }));
+          }).pipe(Effect.provide(harness.layer));
+          return { failure, stored: (yield* Ref.get(harness.credentials)).get("pinned") };
+        });
+
+      const refused = yield* renew([
+        Response.json(
+          {
+            _tag: "EnvironmentTailnetSignInRefusedError",
+            code: "tailnet_sign_in_refused",
+            reason: "blocked",
+            traceId: "trace-blocked",
+          },
+          { status: 403 },
+        ),
+      ]);
+      expect(refused.failure).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "permission",
+        tailnetRefusal: "blocked",
+        traceId: "trace-blocked",
+      });
+      expect(refused.stored).toBe(expired);
+
+      // Off Tailscale the fetch fails; the machine keeps its session and retries later.
+      const offline = yield* renew([]);
+      expect(offline.failure._tag).toBe("ConnectionTransientError");
+      expect(offline.stored).toBe(expired);
     }),
   );
 });

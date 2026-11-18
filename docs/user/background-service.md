@@ -1,7 +1,7 @@
 # Running T3 Code in the background
 
-On Linux and macOS, T3 Code can run as a service for your user so you do not need
-to keep a terminal open.
+On Linux, macOS, and Windows, T3 Code can run as a service for your user so you
+do not need to keep a terminal open.
 
 ## Manage the service
 
@@ -44,14 +44,16 @@ under T3 home. Pass `--yes` from a script.
 
 ## Local network access
 
-A new service answers only on this machine. Other devices reach it through
-T3 Connect, or directly once you choose the local network in `t3 up` (or run
-`t3 up --lan`, which sets `T3CODE_LAN=true` in `service.env`). It then listens on
-your local network and Tailscale addresses, so the desktop and mobile apps on
-the same network connect directly instead of through T3 Connect. It still does
-not answer on public addresses. Anyone on the same network can reach the port,
-so a pairing code is all that keeps them out. The hosted web app at app.t3.codes
-stays on T3 Connect, because browsers block plain HTTP from an HTTPS page.
+A new service accepts no connections from your local network. Other devices
+reach it through T3 Connect, through Tailscale once you choose it in `t3 up`, or
+directly once you choose the local network there (or run `t3 up --lan`, which
+sets `T3CODE_LAN=true` in `service.env`).
+It then listens on your local network and Tailscale addresses, so the desktop
+and mobile apps on the same network connect directly instead of through
+T3 Connect. It still does not answer on public addresses. Anyone on the same
+network can reach the port, so a pairing code or Tailscale sign-in is all that
+keeps them out. The hosted web app at app.t3.codes stays on T3 Connect, because
+browsers block plain HTTP from an HTTPS page.
 
 A service installed before `T3CODE_LAN` existed keeps listening on the local
 network. `t3 status` says so, and `t3 up --no-lan` turns it off. Any
@@ -64,7 +66,7 @@ directory, normally `~/.t3/service.env`. This file survives service installation
 and updates. For example:
 
 ```dotenv
-T3CODE_PORT=3773
+T3CODE_PORT=3774
 T3CODE_HOST=127.0.0.1
 ```
 
@@ -92,11 +94,12 @@ Mac logged in and awake for unattended remote access. Installing over SSH while
 nobody is logged in at the Mac's screen can fail at the final start step; the
 service is still installed and will start at the next login.
 
-Windows background services are not supported. To keep a Windows host available
-through T3 Connect, leave the desktop app running with its local environment
-enabled, or keep `t3 serve` running in a terminal. Minimize the desktop app rather
-than closing its last window, which stops its local server. Linking T3 Connect
-does not configure automatic startup at Windows sign-in.
+Windows starts the service when you log in and stops it when you sign out. It
+runs without a window as the `t3code-<domain>-<user name>` task in Task Scheduler, and Task
+Scheduler starts it again within a minute if it exits. Lock the screen instead
+of signing out, and keep the PC awake, for unattended remote access. Installing
+over SSH while nobody is signed in at the PC can fail at the final start step;
+the service is still installed and will start at the next sign-in.
 
 `t3 up` installs the service when you set up T3 Connect, but the two are managed
 separately. Signing out of T3 Connect does not stop or uninstall the service.
@@ -147,7 +150,7 @@ that session open.
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `linger-unavailable`                    | Run `loginctl show-user "$(id -un)" --property=Linger` and check that systemd-logind is available.                             |
 | `user-manager-unavailable`              | Run `systemctl --user status` in a login session for the service user; check your distribution's systemd user-session support. |
-| `service-disabled` or `service-stopped` | Read the log and `systemctl --user status t3code.service`, then use the repair command printed by T3 Code.                     |
+| `service-disabled` or `service-stopped` | Read the log and, on Linux, `systemctl --user status t3code.service`, then use the repair command printed by T3 Code.          |
 | `restart-pending`                       | A newer version is installed but the service still runs the previous one. Run `t3 service restart`.                            |
 
 On macOS, check **System Settings → General → Login Items** if the service no
@@ -181,14 +184,19 @@ pass `--fix` to run the recommended ones without a prompt (for scripts), or
 `--dry-run` to only report. An installed background service for the same data
 directory is stopped for the repair and started again afterwards, also when
 the repair fails. Quit a server you started by hand, or the desktop app, first:
-the repair refuses to touch a database that is in use. Use `--base-dir` for a
-different data directory.
+the repair refuses to touch a database that is in use, and names the server
+process that holds it when it can tell. While the repair runs, a server started
+for the same data directory, for example by a desktop app connecting over SSH,
+is refused until the repair ends. Use `--base-dir` for a different data
+directory.
 
-The repair can take several minutes on a large database. It rebuilds the
-database through a temporary copy, so it needs free space of about twice the
-data still in use (the database size minus the reclaimable space): once in the
-system temporary directory (on Linux and macOS, `TMPDIR`, or `/var/tmp` when it
-is not set) and once next to the database for its write-ahead log.
+The repair's time grows with the size of the whole database, not only the
+space it reclaims, and can exceed an hour on a large database or a slow disk;
+`t3 doctor` shows each step as it runs. It rebuilds the database through a
+temporary copy, so it needs free space of about twice the data still in use
+(the database size minus the reclaimable space): once in the system temporary
+directory (on Linux and macOS, `TMPDIR`, or `/var/tmp` when it is not set) and
+once next to the database for its write-ahead log.
 
 If you upgraded from a version before 0.1.0, its database (`state.sqlite`) is
 still kept next to the current one so you can roll back. `t3 doctor` offers to

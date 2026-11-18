@@ -29,6 +29,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.remoteMcpAuthorize]: AuthSettingsWriteScope,
   [WS_METHODS.remoteMcpReconnect]: AuthSettingsWriteScope,
   [WS_METHODS.remoteMcpRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.serverCheckSecretSource]: AuthSettingsWriteScope,
+  // Listing models spends the stored API key, so only those who can choose a model may.
+  [WS_METHODS.serverListTextGeneratorModels]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
@@ -115,9 +118,16 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // A guest link hands thread access to someone outside, like a pairing link.
   [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksLink]: AuthAccessWriteScope,
+  // An offer makes this machine's app connect to another machine; taking one acts on it.
+  [WS_METHODS.connectionOffersOffer]: AuthAccessWriteScope,
+  [WS_METHODS.connectionOffersTake]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
+  // Blocking a device is access management, like revoking its session.
+  [WS_METHODS.tailnetDevicesList]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesBlock]: AuthAccessWriteScope,
+  [WS_METHODS.tailnetDevicesUnblock]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

@@ -1,4 +1,8 @@
-import { AuthStandardClientScopes, type ManagedPolicyDocument } from "@t3tools/contracts";
+import {
+  AuthStandardClientScopes,
+  type ManagedPolicyDocument,
+  TAILNET_SUBJECT_PREFIX,
+} from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
@@ -76,6 +80,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         const pairingLinks = yield* PairingGrantStore.PairingGrantStore;
         const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const phone = yield* sessions.issue({ subject: "one-time-token" });
+        const tailnet = yield* sessions.issue({ subject: `${TAILNET_SUBJECT_PREFIX}nPhone` });
         const bot = yield* sessions.issue({ subject: "cli-issued-session" });
         const startup = (ipAddress: string) =>
           sessions.issue({
@@ -85,6 +90,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         const startupPhone = yield* startup("192.168.1.20");
         const startupBrowser = yield* startup("127.0.0.1");
         yield* environmentAuth.createPairingLink({ subject: "one-time-token" });
+        yield* environmentAuth.issuePairingCredential({ access: "auto" });
 
         yield* EnvironmentAuth.make.pipe(
           Effect.provide(
@@ -94,6 +100,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 
         const remaining = (yield* sessions.listActive()).map((session) => session.sessionId);
         assert.notInclude(remaining, phone.sessionId);
+        assert.notInclude(remaining, tailnet.sessionId);
         assert.notInclude(remaining, startupPhone.sessionId);
         assert.include(remaining, startupBrowser.sessionId);
         assert.include(remaining, bot.sessionId);
@@ -106,6 +113,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         const sessions = yield* SessionStore.SessionStore;
         const phone = yield* sessions.issue({ subject: "one-time-token" });
         const connect = yield* sessions.issue({ subject: "cloud-connect" });
+        const tailnet = yield* sessions.issue({ subject: `${TAILNET_SUBJECT_PREFIX}nPhone` });
 
         yield* EnvironmentAuth.make.pipe(
           Effect.provide(
@@ -122,6 +130,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
 
         const remaining = (yield* sessions.listActive()).map((session) => session.sessionId);
         assert.include(remaining, phone.sessionId);
+        assert.include(remaining, tailnet.sessionId);
         assert.notInclude(remaining, connect.sessionId);
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
@@ -135,6 +144,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           subject: "one-time-token",
           label: "CI phone",
         });
+        // An app approval code is never listed.
+        yield* environmentAuth.issuePairingCredential({ access: "auto" });
         const listedBeforeRevoke = yield* environmentAuth.listPairingLinks();
         const revoked = yield* environmentAuth.revokePairingLink(created.id);
         const listedAfterRevoke = yield* environmentAuth.listPairingLinks();

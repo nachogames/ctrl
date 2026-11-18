@@ -9,6 +9,7 @@ import {
 import { AuthClientPresentationMetadata, ServerAuthDescriptor } from "./auth.ts";
 import {
   ForwardCompatibleArray,
+  ForwardCompatibleOptional,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -29,6 +30,7 @@ import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
 import { ServerSettings } from "./settings.ts";
+import { TailscaleState } from "./tailnet.ts";
 import { DesktopUpdateChannelSchema } from "./ipc.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -82,6 +84,8 @@ export const ServerProviderAuth = Schema.Struct({
   subscriptionSharing: Schema.optional(Schema.Boolean),
   profileId: Schema.optional(TrimmedNonEmptyString),
   workspaceId: Schema.optional(TrimmedNonEmptyString),
+  /** Origin of the custom endpoint the instance sends its requests to. */
+  endpoint: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
@@ -95,6 +99,9 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  // False when the provider can run this model in sessions but not for
+  // application text generation. Absent means supported.
+  supportsTextGeneration: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
@@ -147,6 +154,9 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+  // Absent means the provider's machine `models`, which keeps most snapshots small.
+  models: Schema.optional(Schema.Array(ServerProviderModel)),
+  modelsPending: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
@@ -157,6 +167,13 @@ export function isProviderWorkspaceSnapshotCurrent(
   nowMs: number,
 ): boolean {
   return nowMs - Date.parse(snapshot.checkedAt) < PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS;
+}
+
+/** A pending snapshot keeps what it found before and is rescanned before its TTL. */
+export function isProviderWorkspaceSnapshotPending(
+  snapshot: Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "modelsPending">,
+): boolean {
+  return snapshot.slashCommandsPending === true || snapshot.modelsPending === true;
 }
 
 /** Unavailable snapshots must set installed and enabled false. */
@@ -283,12 +300,72 @@ export const ServerProvider = Schema.Struct({
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
+  /**
+   * Set when the server rescanned a workspace after a session start and its skills or commands
+   * changed. Clients holding fetched workspace snapshots for this provider fetch them again.
+   */
+  workspaceRescannedAt: Schema.optionalKey(IsoDateTime),
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  /**
+   * Stands for the machine slash commands and skills, which are then left out. Sent to clients
+   * that ask for catalog digests; they load both lists with their next cwd snapshot.
+   */
+  catalogDigest: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Set by the client, never sent: the `catalogDigest` its slash commands and skills belong to. */
+  loadedCatalogDigest: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerProvider = typeof ServerProvider.Type;
+
+/** A provider without the lists that equal the ones its reader already holds. */
+export const ServerProviderDelta = ServerProvider.mapFields((fields) => ({
+  ...fields,
+  models: Schema.optionalKey(fields.models),
+  // Declared again without the decoding default, which would read as a change to an empty list.
+  slashCommands: Schema.optionalKey(Schema.Array(ServerProviderSlashCommand)),
+  skills: Schema.optionalKey(Schema.Array(ServerProviderSkill)),
+}));
+export type ServerProviderDelta = typeof ServerProviderDelta.Type;
+
+const sameJson = (left: unknown, right: unknown) =>
+  left === right || JSON.stringify(left) === JSON.stringify(right);
+
+/** Leaves each provider's models, slash commands, and skills out when `previous` has the same. */
+export function serverProviderDeltas(
+  previous: ReadonlyArray<ServerProvider>,
+  next: ReadonlyArray<ServerProvider>,
+): ServerProviderDelta[] {
+  const held = new Map(previous.map((provider) => [provider.instanceId, provider]));
+  return next.map((provider) => {
+    const base = held.get(provider.instanceId);
+    if (base === undefined) return provider;
+    const { models, slashCommands, skills, ...rest } = provider;
+    return {
+      ...rest,
+      ...(sameJson(base.models, models) ? {} : { models }),
+      ...(sameJson(base.slashCommands, slashCommands) ? {} : { slashCommands }),
+      ...(sameJson(base.skills, skills) ? {} : { skills }),
+    };
+  });
+}
+
+/** Rebuilds the provider list `serverProviderDeltas` was made from. */
+export function applyServerProviderDeltas(
+  previous: ReadonlyArray<ServerProvider>,
+  deltas: ReadonlyArray<ServerProviderDelta>,
+): ServerProvider[] {
+  const held = new Map(previous.map((provider) => [provider.instanceId, provider]));
+  return deltas.flatMap((delta) => {
+    const base = held.get(delta.instanceId);
+    const models = delta.models ?? base?.models;
+    const slashCommands = delta.slashCommands ?? base?.slashCommands;
+    const skills = delta.skills ?? base?.skills;
+    // A list this reader never held cannot be rebuilt; drop the provider like an unreadable one.
+    return models && slashCommands && skills ? [{ ...delta, models, slashCommands, skills }] : [];
+  });
+}
 
 export const ServerProviders = ForwardCompatibleArray(ServerProvider);
 export type ServerProviders = typeof ServerProviders.Type;
@@ -574,6 +651,8 @@ const EnvironmentThemeColors = Schema.Record(
   TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
 );
 
+export const THEME_CSS_MAX_LENGTH = 50_000;
+
 const environmentThemeFields = {
   version: Schema.optional(Schema.Literal(1)),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)),
@@ -588,6 +667,8 @@ const environmentThemeFields = {
       dark: Schema.optional(EnvironmentThemeColors),
     }),
   ),
+  /** Custom styles for web and desktop clients. */
+  css: Schema.optional(Schema.String.check(Schema.isMaxLength(THEME_CSS_MAX_LENGTH))),
 };
 
 export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
@@ -635,10 +716,111 @@ export const ServerEventLoopStall = Schema.Struct({
 });
 export type ServerEventLoopStall = typeof ServerEventLoopStall.Type;
 
+export const ServerTailscaleIssueCause = Schema.Literals([
+  "not_installed",
+  "not_running",
+  "needs_login",
+  "needs_machine_approval",
+  "stopped",
+  "starting",
+  "unreadable",
+  "key_expired",
+  "key_expiring",
+  "health_warning",
+  "https_off",
+  "magic_dns_off",
+  "userspace_networking",
+  "outdated",
+  "no_ipv4",
+]);
+export type ServerTailscaleIssueCause = typeof ServerTailscaleIssueCause.Type;
+
+export const ServerTailscaleIssue = Schema.Struct({
+  cause: ServerTailscaleIssueCause,
+  /** What to do on the host, without naming it. */
+  fix: Schema.String,
+  /** Tailscale's own text, for a health warning. */
+  message: Schema.optionalKey(Schema.String),
+});
+export type ServerTailscaleIssue = typeof ServerTailscaleIssue.Type;
+
+/** The host's own Tailscale as of `checkedAt`. Clients keep the last one they saw. */
+export const ServerTailscaleStatus = Schema.Struct({
+  state: TailscaleState,
+  checkedAt: IsoDateTime,
+  magicDnsName: Schema.NullOr(Schema.String),
+  keyExpiry: Schema.NullOr(IsoDateTime),
+  /** Most urgent first. Empty when nothing needs fixing. */
+  issues: ForwardCompatibleArray(ServerTailscaleIssue),
+});
+export type ServerTailscaleStatus = typeof ServerTailscaleStatus.Type;
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+/** "3 days", "5h", "12m": coarse, for key expiry and how old a fact is. */
+export function formatRoughDuration(ms: number): string {
+  if (ms >= 2 * DAY_MS) return `${Math.floor(ms / DAY_MS)} days`;
+  if (ms >= DAY_MS) return "1 day";
+  if (ms >= HOUR_MS) return `${Math.floor(ms / HOUR_MS)}h`;
+  return `${Math.max(1, Math.floor(ms / MINUTE_MS))}m`;
+}
+
+/** One line for an issue, e.g. "Tailscale on studio is signed out". The CLI passes "this machine". */
+export function tailscaleIssueHeadline(
+  host: string,
+  issue: ServerTailscaleIssue,
+  keyExpiry: string | null,
+  now: number,
+): string {
+  switch (issue.cause) {
+    case "not_installed":
+      return `Tailscale is not installed on ${host}`;
+    case "not_running":
+      return `Tailscale is not running on ${host}`;
+    case "needs_login":
+      return `Tailscale on ${host} is signed out`;
+    case "needs_machine_approval":
+      return `Tailscale on ${host} is waiting for approval`;
+    case "stopped":
+      return `Tailscale is off on ${host}`;
+    case "starting":
+      return `Tailscale on ${host} is starting`;
+    case "unreadable":
+      return `T3 Code could not read the Tailscale status on ${host}`;
+    case "key_expired":
+      return `The Tailscale node key on ${host} has expired`;
+    case "key_expiring": {
+      const expiresAt = keyExpiry === null ? Number.NaN : Date.parse(keyExpiry);
+      // A cached status can outlive the expiry it warned about.
+      return Number.isNaN(expiresAt)
+        ? `The Tailscale node key on ${host} expires soon`
+        : expiresAt <= now
+          ? `The Tailscale node key on ${host} has expired`
+          : `The Tailscale node key on ${host} expires in ${formatRoughDuration(expiresAt - now)}`;
+    }
+    case "health_warning":
+      return `Tailscale on ${host} reports: ${issue.message ?? "a problem"}`;
+    case "https_off":
+      return `HTTPS certificates are off on the tailnet of ${host}`;
+    case "magic_dns_off":
+      return `MagicDNS is off on the tailnet of ${host}`;
+    case "userspace_networking":
+      return `Tailscale on ${host} uses userspace networking`;
+    case "outdated":
+      return `Tailscale on ${host} is too old for Tailscale sign-in`;
+    case "no_ipv4":
+      return `Tailscale on ${host} has no IPv4 address`;
+  }
+}
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
   cwd: TrimmedNonEmptyString,
+  /** The machine's own name, which file URIs from its shells may carry. Older servers omit it. */
+  hostname: Schema.optionalKey(Schema.String),
   keybindingsConfigPath: TrimmedNonEmptyString,
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
@@ -695,6 +877,14 @@ export const ServerConfig = Schema.Struct({
    * answering. Clients do not cache it, since it describes the host at connect.
    */
   lastEventLoopStall: Schema.optionalKey(ServerEventLoopStall),
+  /** Absent from older servers. A value this build cannot read decodes as absent. */
+  tailscale: ForwardCompatibleOptional(ServerTailscaleStatus),
+  /**
+   * The host's clock when it built the config, so clients can count live
+   * elapsed times against host timestamps despite clock skew. Only a
+   * subscription's first snapshot is fresh; later snapshots may repeat it.
+   */
+  serverTime: Schema.optionalKey(IsoDateTime),
   /**
    * Never sent in a config snapshot: the theme stream emits the current set
    * before any change, so a snapshot carrying it too would hand every
@@ -779,6 +969,13 @@ export const ServerConfigProviderStatusesPayload = Schema.Struct({
 });
 export type ServerConfigProviderStatusesPayload = typeof ServerConfigProviderStatusesPayload.Type;
 
+export const ServerConfigProviderStatusDeltasPayload = Schema.Struct({
+  /** Every provider in order, as `serverProviderDeltas` from the list this client last received. */
+  providers: ForwardCompatibleArray(ServerProviderDelta),
+});
+export type ServerConfigProviderStatusDeltasPayload =
+  typeof ServerConfigProviderStatusDeltasPayload.Type;
+
 export const ServerConfigSettingsUpdatedPayload = Schema.Struct({
   settings: ServerSettings,
 });
@@ -806,6 +1003,14 @@ export const ServerConfigStreamProviderStatusesEvent = Schema.Struct({
 });
 export type ServerConfigStreamProviderStatusesEvent =
   typeof ServerConfigStreamProviderStatusesEvent.Type;
+
+export const ServerConfigStreamProviderStatusDeltasEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("providerStatusDeltas"),
+  payload: ServerConfigProviderStatusDeltasPayload,
+});
+export type ServerConfigStreamProviderStatusDeltasEvent =
+  typeof ServerConfigStreamProviderStatusDeltasEvent.Type;
 
 export const ServerConfigStreamSettingsUpdatedEvent = Schema.Struct({
   version: Schema.Literal(1),
@@ -856,6 +1061,7 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
   ServerConfigStreamProviderStatusesEvent,
+  ServerConfigStreamProviderStatusDeltasEvent,
   ServerConfigStreamSettingsUpdatedEvent,
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
@@ -985,6 +1191,7 @@ export const ServerSelfUpdateInput = Schema.Struct({
   channel: Schema.optionalKey(DesktopUpdateChannelSchema),
   /** The target release's highest migration; the host refuses to leave Nightly without it. */
   targetDatabaseMigration: Schema.optionalKey(Schema.Int),
+  stageOnly: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
 

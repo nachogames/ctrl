@@ -44,6 +44,7 @@ vi.mock("expo-haptics", () => ({
 }));
 vi.mock("../../components/ui/ListRow", () => ({ ListRow: () => null }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
+vi.mock("../../state/connectComputers", () => ({ connectComputerTo: vi.fn() }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => <span>{children}</span>,

@@ -16,6 +16,10 @@ client of a restarted server reconnects in the same second; with a short cap, a
 client that can never connect retries all day. Offline states and authentication
 failures wait for a wakeup instead of spending attempts on unchanged conditions.
 
+A healthy session stays on its current route: discovery does not prove that a
+better route can establish a socket. Necessary reconnects use the latest ranked
+routes, including those learned from the current session.
+
 Foregrounding, a network change, an explicit retry, and an offline report probe
 the established session, and only a failed probe reconnects. Offline reports are
 often wrong, for example for a loopback server. The OS can kill a suspended
@@ -74,6 +78,37 @@ Cached projections remain readable offline. They must neither imply a live
 connection nor overwrite newer live data during a reconnect. Loading and
 resuming snapshots belongs to the shared state services, so every view agrees
 on which data is current.
+
+The shell snapshot loads over HTTP, which needs only the prepared connection, so
+the [shell state](../../packages/client-runtime/src/state/shell.ts) can ask for
+it before the socket and the config are ready. Two constraints follow. The live
+config stays the authority: rows loaded early for a build or with omissions that
+it does not confirm are replaced, never resumed. And an HTTP answer must never
+land on rows the socket has moved on: the subscription waits for the answer, and
+when held rows can resume, it ends the request 3 seconds after the socket is
+ready. A proxy that drops `/api` without an answer then does not hold the
+connect for the HTTP timeout.
+
+Each environment synchronizes at its own time, so a thread list that follows every
+snapshot moves once per environment on each cold start and resume. Mobile lists read
+[steady shells](../../packages/client-runtime/src/state/steadyShells.ts): an
+environment's rows stay as shown until its connection's server snapshot arrives,
+it is synchronized, or it disconnects, and environments that get there within two
+seconds of each other show together. Only an environment that is connected or on
+its first attempt, and still owes its snapshot, is waited for; a retry can take
+minutes. A move in a list is refused while its rows wait, because its plan would
+use order keys the server may have replaced. Every other row action looks up the
+live row before it reads thread state, so an undo plan or a guard never uses a held
+row. The hold stops only changes the user
+did not cause: a command that moves or removes a row (settle, snooze, pin, archive,
+delete, and their reverses) makes that environment's rows follow the live snapshot
+until it is live. Point reads (a
+thread's own shell, route checks) keep the live snapshot, where a row the server just
+sent must not look missing. The decision reads the snapshot's own sequence: a second
+atom derived from the same shell state can be one update behind the rows. The mobile
+splash screen also waits, for a bounded time, until every enabled environment has
+read its cached shell and Home's list has laid out those rows, so the first frame
+holds all cached rows.
 
 Shell snapshots can leave rows out when the client asks. Servers that advertise
 `shellThreadFamilies` leave out idle subagent children: a child stays while it

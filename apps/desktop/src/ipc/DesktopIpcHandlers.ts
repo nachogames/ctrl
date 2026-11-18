@@ -13,8 +13,11 @@ import {
 import {
   getAdvertisedEndpoints,
   getServerExposureState,
+  discoverTailnetEnvironments,
+  getTailscaleStatus,
   setServerExposureMode,
   setTailscaleServeEnabled,
+  setTailscaleSignInEnabled,
 } from "./methods/serverExposure.ts";
 import {
   bootstrapSshBearerSession,
@@ -40,18 +43,22 @@ import {
   installRelayTelemetryEnabled,
   getSystemLocale,
   getPreferredSystemLanguages,
+  getPrimaryPasteEnabled,
   getWindowFullscreenState,
   openExternal,
   readMedia,
+  restartAudioService,
   openSystemSettings,
   checkSystemPermission,
   pasteAsText,
   probeRemoteEditors,
   revealWindow,
   pickFolder,
+  toLocalBackendPath,
   pickProjectFavicon,
   pickThemeFiles,
   setTheme,
+  syncHtmlFullscreen,
   showContextMenu,
 } from "./methods/window.ts";
 import {
@@ -100,6 +107,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* installRelayTelemetryEnabled();
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getPreferredSystemLanguages);
+  yield* ipc.handleSync(getPrimaryPasteEnabled);
   yield* ipc.handleSync(getWindowFullscreenState);
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);
   yield* ipc.handleSync(getLocalEnvironmentEnabled);
@@ -107,6 +115,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(getHostEnvironmentId);
   yield* ipc.handle(getLocalEnvironmentBearerToken);
 
+  yield* ipc.handle(restartAudioService);
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
   yield* ipc.handle(getConnectionCatalog);
@@ -137,6 +146,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setServerExposureMode);
   yield* ipc.handle(setTailscaleServeEnabled);
   yield* ipc.handle(getAdvertisedEndpoints);
+  yield* ipc.handle(getTailscaleStatus);
+  yield* ipc.handle(setTailscaleSignInEnabled);
+  yield* ipc.handle(discoverTailnetEnvironments);
 
   yield* ipc.handle(getWslState);
   yield* ipc.handle(setWslBackendEnabled);
@@ -144,6 +156,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setWslOnly);
 
   yield* ipc.handle(pickFolder);
+  yield* ipc.handle(toLocalBackendPath);
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);
@@ -156,6 +169,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(checkSystemPermission);
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(revealWindow);
+  yield* ipc.handle(syncHtmlFullscreen);
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);

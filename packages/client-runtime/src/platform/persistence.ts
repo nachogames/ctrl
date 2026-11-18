@@ -28,6 +28,7 @@ export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPer
     operation: Schema.Literals([
       "list-targets",
       "list-disabled-targets",
+      "list-dismissed-environments",
       "register-connection",
       "set-connection-routes",
       "remove-connection",
@@ -54,6 +55,8 @@ export class ConnectionTargetStore extends Context.Service<
   {
     readonly list: Effect.Effect<ReadonlyArray<ConnectionTarget>, ConnectionPersistenceError>;
     readonly listDisabled: Effect.Effect<ReadonlyArray<EnvironmentId>, ConnectionPersistenceError>;
+    /** Environments the user removed, which discovery must not add again. */
+    readonly listDismissed: Effect.Effect<ReadonlyArray<EnvironmentId>, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/ConnectionTargetStore") {}
 
@@ -74,8 +77,10 @@ export class ConnectionRegistrationStore extends Context.Service<
       environmentId: EnvironmentId,
       routes: ReadonlyArray<PersistedConnectionTarget>,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
+    /** `dismiss` remembers the removal, so discovery does not add the environment again. */
     readonly remove: (
       environmentId: EnvironmentId,
+      options?: { readonly dismiss?: boolean },
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly setEnabled: (
       environmentId: EnvironmentId,

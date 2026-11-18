@@ -55,6 +55,7 @@ export function useLogicalProjectEnvironments(
             },
       ),
       ...(disabledReason === undefined ? {} : { disabledReason }),
+      connection: environment?.connection.phase ?? "available",
     });
   };
   if (scratchDraft) {

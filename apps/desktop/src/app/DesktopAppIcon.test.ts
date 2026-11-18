@@ -70,7 +70,7 @@ function harness(input: {
             setDockIcon: (path) => Effect.sync(() => void input.calls.dock.push(path)),
           }),
           Layer.mock(ElectronWindow.ElectronWindow)({
-            syncAllAppearance: (sync) => sync(fakeWindow),
+            syncAllAppearance: (sync) => sync(fakeWindow, { titleBarOverlay: false }),
           }),
           DesktopClientSettings.layerTest(
             input.stored === undefined

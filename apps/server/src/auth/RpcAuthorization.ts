@@ -29,6 +29,7 @@ import {
   RpcScopeAuthorization,
   WS_METHODS,
   WsRpcGroup,
+  tailnetScopeDenial,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -94,7 +95,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverGetStorageCleanupReport]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetDatabaseStorage]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.peerLinksList]: AuthAccessReadScope,
+  // Narrow tokens, such as MCP clients, get no map of the tailnet.
+  [WS_METHODS.tailnetPeersList]: AuthAccessReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
   [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,
@@ -156,6 +160,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsReportState]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
@@ -260,9 +265,14 @@ export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope 
   return requiredScope;
 }
 
-export const rpcAuthorizationError = (requiredScope: AuthEnvironmentScope) =>
+export const rpcAuthorizationError = (
+  requiredScope: AuthEnvironmentScope,
+  grantedByTailnet = false,
+) =>
   new EnvironmentAuthorizationError({
-    message: `The authenticated token is missing required scope: ${requiredScope}.`,
+    message: grantedByTailnet
+      ? tailnetScopeDenial(requiredScope)
+      : `The authenticated token is missing required scope: ${requiredScope}.`,
     ...authScopeRequiredResponse(requiredScope),
   });
 
@@ -297,7 +307,8 @@ const requiredScopesForRpcCall = (
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||
-      resource._tag === "draft-workspace-file"
+      resource._tag === "draft-workspace-file" ||
+      (resource._tag === "native-app-icon" && resource.app._tag === "app-path")
         ? AuthFilesystemReadScope
         : AuthOrchestrationReadScope,
     ];
@@ -319,11 +330,15 @@ const requiredScopesForRpcCall = (
 export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
+  /** The session came from a tailnet grant, so a missing scope is the grant's to add. */
+  grantedByTailnet = false,
 ) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
-    if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
+    if (requiredScope !== undefined) {
+      return Effect.fail(rpcAuthorizationError(requiredScope, grantedByTailnet));
+    }
     return onAuthorized === undefined
       ? effect
       : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));

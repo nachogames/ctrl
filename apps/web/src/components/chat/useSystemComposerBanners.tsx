@@ -1,6 +1,9 @@
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type EnvironmentId } from "@t3tools/contracts";
-import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import {
+  type EnvironmentConnectionPhase,
+  type EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
@@ -39,6 +42,22 @@ export type EnvironmentUnavailableState = {
   readonly label: string;
   readonly connection: EnvironmentConnectionPresentation;
 };
+
+function unavailableTitle(label: string, phase: EnvironmentConnectionPhase): string {
+  switch (phase) {
+    case "connecting":
+    case "reconnecting":
+      return `${label} is reconnecting`;
+    case "error":
+    case "unsupported":
+      return `Can't connect to ${label}`;
+    case "available":
+      return `${label} is switched off`;
+    case "offline":
+    case "connected":
+      return `${label} is offline`;
+  }
+}
 
 interface SystemComposerBannersInput {
   readonly activeEnvironment: EnvironmentPresentation | null;
@@ -177,8 +196,11 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       unavailableConnection !== null &&
       (unavailableConnection.phase === "connecting" ||
         unavailableConnection.phase === "reconnecting");
+    const awaitingApproval = unavailableConnection?.awaitingApproval === true;
     const suppressUnavailableBanner =
-      environmentReconnecting && (updateRunning || !reconnectWarningGraceElapsed);
+      environmentReconnecting &&
+      !awaitingApproval &&
+      (updateRunning || !reconnectWarningGraceElapsed);
     const showUnavailableBanner =
       activeEnvironmentUnavailableState !== null &&
       unavailableConnection !== null &&
@@ -189,13 +211,17 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
         group: "environment",
         icon: <WifiOffIcon />,
-        title: `${activeEnvironmentUnavailableState.label} is ${environmentReconnecting ? "reconnecting" : "offline"}`,
-        description: activeEnvironment ? (
+        title: awaitingApproval
+          ? `${activeEnvironmentUnavailableState.label} is waiting to approve this device`
+          : unavailableTitle(activeEnvironmentUnavailableState.label, unavailableConnection.phase),
+        description: awaitingApproval ? (
+          (unavailableConnection.error ?? undefined)
+        ) : activeEnvironment ? (
           <ConnectionDiagnosisHeadline environment={activeEnvironment} />
         ) : undefined,
         actions: (
           <>
-            {!environmentReconnecting ? (
+            {unavailableConnection.phase !== "connecting" ? (
               <Button
                 size="xs"
                 variant="ghost"
@@ -205,7 +231,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
                   )
                 }
               >
-                Reconnect
+                {environmentReconnecting ? "Retry now" : "Reconnect"}
               </Button>
             ) : null}
             {disconnectAction}

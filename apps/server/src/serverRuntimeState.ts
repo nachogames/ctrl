@@ -5,9 +5,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
 import packageJson from "../package.json" with { type: "json" };
 import type * as ServerConfig from "./config.ts";
-import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
 export const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),
@@ -15,6 +15,7 @@ export const PersistedServerRuntimeState = Schema.Struct({
   ownerId: Schema.optional(Schema.String),
   host: Schema.optional(Schema.String),
   privateNetworkOnly: Schema.optional(Schema.Boolean),
+  tailscaleOnly: Schema.optional(Schema.Boolean),
   port: Schema.Int,
   origin: Schema.String,
   // Dev is single-origin: browsers must pair through this URL, not `origin`.
@@ -64,7 +65,7 @@ const runtimeOriginForConfig = (
 export const makePersistedServerRuntimeState = (input: {
   readonly config: Pick<
     ServerConfig.ServerConfig["Service"],
-    "host" | "privateNetworkOnly" | "devUrl"
+    "host" | "privateNetworkOnly" | "tailscaleOnly" | "devUrl"
   >;
   readonly port: number;
   readonly serviceManaged?: boolean;
@@ -75,6 +76,7 @@ export const makePersistedServerRuntimeState = (input: {
     pid: process.pid,
     ...(input.config.host ? { host: input.config.host } : {}),
     ...(input.config.privateNetworkOnly ? { privateNetworkOnly: true } : {}),
+    ...(input.config.tailscaleOnly ? { tailscaleOnly: true } : {}),
     port: input.port,
     origin: runtimeOriginForConfig(input.config, input.port),
     ...(input.config.devUrl ? { devUrl: input.config.devUrl.toString() } : {}),
@@ -191,4 +193,17 @@ export const readPersistedServerRuntimeState = Effect.fn(
         Effect.as(Option.none<PersistedServerRuntimeState>()),
       ),
   }),
+);
+
+/**
+ * The runtime record, only while its server process is alive. Read this before sending
+ * credentials to the recorded origin: a killed server leaves its record behind, and
+ * another process may own its port by now.
+ */
+export const readLiveServerRuntimeState = Effect.fn(
+  "serverRuntimeState.readLiveServerRuntimeState",
+)((path: string) =>
+  readPersistedServerRuntimeState(path).pipe(
+    Effect.map(Option.filter((state) => isProcessAlive(state.pid))),
+  ),
 );

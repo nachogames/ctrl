@@ -21,11 +21,16 @@ export const DesktopBackendBootstrap = Schema.Struct({
   shellEnvironmentPrepared: Schema.optionalKey(Schema.Boolean),
   tailscaleServeEnabled: Schema.Boolean,
   tailscaleServePort: PortSchema,
+  tailscaleSignInEnabled: Schema.optionalKey(Schema.Boolean),
+  // Accept only loopback and tailnet peers on a wildcard listener.
+  tailscaleOnly: Schema.optionalKey(Schema.Boolean),
   otlpTracesUrl: Schema.optional(Schema.String),
   otlpMetricsUrl: Schema.optional(Schema.String),
   otlpLogsUrl: Schema.optional(Schema.String),
   desktopTelemetryFd: Schema.optionalKey(PositiveInt),
   desktopTelemetryControlFd: Schema.optionalKey(PositiveInt),
+  // Whether the spawning desktop app can install updates when the server requests one.
+  desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
   desktopBrowserFd: Schema.optionalKey(PositiveInt),
   desktopBrowserControlFd: Schema.optionalKey(PositiveInt),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
@@ -35,3 +40,6 @@ export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;
 
 /** Written to `<t3Home>/runtime` before update shutdown so the backend retains its managed tunnel. */
 export const DESKTOP_UPDATE_RESTART_MARKER_FILE = "desktop-update-restart";
+
+export const DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE = "desktop-update-in-progress";
+export const DESKTOP_UPDATE_IN_PROGRESS_TTL_MS = 60_000;

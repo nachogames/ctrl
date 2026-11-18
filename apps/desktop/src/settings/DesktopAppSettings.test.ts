@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 
@@ -160,6 +161,49 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("keeps saved preferences when a read fails before a bounds save", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* writeSettingsPatch({ serverExposureMode: "network-accessible" });
+        const cause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readFileString",
+          pathOrDescriptor: environment.desktopSettingsPath,
+        });
+        let failRead = true;
+        const settings = yield* DesktopAppSettings.make.pipe(
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.FileSystem.of({
+              ...fileSystem,
+              readFileString: (path) =>
+                Effect.suspend(() => {
+                  if (failRead && path === environment.desktopSettingsPath) {
+                    failRead = false;
+                    return Effect.fail(cause);
+                  }
+                  return fileSystem.readFileString(path);
+                }),
+            }),
+          ),
+        );
+
+        yield* Effect.exit(settings.load);
+        yield* Effect.exit(
+          settings.setMainWindowBounds({ x: 10, y: 20, width: 900, height: 600 }, false),
+        );
+
+        const persisted = yield* decodeDesktopSettingsPatch(
+          yield* fileSystem.readFileString(environment.desktopSettingsPath),
+        );
+        assert.equal(persisted.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
   it.effect("loads lenient persisted desktop settings JSON", () =>
     withSettings(
       Effect.gen(function* () {
@@ -186,12 +230,35 @@ describe("DesktopSettings", () => {
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
+          tailscaleSignInEnabled: false,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
           wslOnly: false,
           wslDistro: null,
         } satisfies DesktopAppSettings.DesktopSettings);
+      }),
+    ),
+  );
+
+  it.effect("keeps Local environment off when another value in the file is unreadable", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.desktopSettingsPath,
+          `{ "localEnvironmentEnabled": false, "serverExposureMode": "tailnet" }\n`,
+        );
+
+        assert.isFalse((yield* settings.load).localEnvironmentEnabled);
+        yield* settings.setMainWindowBounds({ x: 10, y: 20, width: 800, height: 600 }, false);
+        assert.include(
+          yield* fileSystem.readFileString(environment.desktopSettingsPath),
+          `"localEnvironmentEnabled":false`,
+        );
       }),
     ),
   );
@@ -317,6 +384,7 @@ describe("DesktopSettings", () => {
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
+          tailscaleSignInEnabled: false,
           updateChannel: "nightly",
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
@@ -346,6 +414,7 @@ describe("DesktopSettings", () => {
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
+          tailscaleSignInEnabled: false,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
           wslBackendEnabled: false,

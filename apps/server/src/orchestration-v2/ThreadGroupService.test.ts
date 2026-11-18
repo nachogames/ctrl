@@ -106,14 +106,14 @@ function makeLayer(
         ServerSettings.layerTest(),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (threadId) => Effect.succeed(threads.get(threadId) ?? null),
-          listProjectThreads: (input) =>
+          listProjectThreadShells: (projectId) =>
             Effect.succeed(
               [...threads.values()].filter(
                 (thread) =>
-                  thread.projectId === input.projectId &&
+                  thread.projectId === projectId &&
                   thread.archivedAt === null &&
                   thread.deletedAt === null &&
-                  (input.includeSubagents || thread.lineage.relationshipToParent !== "subagent"),
+                  thread.lineage.relationshipToParent !== "subagent",
               ),
             ),
           getShellSnapshot: (options) =>

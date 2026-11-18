@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 
 import { assert, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -50,6 +51,8 @@ const minimalDesktopFlags = (baseDir: string) => ({
   tailscaleServeEnabled: Option.none<boolean>(),
   tailscaleServePort: Option.none<number>(),
   lan: Option.none<boolean>(),
+  tailscaleSignInEnabled: Option.none<boolean>(),
+  tailscaleOwnerUserId: Option.none<string>(),
 });
 
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
@@ -214,6 +217,59 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       }),
   );
 
+  it.effect("names the pair command for the refused server's home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const child = yield* liveProcess;
+      assert(child.pid !== undefined);
+      for (const source of ["flag", "T3CODE_HOME", "default"] as const) {
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-pair-" });
+        const baseDir = source === "default" ? path.join(home, ".ctrl") : home;
+        const stateDir = path.join(baseDir, "userdata");
+        yield* fs.makeDirectory(stateDir, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(stateDir, "server-runtime.json"),
+          yield* encodeUnknownJson({
+            version: 1,
+            pid: child.pid,
+            port: 3773,
+            origin: "http://127.0.0.1:3773",
+            startedAt: "2026-10-01T00:00:00.000Z",
+          }),
+        );
+        const error = yield* resolveServerConfig(
+          {
+            ...minimalWebFlags(baseDir),
+            baseDir: source === "flag" ? Option.some(baseDir) : Option.none(),
+            cwd: Option.some(path.join(home, "project")),
+          },
+          Option.none(),
+          { rejectRunningServer: true },
+        ).pipe(
+          Effect.provide(
+            Layer.merge(
+              NetService.layer,
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: source === "T3CODE_HOME" ? { T3CODE_HOME: baseDir } : {},
+                }),
+              ),
+            ),
+          ),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.flip,
+        );
+        // A temp dir with spaces or backslashes is single-quoted for the shell.
+        const homePattern = baseDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        expect(String(error)).toMatch(
+          new RegExp(`pair --base-dir (${homePattern}|'${homePattern}')`),
+        );
+      }
+    }),
+  );
+
   it.effect("enables a trimmed reusable auth token only for web dev mode", () =>
     Effect.gen(function* () {
       const baseDir = yield* FileSystem.FileSystem.pipe(
@@ -233,6 +289,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
+        tailscaleSignInEnabled: Option.none<boolean>(),
+        tailscaleOwnerUserId: Option.none<string>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -278,6 +336,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
+        tailscaleSignInEnabled: Option.none<boolean>(),
+        tailscaleOwnerUserId: Option.none<string>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({ env: { T3CODE_DEV_AUTH_TOKEN: secret } }),
@@ -300,6 +360,32 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(serialized).not.toContain(secret);
       expect(desktop.devAuthToken).toBeUndefined();
       expect(staticWeb.devAuthToken).toBeUndefined();
+    }),
+  );
+
+  it.effect("reads the pairing session lifetime from T3CODE_PAIRING_SESSION_TTL", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-pairing-ttl-" })),
+      );
+      const resolveWithEnv = (env: Record<string, string>) =>
+        resolveServerConfig(minimalDesktopFlags(baseDir), Option.none()).pipe(
+          Effect.provide(
+            Layer.mergeAll(ConfigProvider.layer(ConfigProvider.fromEnv({ env })), NetService.layer),
+          ),
+        );
+
+      const configured = yield* resolveWithEnv({ T3CODE_PAIRING_SESSION_TTL: "26w" });
+      const unset = yield* resolveWithEnv({});
+      const rejected = yield* Effect.forEach(["0d", "3651d", "forever"], (value) =>
+        resolveWithEnv({ T3CODE_PAIRING_SESSION_TTL: value }).pipe(Effect.flip),
+      );
+
+      expect(configured.pairingSessionTtl).toEqual(Duration.weeks(26));
+      expect(unset.pairingSessionTtl).toBeUndefined();
+      for (const error of rejected) {
+        expect(String(error)).toContain("T3CODE_PAIRING_SESSION_TTL");
+      }
     }),
   );
 
@@ -334,6 +420,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -411,6 +499,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -559,6 +649,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -608,6 +700,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -649,6 +743,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.none(),
         {
@@ -712,6 +808,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
           lan: Option.none(),
+          tailscaleSignInEnabled: Option.none(),
+          tailscaleOwnerUserId: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -752,6 +850,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     tailscaleServeEnabled: Option.none<boolean>(),
     tailscaleServePort: Option.none<number>(),
     lan: Option.none<boolean>(),
+    tailscaleSignInEnabled: Option.none<boolean>(),
+    tailscaleOwnerUserId: Option.none<string>(),
   });
 
   it.effect("uses the automatic port selector only when no port is configured", () =>
@@ -782,12 +882,12 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         );
 
       expect(yield* resolvePort({ port: Option.none() })).toBe(50_123);
-      expect(selected).toEqual([3773]);
+      expect(selected).toEqual([3774]);
       expect(yield* resolvePort({ port: Option.some(8788) })).toBe(8788);
       expect(
         yield* resolvePort({ mode: Option.some("desktop" as const), port: Option.none() }),
-      ).toBe(3773);
-      expect(selected).toEqual([3773]);
+      ).toBe(3774);
+      expect(selected).toEqual([3774]);
     }),
   );
 
@@ -910,7 +1010,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       }),
   );
 
-  it.effect("listens on private networks per T3CODE_LAN, else under the service launcher", () =>
+  it.effect("listens per T3CODE_LAN and Tailscale sign-in, else per the service launcher", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
       const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-service-host");
@@ -919,7 +1019,11 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         readonly env?: Record<string, string>;
       }) =>
         resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
-          Effect.map(({ host, privateNetworkOnly }) => ({ host, privateNetworkOnly })),
+          Effect.map(({ host, privateNetworkOnly, tailscaleOnly }) => ({
+            host,
+            privateNetworkOnly,
+            tailscaleOnly,
+          })),
           Effect.provide(
             Layer.mergeAll(
               ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.env ?? {} })),
@@ -955,6 +1059,15 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         privateNetworkOnly: undefined,
       });
       expect(yield* resolveHost({ connected: false, env: { T3CODE_LAN: "true" } })).toEqual({
+        host: "0.0.0.0",
+        privateNetworkOnly: true,
+      });
+      // Tailscale sign-in without the local network accepts only the tailnet.
+      const signIn = { T3CODE_TAILSCALE_SIGN_IN: "true" };
+      expect(
+        yield* resolveHost({ connected: true, env: { ...signIn, T3CODE_LAN: "false" } }),
+      ).toEqual({ host: "0.0.0.0", privateNetworkOnly: undefined, tailscaleOnly: true });
+      expect(yield* resolveHost({ connected: true, env: signIn })).toEqual({
         host: "0.0.0.0",
         privateNetworkOnly: true,
       });

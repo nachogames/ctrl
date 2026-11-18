@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -10,6 +11,7 @@ import * as Schema from "effect/Schema";
 
 import type { OtlpEndpointSource } from "@t3tools/contracts";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
+import { markNoCopyOnWrite } from "./noCopyOnWrite.ts";
 import {
   DEFAULT_SIGNAL_EXPORT,
   nodeProcessRuntimeAttributes,
@@ -26,7 +28,8 @@ declare const __T3CODE_TELEMETRY_CHANNEL__: ReleaseChannel | undefined;
 export const telemetryChannel: ReleaseChannel =
   typeof __T3CODE_TELEMETRY_CHANNEL__ === "undefined" ? "dev" : __T3CODE_TELEMETRY_CHANNEL__;
 
-export const DEFAULT_PORT = 3773;
+// Ctrl's own port, so it runs beside T3 Code (3773) and tailnet discovery never finds the other app.
+export const DEFAULT_PORT = 3774;
 
 export const RuntimeMode = Schema.Literals(["web", "desktop"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
@@ -100,6 +103,7 @@ export class ServerConfig extends Context.Service<
     readonly shellEnvironmentPrepared?: boolean | undefined;
     readonly desktopTelemetryFd?: number | undefined;
     readonly desktopTelemetryControlFd?: number | undefined;
+    readonly desktopAppUpdate?: boolean | undefined;
     readonly desktopBrowserFd?: number | undefined;
     readonly desktopBrowserControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;
@@ -107,6 +111,14 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /** Overrides the idle limit of sessions redeemed from pairing links; unset follows the setting. */
+    readonly pairingSessionTtl?: Duration.Duration | undefined;
+    /** Tailscale devices may sign in with no pairing code: by grant, else the owner's own devices. */
+    readonly tailscaleSignInEnabled?: boolean | undefined;
+    /** The owner's Tailscale user ID on a tagged host, which has no user of its own. */
+    readonly tailscaleOwnerUserId?: string | undefined;
+    /** Accept only loopback and tailnet peers, and advertise no LAN routes. */
+    readonly tailscaleOnly?: boolean | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (
@@ -178,9 +190,14 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  yield* fs.makeDirectory(derivedPaths.stateDir, { recursive: true });
+  // Only before the database exists: a No_COW WAL beside an existing copy-on-write database
+  // could not be reflinked into one backup folder with it. When unsure, leave the folder as is.
+  if (!(yield* fs.exists(derivedPaths.dbPath).pipe(Effect.orElseSucceed(() => true)))) {
+    yield* Effect.promise(() => markNoCopyOnWrite(derivedPaths.stateDir));
+  }
   yield* Effect.all(
     [
-      fs.makeDirectory(derivedPaths.stateDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.logsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.providerLogsDir, { recursive: true }),
       fs.makeDirectory(derivedPaths.terminalLogsDir, { recursive: true }),

@@ -1,10 +1,5 @@
 import { SessionPermissions } from "./SessionPermissions";
-import {
-  ChevronRightIcon,
-  ChevronsLeftRightEllipsisIcon,
-  EllipsisIcon,
-  RouteIcon,
-} from "lucide-react";
+import { ChevronsLeftRightEllipsisIcon, EllipsisIcon, RouteIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import {
@@ -30,9 +25,16 @@ import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
+import { SignedOutEnvironmentPanel } from "./SignedOutEnvironmentPanel";
+import {
+  type AgentsOnMachine,
+  type MachineSignedInHere,
+  MachineUseSwitches,
+} from "./MachineUseSwitches";
 import {
   ConnectionDiagnosisPanel,
   ConnectionDiagnosisSummary,
+  HostTailscaleNotice,
   useConnectionDiagnosis,
 } from "./ConnectionDiagnosisDetails";
 import { usePreparedConnection } from "~/state/session";
@@ -50,6 +52,7 @@ import {
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
+import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
@@ -60,6 +63,7 @@ import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/st
 import { APP_VERSION } from "~/branding";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useUpdateEnvironmentSettings } from "~/hooks/useSettings";
 import { serverEnvironment } from "~/state/server";
 import {
   OutdatedServerUpdateAction,
@@ -75,6 +79,8 @@ type SavedBackendListRowProps = {
   onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   onRemove: (environment: EnvironmentPresentation) => void;
   onAddRoute: (environment: EnvironmentPresentation) => void;
+  agents: AgentsOnMachine | null;
+  signedInHere?: MachineSignedInHere | null;
 };
 
 function savedBackendStatus(environment: EnvironmentPresentation): {
@@ -90,6 +96,9 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
     case "connecting":
       return { text: "Connecting", tone: "muted" };
     case "reconnecting":
+      if (connection.awaitingApproval) {
+        return { text: connection.error ?? "Waiting for approval", tone: "muted" };
+      }
       return {
         text: connection.error ? `Reconnecting: ${connection.error}` : "Reconnecting",
         tone: "error",
@@ -114,6 +123,8 @@ export function SavedBackendListRow({
   onSetEnabled,
   onRemove,
   onAddRoute,
+  agents,
+  signedInHere = null,
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
@@ -127,13 +138,6 @@ export function SavedBackendListRow({
   const errorTraceId = environment.connection.traceId;
   const { copyToClipboard: copyTraceIdToClipboard } = useCopyToClipboard<{ traceId: string }>({
     target: "trace ID",
-    onCopy: ({ traceId }) => {
-      toastManager.add({
-        type: "success",
-        title: "Trace ID copied",
-        description: traceId,
-      });
-    },
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({
@@ -197,7 +201,10 @@ export function SavedBackendListRow({
     state: connectionState,
     relayOnly,
   } = useConnectionDiagnosis(environment);
-  const diagnosis = resumingServerUpdate ? null : currentDiagnosis;
+  // A lapsed sign-in is not a reachability failure: no retry or diagnostics fix it, pairing does.
+  const signedOut =
+    currentDiagnosis !== null && connectionState.lastFailure?.failureCause === "session_expired";
+  const diagnosis = resumingServerUpdate || signedOut ? null : currentDiagnosis;
   const prepared = usePreparedConnection(environmentId);
   const connectedTarget = isConnected && prepared._tag === "Some" ? prepared.value.target : null;
   const mcpUrl = environmentMcpUrl({
@@ -213,7 +220,7 @@ export function SavedBackendListRow({
   const subtitleText = [
     environmentTransportLabel(environment, connectedTarget),
     // The headline below names the failure in full.
-    diagnosis ? null : resumingServerUpdate ? "Restarting" : status.text,
+    signedOut ? "Signed out" : diagnosis ? null : resumingServerUpdate ? "Restarting" : status.text,
     enabled && versionMismatch ? serverVersion : null,
   ]
     .filter((value): value is string => value !== null)
@@ -261,10 +268,12 @@ export function SavedBackendListRow({
                 <span
                   className={cn(
                     "min-w-0 truncate",
+                    signedOut && "text-warning-foreground",
                     enabled &&
                       status.tone === "error" &&
                       !resumingServerUpdate &&
                       !diagnosis &&
+                      !signedOut &&
                       "text-destructive",
                   )}
                 />
@@ -276,47 +285,16 @@ export function SavedBackendListRow({
               {statusTooltip}
             </TooltipPopup>
           </Tooltip>
-          <span aria-hidden className="shrink-0">
-            ·
-          </span>
-          <button
-            type="button"
-            aria-expanded={routesOpen}
-            onClick={() => setRoutesOpen((open) => !open)}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            {routeCount === 1 ? "Routes" : `${routeCount} routes`}
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                routesOpen && "rotate-90",
-              )}
-            />
-          </button>
-          <span aria-hidden className="shrink-0">
-            ·
-          </span>
-          <button
-            type="button"
-            aria-expanded={permissionsOpen}
-            aria-controls={`remote-permissions-${environmentId}`}
-            onClick={() => setPermissionsOpen((open) => !open)}
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            Permissions
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                permissionsOpen && "rotate-90",
-              )}
-            />
-          </button>
         </span>
       }
       below={
         <>
+          {signedOut ? (
+            <SignedOutEnvironmentPanel
+              environmentId={environmentId}
+              hostLabel={environment.label}
+            />
+          ) : null}
           {diagnosis ? (
             <ConnectionDiagnosisSummary
               diagnosis={diagnosis}
@@ -325,6 +303,8 @@ export function SavedBackendListRow({
               expanded={diagnosisOpen}
               onToggle={() => setDiagnosisOpen((open) => !open)}
             />
+          ) : enabled ? (
+            <HostTailscaleNotice environment={environment} />
           ) : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="mt-1 max-w-md">
@@ -335,6 +315,16 @@ export function SavedBackendListRow({
       }
       detail={
         <>
+          <MachineUseSwitches
+            environment={environment}
+            chats={{
+              checked: enabled,
+              disabled: isRemoving || blocked,
+              onCheckedChange: (checked) => onSetEnabled(environmentId, checked),
+            }}
+            agents={agents}
+            signedInHere={signedInHere}
+          />
           {diagnosis && diagnosisOpen ? (
             <ConnectionDiagnosisPanel
               hostLabel={environment.label}
@@ -387,22 +377,6 @@ export function SavedBackendListRow({
           appearance="icon"
         />
       ) : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Switch
-              size="sm"
-              checked={enabled}
-              disabled={isRemoving || blocked}
-              aria-label={`${enabled ? "Switch off" : "Switch on"} ${environment.label}`}
-              onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
-            />
-          }
-        />
-        <TooltipPopup side="top">
-          {blocked ? "Client not supported" : enabled ? "Switch off" : "Switch on"}
-        </TooltipPopup>
-      </Tooltip>
       <Menu>
         <MenuTrigger
           render={
@@ -424,7 +398,10 @@ export function SavedBackendListRow({
           />
           <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
             <RouteIcon />
-            {routesOpen ? "Hide routes" : "Routes"}
+            {routesOpen ? "Hide routes" : `Routes (${routeCount})`}
+          </MenuItem>
+          <MenuItem onClick={() => setPermissionsOpen((open) => !open)}>
+            {permissionsOpen ? "Hide permissions" : "Permissions"}
           </MenuItem>
           {mcpUrl ? (
             <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
@@ -496,9 +473,13 @@ function T3ConnectTunnelUsage({ tunnelLimit }: { readonly tunnelLimit: number | 
         used={usage.used}
         limit={usage.limit}
         action={
-          // At the cap the alert below carries the same action.
-          usage.upgrade && openAccountPage && !showLimitAlert ? (
+          // At the cap the alert below carries the same actions.
+          !openAccountPage || showLimitAlert ? null : usage.upgrade ? (
             <InlineButton onClick={() => openAccountPage("t3-chat")}>Get more tunnels</InlineButton>
+          ) : usage.used >= usage.limit ? (
+            <InlineButton onClick={() => openAccountPage("t3-connect")}>
+              Manage tunnels
+            </InlineButton>
           ) : null
         }
       />
@@ -526,10 +507,13 @@ function T3ConnectTunnelUsage({ tunnelLimit }: { readonly tunnelLimit: number | 
 function ConfiguredCloudLinkRow({
   environmentId,
   canManageRelay,
+  connectDeviceApproval,
 }: {
   readonly environmentId: EnvironmentId;
   readonly canManageRelay: boolean;
+  readonly connectDeviceApproval: ConnectDeviceApprovalControl | null;
 }) {
+  const updateEnvironmentSettings = useUpdateEnvironmentSettings(environmentId);
   const {
     isSignedIn,
     linkState: cloudLinkState,
@@ -545,6 +529,9 @@ function ConfiguredCloudLinkRow({
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   // The server unlinks and refuses relay changes under such a policy; unlinking stays possible.
   const connectDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "connect");
+  const turnOn = useT3ConnectTurnOn(environmentId);
+  // Turning on links from this desktop's own backend only; turning off works from anywhere.
+  const showSwitch = isElectron && (turnOn.kind !== "on-host" || managedTunnelActive);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
@@ -654,7 +641,7 @@ function ConfiguredCloudLinkRow({
 
   return (
     <>
-      {isElectron ? (
+      {showSwitch ? (
         <SettingsRow
           title={searchableSetting("t3-connect").title}
           description={
@@ -698,8 +685,13 @@ function ConfiguredCloudLinkRow({
           title={searchableSetting("t3-connect").title}
           description="This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again."
         />
+      ) : isElectron ? (
+        <SettingsRow
+          title={searchableSetting("t3-connect").title}
+          description="Run `t3 connect link` on the host, then restart T3 Code there."
+        />
       ) : null}
-      {signedOut && isElectron ? null : (
+      {signedOut && showSwitch ? null : (
         <SettingsRow
           title={searchableSetting("publish-agent-activity").title}
           description={
@@ -739,18 +731,48 @@ function ConfiguredCloudLinkRow({
           }
         />
       ) : null}
+      {managedTunnelActive && connectDeviceApproval ? (
+        <SettingsRow
+          title={searchableSetting("connect-device-approval").title}
+          description="Devices that sign in to your T3 Connect account wait until someone already connected here approves them."
+          managed={connectDenial}
+          control={
+            <CloudLinkSwitch
+              ariaLabel="Require approval for new T3 Connect devices"
+              checked={connectDeviceApproval.required}
+              disabled={!connectDeviceApproval.canManage}
+              disabledReason={
+                connectDeviceApproval.canManage
+                  ? null
+                  : "Your session does not have permission to manage access."
+              }
+              onCheckedChange={(enabled) =>
+                updateEnvironmentSettings({ requireConnectDeviceApproval: enabled })
+              }
+            />
+          }
+        />
+      ) : null}
     </>
   );
+}
+
+/** Older servers have no device approval, so callers pass null and the row stays hidden. */
+export interface ConnectDeviceApprovalControl {
+  readonly required: boolean;
+  readonly canManage: boolean;
 }
 
 export function CloudLinkRow({
   environmentId,
   canReadRelay,
   canManageRelay,
+  connectDeviceApproval,
 }: {
   readonly environmentId: EnvironmentId;
   readonly canReadRelay: boolean;
   readonly canManageRelay: boolean;
+  readonly connectDeviceApproval: ConnectDeviceApprovalControl | null;
 }) {
   if (!hasCloudPublicConfig()) return null;
   if (!canReadRelay) {
@@ -761,7 +783,13 @@ export function CloudLinkRow({
       />
     );
   }
-  return <ConfiguredCloudLinkRow environmentId={environmentId} canManageRelay={canManageRelay} />;
+  return (
+    <ConfiguredCloudLinkRow
+      environmentId={environmentId}
+      canManageRelay={canManageRelay}
+      connectDeviceApproval={connectDeviceApproval}
+    />
+  );
 }
 
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
@@ -771,11 +799,11 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
         <ChevronsLeftRightEllipsisIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No saved remote environments</EmptyTitle>
+        <EmptyTitle>No other machines yet</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from T3 Connect."
-            : "Click “Add environment” to pair another environment."}
+            ? "Click Add a machine and paste the link from Add a device on the other machine, or connect one from T3 Connect."
+            : "Click Add a machine and paste the link from Add a device on the other machine."}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -785,17 +813,20 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
 export function CloudRemoteEnvironmentRows({
   primaryEnvironmentId,
   savedEnvironments,
+  listsOtherMachines = false,
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
+  /** Machines linked only for agents also fill the list, so it is not empty. */
+  readonly listsOtherMachines?: boolean;
 }) {
   return hasCloudPublicConfig() ? (
     <CloudEnvironmentConnectRows
       primaryEnvironmentId={primaryEnvironmentId}
       savedEnvironments={savedEnvironments}
-      empty={<EmptyRemoteEnvironments />}
+      empty={listsOtherMachines ? null : <EmptyRemoteEnvironments />}
     />
-  ) : savedEnvironments.length === 0 ? (
+  ) : savedEnvironments.length === 0 && !listsOtherMachines ? (
     <EmptyRemoteEnvironments cloudEnabled={false} />
   ) : null;
 }

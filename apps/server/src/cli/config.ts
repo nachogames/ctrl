@@ -27,6 +27,7 @@ import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { resolveHostCliCommand } from "./invocation.ts";
 
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -83,6 +84,21 @@ const tailscaleServeFlag = Flag.Boolean("tailscale-serve").pipe(
 const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
+  Flag.optional,
+);
+/** Tailscale user IDs are int64; keep them as digits. */
+export const TailscaleUserId = Schema.String.check(Schema.isPattern(/^[1-9]\d{0,18}$/));
+const tailscaleSignInFlag = Flag.Boolean("tailscale-sign-in").pipe(
+  Flag.withDescription(
+    "Let Tailscale devices sign in with no pairing code: devices your tailnet policy grants t3.codes/cap/t3code, else the owner's own untagged devices (equivalent to T3CODE_TAILSCALE_SIGN_IN).",
+  ),
+  Flag.optional,
+);
+const tailscaleOwnerFlag = Flag.String("tailscale-owner").pipe(
+  Flag.withSchema(TailscaleUserId),
+  Flag.withDescription(
+    "Tailscale user ID that owns this host when it is tagged (equivalent to T3CODE_TAILSCALE_OWNER). `t3 up` sets it.",
+  ),
   Flag.optional,
 );
 const lanFlag = Flag.Boolean("lan").pipe(
@@ -171,6 +187,14 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  tailscaleSignInEnabled: Config.Boolean("T3CODE_TAILSCALE_SIGN_IN").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  tailscaleOwnerUserId: Config.schema(TailscaleUserId, "T3CODE_TAILSCALE_OWNER").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   lan: Config.Boolean("T3CODE_LAN").pipe(Config.option, Config.map(Option.getOrUndefined)),
 });
 
@@ -207,6 +231,8 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly tailscaleSignInEnabled: Option.Option<boolean>;
+  readonly tailscaleOwnerUserId: Option.Option<string>;
   readonly lan: Option.Option<boolean>;
 }
 
@@ -242,6 +268,8 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  tailscaleSignInEnabled: tailscaleSignInFlag,
+  tailscaleOwnerUserId: tailscaleOwnerFlag,
   lan: lanFlag,
 } as const;
 
@@ -277,6 +305,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const env = yield* EnvServerConfig;
+  const pairingSessionTtl = yield* pairingSessionTtlConfig;
   const normalizedFlags = {
     mode: flags.mode ?? Option.none(),
     port: flags.port ?? Option.none(),
@@ -290,6 +319,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
     tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
     tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+    tailscaleSignInEnabled: flags.tailscaleSignInEnabled ?? Option.none(),
+    tailscaleOwnerUserId: flags.tailscaleOwnerUserId ?? Option.none(),
     lan: flags.lan ?? Option.none(),
   } satisfies CliServerFlags;
   const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
@@ -355,8 +386,13 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
       runtime.value.pid !== process.pid &&
       isProcessAlive(runtime.value.pid)
     ) {
+      // Bare `t3 pair` prefers a linked worktree's `.t3`, so always name this home.
+      const { command: pairCommand } = yield* resolveHostCliCommand("pair", [
+        "--base-dir",
+        baseDir,
+      ]);
       return yield* new CliError.UserError({
-        cause: `A T3 Code server is already running for ${baseDir} (pid ${runtime.value.pid}, ${runtime.value.origin}). Connect to that server, stop it before starting another, or use a different --base-dir.`,
+        cause: `A T3 Code server is already running for ${baseDir} (pid ${runtime.value.pid}, ${runtime.value.origin}). To open it, run \`${pairCommand}\` and open the pairing URL it prints. To start another server, stop this one first or use a different --base-dir.`,
       });
     }
   }
@@ -383,6 +419,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const shellEnvironmentPrepared = bootstrap?.shellEnvironmentPrepared;
   const desktopTelemetryFd = bootstrap?.desktopTelemetryFd;
   const desktopTelemetryControlFd = bootstrap?.desktopTelemetryControlFd;
+  const desktopAppUpdate = bootstrap?.desktopAppUpdate;
   const desktopBrowserFd = bootstrap?.desktopBrowserFd;
   const desktopBrowserControlFd = bootstrap?.desktopBrowserControlFd;
   const resourceMonitorPath = bootstrap?.resourceMonitorPath;
@@ -418,6 +455,20 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ),
     () => 443,
   );
+  const tailscaleSignInEnabled = Option.getOrElse(
+    resolveOptionPrecedence(
+      normalizedFlags.tailscaleSignInEnabled,
+      Option.fromUndefinedOr(env.tailscaleSignInEnabled),
+      Option.fromUndefinedOr(bootstrap?.tailscaleSignInEnabled),
+    ),
+    () => false,
+  );
+  const tailscaleOwnerUserId = Option.getOrUndefined(
+    resolveOptionPrecedence(
+      normalizedFlags.tailscaleOwnerUserId,
+      Option.fromUndefinedOr(env.tailscaleOwnerUserId),
+    ),
+  );
   const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
   const explicitHost = resolveOptionPrecedence(
     normalizedFlags.host,
@@ -437,8 +488,16 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
           Effect.map((launcher) => launcher.managed),
           Effect.orElseSucceed(() => false),
         ));
+  // Tailscale sign-in needs tailnet devices to reach the server. Without the
+  // local network, it accepts only loopback and tailnet connections.
+  const tailscaleOnly =
+    bootstrap?.tailscaleOnly ??
+    (tailscaleSignInEnabled &&
+      !privateNetworkOnly &&
+      Option.isNone(explicitHost) &&
+      mode === "web");
   const host = Option.getOrElse(explicitHost, () =>
-    privateNetworkOnly ? "0.0.0.0" : mode === "desktop" ? "127.0.0.1" : undefined,
+    privateNetworkOnly || tailscaleOnly ? "0.0.0.0" : mode === "desktop" ? "127.0.0.1" : undefined,
   );
   const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
@@ -516,6 +575,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ...(shellEnvironmentPrepared === undefined ? {} : { shellEnvironmentPrepared }),
     desktopTelemetryFd,
     desktopTelemetryControlFd,
+    ...(desktopAppUpdate === undefined ? {} : { desktopAppUpdate }),
     desktopBrowserFd,
     desktopBrowserControlFd,
     resourceMonitorPath,
@@ -523,6 +583,10 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents,
     tailscaleServeEnabled,
     tailscaleServePort,
+    ...(pairingSessionTtl === undefined ? {} : { pairingSessionTtl }),
+    ...(tailscaleSignInEnabled ? { tailscaleSignInEnabled } : {}),
+    ...(tailscaleOwnerUserId === undefined ? {} : { tailscaleOwnerUserId }),
+    ...(tailscaleOnly ? { tailscaleOnly } : {}),
   };
 
   return config;
@@ -547,6 +611,8 @@ export const resolveCliAuthConfig = (
       logWebSocketEvents: Option.none(),
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
+      tailscaleSignInEnabled: Option.none(),
+      tailscaleOwnerUserId: Option.none(),
       lan: Option.none(),
     },
     cliLogLevel,
@@ -620,3 +686,22 @@ export const DurationFromString = Schema.String.pipe(
     }),
   ),
 );
+
+// Ten years keeps every expiry a valid date in the session table, signed claims and cookies.
+const MAX_PAIRING_SESSION_TTL = Duration.days(3650);
+
+const PairingSessionTtlFromString = DurationFromString.pipe(
+  Schema.check(
+    Schema.makeFilter(
+      (duration) =>
+        Duration.isPositive(duration) &&
+        Duration.isLessThanOrEqualTo(duration, MAX_PAIRING_SESSION_TTL),
+      { expected: "a duration above zero and at most 3650d, such as 90d or 26w" },
+    ),
+  ),
+);
+
+const pairingSessionTtlConfig = Config.schema(
+  PairingSessionTtlFromString,
+  "T3CODE_PAIRING_SESSION_TTL",
+).pipe(Config.option, Config.map(Option.getOrUndefined));

@@ -1,6 +1,12 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  TailnetSignInRefusedReason,
+  type ExecutionEnvironmentDescriptor,
+} from "@t3tools/contracts";
 import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
 import * as Schema from "effect/Schema";
+
+import type { ConnectionRouteKind } from "./routes.ts";
 
 const ConnectionTargetBase = {
   environmentId: EnvironmentId,
@@ -64,6 +70,7 @@ export const ConnectionTransientReason = Schema.Literals([
   "relay-unavailable",
   "remote-unavailable",
   "session-pending",
+  "approval-pending",
 ]);
 export type ConnectionTransientReason = typeof ConnectionTransientReason.Type;
 
@@ -87,6 +94,9 @@ export const ConnectionFailureCause = Schema.Literals([
   "relay_error",
   "tunnel_pending",
   "tunnel_not_enabled",
+  // The host answered and refused a sign-in it had let lapse; pairing again fixes it.
+  "session_expired",
+  "approval_pending",
 ]);
 export type ConnectionFailureCause = typeof ConnectionFailureCause.Type;
 
@@ -100,6 +110,10 @@ const ConnectionFailureFields = {
   via: Schema.optionalKey(Schema.Literals(["relay", "direct"])),
   failureCause: Schema.optionalKey(ConnectionFailureCause),
   httpStatus: Schema.optionalKey(Schema.Number),
+  /** The check a host's Tailscale sign-in failed. */
+  tailnetRefusal: Schema.optionalKey(TailnetSignInRefusedReason),
+  /** The tailnet policy grant the host says would let this device in. */
+  suggestedGrant: Schema.optionalKey(Schema.String),
 };
 
 export class ConnectionTransientError extends Schema.TaggedError<ConnectionTransientError>()(
@@ -108,6 +122,8 @@ export class ConnectionTransientError extends Schema.TaggedError<ConnectionTrans
     reason: ConnectionTransientReason,
     detail: Schema.String,
     traceId: Schema.optionalKey(Schema.String),
+    /** The code this device shows while the host decides whether to trust it. */
+    verificationCode: Schema.optionalKey(Schema.String),
     ...ConnectionFailureFields,
   },
 ) {
@@ -145,6 +161,8 @@ export type PreparedHttpAuthorization =
       readonly _tag: "Dpop";
       readonly accessToken: string;
       readonly expiresAtEpochMs: number;
+      /** Set for a Tailscale session, which renews from this credential instead of T3 Connect. */
+      readonly tailnetCredentialId?: string;
     };
 
 export interface PreparedConnection {
@@ -154,6 +172,8 @@ export interface PreparedConnection {
   readonly socketUrl: string;
   readonly httpAuthorization: PreparedHttpAuthorization | null;
   readonly target: ConnectionTarget;
+  /** What the server said about itself while this connection was prepared. */
+  readonly descriptor?: ExecutionEnvironmentDescriptor;
 }
 
 export type SupervisorConnectionPhase =
@@ -166,6 +186,42 @@ export type SupervisorConnectionPhase =
 
 export type ConnectionAttemptStage = "preparing" | "opening" | "synchronizing";
 
+/**
+ * What the latest attempt saw on one route: the host answered there, did not
+ * answer the reachability check, or the connection over it failed.
+ */
+export type ConnectionRouteOutcome = {
+  readonly routeId: string;
+  readonly kind: ConnectionRouteKind;
+  readonly address: string | null;
+} & (
+  | { readonly result: "answered" | "silent" }
+  | { readonly result: "failed"; readonly error: ConnectionAttemptError }
+);
+
+const UNANSWERED_REASONS: ReadonlySet<ConnectionTransientReason> = new Set([
+  "network",
+  "timeout",
+  "transport",
+]);
+
+/** A failure that gave no sign the host is there, as opposed to one where it answered. */
+export function failureDidNotAnswer(error: ConnectionAttemptError): boolean {
+  return (
+    error._tag === "ConnectionTransientError" &&
+    UNANSWERED_REASONS.has(error.reason) &&
+    error.tailnetRefusal === undefined
+  );
+}
+
+/** A route that gave no sign the host is there, as opposed to one that answered and refused. */
+export function routeDidNotAnswer(outcome: ConnectionRouteOutcome): boolean {
+  return (
+    outcome.result === "silent" ||
+    (outcome.result === "failed" && failureDidNotAnswer(outcome.error))
+  );
+}
+
 export interface SupervisorConnectionState {
   readonly desired: boolean;
   readonly network: NetworkStatus;
@@ -175,6 +231,8 @@ export interface SupervisorConnectionState {
   readonly generation: number;
   readonly lastFailure: ConnectionAttemptError | null;
   readonly retryAt: number | null;
+  /** Each route's latest outcome. A route keeps it until an attempt reaches that route again. */
+  readonly routes: ReadonlyArray<ConnectionRouteOutcome>;
 }
 
 export type ConnectionProjectionPhase = "disconnected" | "synchronizing" | "ready";
@@ -204,4 +262,5 @@ export const AVAILABLE_CONNECTION_STATE: SupervisorConnectionState = Object.free
   generation: 0,
   lastFailure: null,
   retryAt: null,
+  routes: [],
 });

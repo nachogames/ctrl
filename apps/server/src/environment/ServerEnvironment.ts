@@ -3,6 +3,7 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
+  tailscaleStateFromBackend,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -23,8 +24,10 @@ import * as ServerConfig from "../config.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { isSpeechPlatformSupported } from "../speech/platform.ts";
+import * as TailscaleHost from "../tailscale/TailscaleHost.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
+import { signInIssues } from "./TailscaleHealth.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
@@ -187,6 +190,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const tailscaleHost = yield* TailscaleHost.TailscaleHost;
   const identity = yield* ServerEnvironmentIdentity;
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
@@ -201,10 +205,11 @@ export const make = Effect.gen(function* () {
     launcherManaged: launcher.managed,
   });
   const serverInstallation = serverSelfUpdate === null ? yield* resolveServerInstallation : null;
-  // Desktop and server ship together; a control fd guarantees requestDesktopUpdate support.
-
+  // The desktop reports whether it can install updates; requests travel over its control fd.
   const desktopAppUpdate =
-    serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
+    serverSelfUpdate === "desktop-managed" &&
+    serverConfig.desktopAppUpdate === true &&
+    serverConfig.desktopTelemetryControlFd !== undefined;
 
   const databaseMigration = databaseMigrationHead(serverConfig.dbPath);
   const descriptor: ExecutionEnvironmentDescriptor = {
@@ -226,6 +231,7 @@ export const make = Effect.gen(function* () {
       fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
       pullRequests: true,
       pullRequestChecks: true,
+      linkedThreadRefreshes: true,
       sideChats: true,
       reviewWritingStyles: true,
       vcsBranchStatus: true,
@@ -237,6 +243,7 @@ export const make = Effect.gen(function* () {
       storageCleanupRun: true,
       databaseStorage: true,
       otlpEndpointCheck: true,
+      secretSourceCheck: true,
       projectWorktreeCleanup: true,
       settledWorktreeCleanup: true,
       worktreesDirectory: true,
@@ -251,6 +258,7 @@ export const make = Effect.gen(function* () {
       environmentThemes: true,
       usageLimitSources: true,
       providerWorkspaceSnapshotsOnDemand: true,
+      modelCatalogRefresh: true,
       usagePriceOverrides: true,
       usageModelAliases: true,
       threadPinning: true,
@@ -274,6 +282,7 @@ export const make = Effect.gen(function* () {
       projectCloneTracking: true,
       projectOrganization: true,
       ignoredFileListing: true,
+      ignoredFileSearch: true,
       triage: true,
       oneTimeSchedules: true,
       freshContext: true,
@@ -286,21 +295,42 @@ export const make = Effect.gen(function* () {
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? { serverSelfUpdateProgress: true }
         : {}),
+      ...(serverSelfUpdate === "boot-service" ? { serverUpdateStaging: true } : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true, desktopAppChannelSwitch: true } : {}),
       serverBrowser: true,
       peerLinks: true,
       mcpModeLimitHeader: true,
       linkFence: true,
+      mcpApprovalCodes: true,
+      mcpHostedApproval: true,
+      shellThreadFamilies: true,
+      shellOlderSettled: true,
     },
   };
+
+  // Tailscale can stop or log out while the server runs; the status read is cached briefly.
+  const tailnetSignIn = serverConfig.tailscaleSignInEnabled
+    ? tailscaleHost.status.pipe(
+        Effect.map(
+          (status) =>
+            tailscaleStateFromBackend(status.backendState) === "running" &&
+            signInIssues(status).length === 0,
+        ),
+        Effect.orElseSucceed(() => false),
+      )
+    : Effect.succeed(false);
 
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
     // Publishing opt-in and relay links change at runtime; read the capability per request.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
-      Effect.map((agentActivityPublishing) => ({
+    getDescriptor: Effect.all([readAgentActivityPublishingActive(secrets), tailnetSignIn]).pipe(
+      Effect.map(([agentActivityPublishing, tailnetSignInAvailable]) => ({
         ...descriptor,
-        capabilities: { ...descriptor.capabilities, agentActivityPublishing },
+        capabilities: {
+          ...descriptor.capabilities,
+          agentActivityPublishing,
+          ...(tailnetSignInAvailable ? { tailnetSignIn: true } : {}),
+        },
       })),
     ),
   });
