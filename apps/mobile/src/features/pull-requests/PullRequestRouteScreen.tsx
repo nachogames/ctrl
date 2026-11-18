@@ -13,7 +13,7 @@ import { guideFocusedRows, type GuideDiffFocus } from "./guide/guideDiffFocus";
 import { PullRequestGuideContent } from "./guide/PullRequestGuideScreen";
 import { useReviewGuidesEnabled } from "./guide/useReviewGuide";
 import { PullRequestReviewContent } from "./review/PullRequestReviewContent";
-import { liveReviewKey, liveReviewsAtom, useLiveReviews } from "./review/useLiveReviews";
+import { liveReviewsAtom } from "./review/useLiveReviews";
 import { filterPullRequestActivity, type ActivityFilter } from "./pullRequestActivityFilter";
 import { PullRequestActivityFilters } from "./PullRequestActivityFilters";
 import { usePullRequestActivityFilter } from "./usePullRequestActivityFilter";
@@ -379,17 +379,13 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const filesContent = usePullRequestFilesSection(params);
   const guidesEnabled = useReviewGuidesEnabled(params);
   const environmentId = EnvironmentId.make(params.environmentId);
-  const liveReviews = useLiveReviews([environmentId]);
+  // Keeps the list's waiting markers current after acting on a review here.
   const refreshLiveReviews = useAtomRefresh(liveReviewsAtom(environmentId));
   useFocusEffect(refreshLiveReviews);
-  // The Review tab shows while the pull request has a live review, and stays while it is open.
-  const reviewShown =
-    liveReviews.has(liveReviewKey(environmentId, params.repository, params.number)) ||
-    chosenSection === "review";
   // The guide tab goes away while guides are off and overview stands in. The pick is kept, so
   // guides coming back (a settings reload, a reconnect) return to the guide the user chose.
   const shown = (tab: typeof chosenSection) =>
-    (!guidesEnabled && tab === "guide") || (!reviewShown && tab === "review") ? "overview" : tab;
+    !guidesEnabled && tab === "guide" ? "overview" : tab;
   const section = shown(chosenSection);
   const activity = usePullRequestActivityFilter(parsePullRequestAnchor(params.navigationUrl)?.kind);
   const activityFilter = activity.filter;
@@ -699,9 +695,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
         />
         <ScreenContent onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}>
           {(["overview", "guide", "activity", "review"] as const)
-            .filter(
-              (tab) => (tab !== "guide" || guidesEnabled) && (tab !== "review" || reviewShown),
-            )
+            .filter((tab) => tab !== "guide" || guidesEnabled)
             .map((tab) => (
               <View
                 key={tab}
@@ -924,9 +918,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                                   ? [{ value: "guide" as const, label: "Guide" }]
                                   : []),
                                 { value: "activity", label: "Activity" },
-                                ...(reviewShown
-                                  ? [{ value: "review" as const, label: "Review" }]
-                                  : []),
+                                { value: "review", label: "Review" },
                               ]}
                               selected={section}
                               onSelect={selectSection}
