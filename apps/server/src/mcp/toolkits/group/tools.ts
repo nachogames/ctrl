@@ -14,7 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ThreadGroupLaunchService from "../../../orchestration-v2/ThreadGroupLaunchService.ts";
 import * as ThreadGroupService from "../../../orchestration-v2/ThreadGroupService.ts";
@@ -204,7 +204,8 @@ const GroupHandoffTool = Tool.make("t3_group_handoff", {
 })
   .annotate(Tool.Title, "Hand off to a new chat")
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const GroupMoveThreadTool = Tool.make("t3_group_move_thread", {
   ...groupTool,

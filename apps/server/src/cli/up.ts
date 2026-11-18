@@ -91,6 +91,7 @@ interface Setup {
   readonly connectRevoked: boolean;
   readonly entries: Readonly<Record<string, string>>;
   readonly settings: ServiceSettings;
+  /** An installed service with no T3CODE_LAN or T3CODE_HOST keeps the old default: on. */
   readonly lanFromOldDefault: boolean;
   readonly requireGrant: boolean;
   readonly host: string | undefined;
@@ -134,7 +135,8 @@ const readSetup = Effect.fn("cli.up.read_setup")(function* () {
     connectRevoked,
     entries,
     settings: serviceSettings(entries, servesThisHome),
-    lanFromOldDefault: entries.T3CODE_LAN === undefined && servesThisHome,
+    lanFromOldDefault:
+      entries.T3CODE_LAN === undefined && servesThisHome && entries.T3CODE_HOST === undefined,
     requireGrant: yield* fs.exists(path.join(stateDir, REQUIRE_GRANT_FILE)),
     host: entries.T3CODE_HOST,
   } satisfies Setup;
@@ -191,7 +193,25 @@ const CHOICES = {
   lan: { title: "Local network", description: "LAN and tailnet. Pairing code required." },
 } satisfies Record<Route, { readonly title: string; readonly description: string }>;
 
-const formatSetup = (setup: Setup) => {
+/** The commands hints name, run with the caller's --base-dir and launcher. */
+const resolveHints = Effect.fn("cli.up.resolve_hints")(function* (baseDir: Option.Option<string>) {
+  const baseDirArgs = Option.match(baseDir, {
+    onNone: () => [],
+    onSome: (dir) => ["--base-dir", dir],
+  });
+  const command = (subcommand: string, args: ReadonlyArray<string> = []) =>
+    Effect.map(resolveHostCliCommand(subcommand, [...baseDirArgs, ...args]), (r) => r.command);
+  return {
+    run: yield* command(""),
+    pair: yield* command("pair"),
+    up: yield* command("up"),
+    upNoLan: yield* command("up", ["--no-lan"]),
+    connect: yield* command("connect"),
+  };
+});
+type Hints = Effect.Success<ReturnType<typeof resolveHints>>;
+
+const formatSetup = (setup: Setup, hints: Hints) => {
   const { service, settings } = setup;
   // This home's access settings reach no service, so only the service is shown.
   if (service.otherBaseDir !== undefined) {
@@ -226,7 +246,7 @@ const formatSetup = (setup: Setup) => {
             setup.connect
               ? "on · your T3 account"
               : setup.connectRevoked
-                ? "off · link revoked. Run `t3 connect`."
+                ? `off · link revoked. Run \`${hints.connect}\`.`
                 : "off",
           ] as const,
         ]),
@@ -247,7 +267,7 @@ const formatSetup = (setup: Setup) => {
           settings.tailscale
             ? "Anyone on your LAN or tailnet can reach the port. A LAN device needs a pairing code."
             : "Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock.",
-          "Turn it off: `t3 up --no-lan`.",
+          `Turn it off: \`${hints.upNoLan}\`.`,
         ]
       : []),
     ...(settings.tailscale && setup.requireGrant
@@ -260,18 +280,18 @@ const formatSetup = (setup: Setup) => {
   ].join("\n");
 };
 
-const formatNextSteps = (routes: Routes, serviceInstalled: boolean, pairCommand: string) =>
+const formatNextSteps = (routes: Routes, serviceInstalled: boolean, hints: Hints) =>
   [
     ...(routes.connect
       ? ["On your other device, sign in to T3 Connect with the same account."]
       : []),
-    ...(routes.lan ? [`Run \`${pairCommand}\`. Use the code on your other device.`] : []),
+    ...(routes.lan ? [`Run \`${hints.pair}\`. Use the code on your other device.`] : []),
     ...(routes.connect || routes.lan || routes.tailscale
       ? []
       : [
           serviceInstalled
             ? "Remote access is off. T3 Code still runs here in the background."
-            : "Remote access is off. Run `t3` to use T3 Code here.",
+            : `Remote access is off. Run \`${hints.run}\` to use T3 Code here.`,
         ]),
   ].join("\n");
 
@@ -549,7 +569,7 @@ const setUp = Effect.fn("cli.up")(function* (
     onNone: () => [],
     onSome: (dir) => ["--base-dir", dir],
   });
-  const { command: pairCommand } = yield* resolveHostCliCommand("pair", baseDirArgs);
+  const hints = yield* resolveHints(flags.baseDir);
   const before = yield* readSetup();
   // Before any question or write: install would refuse only after both.
   if (before.service.otherBaseDir !== undefined) {
@@ -591,7 +611,8 @@ const setUp = Effect.fn("cli.up")(function* (
   let lanChosen = Option.isSome(flags.lan) || !before.lanFromOldDefault;
   if (plan.ask.length > 0 && interactive) {
     lanChosen = true;
-    if (before.service.installed) yield* Console.log(`Current setup\n${formatSetup(before)}\n`);
+    if (before.service.installed)
+      yield* Console.log(`Current setup\n${formatSetup(before, hints)}\n`);
     if (!tailscale.ok) yield* Console.log(`${tailscale.reason}\n`);
     const picked = yield* Prompt.run(
       Prompt.MultiSelect({
@@ -699,7 +720,7 @@ const setUp = Effect.fn("cli.up")(function* (
         yield* Console.log("Removed a Tailscale Serve mapping an earlier run left.");
       }
       if (leftover.otherAccounts.length > 0) {
-        yield* Console.log(formatNextSteps(routes, false, pairCommand));
+        yield* Console.log(formatNextSteps(routes, false, hints));
         // A Windows sign-in again makes a new profile, so the "other" account can be this one.
         if (leftover.otherAccounts.every((label) => label === leftover.currentLabel)) {
           const windows = yield* HostProcess.isWindows;
@@ -713,7 +734,7 @@ const setUp = Effect.fn("cli.up")(function* (
         );
       }
     }
-    return yield* Console.log(formatNextSteps(routes, false, pairCommand));
+    return yield* Console.log(formatNextSteps(routes, false, hints));
   }
   // Tailscale left on while it is down here keeps its settings; turning it on needs it.
   const tailscaleKept = routes.tailscale && current.tailscale && Option.isNone(flags.tailscale);
@@ -882,10 +903,9 @@ const setUp = Effect.fn("cli.up")(function* (
     if ("failed" in result && before.service.installed) {
       // The old service still runs, so a foreground server would clash with it.
       yield* restoreServiceEnv;
-      const { command } = yield* resolveHostCliCommand("up", baseDirArgs);
       // A failure, so a script sees that the running service kept its old access.
       return yield* upError(
-        `Service setup failed: ${result.failed} The service kept its old settings. Fix that, then run \`${command}\` again.`,
+        `Service setup failed: ${result.failed} The service kept its old settings. Fix that, then run \`${hints.up}\` again.`,
       );
     } else if ("failed" in result) {
       yield* printServeCommand(`Service setup failed: ${result.failed}`);
@@ -926,7 +946,7 @@ const setUp = Effect.fn("cli.up")(function* (
   if (started && routes.connect && !current.connect) yield* waitForReachability();
 
   const after = yield* readSetup();
-  yield* Console.log(`\nThis machine\n${formatSetup(after)}\n`);
+  yield* Console.log(`\nThis machine\n${formatSetup(after, hints)}\n`);
   if (signIn !== null && tailscale.ok && after.settings.tailscale) {
     yield* Console.log(formatTailscale(tailscale, signIn.owner, signIn.port, requireGrant));
   }
@@ -938,7 +958,7 @@ const setUp = Effect.fn("cli.up")(function* (
       lan: after.settings.lan,
     },
     after.service.installed,
-    pairCommand,
+    hints,
   );
   if (nextSteps !== "") yield* Console.log(nextSteps);
 });
@@ -1098,12 +1118,12 @@ export const statusCommand = Command.make("status", {
           ),
         ),
       );
+      if (flags.json) return yield* Console.log(setupJson(setup));
+      const hints = yield* resolveHints(flags.baseDir);
       yield* Console.log(
-        flags.json
-          ? setupJson(setup)
-          : setup.service.otherBaseDir !== undefined
-            ? `This machine\n${formatSetup(setup)}`
-            : `This machine\n${formatSetup(setup)}\n\nChange access: \`t3 up\`. Tailscale details: \`t3 tailscale status\`.`,
+        setup.service.otherBaseDir !== undefined
+          ? `This machine\n${formatSetup(setup, hints)}`
+          : `This machine\n${formatSetup(setup, hints)}\n\nChange access: \`${hints.up}\`. Tailscale details: \`t3 tailscale status\`.`,
       );
     }),
   ),

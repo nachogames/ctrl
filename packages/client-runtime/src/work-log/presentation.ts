@@ -556,6 +556,7 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "group-move-thread":
     case "group-resource":
     case "environment-update":
+    case "theme-set":
     case "attachment-prepare":
     case "attachment-discard":
     case "attachment-send":

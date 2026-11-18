@@ -196,8 +196,11 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       unavailableConnection !== null &&
       (unavailableConnection.phase === "connecting" ||
         unavailableConnection.phase === "reconnecting");
+    const awaitingApproval = unavailableConnection?.awaitingApproval === true;
     const suppressUnavailableBanner =
-      environmentReconnecting && (updateRunning || !reconnectWarningGraceElapsed);
+      environmentReconnecting &&
+      !awaitingApproval &&
+      (updateRunning || !reconnectWarningGraceElapsed);
     const showUnavailableBanner =
       activeEnvironmentUnavailableState !== null &&
       unavailableConnection !== null &&
@@ -208,11 +211,12 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         variant: unavailableConnection.phase === "error" ? "error" : "warning",
         group: "environment",
         icon: <WifiOffIcon />,
-        title: unavailableTitle(
-          activeEnvironmentUnavailableState.label,
-          unavailableConnection.phase,
-        ),
-        description: activeEnvironment ? (
+        title: awaitingApproval
+          ? `${activeEnvironmentUnavailableState.label} is waiting to approve this device`
+          : unavailableTitle(activeEnvironmentUnavailableState.label, unavailableConnection.phase),
+        description: awaitingApproval ? (
+          (unavailableConnection.error ?? undefined)
+        ) : activeEnvironment ? (
           <ConnectionDiagnosisHeadline environment={activeEnvironment} />
         ) : undefined,
         actions: (

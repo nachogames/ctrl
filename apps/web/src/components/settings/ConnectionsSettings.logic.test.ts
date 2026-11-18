@@ -3,6 +3,8 @@ import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  isServerNetworkAccessible,
+  parseManualDesktopSshTarget,
   readPairingIntent,
   resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
@@ -45,6 +47,14 @@ describe("togglePairingScopeSelection", () => {
     },
   ] as const)("$label", ({ current, scope, checked, expected }) => {
     expect(togglePairingScopeSelection(current, scope, checked)).toEqual(expected);
+  });
+});
+
+describe("parseManualDesktopSshTarget", () => {
+  it.each(["22.5", "1e3", "2222garbage"])("rejects explicit port %j", (port) => {
+    expect(() => parseManualDesktopSshTarget({ host: "devbox", username: "", port })).toThrow(
+      "SSH port must be between 1 and 65535.",
+    );
   });
 });
 
@@ -343,5 +353,18 @@ describe("matchMachineSessions", () => {
     );
     // The first (newest) of two same-named sessions wins; this device's own session never matches.
     expect([...matched]).toEqual([[laptop, sessions[0]]]);
+  });
+});
+
+describe("isServerNetworkAccessible", () => {
+  const served = [{ kind: "tailnet", httpBaseUrl: "https://host.example.ts.net:8443/" }] as const;
+  it.each([
+    { authPolicy: "remote-reachable", directEndpoints: undefined, expected: true },
+    { authPolicy: "loopback-browser", directEndpoints: undefined, expected: false },
+    { authPolicy: "loopback-browser", directEndpoints: [], expected: false },
+    { authPolicy: "loopback-browser", directEndpoints: served, expected: true },
+    { authPolicy: null, directEndpoints: served, expected: false },
+  ] as const)("$authPolicy with $directEndpoints.length endpoints", (row) => {
+    expect(isServerNetworkAccessible(row)).toBe(row.expected);
   });
 });

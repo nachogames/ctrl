@@ -489,18 +489,16 @@ export const make = Effect.gen(function* () {
     }
     const group = shell.value;
     // Archived chats have no live terminals; their servers still match by cwd.
-    const projectThreads = yield* threads
-      .listProjectThreads({ projectId: group.projectId, includeSubagents: false })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ThreadGroupService.ThreadGroupOperationError({
-              operation: "read-threads",
-              groupId,
-              cause,
-            }),
-        ),
-      );
+    const projectThreads = yield* threads.listProjectThreadShells(group.projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThreadGroupService.ThreadGroupOperationError({
+            operation: "read-threads",
+            groupId,
+            cause,
+          }),
+      ),
+    );
     const scope: GroupAttributionScope = {
       memberThreadIds: new Set(
         projectThreads.flatMap((thread) => (thread.groupId === groupId ? [thread.id] : [])),

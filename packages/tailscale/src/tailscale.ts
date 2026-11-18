@@ -64,6 +64,7 @@ export const TailscaleStderrDiagnostic = Schema.Literals([
   "not-logged-in",
   "not-running",
   "permission-denied",
+  "unsupported-target",
   "unknown",
 ]);
 export type TailscaleStderrDiagnostic = typeof TailscaleStderrDiagnostic.Type;
@@ -80,6 +81,8 @@ const STDERR_DIAGNOSTIC_PATTERNS: ReadonlyArray<
     "not-running",
   ],
   [/permission denied|access denied|must be root|operation not permitted/i, "permission-denied"],
+  // The macOS apps, and tailscaled without SO_MARK, proxy only to localhost, 127.0.0.1 and ::1.
+  [/doesn't support connecting to remote destinations/i, "unsupported-target"],
 ];
 
 const stderrDiagnosticOf = (stderr: string): TailscaleStderrDiagnostic | undefined => {
@@ -274,6 +277,11 @@ export interface TailscalePeer {
 export interface TailscaleStatus {
   /** The daemon's version, such as `1.102.2-t6cac91817-g…`. */
   readonly version: string | null;
+  /**
+   * `tailscale down` keeps `Self` from the last netmap, so the DNS name alone
+   * does not mean the tailnet is reachable. `null` when the CLI omits BackendState.
+   */
+  readonly running: boolean | null;
   readonly magicDnsName: string | null;
   readonly tailnetIpv4Addresses: readonly string[];
   /**
@@ -412,6 +420,7 @@ export const parseTailscaleStatus = (
       });
       return {
         version: nonEmptyOrNull(parsed.Version),
+        running: parsed.BackendState === undefined ? null : parsed.BackendState === "Running",
         magicDnsName: normalizeMagicDnsName(self?.DNSName),
         tailnetIpv4Addresses: tailnetIpv4AddressesOf(self?.TailscaleIPs),
         httpsServeEnabled: self?.CapMap === undefined ? null : Object.hasOwn(self.CapMap, "https"),
@@ -779,13 +788,32 @@ interface TailscaleServeTarget {
 const serveProxyTarget = (input: TailscaleServeTarget): string =>
   `http://${input.localHost ?? "127.0.0.1"}:${input.localPort}`;
 
-export const ensureTailscaleServe = (
+export class TailscaleServeHttpsDisabledError extends Schema.TaggedError<TailscaleServeHttpsDisabledError>()(
+  "TailscaleServeHttpsDisabledError",
+  {},
+) {
+  override get message(): string {
+    return "Tailscale Serve needs HTTPS enabled on the tailnet. Enable HTTPS certificates at https://login.tailscale.com/admin/dns.";
+  }
+}
+
+export const ensureTailscaleServe = Effect.fn("tailscale.ensureTailscaleServe")(function* (
   input: TailscaleServeTarget,
-): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> => {
+): Effect.fn.Return<
+  void,
+  TailscaleCommandError | TailscaleServeHttpsDisabledError,
+  ChildProcessSpawner.ChildProcessSpawner
+> {
+  // Without the capability `tailscale serve` prints an enablement notice and exits 0, or blocks on
+  // it, having configured nothing either way.
+  const status = yield* Effect.option(readTailscaleStatus("active"));
+  if (Option.isSome(status) && status.value.httpsServeEnabled === false) {
+    return yield* new TailscaleServeHttpsDisabledError();
+  }
   const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
   const args = ["serve", "--bg", `--https=${servePort}`, serveProxyTarget(input)];
-  return runTailscale("serve", args, TAILSCALE_SERVE_TIMEOUT, "active").pipe(Effect.asVoid);
-};
+  yield* runTailscale("serve", args, TAILSCALE_SERVE_TIMEOUT, "active");
+});
 
 /** A Serve route: a web handler at `mount` on `servePort`, or a TCP forward without one. */
 export interface TailscaleServeRoute {
@@ -1180,5 +1208,20 @@ export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHt
   }) {
     const served = yield* readT3EnvironmentId(input);
     return Option.contains(served, input.environmentId);
+  },
+);
+
+/**
+ * Who holds the root of `servePort`: nobody, the server at `target`, only a stopped loopback
+ * server (an unclean exit leaves one), or another live server or app, whose route must be left alone.
+ */
+export const readTailscaleServeRootHolder = Effect.fn("tailscale.readTailscaleServeRootHolder")(
+  function* (servePort: number, target: { readonly host: string; readonly port: number }) {
+    const holder = tailscaleServePortHolder(yield* readTailscaleServeConfig, servePort);
+    if (holder._tag === "free") return "none" as const;
+    if (holder._tag === "other") return "other" as const;
+    if (reachesTarget(expandProxy(holder.target), target)?.reach === "exact")
+      return "ours" as const;
+    return (yield* proxyTargetIsLive(holder.target)) ? ("other" as const) : ("dead" as const);
   },
 );

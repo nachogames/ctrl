@@ -75,6 +75,19 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
   }).pipe(Atom.withLabel(`mobile-usage:window:${windowKey}`)),
 );
 
+/** Every environment usage can come from, without asking any of them for usage. */
+const usageEnvironmentsAtom = Atom.make((get): readonly EnvironmentUsageStatus[] =>
+  [...get(environmentPresentations.presentationsAtom)].map(([environmentId, presentation]) => ({
+    environmentId,
+    label: presentation.entry.target.label,
+    isPending: true,
+    isConnected: presentation.connection.phase === "connected",
+    canReadDiagnostics: false,
+    error: null,
+    summary: null,
+  })),
+).pipe(Atom.withLabel("mobile-usage:environments"));
+
 export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
@@ -89,6 +102,8 @@ export interface UsageView {
 export function useUsage(
   input: UsageSummaryInput,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
+  /** Off, it lists the environments without loading their usage. */
+  load = true,
 ): UsageView {
   const windowKey = useMemo(
     () =>
@@ -109,8 +124,7 @@ export function useUsage(
       input.untilTime,
     ],
   );
-  const atom = usageByWindowAtom(windowKey);
-  const environments = useAtomValue(atom);
+  const environments = useAtomValue(load ? usageByWindowAtom(windowKey) : usageEnvironmentsAtom);
   const selectedEnvironments = useMemo(
     () =>
       selectedEnvironmentIds === null

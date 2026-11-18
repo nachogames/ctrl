@@ -87,11 +87,11 @@ function makeLayer(
         }
         return Effect.succeed(threads.get(threadId) ?? null);
       }),
-    listProjectThreads: (input) =>
+    listProjectThreadShells: (projectId) =>
       Effect.succeed(
         [...threads.values()].filter(
           (thread) =>
-            thread.projectId === input.projectId &&
+            thread.projectId === projectId &&
             thread.archivedAt === null &&
             thread.deletedAt === null,
         ),
@@ -192,6 +192,7 @@ function makeLayer(
             return { threadId, projection: undefined as never, resumed: false };
           }),
         checkWorktreeBase: () => Effect.void,
+        isNonGitProject: () => Effect.succeed(false),
         retryPreparation: () => Effect.die("unused"),
         prepareRun: () => Effect.die("unused"),
       });

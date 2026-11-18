@@ -25,7 +25,7 @@ export function ThreadHeader(props: {
   /** Drawn after the subtitle on Android. */
   readonly subtitleAccessory?: ReactNode;
 }) {
-  const goBack = useWorkspaceBackNavigation("threads");
+  const goBack = useWorkspaceBackNavigation();
   const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);

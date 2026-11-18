@@ -280,7 +280,6 @@ describe("the Cursor app's MCP allowlist", () => {
         NodeSqliteClient.layer({
           filename: path.join(directory, "state.vscdb"),
           readerWorker: false,
-          checkpointWorker: false,
         }),
       ),
     );

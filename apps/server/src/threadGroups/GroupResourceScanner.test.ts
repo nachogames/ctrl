@@ -125,7 +125,8 @@ const makeLayer = (input: {
           getShell: () => Effect.succeedSome(group(input.worktreePath, input.manualResources)),
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          listProjectThreads: () => Effect.succeed([thread(member, true), thread(outsider, false)]),
+          listProjectThreadShells: () =>
+            Effect.succeed([thread(member, true), thread(outsider, false)]),
           getThreadShell: (threadId) =>
             Effect.succeed(
               threadId === member || threadId === outsider

@@ -908,7 +908,7 @@ const make = Effect.gen(function* () {
         Effect.provideService(SqlClient.SqlClient, sql),
       );
       const shells = yield* threads
-        .listProjectThreads({ projectId: session.projectId, includeSubagents: false })
+        .listProjectThreadShells(session.projectId)
         .pipe(Effect.orElseSucceed(() => []));
       return {
         snapshot,
