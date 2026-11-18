@@ -118,7 +118,7 @@ export function ReviewWritingStyleCard(props: {
               }
               className="px-1 py-1 active:opacity-70"
             >
-              <Text className="text-xs text-accent">Edit</Text>
+              <Text className="text-xs font-t3-medium text-primary-text">Edit</Text>
             </Pressable>
           ) : null}
           <Pressable
@@ -126,7 +126,7 @@ export function ReviewWritingStyleCard(props: {
             onPress={() => setShowExample((open) => !open)}
             className="px-1 py-1 active:opacity-70"
           >
-            <Text className="text-xs text-accent">
+            <Text className="text-xs font-t3-medium text-primary-text">
               {showExample ? "Hide example" : "See example"}
             </Text>
           </Pressable>
@@ -183,7 +183,9 @@ export function ReviewWritingStyleCard(props: {
                 onPress={() => setForm({ ...form, instructions: selected.instructions })}
                 className="self-start px-1 py-1 active:opacity-70"
               >
-                <Text className="text-xs text-accent">Start from {selected.label}</Text>
+                <Text className="text-xs font-t3-medium text-primary-text">
+                  Start from {selected.label}
+                </Text>
               </Pressable>
             ) : null}
             <View className="flex-row items-center gap-2">

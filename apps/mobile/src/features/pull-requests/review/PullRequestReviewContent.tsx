@@ -47,7 +47,7 @@ import * as Dialog from "../../../components/ui/Dialog";
 import { useEnvironmentQuery } from "../../../state/query";
 import { reviewSessionEnvironment } from "../../../state/reviewSessions";
 import { PullRequestCardGroup } from "../PullRequestControls";
-import type { PullRequestParams } from "../usePullRequestDiff";
+import { pullRequestTarget, type PullRequestParams } from "../usePullRequestDiff";
 import { ReviewPointCard } from "./ReviewPointCard";
 import { ReviewProgressCard } from "./ReviewProgressCard";
 import { ReviewWritingStyleCard } from "./ReviewWritingStyleCard";
@@ -80,12 +80,14 @@ export function PullRequestReviewContent({
   );
   const snapshot = query.data?.snapshot ?? null;
   if (snapshot === null) {
-    return (
-      <Text className="py-6 text-sm text-foreground-muted">
-        {query.error ??
-          (query.data === null ? "Loading the review…" : "This pull request has no review yet.")}
-      </Text>
-    );
+    if (query.error !== null || query.data === null) {
+      return (
+        <Text className="py-6 text-sm text-foreground-muted">
+          {query.error ?? "Loading the review…"}
+        </Text>
+      );
+    }
+    return <NoReview params={params} environmentId={environmentId} pr={pr} />;
   }
   const summary = params.initialSummary;
   return (
@@ -99,6 +101,49 @@ export function PullRequestReviewContent({
       // A deep link opens with no summary, so its approval is not known here.
       approvalUnknown={summary === undefined}
     />
+  );
+}
+
+/** No review yet: starts one the way desktop's Run your review does; the live feed then shows it. */
+function NoReview({
+  params,
+  environmentId,
+  pr,
+}: {
+  readonly params: PullRequestParams;
+  readonly environmentId: EnvironmentId;
+  readonly pr: PullRequestDetail | null;
+}) {
+  const canStart = useAtomValue(
+    reviewSessionEnvironment.startFromPullRequest.permissionAtom(environmentId),
+  );
+  const start = useReviewCommand(
+    reviewSessionEnvironment.startFromPullRequest,
+    "Could not start your review",
+  );
+  const [starting, setStarting] = useState(false);
+  const run = async () => {
+    setStarting(true);
+    await start(pullRequestTarget(params));
+    setStarting(false);
+  };
+  return (
+    <View className="gap-3 py-6">
+      <Text className="text-sm text-foreground-muted">
+        {starting
+          ? "Preparing the review chat and isolated checkout…"
+          : "This pull request has no review yet. Run your review creates a review chat and starts an independent review."}
+      </Text>
+      <Button
+        tone="primary"
+        fullWidth
+        icon="play"
+        label="Run your review"
+        loading={starting}
+        disabled={!canStart || pr?.state !== "open"}
+        onPress={() => void run()}
+      />
+    </View>
   );
 }
 
