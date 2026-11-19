@@ -2908,6 +2908,11 @@
     },
     ". Abre una capa para revisarla o fusionar la pila hasta esa capa."
   ],
+  "7bbdd8496e6dbd8a": "Stack into {base}, {shown} of {size} here",
+  "f003c65939c9c8f0": "Stack into {base}",
+  "0034f65ef4b6491d": "{shown} of {size} here",
+  "e31342b1da7c0627": "Show the {count} other layers of this stack",
+  "98515f1201b25dcc": "+{count} more",
   "7d50c5c18ba726fa": "Estado de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}, {status}",
   "25019c947d3082dc": "Estado de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
   "cdfe7771384370e8": "¿Abrir una {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}} nueva que revierta estos cambios?",

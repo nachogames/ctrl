@@ -6978,6 +6978,38 @@
   "8fc977a6e03cf01f": "Ações rápidas {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}} #{number}",
   "f62eeb32134aff8d": "Abra {term, select, mr {este merge request} cr {esta solicitação de alteração} other {este pull request}} para mesclar a pilha",
   "7cd7da2abec6141e": "Feche imediatamente ou arraste pelas linhas para fechar vários",
+  "e31342b1da7c0627": "Show the {count} other layers of this stack",
+  "fd33787eebb99524": [
+    "Stack into ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "90e004f35526a404": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " of ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " here"
+  ],
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " more"
+  ],
   "bb0614eb361e525d": "Pode estar desatualizado",
   "f1152662c2b89b0d": [
     "Pilha #",
@@ -7040,6 +7072,20 @@
   "4aafe1baf113088a": "Mesclar pilha",
   "0292da19054f2a04": "Carregando a pilha…",
   "583869e6df57abeb": "Este pull request não está mais em uma pilha.",
+  "42a54e8cb16d0a48": [
+    "View all ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " layers of stack #",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
   "9f3f817e9111e162": "Comentou",
   "9736f3763a6476c2": "Pendente",
   "e3e1ec05d1224d36": "Não foi possível salvar a descrição",

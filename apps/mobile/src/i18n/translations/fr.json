@@ -2908,6 +2908,11 @@
     },
     ". Ouvrez une couche pour la relire ou fusionner la pile jusqu’à cette couche."
   ],
+  "7bbdd8496e6dbd8a": "Stack into {base}, {shown} of {size} here",
+  "f003c65939c9c8f0": "Stack into {base}",
+  "0034f65ef4b6491d": "{shown} of {size} here",
+  "e31342b1da7c0627": "Show the {count} other layers of this stack",
+  "98515f1201b25dcc": "+{count} more",
   "7d50c5c18ba726fa": "Statut de la {term, select, mr {merge request} cr {demande de modification} other {pull request}}, {status}",
   "25019c947d3082dc": "Statut de la {term, select, mr {merge request} cr {demande de modification} other {pull request}}",
   "cdfe7771384370e8": "Ouvrir une nouvelle {term, select, mr {merge request} cr {demande de modification} other {pull request}} qui annule ces modifications ?",

@@ -6992,6 +6992,38 @@
   "8fc977a6e03cf01f": "{term, select, mr {MR} cr {change request} other {PR}} #{number} 的快捷操作",
   "f62eeb32134aff8d": "打开此 {term, select, mr {MR} cr {change request} other {PR}} 以合并其堆叠",
   "7cd7da2abec6141e": "立即关闭，或跨行拖动以关闭多个",
+  "e31342b1da7c0627": "Show the {count} other layers of this stack",
+  "fd33787eebb99524": [
+    "Stack into ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "90e004f35526a404": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " of ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " here"
+  ],
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " more"
+  ],
   "bb0614eb361e525d": "可能已过期",
   "f1152662c2b89b0d": [
     "堆叠 #",
@@ -7055,6 +7087,20 @@
   "4aafe1baf113088a": "合并堆叠",
   "0292da19054f2a04": "正在加载堆叠…",
   "583869e6df57abeb": "此 pull request 已不在堆叠中。",
+  "42a54e8cb16d0a48": [
+    "View all ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " layers of stack #",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
   "9f3f817e9111e162": "已评论",
   "9736f3763a6476c2": "待定",
   "e3e1ec05d1224d36": "无法保存描述",

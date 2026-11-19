@@ -6984,6 +6984,38 @@
   "8fc977a6e03cf01f": "Snabbåtgärder för {term, select, mr {merge request} cr {ändringsbegäran} other {pull request}} #{number}",
   "f62eeb32134aff8d": "Öppna den här {term, select, mr {merge requesten} cr {ändringsbegäran} other {pull requesten}} för att merga dess stack",
   "7cd7da2abec6141e": "Stäng direkt eller dra över rader för att stänga flera",
+  "e31342b1da7c0627": "Show the {count} other layers of this stack",
+  "fd33787eebb99524": [
+    "Stack into ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "90e004f35526a404": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " of ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " here"
+  ],
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " more"
+  ],
   "bb0614eb361e525d": "Kan vara inaktuell",
   "f1152662c2b89b0d": [
     "Stack #",
@@ -7046,6 +7078,20 @@
   "4aafe1baf113088a": "Merga stacken",
   "0292da19054f2a04": "Läser in stacken…",
   "583869e6df57abeb": "Den här pull requesten ingår inte längre i en stack.",
+  "42a54e8cb16d0a48": [
+    "View all ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " layers of stack #",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
   "9f3f817e9111e162": "Kommenterad",
   "9736f3763a6476c2": "Väntande",
   "e3e1ec05d1224d36": "Kunde inte spara beskrivningen",

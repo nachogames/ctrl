@@ -2909,6 +2909,11 @@
     },
     "。打开某一层以审查，或将堆叠合并到该层为止。"
   ],
+  "7bbdd8496e6dbd8a": "Stack into {base}, {shown} of {size} here",
+  "f003c65939c9c8f0": "Stack into {base}",
+  "0034f65ef4b6491d": "{shown} of {size} here",
+  "e31342b1da7c0627": "Show the {count} other layers of this stack",
+  "98515f1201b25dcc": "+{count} more",
   "7d50c5c18ba726fa": "{term, select, mr {MR} cr {change request} other {PR}} 状态，{status}",
   "25019c947d3082dc": "{term, select, mr {MR} cr {change request} other {PR}} 状态",
   "cdfe7771384370e8": "要新建一个撤销这些更改的 {term, select, mr {merge request} cr {change request} other {pull request}} 吗？",

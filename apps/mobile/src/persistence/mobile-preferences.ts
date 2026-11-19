@@ -186,6 +186,8 @@ export interface Preferences {
   readonly threadListRowOrder?: ReadonlyArray<string>;
   /** Project scope keys whose Home section is folded to its heading. */
   readonly threadListCollapsedProjects?: ReadonlyArray<string>;
+  /** Pull request stack keys whose rows are folded under their header. */
+  readonly pullRequestCollapsedStacks?: ReadonlyArray<string>;
   readonly useLastProjectForNewThreads?: boolean;
   readonly lastThreadProject?: typeof ThreadProject.Type;
   readonly modelFavorites?: ReadonlyArray<{
@@ -283,6 +285,7 @@ export function sanitizePreferences(parsed: Preferences): Preferences {
     threadListProjectOrder?: ReadonlyArray<string>;
     threadListRowOrder?: ReadonlyArray<string>;
     threadListCollapsedProjects?: ReadonlyArray<string>;
+    pullRequestCollapsedStacks?: ReadonlyArray<string>;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
     modelFavorites?: Preferences["modelFavorites"];
@@ -434,6 +437,7 @@ export function sanitizePreferences(parsed: Preferences): Preferences {
     "threadListProjectOrder",
     "threadListRowOrder",
     "threadListCollapsedProjects",
+    "pullRequestCollapsedStacks",
   ] as const) {
     const value: unknown = parsed[key];
     if (Array.isArray(value)) {

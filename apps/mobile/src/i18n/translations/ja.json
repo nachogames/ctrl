@@ -2905,6 +2905,11 @@
     },
     "。レイヤーを開いてレビューするか、そのレイヤーまでスタックをマージしてください。"
   ],
+  "7bbdd8496e6dbd8a": "Stack into {base}, {shown} of {size} here",
+  "f003c65939c9c8f0": "Stack into {base}",
+  "0034f65ef4b6491d": "{shown} of {size} here",
+  "e31342b1da7c0627": "Show the {count} other layers of this stack",
+  "98515f1201b25dcc": "+{count} more",
   "7d50c5c18ba726fa": "{term, select, mr {マージリクエストのステータス、{status}} cr {変更リクエストのステータス、{status}} other {プルリクエストのステータス、{status}}}",
   "25019c947d3082dc": "{term, select, mr {マージリクエストのステータス} cr {変更リクエストのステータス} other {プルリクエストのステータス}}",
   "cdfe7771384370e8": "{term, select, mr {これらの変更を元に戻す新しいマージリクエストを開きますか？} cr {これらの変更を元に戻す新しい変更リクエストを開きますか？} other {これらの変更を元に戻す新しいプルリクエストを開きますか？}}",

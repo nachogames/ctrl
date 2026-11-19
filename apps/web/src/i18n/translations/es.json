@@ -6978,6 +6978,38 @@
   "8fc977a6e03cf01f": "Acciones rápidas de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}} #{number}",
   "f62eeb32134aff8d": "Abre esta {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}} para fusionar su pila",
   "7cd7da2abec6141e": "Cierra inmediatamente, o arrastra por las filas para cerrar varias",
+  "e31342b1da7c0627": "Show the {count} other layers of this stack",
+  "fd33787eebb99524": [
+    "Stack into ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "90e004f35526a404": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " of ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " here"
+  ],
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " more"
+  ],
   "bb0614eb361e525d": "Puede estar desactualizado",
   "f1152662c2b89b0d": [
     "Pila #",
@@ -7040,6 +7072,20 @@
   "4aafe1baf113088a": "Fusionar pila",
   "0292da19054f2a04": "Cargando la pila…",
   "583869e6df57abeb": "Esta pull request ya no está en una pila.",
+  "42a54e8cb16d0a48": [
+    "View all ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " layers of stack #",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
   "9f3f817e9111e162": "Comentó",
   "9736f3763a6476c2": "Pendiente",
   "e3e1ec05d1224d36": "No se pudo guardar la descripción",
