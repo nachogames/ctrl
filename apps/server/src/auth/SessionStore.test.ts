@@ -160,14 +160,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
 
       yield* TestClock.adjust(Duration.days(20));
       const beforeRenewal = yield* sessions.verify(issued.token);
-      const renewed = yield* sessions.renew(renewal(beforeRenewal), Duration.days(30));
+      const renewed = yield* sessions.slideExpiry(renewal(beforeRenewal), Duration.days(30));
       expect(Option.map(renewed, (at) => at.epochMilliseconds)).toEqual(
         Option.some(Duration.toMillis(Duration.days(50))),
       );
       // A renewal inside the granularity window does not write again.
       expect(
         Option.isNone(
-          yield* sessions.renew(renewal(yield* sessions.verify(issued.token)), Duration.days(30)),
+          yield* sessions.slideExpiry(
+            renewal(yield* sessions.verify(issued.token)),
+            Duration.days(30),
+          ),
         ),
       ).toBe(true);
 
@@ -180,9 +183,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const lapsed = yield* sessions.verify(issued.token).pipe(Effect.flip);
       expect(lapsed._tag).toBe("SessionTokenExpiredError");
       // A lapsed session cannot be revived by a late renewal.
-      expect(Option.isNone(yield* sessions.renew(renewal(afterClaim), Duration.days(30)))).toBe(
-        true,
-      );
+      expect(
+        Option.isNone(yield* sessions.slideExpiry(renewal(afterClaim), Duration.days(30))),
+      ).toBe(true);
       expect((yield* sessions.verify(issued.token).pipe(Effect.flip))._tag).toBe(
         "SessionTokenExpiredError",
       );
@@ -196,7 +199,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const verified = yield* sessions.verify(issued.token);
       yield* sessions.revoke(issued.sessionId);
       yield* TestClock.adjust(Duration.days(10));
-      expect(Option.isNone(yield* sessions.renew(renewal(verified), Duration.days(90)))).toBe(true);
+      expect(Option.isNone(yield* sessions.slideExpiry(renewal(verified), Duration.days(90)))).toBe(
+        true,
+      );
       expect((yield* sessions.verify(issued.token).pipe(Effect.flip))._tag).toBe(
         "SessionTokenRevokedError",
       );
@@ -223,7 +228,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const issued = yield* sessions.issue({ ...input, ttl: Duration.days(30) });
       yield* TestClock.adjust(Duration.days(20));
       // Even a stored expiry moved by hand does not outlive the token's own claim.
-      yield* sessions.renew(renewal(yield* sessions.verify(issued.token)), Duration.days(30));
+      yield* sessions.slideExpiry(renewal(yield* sessions.verify(issued.token)), Duration.days(30));
       yield* TestClock.adjust(Duration.days(10));
       expect((yield* sessions.verify(issued.token).pipe(Effect.flip))._tag).toBe(
         "SessionTokenExpiredError",
@@ -244,7 +249,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
           Effect.forkScoped({ startImmediately: true }),
         );
       yield* TestClock.adjust(Duration.minutes(50));
-      yield* sessions.renew(renewal(yield* sessions.verify(issued.token)), Duration.hours(1));
+      yield* sessions.slideExpiry(renewal(yield* sessions.verify(issued.token)), Duration.hours(1));
       yield* TestClock.adjust(Duration.minutes(20));
       expect(yield* Deferred.isDone(invalidated)).toBe(false);
       yield* TestClock.adjust(Duration.minutes(40));
@@ -254,6 +259,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
 
   it.effect.each([
     { name: "a renewal for the same key", renewal: {}, closesAtMinute: 119 },
+    {
+      name: "a renewal for the same key, on a media ticket",
+      renewal: {},
+      closesAtMinute: 119,
+      ticket: "media",
+    },
     {
       name: "a renewal for another key",
       renewal: { proofKeyThumbprint: "other-proof-key" },
@@ -281,8 +292,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const sessions = yield* SessionStore.SessionStore;
       const client = yield* sessions.issue(relaySessionInput);
       const invalidated = yield* Deferred.make<void>();
+      // Media tickets carry no proof key, so their routes wait without one.
+      const watched =
+        "ticket" in testCase
+          ? yield* sessions.verifyWebSocketToken(
+              (yield* sessions.issueWebSocketToken(client.sessionId, { audience: "media" })).token,
+            )
+          : {
+              sessionId: client.sessionId,
+              proofKeyThumbprint: relaySessionInput.proofKeyThumbprint,
+            };
       const watcher = yield* sessions
-        .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+        .awaitInvalidation(watched.sessionId, watched.proofKeyThumbprint)
         .pipe(
           Effect.andThen(Deferred.succeed(invalidated, undefined)),
           Effect.forkScoped({ startImmediately: true }),
@@ -297,6 +318,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
           testCase.revoke === "original" ? client.sessionId : renewal.sessionId,
         );
       }
+      yield* Fiber.join(watcher);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("keeps a socket on a session renewed in place until its moved deadline", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const renewable = { ttl: Duration.hours(1), renewalWindow: Duration.hours(2) };
+      const client = yield* sessions.issue({ ...relaySessionInput, ...renewable });
+      const invalidated = yield* Deferred.make<void>();
+      const watcher = yield* sessions
+        .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      yield* TestClock.adjust(Duration.minutes(90));
+      yield* sessions.renew(client.token, {
+        proofKeyThumbprint: relaySessionInput.proofKeyThumbprint,
+        consumeProof: Effect.void,
+        ...renewable,
+      });
+      yield* TestClock.adjust(Duration.millis(120 * 60_000 - 1));
+      expect(yield* Deferred.isDone(invalidated)).toBe(false);
+      yield* TestClock.adjust(Duration.millis(1));
       yield* Fiber.join(watcher);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );

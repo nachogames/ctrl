@@ -17,7 +17,7 @@ import { Button } from "../ui/button";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -26,6 +26,7 @@ import {
 
 /** How review findings are written: pick a style, and add, edit or delete your own. */
 export function ReviewWritingStyleSetting() {
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["reviewWritingStyle"]);
@@ -68,7 +69,7 @@ export function ReviewWritingStyleSetting() {
       resetAction={
         mixed || setting.selected !== DEFAULT_REVIEW_WRITING_STYLE ? (
           <SettingResetButton
-            label="review writing style"
+            ariaLabel="Reset review writing style to default"
             onClick={() =>
               updateSettings({ reviewWritingStyle: { selected: DEFAULT_REVIEW_WRITING_STYLE } })
             }

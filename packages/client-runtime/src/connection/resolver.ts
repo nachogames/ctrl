@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import type {
   AuthClientPresentationMetadata,
   ExecutionEnvironmentDescriptor,
@@ -214,7 +216,11 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     if (!isBearerProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: `Connection profile ${target.connectionId} is not a bearer connection.`,
+        ...translatableDetail(
+          msg("Connection profile {connectionId} is not a bearer connection.", {
+            connectionId: target.connectionId,
+          }),
+        ),
       });
     }
     if (profile.environmentId !== target.environmentId) {
@@ -245,7 +251,7 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
       if (connectionRouteKind({ target, profile: Option.some(tailnetProfile) }) !== "tailnet") {
         return yield* new ConnectionBlockedError({
           reason: "configuration",
-          detail: "A Tailscale sign-in is only used on Tailscale addresses.",
+          ...translatableDetail(msg("A Tailscale sign-in is only used on Tailscale addresses.")),
           hop: "device",
         });
       }
@@ -256,18 +262,22 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
       });
       return { ...authorized, target } satisfies PreparedConnection;
     }
-    if (!isBearerCredential(credential)) {
-      return yield* credentialMissingError(target.connectionId);
-    }
-    const authorized = yield* remote
-      .authorizeBearer({
-        expectedEnvironmentId: target.environmentId,
-        httpBaseUrl: profile.httpBaseUrl,
-        wsBaseUrl: profile.wsBaseUrl,
-        bearerToken: credential.token,
-        connectionMethod: "direct",
-      })
-      .pipe(Effect.catch((ended) => upgradeToTailnet(target, profile, ended)));
+    const authorized = yield* (
+      credential._tag === "DpopConnectionCredential"
+        ? remote.authorizeDirectDpop({
+            expectedEnvironmentId: target.environmentId,
+            connectionId: credentialId,
+            httpBaseUrl: profile.httpBaseUrl,
+            wsBaseUrl: profile.wsBaseUrl,
+          })
+        : remote.authorizeBearer({
+            expectedEnvironmentId: target.environmentId,
+            httpBaseUrl: profile.httpBaseUrl,
+            wsBaseUrl: profile.wsBaseUrl,
+            bearerToken: credential.token,
+            connectionMethod: "direct",
+          })
+    ).pipe(Effect.catch((ended) => upgradeToTailnet(target, profile, ended)));
     return {
       ...authorized,
       target,
@@ -309,7 +319,11 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
     if (!isSshProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: `Connection profile ${target.connectionId} is not an SSH connection.`,
+        ...translatableDetail(
+          msg("Connection profile {connectionId} is not an SSH connection.", {
+            connectionId: target.connectionId,
+          }),
+        ),
       });
     }
     if (profile.environmentId !== target.environmentId) {

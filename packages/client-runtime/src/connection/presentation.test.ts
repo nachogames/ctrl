@@ -51,6 +51,7 @@ function supervisorState(overrides: Partial<SupervisorConnectionState>): Supervi
     lastFailure: null,
     retryAt: null,
     routes: [],
+    refusedRouteIds: [],
     ...overrides,
   };
 }

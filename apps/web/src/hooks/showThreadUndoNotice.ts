@@ -1,11 +1,14 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { msg } from "gt-react";
 import { create } from "zustand";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { m, type MessageResolver } from "../i18n/messages";
 import { shortcutLabelForCommand } from "../keybindings";
 import { announce, cancelAnnouncement } from "../lib/announce";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -31,31 +34,62 @@ type UndoNotice = {
 
 export const useThreadUndoNotice = create<{ notice: UndoNotice | null }>(() => ({ notice: null }));
 
-const UNDONE_ACTION = {
-  Settled: "settle",
-  "Un-settled": "un-settle",
-  Snoozed: "snooze",
-  Unpinned: "unpin",
-  Archived: "archive",
-  Discarded: "discard",
+const SUMMARY = {
+  Settled: msg("Settled {count, plural, one {{count} thread} other {{count} threads}}"),
+  "Un-settled": msg("Un-settled {count, plural, one {{count} thread} other {{count} threads}}"),
+  Snoozed: msg("Snoozed {count, plural, one {{count} thread} other {{count} threads}}"),
+  Unpinned: msg("Unpinned {count, plural, one {{count} thread} other {{count} threads}}"),
+  Archived: msg("Archived {count, plural, one {{count} thread} other {{count} threads}}"),
+  Discarded: msg("Discarded {count, plural, one {{count} draft} other {{count} drafts}}"),
 } satisfies Record<UndoOptions["action"], string>;
 
-function countLabel(
-  notice: { readonly action: UndoOptions["action"]; readonly subject?: "group" | undefined },
-  count: number,
-): string {
-  const noun =
-    notice.subject === "group" ? "group" : notice.action === "Discarded" ? "draft" : "thread";
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+const GROUP_SUMMARY = {
+  Settled: msg("Settled {count, plural, one {{count} group} other {{count} groups}}"),
+  "Un-settled": msg("Un-settled {count, plural, one {{count} group} other {{count} groups}}"),
+  Snoozed: msg("Snoozed {count, plural, one {{count} group} other {{count} groups}}"),
+  Unpinned: msg("Unpinned {count, plural, one {{count} group} other {{count} groups}}"),
+  Archived: msg("Archived {count, plural, one {{count} group} other {{count} groups}}"),
+  Discarded: msg("Discarded {count, plural, one {{count} group} other {{count} groups}}"),
+} satisfies Record<UndoOptions["action"], string>;
+
+const UNDONE = {
+  Settled: msg("Undid settle of {count, plural, one {{count} thread} other {{count} threads}}"),
+  "Un-settled": msg(
+    "Undid un-settle of {count, plural, one {{count} thread} other {{count} threads}}",
+  ),
+  Snoozed: msg("Undid snooze of {count, plural, one {{count} thread} other {{count} threads}}"),
+  Unpinned: msg("Undid unpin of {count, plural, one {{count} thread} other {{count} threads}}"),
+  Archived: msg("Undid archive of {count, plural, one {{count} thread} other {{count} threads}}"),
+  Discarded: msg("Undid discard of {count, plural, one {{count} draft} other {{count} drafts}}"),
+} satisfies Record<UndoOptions["action"], string>;
+
+const GROUP_UNDONE = {
+  Settled: msg("Undid settle of {count, plural, one {{count} group} other {{count} groups}}"),
+  "Un-settled": msg(
+    "Undid un-settle of {count, plural, one {{count} group} other {{count} groups}}",
+  ),
+  Snoozed: msg("Undid snooze of {count, plural, one {{count} group} other {{count} groups}}"),
+  Unpinned: msg("Undid unpin of {count, plural, one {{count} group} other {{count} groups}}"),
+  Archived: msg("Undid archive of {count, plural, one {{count} group} other {{count} groups}}"),
+  Discarded: msg("Undid discard of {count, plural, one {{count} group} other {{count} groups}}"),
+} satisfies Record<UndoOptions["action"], string>;
+
+function undoneMessage(notice: Pick<UndoOptions, "action" | "subject">): string {
+  return (notice.subject === "group" ? GROUP_UNDONE : UNDONE)[notice.action];
 }
 
 function threadUndoNoticeSummary(notice: Pick<UndoNotice, "action" | "subject" | "count">): string {
-  return `${notice.action} ${countLabel(notice, notice.count)}`;
+  const summary = (notice.subject === "group" ? GROUP_SUMMARY : SUMMARY)[notice.action];
+  return m(summary, { count: notice.count });
 }
 
-export function threadUndoLabel(keybindings: Parameters<typeof shortcutLabelForCommand>[0]) {
+/** Components pass `useMessages()` so the label follows a language switch. */
+export function threadUndoLabel(
+  keybindings: Parameters<typeof shortcutLabelForCommand>[0],
+  resolve: MessageResolver = m,
+) {
   const shortcut = shortcutLabelForCommand(keybindings, "thread.undo");
-  return shortcut ? `${shortcut} to undo` : "Undo";
+  return shortcut ? resolve(msg("{shortcut} to undo", { shortcut })) : resolve(msg("Undo"));
 }
 
 let announcedSummary: string | null = null;
@@ -70,7 +104,7 @@ function setNotice(notice: UndoNotice | null) {
   announcedSummary = summary;
   if (summary) {
     const label = threadUndoLabel(appAtomRegistry.get(primaryServerKeybindingsAtom));
-    announce(`${summary}, ${label}`, "thread-undo-notice");
+    announce(m(msg("{summary}, {label}", { summary, label })), "thread-undo-notice");
   } else {
     cancelAnnouncement("thread-undo-notice");
   }
@@ -116,7 +150,7 @@ function refreshNotice() {
               stackedThreadToast({
                 type: "error",
                 title: failureTitle,
-                description: error instanceof Error ? error.message : "An error occurred.",
+                description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
               }),
             );
           };
@@ -133,7 +167,7 @@ function refreshNotice() {
       );
       // Failures already raise a toast, so only what was actually restored is spoken.
       if (undone > 0) {
-        announce(`Undid ${UNDONE_ACTION[latest.action]} of ${countLabel(latest, undone)}`);
+        announce(m(undoneMessage(latest), { count: undone }));
       }
     },
   });

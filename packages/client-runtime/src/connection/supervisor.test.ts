@@ -152,6 +152,14 @@ function blocked(message = "Authentication required.") {
   });
 }
 
+function hostRefusal() {
+  return new ConnectionBlockedError({
+    reason: "authentication",
+    detail: "The environment credential is invalid.",
+    hop: "server",
+  });
+}
+
 function awaitState(
   state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>,
   predicate: (value: SupervisorConnectionState) => boolean,
@@ -245,7 +253,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
 
     yield* reportProgress({ stage: "synchronizing", prepared });
     yield* session.ready;
-    return { prepared, session } satisfies ConnectionDriver.EnvironmentConnectionLease;
+    return { prepared, session } satisfies ConnectionDriver.RouteConnection;
   });
 
   const connect = Effect.fn("TestConnectionDriver.connect")(function* (
@@ -1737,7 +1745,7 @@ describe("EnvironmentSupervisor", () => {
             Layer.succeed(ClientCapabilities.ClientPresentation, {
               metadata: { label: "Test client", deviceType: "desktop" },
             }),
-            Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({}),
+            ConnectionCredentialStore.layerMemory(),
           ),
         ),
       );
@@ -2205,6 +2213,83 @@ describe("EnvironmentSupervisor routes", () => {
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
       expect(prepared.target._tag).toBe("RelayConnectionTarget");
+    }),
+  );
+
+  it.effect("does not report a route that failed before reaching its host's sign-in", () =>
+    Effect.gen(function* () {
+      const failures = [
+        new ConnectionBlockedError({
+          reason: "permission",
+          detail: "T3 Connect is not enabled on this machine.",
+          hop: "tunnel",
+          failureCause: "tunnel_not_enabled",
+        }),
+        new ConnectionBlockedError({
+          reason: "authentication",
+          detail: "This device's clock is wrong.",
+          hop: "server",
+          failureCause: "clock_skew",
+        }),
+      ];
+      for (const failure of failures) {
+        const harness = yield* makeHarness({
+          checkRoute: () => Effect.succeed("answered"),
+          prepare: (_attempt, target) =>
+            target._tag === "BearerConnectionTarget"
+              ? Effect.fail(failure)
+              : Effect.succeed(preparedFor(target)),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        const state = yield* awaitState(supervisor.state, (value) => value.phase === "connected");
+        expect(state.refusedRouteIds).toEqual([]);
+      }
+    }),
+  );
+
+  it.effect("reports a saved route whose host refused sign-in while another route connected", () =>
+    Effect.gen(function* () {
+      const loopbackTarget = new BearerConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        connectionId: "bearer:loopback",
+      });
+      const entry: ConnectionCatalogEntry = {
+        target: loopbackTarget,
+        profile: Option.some(
+          new BearerConnectionProfile({
+            connectionId: loopbackTarget.connectionId,
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            httpBaseUrl: "http://127.0.0.1:3774/",
+            wsBaseUrl: "ws://127.0.0.1:3774/",
+          }),
+        ),
+        alternateRoutes: [{ target: RELAY_TARGET, profile: Option.none() }],
+        enabled: true,
+      };
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed<ConnectionDriver.RouteCheck>(
+            route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked",
+          ),
+        prepare: (_attempt, target) =>
+          connectionRouteId(target) === loopbackTarget.connectionId
+            ? Effect.fail(hostRefusal())
+            : Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(entry, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const overRelay = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+      expect(overRelay.refusedRouteIds).toEqual([loopbackTarget.connectionId]);
     }),
   );
 

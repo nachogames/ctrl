@@ -22,7 +22,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { toastManager } from "../ui/toast";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 const ENGINES: ReadonlyArray<{ readonly value: VoiceFrontEngine; readonly label: string }> = [
@@ -51,6 +51,7 @@ export function VoiceFrontSettings(props: {
   readonly environmentId: EnvironmentId | null;
   readonly locked: boolean;
 }) {
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings((unified) => unified.voiceFront);
   const updateSettings = useUpdateScopedSettings();
   const modelEdited = useRef(false);
@@ -135,7 +136,7 @@ export function VoiceFrontSettings(props: {
                 resetAction={
                   settings.geminiModel !== DEFAULT_GEMINI_LIVE_MODEL ? (
                     <SettingResetButton
-                      label="Gemini model"
+                      ariaLabel="Reset Gemini model to default"
                       onClick={() =>
                         updateSettings({ voiceFront: { geminiModel: DEFAULT_GEMINI_LIVE_MODEL } })
                       }
@@ -172,7 +173,7 @@ export function VoiceFrontSettings(props: {
                 resetAction={
                   settings.monthlyCapUsd !== DEFAULT_VOICE_FRONT_MONTHLY_CAP_USD ? (
                     <SettingResetButton
-                      label="Gemini monthly limit"
+                      ariaLabel="Reset Gemini monthly limit to default"
                       onClick={() =>
                         updateSettings({
                           voiceFront: { monthlyCapUsd: DEFAULT_VOICE_FRONT_MONTHLY_CAP_USD },
@@ -218,7 +219,7 @@ export function VoiceFrontSettings(props: {
             resetAction={
               settings.model !== DEFAULT_VOICE_FRONT_MODEL ? (
                 <SettingResetButton
-                  label="front model"
+                  ariaLabel="Reset front model to default"
                   onClick={() =>
                     updateSettings({ voiceFront: { model: DEFAULT_VOICE_FRONT_MODEL } })
                   }
@@ -253,7 +254,7 @@ export function VoiceFrontSettings(props: {
             resetAction={
               settings.endpoint !== DEFAULT_VOICE_FRONT_ENDPOINT ? (
                 <SettingResetButton
-                  label="LM Studio endpoint"
+                  ariaLabel="Reset LM Studio endpoint to default"
                   onClick={() =>
                     updateSettings({ voiceFront: { endpoint: DEFAULT_VOICE_FRONT_ENDPOINT } })
                   }

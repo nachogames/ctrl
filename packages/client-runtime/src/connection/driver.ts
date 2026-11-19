@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -16,6 +18,7 @@ import type {
   PreparedConnection,
 } from "./model.ts";
 import { ConnectionTransientError } from "./model.ts";
+import { isHostCredentialRefusal } from "./errors.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import {
   connectionRouteAddress,
@@ -41,9 +44,14 @@ export type ConnectionDriverProgress =
       readonly prepared: PreparedConnection;
     };
 
-export interface EnvironmentConnectionLease {
+export interface RouteConnection {
   readonly prepared: PreparedConnection;
   readonly session: RpcSession.RpcSession;
+}
+
+export interface EnvironmentConnectionLease extends RouteConnection {
+  /** Saved routes whose host refused this device's credential before another route connected. */
+  readonly refusedRouteIds: ReadonlyArray<string>;
 }
 
 export type RouteCheck = "answered" | "silent" | "unchecked";
@@ -73,7 +81,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   checkRoute: (route: ConnectionRoute) => Effect.Effect<RouteCheck>,
   connectRoute: (
     route: ConnectionRoute,
-  ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, R | Scope.Scope>,
+  ) => Effect.Effect<RouteConnection, ConnectionAttemptError, R | Scope.Scope>,
   reportRoute: ReportRouteOutcome,
 ) {
   const routes = usableRoutes(entry);
@@ -102,6 +110,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   let transient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
   let expired: ConnectionAttemptError | undefined;
+  const refusedRouteIds: Array<string> = [];
   // Each route gets its own scope so a half-open session closes before the next try.
   const attempt = Effect.fnUntraced(function* (route: ConnectionRoute) {
     const routeScope = yield* Scope.fork(attemptScope);
@@ -115,6 +124,8 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       // The host's own refusal says more than this device's.
       else if (blocked?.hop === undefined || blocked.hop === "device") blocked = result.failure;
       if (result.failure.failureCause === "session_expired") expired ??= result.failure;
+      if (isHostCredentialRefusal(result.failure))
+        refusedRouteIds.push(connectionRouteId(route.target));
     }
     yield* reportRoute(
       result._tag === "Success"
@@ -138,7 +149,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       continue;
     }
     const result = yield* attempt(route);
-    if (result._tag === "Success") return result.success;
+    if (result._tag === "Success") return { ...result.success, refusedRouteIds };
     // An incompatible server is the same server on every route.
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
@@ -153,7 +164,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     // retries, the retry reaches it sooner than waiting here would.
     if (transient !== undefined && stillSilent.some((entry) => entry.route === route)) break;
     const result = yield* attempt(route);
-    if (result._tag === "Success") return result.success;
+    if (result._tag === "Success") return { ...result.success, refusedRouteIds };
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
   // A skipped route's check still tells the diagnosis whether this device
@@ -167,7 +178,9 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       blocked ??
       new ConnectionTransientError({
         reason: "endpoint-unavailable",
-        detail: `${entry.target.label} did not answer on any saved route.`,
+        ...translatableDetail(
+          msg("{host} did not answer on any saved route.", { host: entry.target.label }),
+        ),
       })
   );
 });
@@ -254,6 +267,9 @@ export const make = Effect.gen(function* () {
               ...(prepared.httpAuthorization.tailnetCredentialId === undefined
                 ? {}
                 : { tailnetCredentialId: prepared.httpAuthorization.tailnetCredentialId }),
+              ...(prepared.httpAuthorization.directConnection
+                ? { directConnection: prepared.httpAuthorization.directConnection }
+                : {}),
             })
             .pipe(
               Effect.catch((error) =>
@@ -262,7 +278,7 @@ export const make = Effect.gen(function* () {
               Effect.forkScoped,
             );
         }
-        return { prepared, session } satisfies EnvironmentConnectionLease;
+        return { prepared, session } satisfies RouteConnection;
       }),
       reportRoute,
     );

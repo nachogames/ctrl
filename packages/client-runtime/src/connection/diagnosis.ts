@@ -22,6 +22,8 @@ import {
   type SupervisorConnectionState,
 } from "./model.ts";
 import { tailnetRefusalVerdict } from "./tailnet.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type ConnectionHopResult = "ok" | "failed" | "unchecked";
 
@@ -71,8 +73,6 @@ export interface ConnectionDiagnosisInput {
 const TAILSCALE_TROUBLESHOOTING_URL =
   "https://github.com/pingdotgg/t3code/blob/main/docs/user/remote-access.md#tailscale-troubleshooting";
 
-const OFF_TAILNET_HINT = "Check that Tailscale is on for this device.";
-
 /** Tailscale routes when every one of them failed to reach the host, else none. */
 function failedTailnetRoutes(
   routes: ReadonlyArray<ConnectionRouteOutcome>,
@@ -87,9 +87,14 @@ export function everyTailnetRouteFailed(state: SupervisorConnectionState): boole
 }
 
 /** The latest outcome on one route, for a route list. */
-export function routeOutcomeText(outcome: ConnectionRouteOutcome): string {
-  if (outcome.result === "answered") return "Answered";
-  return routeDidNotAnswer(outcome) ? "Did not answer" : "Failed";
+export function routeOutcomeText(
+  outcome: ConnectionRouteOutcome,
+  resolve: MFunctionType = mFallback,
+): string {
+  if (outcome.result === "answered") return resolve(msg("Answered", { $context: "route outcome" }));
+  return routeDidNotAnswer(outcome)
+    ? resolve(msg("Did not answer", { $context: "route outcome" }))
+    : resolve(msg("Failed", { $context: "route outcome" }));
 }
 
 /**
@@ -97,12 +102,15 @@ export function routeOutcomeText(outcome: ConnectionRouteOutcome): string {
  * answered, so Tailscale may be off on this device. A host that is off fails
  * every route, so it gets no hint.
  */
-export function offTailnetHint(state: SupervisorConnectionState): string | null {
+export function offTailnetHint(
+  state: SupervisorConnectionState,
+  resolve: MFunctionType = mFallback,
+): string | null {
   if (!everyTailnetRouteFailed(state)) return null;
   const otherAnswered = state.routes.some(
     (route) => route.kind !== "tailnet" && route.result === "answered",
   );
-  return otherAnswered ? OFF_TAILNET_HINT : null;
+  return otherAnswered ? resolve(msg("Check that Tailscale is on for this device.")) : null;
 }
 
 interface Located {
@@ -157,157 +165,213 @@ function locate(input: ConnectionDiagnosisInput): Located | null {
   return { hop: cause !== null && NOT_ANSWERING.has(cause) ? "server" : "tunnel", cause };
 }
 
-function headline(host: string, located: Located, failure: ConnectionAttemptError | null): string {
+function headline(
+  host: string,
+  located: Located,
+  failure: ConnectionAttemptError | null,
+  resolve: MFunctionType,
+): string {
   switch (located.cause) {
     case "offline":
-      return "This device is offline";
+      return resolve(msg("This device is offline"));
     case "session_pending":
-      return "This device is still loading its T3 Connect sign-in";
+      return resolve(msg("This device is still loading its T3 Connect sign-in"));
     case "approval_pending":
-      return `${host} is waiting for someone to approve this device`;
+      return resolve(msg("{host} is waiting for someone to approve this device", { host }));
     case "outdated":
-      return `${host} runs an older T3 Code`;
+      return resolve(msg("{host} runs an older T3 Code", { host }));
     case "clock_skew":
-      return "This device's clock is off";
+      return resolve(msg("This device's clock is off"));
     case "not_linked":
-      return `${host} is not linked to your T3 Connect account`;
+      return resolve(msg("{host} is not linked to your T3 Connect account", { host }));
     case "relay_error":
-      return "T3 Connect returned an error";
+      return resolve(msg("T3 Connect returned an error"));
     case "tunnel_pending":
-      return `${host}'s tunnel is still being set up`;
+      return resolve(msg("{host}'s tunnel is still being set up", { host }));
     case "tunnel_not_enabled":
-      return `T3 Connect is not turned on for ${host}`;
+      return resolve(msg("T3 Connect is not turned on for {host}", { host }));
     case "session_expired":
-      return `This device's sign-in to ${host} expired`;
+      return resolve(msg("This device's sign-in to {host} expired", { host }));
     case "released":
     case "tunnel_down":
-      return `${host}'s tunnel is offline`;
+      return resolve(msg("{host}'s tunnel is offline", { host }));
     case "origin_unreachable":
-      return `Tunnel works, but T3 Code on ${host} did not answer`;
+      return resolve(msg("Tunnel works, but T3 Code on {host} did not answer", { host }));
     case "invalid_response":
-      return `T3 Code on ${host} sent an unexpected answer`;
+      return resolve(msg("T3 Code on {host} sent an unexpected answer", { host }));
     case "dns":
-      return `${host}'s tunnel address did not resolve`;
+      return resolve(msg("{host}'s tunnel address did not resolve", { host }));
     case "tls":
-      return `Secure connection to ${host}'s tunnel failed`;
+      return resolve(msg("Secure connection to {host}'s tunnel failed", { host }));
     case "refused":
-      return `${host}'s tunnel refused the connection`;
+      return resolve(msg("{host}'s tunnel refused the connection", { host }));
     case "timeout":
-      return `${host} did not answer in time`;
+      return resolve(msg("{host} did not answer in time", { host }));
     case "unknown":
     case null:
       break;
   }
   switch (located.hop) {
     case "device":
-      return "This device could not prepare the connection";
+      return resolve(msg("This device could not prepare the connection"));
     case "relay":
       return failure?.reason === "authentication"
-        ? "T3 Connect did not accept this device's sign-in"
-        : "This device can't reach T3 Connect";
+        ? resolve(msg("T3 Connect did not accept this device's sign-in"))
+        : resolve(msg("This device can't reach T3 Connect"));
     case "tunnel":
       // The relay already reached the host when this device fails on its own.
       return failure?.reason === "network" ||
         failure?.reason === "transport" ||
         failure?.reason === "timeout"
-        ? `This device can't reach ${host}'s tunnel`
-        : `T3 Connect could not reach ${host}'s tunnel`;
+        ? resolve(msg("This device can't reach {host}'s tunnel", { host }))
+        : resolve(msg("T3 Connect could not reach {host}'s tunnel", { host }));
     case "server":
       return failure?.reason === "authentication" || failure?.reason === "permission"
-        ? `T3 Code on ${host} did not accept this device`
-        : `T3 Code on ${host} did not answer`;
+        ? resolve(msg("T3 Code on {host} did not accept this device", { host }))
+        : resolve(msg("T3 Code on {host} did not answer", { host }));
   }
 }
 
-function steps(host: string, located: Located, failure: ConnectionAttemptError | null): string[] {
-  const checkHost = `On ${host}, check Settings > Connections or run \`t3 connect status\`.`;
+function steps(
+  host: string,
+  located: Located,
+  failure: ConnectionAttemptError | null,
+  resolve: MFunctionType,
+): string[] {
+  const checkHost = resolve(
+    msg("On {host}, check Settings > Connections or run `t3 connect status`.", { host }),
+  );
   switch (located.cause) {
     case "offline":
-      return ["Connect this device to the internet. T3 Code reconnects on its own."];
+      return [resolve(msg("Connect this device to the internet. T3 Code reconnects on its own."))];
     case "session_pending":
       return [
-        "Wait a moment. T3 Code retries on its own.",
-        "If it keeps waiting, reload or restart T3 Code on this device.",
+        resolve(msg("Wait a moment. T3 Code retries on its own.")),
+        resolve(msg("If it keeps waiting, reload or restart T3 Code on this device.")),
       ];
     case "approval_pending": {
       const code =
         failure?._tag === "ConnectionTransientError" ? failure.verificationCode : undefined;
-      const approve = code ? `approve the device showing ${code}` : "approve this device";
       return [
-        `On a device already connected to ${host}, open Settings > Sharing & access and ${approve}.`,
-        `Or run \`t3 auth connect-device approve ${code ?? "<code>"}\` on ${host}.`,
+        code
+          ? resolve(
+              msg(
+                "On a device already connected to {host}, open Settings > Sharing & access and approve the device showing {code}.",
+                { host, code },
+              ),
+            )
+          : resolve(
+              msg(
+                "On a device already connected to {host}, open Settings > Sharing & access and approve this device.",
+                { host },
+              ),
+            ),
+        resolve(
+          msg("Or run `t3 auth connect-device approve {code}` on {host}.", {
+            code: code ?? "<code>",
+            host,
+          }),
+        ),
       ];
     }
     case "outdated":
-      return [`Update T3 Code on ${host}.`];
+      return [resolve(msg("Update T3 Code on {host}.", { host }))];
     case "clock_skew":
-      return [`Turn on automatic date and time on this device and on ${host}, then retry.`];
+      return [
+        resolve(
+          msg("Turn on automatic date and time on this device and on {host}, then retry.", {
+            host,
+          }),
+        ),
+      ];
     case "not_linked":
       return [
-        "Check that this device is signed in to the same T3 Connect account as the host.",
-        `On ${host}, open Settings > Connections and turn T3 Connect on.`,
+        resolve(
+          msg("Check that this device is signed in to the same T3 Connect account as the host."),
+        ),
+        resolve(msg("On {host}, open Settings > Connections and turn T3 Connect on.", { host })),
       ];
     case "tunnel_pending":
-      return ["Wait a minute. T3 Code retries on its own.", checkHost];
+      return [resolve(msg("Wait a minute. T3 Code retries on its own.")), checkHost];
     case "relay_error":
       return [
-        "Wait a few minutes. T3 Code retries on its own.",
-        "If it keeps failing, copy the diagnostics and report it.",
+        resolve(msg("Wait a few minutes. T3 Code retries on its own.")),
+        resolve(msg("If it keeps failing, copy the diagnostics and report it.")),
       ];
     case "tunnel_not_enabled":
-      return [`On ${host}, open Settings > Connections and turn T3 Connect on.`];
+      return [
+        resolve(msg("On {host}, open Settings > Connections and turn T3 Connect on.", { host })),
+      ];
     case "session_expired":
       return [
-        `On ${host}, open Settings > Connections and choose Add a device.`,
-        "Pair this device with that code again. Its routes and settings stay as they are.",
+        resolve(msg("On {host}, open Settings > Connections and choose Add a device.", { host })),
+        resolve(
+          msg("Pair this device with that code again. Its routes and settings stay as they are."),
+        ),
       ];
     case "released":
     case "tunnel_down":
       return [
-        `Make sure ${host} is awake and T3 Code is running on it.`,
+        resolve(msg("Make sure {host} is awake and T3 Code is running on it.", { host })),
         checkHost,
-        `A VPN or Tailscale exit node on ${host} can block the tunnel (port 7844). Turn it off or allow the tunnel.`,
+        resolve(
+          msg(
+            "A VPN or Tailscale exit node on {host} can block the tunnel (port 7844). Turn it off or allow the tunnel.",
+            { host },
+          ),
+        ),
       ];
     case "origin_unreachable":
     case "invalid_response":
-      return [`Open or restart T3 Code on ${host}.`, checkHost];
+      return [resolve(msg("Open or restart T3 Code on {host}.", { host })), checkHost];
     // The relay saw these on its way to the host, so the fix is on the host.
     case "dns":
     case "tls":
     case "refused":
     case "timeout":
     case "unknown":
-      return [`Make sure ${host} is awake and online.`, checkHost];
+      return [resolve(msg("Make sure {host} is awake and online.", { host })), checkHost];
     case null:
       break;
   }
   switch (located.hop) {
     case "device":
       return [
-        "Restart T3 Code on this device.",
-        `If it keeps failing, remove ${host} from this device and add it again.`,
+        resolve(msg("Restart T3 Code on this device.")),
+        resolve(
+          msg("If it keeps failing, remove {host} from this device and add it again.", { host }),
+        ),
       ];
     case "relay":
       return failure?.reason === "authentication"
-        ? ["Sign out of T3 Connect and sign in again."]
+        ? [resolve(msg("Sign out of T3 Connect and sign in again."))]
         : [
-            "Check this device's internet connection.",
-            "A VPN, firewall, or ad blocker on this device can block T3 Connect.",
+            resolve(msg("Check this device's internet connection.")),
+            resolve(msg("A VPN, firewall, or ad blocker on this device can block T3 Connect.")),
           ];
     case "tunnel":
       return failure?.reason === "network" ||
         failure?.reason === "transport" ||
         failure?.reason === "timeout"
         ? [
-            "A VPN, firewall, or DNS filter on this device can block the tunnel.",
-            "Try another network, or add a direct route such as a Tailscale address.",
+            resolve(msg("A VPN, firewall, or DNS filter on this device can block the tunnel.")),
+            resolve(msg("Try another network, or add a direct route such as a Tailscale address.")),
           ]
-        : [`Make sure ${host} is awake and online.`, checkHost];
+        : [resolve(msg("Make sure {host} is awake and online.", { host })), checkHost];
     case "server":
-      return [
-        `Make sure T3 Code is running on ${host}.`,
-        "Retry. If it keeps failing, copy the diagnostics.",
-      ];
+      return failure?.reason === "authentication"
+        ? [
+            resolve(
+              msg(
+                "This device's sign-in to {host} expired or was revoked. Pair it again with a new pairing link from {host}.",
+                { host },
+              ),
+            ),
+          ]
+        : [
+            resolve(msg("Make sure T3 Code is running on {host}.", { host })),
+            resolve(msg("Retry. If it keeps failing, copy the diagnostics.")),
+          ];
   }
 }
 
@@ -366,21 +430,23 @@ function helpSection(
   }
 }
 
+const T3_CONNECT_NAME = "T3 Connect";
+
 const HOP_ORDER = {
   relay: ["device", "relay", "tunnel", "server"],
   direct: ["device", "server"],
 } as const;
 
-function hopLabel(hop: ConnectionHop, host: string): string {
+function hopLabel(hop: ConnectionHop, host: string, resolve: MFunctionType): string {
   switch (hop) {
     case "device":
-      return "This device";
+      return resolve(msg("This device"));
     case "relay":
-      return "T3 Connect";
+      return T3_CONNECT_NAME;
     case "tunnel":
-      return `${host} tunnel`;
+      return resolve(msg("{host} tunnel", { host }));
     case "server":
-      return `T3 Code on ${host}`;
+      return resolve(msg("T3 Code on {host}", { host }));
   }
 }
 
@@ -494,17 +560,24 @@ function tailnetVerdict(
   input: ConnectionDiagnosisInput,
   routes: ReadonlyArray<ConnectionRouteOutcome>,
   now: number,
+  resolve: MFunctionType,
 ): TailnetVerdict {
   const host = input.hostLabel;
   const local = input.localTailscale;
-  const awake = `Make sure ${host} is awake and T3 Code is running on it.`;
+  const awake = resolve(msg("Make sure {host} is awake and T3 Code is running on it.", { host }));
   if (localTailscaleDown(local?.state)) {
     return {
       headline: tailscaleIssueHeadline("this device", { cause: local.state, fix: "" }, null, now),
       steps: [
         local.state === "needs_machine_approval"
-          ? "Approve this device at https://login.tailscale.com/admin/machines. T3 Code reconnects on its own."
-          : "Turn on Tailscale on this device and sign in. T3 Code reconnects on its own.",
+          ? resolve(
+              msg(
+                "Approve this device at https://login.tailscale.com/admin/machines. T3 Code reconnects on its own.",
+              ),
+            )
+          : resolve(
+              msg("Turn on Tailscale on this device and sign in. T3 Code reconnects on its own."),
+            ),
       ],
     };
   }
@@ -513,34 +586,49 @@ function tailnetVerdict(
 
   const generic =
     input.relayStatus?.status === "online"
-      ? `${host} is online on T3 Connect, but its Tailscale address did not answer`
-      : `${host} did not answer over Tailscale`;
+      ? resolve(
+          msg("{host} is online on T3 Connect, but its Tailscale address did not answer", {
+            host,
+          }),
+        )
+      : resolve(msg("{host} did not answer over Tailscale", { host }));
   const peer = local?.state === "running" ? routePeer(local.peers, routes) : undefined;
   if (peer === undefined) {
     return {
       headline: generic,
-      steps: [`Check that Tailscale is on and signed in on this device and on ${host}.`, awake],
+      steps: [
+        resolve(
+          msg("Check that Tailscale is on and signed in on this device and on {host}.", { host }),
+        ),
+        awake,
+      ],
     };
   }
   if (peer === null) {
     return {
-      headline: `${host} is not on this device's tailnet`,
-      steps: [`Sign in to the same tailnet on this device and on ${host}.`, awake],
+      headline: resolve(msg("{host} is not on this device's tailnet", { host })),
+      steps: [
+        resolve(msg("Sign in to the same tailnet on this device and on {host}.", { host })),
+        awake,
+      ],
     };
   }
   // Online means connected to Tailscale's control plane, not reachable from here.
   if (!peer.online) {
     const seen = lastSeen(peer, now);
     return {
-      headline: `${host} is offline on your tailnet${seen === null ? "" : ` (${seen})`}`,
-      steps: [`Make sure ${host} is awake and Tailscale is on.`],
+      headline:
+        seen === null
+          ? resolve(msg("{host} is offline on your tailnet", { host }))
+          : resolve(msg("{host} is offline on your tailnet ({seen})", { host, seen })),
+      steps: [resolve(msg("Make sure {host} is awake and Tailscale is on.", { host }))],
     };
   }
   // A direct or peer-relay path means a handshake worked, so Tailscale reaches the host.
   const reached = peer.active && (peer.curAddr !== null || peer.peerRelay !== null);
   return {
-    headline: reached ? `T3 Code on ${host} did not answer` : generic,
-    steps: [awake, `Check that no firewall on ${host} blocks its port.`],
+    headline: reached ? resolve(msg("T3 Code on {host} did not answer", { host })) : generic,
+    steps: [awake, resolve(msg("Check that no firewall on {host} blocks its port.", { host }))],
   };
 }
 
@@ -550,6 +638,7 @@ function tailnetVerdict(
  */
 export function presentConnectionDiagnosis(
   input: ConnectionDiagnosisInput,
+  resolve: MFunctionType = mFallback,
 ): ConnectionDiagnosis | null {
   const located = locate(input);
   if (located === null) return null;
@@ -578,7 +667,7 @@ export function presentConnectionDiagnosis(
   const failedIndex = order.indexOf(tailscaleOff ? "device" : located.hop);
   const hops = order.map((hop, index): ConnectionDiagnosisHop => ({
     hop,
-    label: hopLabel(hop, host),
+    label: hopLabel(hop, host, resolve),
     result:
       index === failedIndex
         ? "failed"
@@ -593,43 +682,60 @@ export function presentConnectionDiagnosis(
   const add = (label: string, value: string | number | null | undefined) => {
     if (value !== null && value !== undefined && value !== "") facts.push([label, String(value)]);
   };
-  add("Cause", refusal ?? located.cause ?? failure?.reason);
-  add("HTTP status", httpStatus);
-  add("Attempts", input.state.attempt > 0 ? input.state.attempt : null);
   add(
-    "Next retry",
+    resolve(msg("Cause", { $context: "diagnostics field label" })),
+    refusal ?? located.cause ?? failure?.reason,
+  );
+  add(resolve(msg("HTTP status")), httpStatus);
+  add(
+    resolve(msg("Attempts", { $context: "diagnostics field label" })),
+    input.state.attempt > 0 ? input.state.attempt : null,
+  );
+  add(
+    resolve(msg("Next retry")),
     input.state.retryAt === null
       ? null
       : DateTime.formatIso(DateTime.makeUnsafe(input.state.retryAt)),
   );
-  add("Route", relayPath ? "T3 Connect" : "Direct");
-  for (const route of tailnetRoutes) add("Failed route", `Tailscale ${route.address ?? ""}`.trim());
+  add(
+    resolve(msg("Route", { $context: "diagnostics field label" })),
+    relayPath ? "T3 Connect" : resolve(msg("Direct", { $context: "connection route" })),
+  );
+  for (const route of tailnetRoutes) {
+    add(resolve(msg("Failed route")), `Tailscale ${route.address ?? ""}`.trim());
+  }
   if (tailnet) {
-    add("Tailscale on this device", local?.state);
+    add(resolve(msg("Tailscale on this device")), local?.state);
     if (local?.state === "running") {
-      add("Tailscale peer", peerFact(routePeer(local.peers, tailnetRoutes), now));
+      add(resolve(msg("Tailscale peer")), peerFact(routePeer(local.peers, tailnetRoutes), now));
     }
     const hostTailscale = input.hostTailscale;
     if (hostTailscale != null) {
-      add("Tailscale on host", `${hostTailscale.state}${asOf(hostTailscale.checkedAt, now)}`);
+      add(
+        resolve(msg("Tailscale on host")),
+        `${hostTailscale.state}${asOf(hostTailscale.checkedAt, now)}`,
+      );
     }
   }
-  if (input.via !== "relay") add("T3 Connect", input.relayStatus?.status);
-  add("App version", input.clientVersion);
-  add("Host version", input.serverVersion);
-  add("Error", refusal === undefined ? failure?.detail : undefined);
-  add("Trace ID", failure?.traceId);
+  if (input.via !== "relay") add(T3_CONNECT_NAME, input.relayStatus?.status);
+  add(resolve(msg("App version")), input.clientVersion);
+  add(resolve(msg("Host version")), input.serverVersion);
+  add(
+    resolve(msg("Error", { $context: "diagnostics field label" })),
+    refusal === undefined ? failure?.detail : undefined,
+  );
+  add(resolve(msg("Trace ID")), failure?.traceId);
 
   const verdict =
     refusal !== undefined
       ? tailnetRefusalVerdict(host, refusal)
       : tailnet
-        ? tailnetVerdict(input, tailnetRoutes, now)
+        ? tailnetVerdict(input, tailnetRoutes, now, resolve)
         : null;
   return {
-    headline: verdict?.headline ?? headline(host, located, failure),
+    headline: verdict?.headline ?? headline(host, located, failure, resolve),
     hops,
-    steps: verdict?.steps ?? steps(host, located, failure),
+    steps: verdict?.steps ?? steps(host, located, failure, resolve),
     facts,
     moreInfoUrl:
       tailnet || refusal !== undefined

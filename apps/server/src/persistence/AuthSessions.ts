@@ -81,6 +81,13 @@ export const RevokeAuthSessionInput = Schema.Struct({
 });
 export type RevokeAuthSessionInput = typeof RevokeAuthSessionInput.Type;
 
+export const ExtendAuthSessionInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  expiresAt: Schema.DateTimeUtcFromString,
+  now: Schema.DateTimeUtcFromString,
+});
+export type ExtendAuthSessionInput = typeof ExtendAuthSessionInput.Type;
+
 export const RevokeOtherAuthSessionsInput = Schema.Struct({
   currentSessionId: AuthSessionId,
   revokedAt: Schema.DateTimeUtcFromString,
@@ -105,13 +112,6 @@ export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
 });
 export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnectedAtInput.Type;
 
-export const ExtendAuthSessionInput = Schema.Struct({
-  sessionId: AuthSessionId,
-  now: Schema.DateTimeUtcFromString,
-  expiresAt: Schema.DateTimeUtcFromString,
-});
-export type ExtendAuthSessionInput = typeof ExtendAuthSessionInput.Type;
-
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   {
@@ -133,6 +133,10 @@ export class AuthSessionRepository extends Context.Service<
     readonly revoke: (
       input: RevokeAuthSessionInput,
     ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
+    /** Moves a live session's expiry; false when it is revoked, expired or missing. */
+    readonly extend: (
+      input: ExtendAuthSessionInput,
+    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
     readonly revokeAllExcept: (
       input: RevokeOtherAuthSessionsInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
@@ -142,10 +146,6 @@ export class AuthSessionRepository extends Context.Service<
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
-    /** Moves a live session's expiry; a revoked or already lapsed session is left alone. */
-    readonly extend: (
-      input: ExtendAuthSessionInput,
-    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
     readonly getProofKeyThumbprint: (
       input: GetAuthSessionByIdInput,
     ) => Effect.Effect<Option.Option<string>, AuthSessionRepositoryError>;
@@ -356,20 +356,6 @@ export const make = Effect.gen(function* () {
       `,
   });
 
-  const extendSessionRows = SqlSchema.findAll({
-    Request: ExtendAuthSessionInput,
-    Result: Schema.Struct({ sessionId: AuthSessionId }),
-    execute: ({ sessionId, now, expiresAt }) =>
-      sql`
-        UPDATE auth_sessions
-        SET expires_at = ${expiresAt}
-        WHERE session_id = ${sessionId}
-          AND revoked_at IS NULL
-          AND expires_at > ${now}
-        RETURNING session_id AS "sessionId"
-      `,
-  });
-
   const revokeSessionRows = SqlSchema.findAll({
     Request: RevokeAuthSessionInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
@@ -379,6 +365,20 @@ export const make = Effect.gen(function* () {
         SET revoked_at = ${revokedAt}
         WHERE session_id = ${sessionId}
           AND revoked_at IS NULL
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
+  const extendSessionRows = SqlSchema.findAll({
+    Request: ExtendAuthSessionInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ sessionId, expiresAt, now }) =>
+      sql`
+        UPDATE auth_sessions
+        SET expires_at = ${expiresAt}
+        WHERE session_id = ${sessionId}
+          AND revoked_at IS NULL
+          AND expires_at > ${now}
         RETURNING session_id AS "sessionId"
       `,
   });
@@ -544,6 +544,18 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.length > 0),
     );
 
+  const extend: AuthSessionRepository["Service"]["extend"] = (input) =>
+    extendSessionRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.extend:query",
+          "AuthSessionRepository.extend:decodeRows",
+          { sessionId: input.sessionId },
+        ),
+      ),
+      Effect.map((rows) => rows.length > 0),
+    );
+
   const revokeAllExcept: AuthSessionRepository["Service"]["revokeAllExcept"] = (input) =>
     revokeOtherSessionRows(input).pipe(
       Effect.mapError(
@@ -573,18 +585,6 @@ export const make = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.setLastConnectedAt:query",
           "AuthSessionRepository.setLastConnectedAt:encodeRequest",
-          { sessionId: input.sessionId },
-        ),
-      ),
-    );
-
-  const extend: AuthSessionRepository["Service"]["extend"] = (input) =>
-    extendSessionRows(input).pipe(
-      Effect.map((rows) => rows.length > 0),
-      Effect.mapError(
-        toPersistenceSqlOrDecodeError(
-          "AuthSessionRepository.extend:query",
-          "AuthSessionRepository.extend:encodeRequest",
           { sessionId: input.sessionId },
         ),
       ),
@@ -623,10 +623,10 @@ export const make = Effect.gen(function* () {
     getById,
     listActive,
     revoke,
+    extend,
     revokeAllExcept,
     revokeBySubject,
     setLastConnectedAt,
-    extend,
     getProofKeyThumbprint,
     revokeByProofKey,
   } satisfies AuthSessionRepository["Service"];

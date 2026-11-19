@@ -31,7 +31,7 @@ export function EnvironmentDisplayNameSetting({
       resetAction={
         current !== null && canWrite ? (
           <SettingResetButton
-            label="display name"
+            ariaLabel="Reset display name to default"
             onClick={() => updateSettings({ environmentLabel: null })}
           />
         ) : null

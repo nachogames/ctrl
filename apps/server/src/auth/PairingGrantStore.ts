@@ -1,4 +1,5 @@
 import {
+  AuthAdministrativeClientScopes,
   AuthStandardClientScopes,
   type AuthClientMetadata,
   type AuthConnectDevice,
@@ -302,8 +303,7 @@ export class PairingGrantStore extends Context.Service<
         readonly requestedScopes?: ReadonlyArray<AuthEnvironmentScope>;
         /** All scopes must be granted; requestedScopes only requires an overlap for OAuth. */
         readonly requiredScopes?: ReadonlyArray<AuthEnvironmentScope>;
-        /** Also spends a code issued for an agent sign-in at this level; others refuse them. */
-        readonly mcpApproval?: AuthMcpClientAccess;
+        readonly allowedSubject?: string;
       },
     ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
   }
@@ -422,7 +422,7 @@ const make = Effect.gen(function* () {
     const now = yield* DateTime.now;
     yield* seedGrant(config.desktopBootstrapToken, {
       method: "desktop-bootstrap",
-      scopes: AuthStandardClientScopes,
+      scopes: AuthAdministrativeClientScopes,
       subject: "desktop-bootstrap",
       expiresAt: DateTime.add(now, {
         milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL_HOURS),
@@ -546,7 +546,7 @@ const make = Effect.gen(function* () {
       if (yield* consumeRotatingDesktopToken(credential, now.epochMilliseconds)) {
         return {
           method: "desktop-bootstrap",
-          scopes: AuthStandardClientScopes,
+          scopes: AuthAdministrativeClientScopes,
           subject: "desktop-bootstrap",
           expiresAt: DateTime.add(now, {
             milliseconds: DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS,
@@ -662,11 +662,7 @@ const make = Effect.gen(function* () {
             ? { requestedScopes: input.requestedScopes }
             : {}),
           ...(input?.requiredScopes !== undefined ? { requiredScopes: input.requiredScopes } : {}),
-          ...(input?.mcpApproval
-            ? {
-                mcpApprovalSubject: `${AuthPairingLinks.MCP_APPROVAL_SUBJECT_PREFIX}${input.mcpApproval}`,
-              }
-            : {}),
+          ...(input?.allowedSubject ? { allowedSubject: input.allowedSubject } : {}),
           consumedAt: now,
           now,
         })

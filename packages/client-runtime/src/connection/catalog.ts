@@ -82,9 +82,19 @@ export class TailnetConnectionCredential extends Schema.TaggedClass<TailnetConne
   },
 ) {}
 
+/** A token bound to this device's DPoP key, which the host renews while the device uses it. */
+export class DpopConnectionCredential extends Schema.TaggedClass<DpopConnectionCredential>()(
+  "DpopConnectionCredential",
+  {
+    accessToken: Schema.String,
+    expiresAtEpochMs: Schema.Number,
+  },
+) {}
+
 export const ConnectionCredential = Schema.Union([
   BearerConnectionCredential,
   TailnetConnectionCredential,
+  DpopConnectionCredential,
 ]);
 export type ConnectionCredential = typeof ConnectionCredential.Type;
 
@@ -107,7 +117,7 @@ export class BearerConnectionRegistration extends Schema.TaggedClass<BearerConne
   {
     target: BearerConnectionTarget,
     profile: BearerConnectionProfile,
-    credential: BearerConnectionCredential,
+    credential: ConnectionCredential,
   },
 ) {}
 
