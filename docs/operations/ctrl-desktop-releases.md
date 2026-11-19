@@ -18,6 +18,36 @@ A run takes about 10 minutes. Installed apps pick it up on their next update che
 
 GitHub's hosted macOS runners sometimes run out, and a job no runner picks up within about 15 minutes fails without running a step. `ctrl-release-retry.yml` re-runs such a release up to three times. A job that started and then failed is not retried.
 
+## Release from a Mac
+
+When no runner picks the job up, build the same release on an Apple Silicon Mac with the macOS 26 SDK. The result matches a workflow release, so installed apps update to it normally.
+
+Prerequisites: the Developer ID Application identity in the login Keychain and the App Store Connect API key (`.p8`, key ID, issuer ID) from the setup below. The tag must already be pushed.
+
+```sh
+git worktree add --detach ../ctrl-release ctrl-v0.1.1   # a clean checkout, no .env
+cd ../ctrl-release
+vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+node scripts/update-release-package-versions.ts 0.1.1
+
+export CSC_NAME="<Developer ID name, without the 'Developer ID Application: ' prefix>"
+export APPLE_API_KEY=~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8
+export APPLE_API_KEY_ID=<KEY_ID> APPLE_API_ISSUER=<ISSUER_ID>
+export T3CODE_DESKTOP_UPDATE_REPOSITORY=nachogames/ctrl
+vp run dist:desktop:artifact --platform mac --target dmg --arch arm64 \
+  --build-version 0.1.1 --signed --verbose
+```
+
+`T3CODE_DESKTOP_UPDATE_REPOSITORY` gives the app its update feed. Without it, or without `--signed`, the build never updates. Before publishing, unzip `release/*.zip` and check the app with `codesign --verify --deep --strict`, `spctl --assess --type execute -vv` (expect "Notarized Developer ID") and `xcrun stapler validate`. Then publish and remove the worktree:
+
+```sh
+gh release create ctrl-v0.1.1 -R nachogames/ctrl --verify-tag --latest \
+  --title "Ctrl 0.1.1" --generate-notes \
+  release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml
+```
+
+Cancel the workflow run if it is still queued.
+
 ## One-time setup
 
 Auto-update on macOS only installs a build signed by the same Developer ID as the running app. The workflow refuses to publish when any signing secret is missing.
@@ -40,7 +70,7 @@ rm ctrl-devid.p12
 
 ## Install on a new Mac
 
-Download the `.dmg` from the latest release once and drag Ctrl into Applications. Builds made outside this workflow (local or ad-hoc signed) have no update feed and never update; replace them with a release build.
+Download the `.dmg` from the latest release once and drag Ctrl into Applications. Builds made any other way, such as a plain local `dist:desktop` or an ad-hoc signed build, have no update feed and never update; replace them with a release build.
 
 Releases are public because the repository is. Anyone can download the app, and its signature shows the Developer ID name. User data, provider credentials, and push credentials stay in `~/.ctrl` on each machine and are never part of a build.
 
