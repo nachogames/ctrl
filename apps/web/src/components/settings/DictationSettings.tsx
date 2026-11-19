@@ -31,7 +31,7 @@ import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 type DictationModel = DictationState["models"][number];
@@ -116,6 +116,7 @@ const modelDetail = (model: DictationModel) =>
  * Settings need settings:write; retry and model removal need orchestration:operate.
  */
 export function DictationSettingsSection() {
+  const searchableSetting = useSearchableSetting();
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   const environmentId =
     environment?.connection.phase === "connected" && environment.serverConfig !== null
@@ -433,6 +434,7 @@ export function DictationRoutingSettings({
 }: {
   readonly environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
+  const searchableSetting = useSearchableSetting();
   const chosen = useClientSettings((settings) => settings.dictationEnvironmentId);
   const hydrated = useClientSettingsHydrated();
   const ready = useReadyDictationEnvironmentIds();

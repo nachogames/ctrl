@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import type { ReactNode } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -31,11 +32,12 @@ type ProjectChipProps = Pick<
 };
 
 function ProjectChips(props: ProjectChipProps) {
+  const gt = useGT();
   return (
     <>
       <ListFilterChip
-        label="All"
-        accessibilityLabel="Show threads from every project"
+        label={gt("All", { $context: "project filter chip" })}
+        accessibilityLabel={gt("Show threads from every project")}
         active={props.selectedProjectKey === null}
         onPress={() => props.onProjectChange(null)}
       />
@@ -91,19 +93,20 @@ export function ThreadListFilters(
   props: ThreadListFilterProps &
     Pick<ProjectChipProps, "indicatorByProjectKey" | "trailing" | "gutter">,
 ) {
+  const gt = useGT();
   const selectedEnvironment = props.environments.find(
     (environment) => environment.environmentId === props.selectedEnvironmentId,
   );
   return (
     <ChipRow trailing={props.trailing} gutter={props.gutter}>
       <ListFilterMenu
-        label={selectedEnvironment?.label ?? "All environments"}
-        accessibilityLabel="Filter threads by environment"
+        label={selectedEnvironment?.label ?? gt("All environments")}
+        accessibilityLabel={gt("Filter threads by environment")}
         active={selectedEnvironment !== undefined}
         actions={[
           {
             id: "all",
-            title: "All environments",
+            title: gt("All environments"),
             state: props.selectedEnvironmentId === null ? "on" : "off",
           },
           ...props.environments.map((environment) => ({
@@ -129,7 +132,7 @@ export function ThreadListFilters(
       {props.selectedEnvironmentId !== null || props.selectedProjectKey !== null ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Reset thread filters"
+          accessibilityLabel={gt("Reset thread filters")}
           className="h-8 w-8 items-center justify-center"
           onPress={() => {
             props.onEnvironmentChange(null);

@@ -485,6 +485,7 @@ describe("VoiceInputController", () => {
       phase: "error",
       error: "This connection is not secure, so the browser blocks the microphone.",
       errorAction: "retry",
+      errorCode: "microphone-blocked",
     });
   });
 

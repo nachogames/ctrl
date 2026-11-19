@@ -8,6 +8,9 @@ it is open, `mod+0` selects All machines and `mod+1` through `mod+9` select the
 numbered environments. The menu shows each shortcut. Customize these under
 **Settings → Keybindings → Navigation**.
 
+To free a default shortcut for another command, choose **Unassign** from its row's
+actions menu. **Reset to default** brings it back.
+
 ## Composer controls
 
 `mod+shift+d` starts dictation in the focused editor, or the composer, and finishes it on the next press;

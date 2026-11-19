@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 import type * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -6,13 +9,16 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpServer } from "effect/http";
+import * as Logger from "effect/Logger";
 import * as NetAddress from "effect/net/NetAddress";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ServerConfig from "./config.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import {
   acceptsPrivateNetworkConnection,
+  closeNonPrivateNetworkConnections,
   issueHeadlessServeAccessInfo,
   makeTailnetConnectionFilter,
   loopbackUrlHostForAddress,
@@ -242,3 +248,51 @@ it.effect("advertises the Tailscale Serve HTTPS endpoint in headless pairing out
     ),
   ),
 );
+
+describe("closeNonPrivateNetworkConnections", () => {
+  it.effect("logs the local and remote address of a connection it closes", () =>
+    Effect.gen(function* () {
+      const warnings: Array<Logger.Options<unknown>> = [];
+      const server = NodeHttp.createServer();
+      yield* closeNonPrivateNetworkConnections(server).pipe(
+        Effect.provide(
+          Logger.layer([Logger.make((entry) => warnings.push(entry))], {
+            mergeWithExisting: false,
+          }),
+        ),
+      );
+
+      // An unconnected socket: Node reports neither address.
+      const socket = new NodeNet.Socket();
+      server.emit("connection", socket);
+
+      expect(socket.destroyed).toBe(true);
+      expect(warnings.map((entry) => entry.logLevel)).toEqual(["Warn"]);
+      const line = Logger.formatLogFmt.log(warnings[0]!);
+      expect(line).toMatch(/localAddress\W+undefined/);
+      expect(line).toMatch(/remoteAddress\W+undefined/);
+    }),
+  );
+
+  it.effect("logs a flood of closed connections at most once a minute, with a count", () =>
+    Effect.gen(function* () {
+      const warnings: Array<Logger.Options<unknown>> = [];
+      const server = NodeHttp.createServer();
+      yield* closeNonPrivateNetworkConnections(server).pipe(
+        Effect.provide(
+          Logger.layer([Logger.make((entry) => warnings.push(entry))], {
+            mergeWithExisting: false,
+          }),
+        ),
+      );
+      const sockets = Array.from({ length: 1000 }, () => new NodeNet.Socket());
+      for (const socket of sockets) server.emit("connection", socket);
+      yield* TestClock.adjust("1 minute");
+      server.emit("connection", new NodeNet.Socket());
+
+      expect(sockets.every((socket) => socket.destroyed)).toBe(true);
+      expect(warnings).toHaveLength(2);
+      expect(Logger.formatLogFmt.log(warnings[1]!)).toMatch(/closedSinceLastLog\W+999/);
+    }),
+  );
+});

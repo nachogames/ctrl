@@ -44,7 +44,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 const EMPTY_EDITORS: ReadonlyArray<never> = [];
@@ -58,6 +58,7 @@ const HOME_DESCRIPTION =
  * manages that machine's Shift.
  */
 export function HomeSettings() {
+  const searchableSetting = useSearchableSetting();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const shiftEnvironmentId = useAtomValue(shiftEnvironmentIdAtom);
@@ -147,6 +148,7 @@ function useNavigateToThread() {
  * composer's picker would; while it is off, the pick is the model it starts with.
  */
 function HomeRows(props: { environmentId: EnvironmentId; homeWorkspaceRoot: string }) {
+  const searchableSetting = useSearchableSetting();
   const { environmentId, homeWorkspaceRoot } = props;
   const settings = useEnvironmentSettings(environmentId);
   const threadId = settings.home.threadId;

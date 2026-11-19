@@ -1423,9 +1423,9 @@ describe("EnvironmentRegistry", () => {
             ? Effect.undefined
             : Ref.get(storedCredentials).pipe(
                 Effect.map((current) => {
-                  const credential = current.get(target.connectionId);
-                  return credential?._tag === "BearerConnectionCredential" &&
-                    credential.token === "old-bearer"
+                  const stored = current.get(target.connectionId);
+                  return stored?._tag === "BearerConnectionCredential" &&
+                    stored.token === "old-bearer"
                     ? new ConnectionBlockedError({ reason: "authentication", detail: "revoked" })
                     : undefined;
                 }),

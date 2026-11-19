@@ -6,6 +6,7 @@ import {
 import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
 import * as Schema from "effect/Schema";
 
+import { MarkedText } from "../errors/translatable.ts";
 import type { ConnectionRouteKind } from "./routes.ts";
 
 const ConnectionTargetBase = {
@@ -121,6 +122,7 @@ export class ConnectionTransientError extends Schema.TaggedError<ConnectionTrans
   {
     reason: ConnectionTransientReason,
     detail: Schema.String,
+    i18nMessage: Schema.optionalKey(MarkedText),
     traceId: Schema.optionalKey(Schema.String),
     /** The code this device shows while the host decides whether to trust it. */
     verificationCode: Schema.optionalKey(Schema.String),
@@ -137,6 +139,7 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
   {
     reason: ConnectionBlockedReason,
     detail: Schema.String,
+    i18nMessage: Schema.optionalKey(MarkedText),
     traceId: Schema.optionalKey(Schema.String),
     ...ConnectionFailureFields,
 
@@ -163,7 +166,15 @@ export type PreparedHttpAuthorization =
       readonly expiresAtEpochMs: number;
       /** Set for a Tailscale session, which renews from this credential instead of T3 Connect. */
       readonly tailnetCredentialId?: string;
+      /** Set when the token renews directly with the host instead of through T3 Connect. */
+      readonly directConnection?: DirectDpopConnection;
     };
+
+export interface DirectDpopConnection {
+  /** The credential store key. */
+  readonly connectionId: string;
+  readonly httpBaseUrl: string;
+}
 
 export interface PreparedConnection {
   readonly environmentId: EnvironmentId;
@@ -233,7 +244,11 @@ export interface SupervisorConnectionState {
   readonly retryAt: number | null;
   /** Each route's latest outcome. A route keeps it until an attempt reaches that route again. */
   readonly routes: ReadonlyArray<ConnectionRouteOutcome>;
+  /** While connected: saved routes whose host refused this device's credential on the way. */
+  readonly refusedRouteIds: ReadonlyArray<string>;
 }
+
+export const NO_REFUSED_ROUTES: ReadonlyArray<string> = Object.freeze([]);
 
 export type ConnectionProjectionPhase = "disconnected" | "synchronizing" | "ready";
 
@@ -263,4 +278,5 @@ export const AVAILABLE_CONNECTION_STATE: SupervisorConnectionState = Object.free
   lastFailure: null,
   retryAt: null,
   routes: [],
+  refusedRouteIds: NO_REFUSED_ROUTES,
 });

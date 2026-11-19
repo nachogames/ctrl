@@ -7,6 +7,7 @@ import {
   UsersIcon,
   type LucideIcon,
 } from "lucide-react";
+import { useMessages } from "gt-react";
 import { useDeferredValue, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
@@ -50,12 +51,14 @@ function PullRequestGroupHeader({
   group: { key: string; label: string };
   count: number;
 }) {
-  const Icon =
-    GROUP_ICONS[group.key] ?? (group.key.startsWith("project:") ? FolderIcon : LayersIcon);
+  const resolve = useMessages();
+  // Project groups are labelled with the project's own name, not a `msg()` string.
+  const isProjectGroup = group.key.startsWith("project:");
+  const Icon = GROUP_ICONS[group.key] ?? (isProjectGroup ? FolderIcon : LayersIcon);
   return (
     <div className="flex items-center gap-2 px-3 pb-1 text-xs font-medium text-muted-foreground/70">
       <Icon aria-hidden className="size-3.5 shrink-0" />
-      <h2 className="shrink-0">{group.label}</h2>
+      <h2 className="shrink-0">{isProjectGroup ? group.label : resolve(group.label)}</h2>
       <span className="shrink-0 tabular-nums text-muted-foreground/50">{count}</span>
       <Separator className="min-w-2 flex-1" />
     </div>

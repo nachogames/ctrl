@@ -27,7 +27,7 @@ import { useEnvironment } from "~/state/environments";
 import { reviewSessionEnvironment } from "~/state/reviewSessions";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { searchableSetting } from "../../settings/settingsSearch";
+import { useSearchableSetting } from "../../settings/settingsSearch";
 import { Button } from "../../ui/button";
 import { Toggle, ToggleGroup } from "../../ui/toggle-group";
 import { ReviewStyleEditor } from "./ReviewStyleEditor";
@@ -76,6 +76,7 @@ export function ReviewWritingStyleCard({
   /** The current round, when there is one. */
   view: ReviewRoundView | undefined;
 }) {
+  const searchableSetting = useSearchableSetting();
   const { styles, selected, custom, supported } = useReviewWritingStyles(environmentId);
   const saveSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: true });
   const canSave = useAtomValue(serverEnvironment.updateSettings.permissionAtom(environmentId));

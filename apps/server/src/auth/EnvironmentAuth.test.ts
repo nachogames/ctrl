@@ -2,7 +2,7 @@ import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   authScopeResponse,
-  AuthStandardClientScopes,
+  AuthAdministrativeClientScopes,
   connectDeviceVerificationCode,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -109,7 +109,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const authenticated = yield* serverAuth.authenticateHttpRequest(request);
         expect(devExchange.cookieName).toMatch(/^t3_dev_session_/);
         expect(devExchange.expireNormalCookie).toBe(true);
-        expect(devExchange.response).toMatchObject(authScopeResponse(AuthStandardClientScopes));
+        expect(devExchange.response).toMatchObject(
+          authScopeResponse(AuthAdministrativeClientScopes),
+        );
         expect(authenticated.scopes).toEqual(["orchestration:read"]);
       }).pipe(
         Effect.provide(
@@ -267,7 +269,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect((yield* Effect.flip(sessions.verify(token)))._tag).toBe("SessionTokenRevokedError");
         expect(
           (yield* serverAuth.createBrowserSession(recovery.credential, requestMetadata)).response,
-        ).toMatchObject({ authenticated: true, ...authScopeResponse(AuthStandardClientScopes) });
+        ).toMatchObject({
+          authenticated: true,
+          ...authScopeResponse(AuthAdministrativeClientScopes),
+        });
       }).pipe(
         Effect.provide(
           layerEnvironmentAuth({
@@ -509,6 +514,113 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
+    it.effect("renews a pairing-link DPoP session in place while its device keeps using it", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const admin = yield* serverAuth.issueSession({ label: "Owner" });
+        const key = makeDpopKey();
+        const other = makeDpopKey();
+        const pair = (proofKeyThumbprint?: string) =>
+          serverAuth
+            .issuePairingCredential({ scopes: ["orchestration:read"] })
+            .pipe(
+              Effect.flatMap((pairing) =>
+                serverAuth.exchangeBootstrapCredentialForAccessToken(
+                  pairing.credential,
+                  undefined,
+                  requestMetadata,
+                  proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
+                ),
+              ),
+            );
+        const sessionExpiry = (sessionId: string) =>
+          serverAuth
+            .listClientSessions(admin.sessionId)
+            .pipe(
+              Effect.map(
+                (sessions) =>
+                  sessions.find((session) => session.sessionId === sessionId)?.expiresAt
+                    .epochMilliseconds,
+              ),
+            );
+
+        const paired = yield* pair(key.thumbprint);
+        expect(paired.expires_in).toBe(60 * 60);
+        const { sessionId } = yield* sessions.verify(paired.access_token);
+        const pairedAt = (yield* DateTime.now).epochMilliseconds;
+        // Listed for the whole renewal window (Ctrl: the paired-device idle limit, 90 days by default),
+        // so an idle device can still be revoked.
+        expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 90 * 24 * 60 * 60 * 1000);
+
+        yield* TestClock.adjust("20 days");
+        const replay = new EnvironmentAuth.ServerAuthInvalidCredentialError({
+          dpopFailureReason: "replay",
+        });
+        const rejected = yield* serverAuth
+          .renewAccessToken(paired.access_token, key.thumbprint, Effect.fail(replay))
+          .pipe(Effect.flip);
+        expect(rejected).toBe(replay);
+        expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 90 * 24 * 60 * 60 * 1000);
+
+        const renewed = yield* serverAuth.renewAccessToken(
+          paired.access_token,
+          key.thumbprint,
+          Effect.void,
+        );
+        expect(renewed.scope).toBe("orchestration:read");
+        const verified = yield* sessions.verify(renewed.access_token);
+        expect(verified.sessionId).toBe(sessionId);
+        expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 110 * 24 * 60 * 60 * 1000);
+
+        const refused = (token: string, thumbprint: string) =>
+          serverAuth
+            .renewAccessToken(
+              token,
+              thumbprint,
+              Effect.die("Invalid credentials cannot consume a proof."),
+            )
+            .pipe(
+              Effect.flip,
+              Effect.map((error) => error._tag),
+            );
+        expect(yield* refused(renewed.access_token, other.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        // Bearer and T3 Connect sessions keep their fixed lifetimes, so unlinking still cuts off.
+        const bearer = yield* pair();
+        expect(yield* refused(bearer.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        const connect = yield* serverAuth.issueConnectCredential({
+          proofKeyThumbprint: key.thumbprint,
+          requireApproval: false,
+        });
+        const connected = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          connect.credential,
+          undefined,
+          requestMetadata,
+          { proofKeyThumbprint: key.thumbprint },
+        );
+        expect(yield* refused(connected.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+
+        // Inside the renewed window, so only the revocation can refuse it.
+        expect(yield* serverAuth.revokeClientSession(admin.sessionId, sessionId)).toBe(true);
+        expect(yield* refused(renewed.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+
+        // Idle past the window, the device pairs again.
+        const idle = yield* pair(key.thumbprint);
+        yield* TestClock.adjust("91 days");
+        expect(yield* refused(idle.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+    );
+
     it.effect("preserves pairing grants after rejecting scopes they do not grant", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -605,6 +717,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             { failure: { _tag: "ServerAuthMcpApprovalCodeError", reason: "unknown_or_used" } },
           ]);
         }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("spends peer-link pairing codes only for the chosen link access", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const pairing = yield* serverAuth.issuePairingCredential({
+          access: "approval-required",
+          purpose: "peer-link",
+        });
+        expect(pairing.purpose).toBe("peer-link");
+
+        const ordinarySession = yield* serverAuth
+          .exchangeBootstrapCredentialForAccessToken(pairing.credential, undefined, requestMetadata)
+          .pipe(Effect.flip);
+        expect(ordinarySession._tag).toBe("ServerAuthInvalidCredentialError");
+
+        for (const input of [
+          { access: "approval-required", peerLink: false },
+          { access: "auto", peerLink: true },
+        ] as const) {
+          const rejected = yield* serverAuth
+            .consumeMcpApprovalCode(pairing.credential, input.access, input.peerLink)
+            .pipe(Effect.flip);
+          expect(rejected._tag).toBe("ServerAuthMcpApprovalCodeError");
+        }
+
+        expect(
+          yield* serverAuth.consumeMcpApprovalCode(pairing.credential, "approval-required", true),
+        ).toBe("approval-required");
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
     it.effect("narrows seeded desktop grants to the requested scopes", () =>
@@ -711,7 +853,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           makeCookieRequest(sessions.cookieName, exchanged.sessionToken),
         );
 
-        expect(verified.scopes).toEqual(AuthStandardClientScopes);
+        expect(verified.scopes).toEqual(AuthAdministrativeClientScopes);
         expect(verified.subject).toBe("administrative-bootstrap");
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );

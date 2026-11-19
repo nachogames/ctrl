@@ -136,6 +136,8 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
     signInTailnet: () => Effect.die("Unexpected Tailscale sign-in."),
     authorizeTailnet: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
     authorizeTailnetHttp: () => Effect.die("Unexpected Tailscale session."),
+    authorizeDirectDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
+    authorizeDirectDpopHttp: () => Effect.die("Unexpected direct DPoP authorization."),
     authorizeDpopHttp: (input) =>
       Effect.sync(() => {
         authorizations.push(input);

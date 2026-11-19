@@ -7,7 +7,7 @@ import { refreshDesktopNetworkAccessState } from "~/state/desktopNetworkAccess";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 /**
  * The desktop switch that lets this user's own Tailscale devices connect with no
@@ -23,6 +23,7 @@ export function TailscaleSignInRow({
   /** Why a managed policy keeps it off, if one does. */
   readonly managed: string | undefined;
 }) {
+  const searchableSetting = useSearchableSetting();
   const [isUpdating, setIsUpdating] = useState(false);
   const enabled = state?.tailscaleSignInEnabled === true && !wslOnly;
   const port = state?.port;

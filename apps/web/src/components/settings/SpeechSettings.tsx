@@ -21,7 +21,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { VoiceFrontSettings } from "./VoiceFrontSettings";
 
@@ -66,6 +66,7 @@ function voiceStatus(state: SpeechState): { readonly label: string; readonly fai
  * spoken replies are off.
  */
 export function SpeechSettingsSection() {
+  const searchableSetting = useSearchableSetting();
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   const environmentId =
     environment?.connection.phase === "connected" && environment.serverConfig !== null

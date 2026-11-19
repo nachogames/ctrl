@@ -47,10 +47,30 @@ export interface RunCtrlMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
 
+const hasPendingCtrlMigrations = Effect.fn("hasPendingCtrlMigrations")(function* (
+  toMigrationInclusive: number | undefined,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const wanted = ctrlMigrationEntries.filter(
+    ([id]) => toMigrationInclusive === undefined || id <= toMigrationInclusive,
+  );
+  const ledger = yield* sql<{ readonly name: string }>`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = ${CTRL_MIGRATIONS_TABLE}
+  `;
+  if (ledger.length === 0) return wanted.length > 0;
+  const recorded = yield* sql<{
+    readonly migration_id: number;
+  }>`SELECT migration_id FROM ${sql(CTRL_MIGRATIONS_TABLE)}`;
+  const recordedIds = new Set(recorded.map((row) => row.migration_id));
+  return wanted.some(([id]) => !recordedIds.has(id));
+});
+
 /** Runs pending Ctrl migrations; call after upstream's. */
 export const runCtrlMigrations = Effect.fn("runCtrlMigrations")(function* ({
   toMigrationInclusive,
 }: RunCtrlMigrationsOptions = {}) {
+  // Like upstream, a current database takes no write lock (CLI startup runs beside the server).
+  if (!(yield* hasPendingCtrlMigrations(toMigrationInclusive))) return [];
   const executed = yield* run({
     table: CTRL_MIGRATIONS_TABLE,
     loader: Migrator.fromRecord(
@@ -79,6 +99,20 @@ export const moveCtrlMigrationsOutOfUpstreamLedger = Effect.fn(
   "moveCtrlMigrationsOutOfUpstreamLedger",
 )(function* () {
   const sql = yield* SqlClient.SqlClient;
+  // Read first, so a database with nothing to move takes no write lock.
+  const upstreamLedger = yield* sql<{ readonly name: string }>`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `;
+  if (upstreamLedger.length === 0) return [];
+  const legacyRows = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+    SELECT migration_id, name FROM effect_sql_migrations
+    WHERE migration_id IN ${sql.in(LEGACY_UPSTREAM_LEDGER_IDS.map(([upstreamId]) => upstreamId))}
+  `;
+  const hasLegacyRows = LEGACY_UPSTREAM_LEDGER_IDS.some(([upstreamId, ctrlId]) => {
+    const name = ctrlMigrationEntries.find(([id]) => id === ctrlId)?.[1];
+    return legacyRows.some((row) => row.migration_id === upstreamId && row.name === name);
+  });
+  if (!hasLegacyRows) return [];
   return yield* sql.withTransaction(
     Effect.gen(function* () {
       const tables = yield* sql<{ readonly name: string }>`
