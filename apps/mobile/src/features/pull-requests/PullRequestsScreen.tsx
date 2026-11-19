@@ -9,7 +9,8 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { useGT } from "gt-react-native";
 import { use, useMemo, useRef, useState, type ReactNode } from "react";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
 import { Keyboard, Platform, Pressable, View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
@@ -25,6 +26,15 @@ import { useWorkspaceState } from "../../state/workspace";
 import { useProjects } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { PullRequestListRow } from "./PullRequestListRow";
+import { PullRequestStackHeaderRow } from "./PullRequestStackHeaderRow";
+import {
+  pullRequestListItemEntries,
+  pullRequestListItemKey,
+  pullRequestListItems,
+  pullRequestListItemsAreEqual,
+  type PullRequestListItem,
+} from "./pullRequestStackItems";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { liveReviewKey, useLiveReviews } from "./review/useLiveReviews";
 import {
   PullRequestListFilters,
@@ -40,7 +50,6 @@ import {
   filterPullRequestList,
   pullRequestListFacets,
   pullRequestListInput,
-  pullRequestListRowsAreEqual,
   scopedPullRequestListKey as pullRequestKey,
   type EnvironmentPullRequestListEntry,
   withoutScratchProjectScope,
@@ -103,6 +112,8 @@ export function PullRequestsScreen(
   const workspace = useWorkspaceTabs()!;
   const { environments } = useWorkspaceState();
   const configs = useAtomValue(environmentServerConfigsAtom);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const insets = useSafeAreaInsets();
   const contentTopInset = useContentTopInset();
   // UIKit insets the list by its column's safe area, which this context can report as 0.
@@ -269,32 +280,70 @@ export function PullRequestsScreen(
         labelColors,
       }),
   });
-  const renderPullRequest = ({ item }: { readonly item: EnvironmentPullRequestListEntry }) => (
-    <PullRequestListRow
-      item={item}
-      onSelect={selectPullRequest}
-      getActions={actions}
-      onAction={select}
-      busy={busyKey === pullRequestKey(item)}
-      selected={selectedKey === pullRequestKey(item)}
-      sidebar={sidebar}
-      reviewWaiting={reviewWaiting(item)}
-    />
-  );
+  const collapsedStackList = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.pullRequestCollapsedStacks ?? [])
+    : [];
+  const listItems = pullRequestListItems(entries, new Set(collapsedStackList), selectedKey);
+  // Builds from the stored list, not this render's, like Home's folded projects.
+  const toggleStack = (stackKey: string) =>
+    savePreferences({
+      transform: (current) => {
+        const next = new Set(current.pullRequestCollapsedStacks ?? []);
+        if (!next.delete(stackKey)) next.add(stackKey);
+        return { pullRequestCollapsedStacks: [...next].slice(-200) };
+      },
+    });
+  const renderPullRequest = ({ item: row }: { readonly item: PullRequestListItem }) => {
+    if (row.kind === "stack") {
+      return (
+        <PullRequestStackHeaderRow
+          membership={row.membership}
+          shown={row.entries.length}
+          open={row.open}
+          sidebar={sidebar}
+          onToggle={() => toggleStack(row.key)}
+          onShowAll={() => selectPullRequest(row.entries[0]!)}
+        />
+      );
+    }
+    const item = row.entry;
+    const pullRequestRow = (
+      <PullRequestListRow
+        item={item}
+        onSelect={selectPullRequest}
+        getActions={actions}
+        onAction={select}
+        busy={busyKey === pullRequestKey(item)}
+        selected={selectedKey === pullRequestKey(item)}
+        sidebar={sidebar}
+        reviewWaiting={reviewWaiting(item)}
+      />
+    );
+    return row.nested ? <View className="ps-4">{pullRequestRow}</View> : pullRequestRow;
+  };
   const list = (
     <View className={sidebar ? "flex-1 bg-drawer" : "flex-1 bg-screen"}>
       <LegendList
         ref={listRef}
-        data={entries}
+        data={listItems}
         extraData={`${selectedKey}:${busyKey}:${waitingKeys}`}
-        keyExtractor={pullRequestKey}
-        itemsAreEqual={pullRequestListRowsAreEqual}
+        keyExtractor={pullRequestListItemKey}
+        itemsAreEqual={pullRequestListItemsAreEqual}
         estimatedItemSize={88}
         drawDistance={1_000}
         maintainVisibleContentPosition={result.continued ? maintainVisiblePosition : false}
         onEndReached={() => void result.loadMore()}
         onEndReachedThreshold={0.5}
-        onViewableItemsChanged={result.onViewableItemsChanged}
+        onViewableItemsChanged={({ viewableItems }) =>
+          result.onViewableItemsChanged({
+            viewableItems: viewableItems.flatMap((token) =>
+              pullRequestListItemEntries(token.item).map((item) => ({
+                item,
+                isViewable: token.isViewable,
+              })),
+            ),
+          })
+        }
         refreshControl={
           <RefreshControl
             refreshing={result.refreshing}

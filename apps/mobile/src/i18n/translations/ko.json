@@ -2909,6 +2909,11 @@
     },
     ". 레이어를 열어 검토하거나 해당 레이어까지 스택을 병합하세요."
   ],
+  "7bbdd8496e6dbd8a": "Stack into {base}, {shown} of {size} here",
+  "f003c65939c9c8f0": "Stack into {base}",
+  "0034f65ef4b6491d": "{shown} of {size} here",
+  "e31342b1da7c0627": "Show the {count} other layers of this stack",
+  "98515f1201b25dcc": "+{count} more",
   "7d50c5c18ba726fa": "{term, select, mr {병합 요청} cr {변경 요청} other {풀 리퀘스트}} 상태, {status}",
   "25019c947d3082dc": "{term, select, mr {병합 요청} cr {변경 요청} other {풀 리퀘스트}} 상태",
   "cdfe7771384370e8": "이 변경 사항을 되돌리는 새 {term, select, mr {병합 요청을} cr {변경 요청을} other {풀 리퀘스트를}} 열까요?",

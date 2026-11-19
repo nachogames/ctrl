@@ -1,7 +1,7 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import type { EnvironmentId, PullRequestRef, PullRequestStackMembership } from "@t3tools/contracts";
 import { T, useGT, Var } from "gt-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { Menu, MenuTrigger, MenuPopup, MenuGroup, MenuGroupLabel, MenuItem } from "../ui/menu";
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
@@ -57,11 +57,14 @@ export function PullRequestStackPopover({
   reference,
   membership,
   onSelect,
+  trigger,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   membership: PullRequestStackMembership;
   onSelect: (reference: PullRequestRef) => void;
+  /** Replaces the layer glyph, e.g. a nested stack's "+3 more". */
+  trigger?: { readonly content: ReactNode; readonly ariaLabel: string } | undefined;
 }) {
   const gt = useGT();
   const [open, setOpen] = useState(false);
@@ -79,24 +82,39 @@ export function PullRequestStackPopover({
                   className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-xs font-normal text-muted-foreground"
                 />
               }
-              aria-label={gt("Stack {number}, layer {position} of {size}", {
-                number: membership.number,
-                position: membership.position,
-                size: membership.size,
-              })}
+              aria-label={
+                trigger?.ariaLabel ??
+                gt("Stack {number}, layer {position} of {size}", {
+                  number: membership.number,
+                  position: membership.position,
+                  size: membership.size,
+                })
+              }
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => event.stopPropagation()}
             >
-              <PullRequestGlyph.stack aria-hidden className="size-3" />
-              {membership.position}/{membership.size}
+              {trigger ? (
+                trigger.content
+              ) : (
+                <>
+                  <PullRequestGlyph.stack aria-hidden className="size-3" />
+                  {membership.position}/{membership.size}
+                </>
+              )}
             </MenuTrigger>
           }
         />
         <TooltipPopup>
-          <T>
-            View stack #<Var>{membership.number}</Var>, layer <Var>{membership.position}</Var> of{" "}
-            <Var>{membership.size}</Var>
-          </T>
+          {trigger ? (
+            <T>
+              View all <Var>{membership.size}</Var> layers of stack #<Var>{membership.number}</Var>
+            </T>
+          ) : (
+            <T>
+              View stack #<Var>{membership.number}</Var>, layer <Var>{membership.position}</Var> of{" "}
+              <Var>{membership.size}</Var>
+            </T>
+          )}
         </TooltipPopup>
       </Tooltip>
       <MenuPopup

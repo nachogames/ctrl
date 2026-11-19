@@ -2912,6 +2912,11 @@
     },
     ". Öffne eine Ebene, um sie zu prüfen oder den Stack bis zu dieser Ebene zu mergen."
   ],
+  "7bbdd8496e6dbd8a": "Stack into {base}, {shown} of {size} here",
+  "f003c65939c9c8f0": "Stack into {base}",
+  "0034f65ef4b6491d": "{shown} of {size} here",
+  "e31342b1da7c0627": "Show the {count} other layers of this stack",
+  "98515f1201b25dcc": "+{count} more",
   "7d50c5c18ba726fa": "{term, select, mr {Status des Merge Requests, {status}} cr {Status der Änderungsanfrage, {status}} other {Status des Pull Requests, {status}}}",
   "25019c947d3082dc": "{term, select, mr {Status des Merge Requests} cr {Status der Änderungsanfrage} other {Status des Pull Requests}}",
   "cdfe7771384370e8": "{term, select, mr {Einen neuen Merge Request öffnen, der diese Änderungen rückgängig macht?} cr {Eine neue Änderungsanfrage öffnen, die diese Änderungen rückgängig macht?} other {Einen neuen Pull Request öffnen, der diese Änderungen rückgängig macht?}}",

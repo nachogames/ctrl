@@ -6985,6 +6985,38 @@
   "8fc977a6e03cf01f": "Quick actions for {term, select, mr {merge request} cr {change request} other {pull request}} #{number}",
   "f62eeb32134aff8d": "Open this {term, select, mr {merge request} cr {change request} other {pull request}} to merge its stack",
   "7cd7da2abec6141e": "Close immediately, or drag across rows to close several",
+  "e31342b1da7c0627": "Show the {count} other layers of this stack",
+  "fd33787eebb99524": [
+    "Stack into ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "90e004f35526a404": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " of ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " here"
+  ],
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " more"
+  ],
   "bb0614eb361e525d": "May be stale",
   "f1152662c2b89b0d": [
     "Stack #",
@@ -7047,6 +7079,20 @@
   "4aafe1baf113088a": "Merge stack",
   "0292da19054f2a04": "Loading stack…",
   "583869e6df57abeb": "This pull request is no longer in a stack.",
+  "42a54e8cb16d0a48": [
+    "View all ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " layers of stack #",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
   "9f3f817e9111e162": "Commented",
   "9736f3763a6476c2": "Pending",
   "e3e1ec05d1224d36": "Could not save the description",
