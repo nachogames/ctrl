@@ -4,7 +4,11 @@ import {
   createRuntimeCommand,
 } from "@t3tools/client-runtime/state/runtime";
 import { discoverTailnetMachines as discoverTailnetMachinesEffect } from "@t3tools/client-runtime/state/tailnet";
-import type { DesktopSshEnvironmentTarget, TailnetPeerEnvironment } from "@t3tools/contracts";
+import type {
+  DesktopSshEnvironmentTarget,
+  EnvironmentId,
+  TailnetPeerEnvironment,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { connectionAtomRuntime } from "./runtime";
@@ -68,5 +72,13 @@ export const pairEnvironmentAgain = createRuntimeCommand(connectionAtomRuntime, 
   execute: (input: ConnectionOnboarding.PairAgainInput) =>
     ConnectionOnboarding.ConnectionOnboarding.pipe(
       Effect.flatMap((onboarding) => onboarding.pairAgain(input)),
+    ),
+});
+
+export const reachesEnvironment = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:reaches-environment",
+  execute: (input: { readonly host: string; readonly environmentId: EnvironmentId }) =>
+    ConnectionOnboarding.ConnectionOnboarding.pipe(
+      Effect.flatMap((onboarding) => onboarding.reaches(input)),
     ),
 });

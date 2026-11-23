@@ -56,13 +56,16 @@ import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
   revealSettingsSearchTarget,
-  SETTINGS_NAV_GROUPS,
+  settingsNavGroups,
   SETTINGS_NAV_LABELS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
 } from "./settingsSearch";
-import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
+import {
+  useAvailableSettingsSearchItems,
+  useHasSecretProvidersEnvironment,
+} from "./useAvailableSettingsSearchItems";
 import { ShiftKeyIcon } from "../home/ShiftKeyIcon";
 import { handleSettingsSectionKeyDown } from "./settingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
@@ -148,7 +151,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       (presentation) => presentation.serverConfig?.homeWorkspaceRoot,
     ),
   );
-  const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
+  const navGroups = settingsNavGroups(useHasSecretProvidersEnvironment()).map((group) => ({
     ...group,
     paths: group.paths.filter((to) => to !== "/settings/home" || canRunHome),
   }));

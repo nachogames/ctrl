@@ -1,10 +1,13 @@
 import {
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadGroupId,
   ThreadId,
+  TurnItemId,
   type OrchestrationProjectShell,
   type OrchestrationThreadGroupShell,
+  type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
@@ -120,6 +123,40 @@ export const v2Projection: OrchestrationV2ThreadProjection = {
   visibleTurnItems: [],
   updatedAt: v2Now,
 };
+
+/** A completed user message row of `v2ThreadId`, identified by its text. */
+export function v2MessageRow(text: string, ordinal: number): OrchestrationV2ProjectedTurnItem {
+  const itemId = TurnItemId.make(text);
+  return {
+    position: 0,
+    visibility: "local",
+    sourceThreadId: v2ThreadId,
+    sourceItemId: itemId,
+    item: {
+      id: itemId,
+      threadId: v2ThreadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: "completed",
+      title: null,
+      startedAt: v2Now,
+      completedAt: v2Now,
+      updatedAt: v2Now,
+      type: "user_message",
+      createdBy: "user",
+      creationSource: "web",
+      messageId: MessageId.make(text),
+      inputIntent: "turn_start",
+      text,
+      attachments: [],
+    },
+  };
+}
 
 export const v2ShellSnapshot: OrchestrationV2ShellSnapshot = {
   schemaVersion: 1,

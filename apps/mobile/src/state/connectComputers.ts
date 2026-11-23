@@ -1,5 +1,5 @@
 import { createConnectionOfferCommands } from "@t3tools/client-runtime/state/connectionOffers";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as DateTime from "effect/DateTime";
@@ -54,16 +54,21 @@ export async function connectComputerTo(
   if (scanned.environmentId === targetEnvironmentId) {
     return "That is the same computer. Pick a different one to connect.";
   }
-  const result = await connectionOffers.offer.run(appAtomRegistry, {
-    environmentId: targetEnvironmentId,
-    input: {
-      environmentId: scanned.environmentId,
-      label: scanned.label,
-      pairingUrl,
-      expiresAt: DateTime.add(DateTime.nowUnsafe(), { minutes: RELAY_LIFETIME_MINUTES }),
-      connectBack: true,
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    connectionOffers.offer,
+    {
+      environmentId: targetEnvironmentId,
+      input: {
+        environmentId: scanned.environmentId,
+        label: scanned.label,
+        pairingUrl,
+        expiresAt: DateTime.add(DateTime.nowUnsafe(), { minutes: RELAY_LIFETIME_MINUTES }),
+        connectBack: true,
+      },
     },
-  });
+    { reportFailure: false },
+  );
   if (result._tag === "Success") return null;
   const failure = squashAtomCommandFailure(result);
   return failure instanceof Error ? failure.message : String(failure);

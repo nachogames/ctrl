@@ -59,6 +59,10 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as EnvironmentTheme from "../../../environmentTheme.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
+import * as FeedbackStore from "../../../feedback/FeedbackStore.ts";
+import * as MilestoneHub from "../../../milestones/MilestoneHub.ts";
+import * as TaskFolders from "../../../workspace/TaskFolders.ts";
+import * as Workflows from "../../../workflows/Workflows.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -97,6 +101,10 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
   Layer.mock(PullRequestService.PullRequestService)({}),
+  Layer.mock(FeedbackStore.FeedbackStore)({}),
+  Layer.mock(TaskFolders.TaskFolders)({}),
+  Workflows.layerDisabled,
+  MilestoneHub.layer,
   notHomeLayer,
   Layer.mock(RemoteMcpServers.RemoteMcpServers)({
     tools: () => [

@@ -87,6 +87,7 @@ export const BUILT_IN_MCP_TOOL_NAMES: ReadonlyArray<string> = [
   "t3_project_read",
   "t3_project_update",
   "t3_queue",
+  "t3_submit_output",
   "t3_theme_read",
   "t3_theme_set",
   "t3_thread_configure",

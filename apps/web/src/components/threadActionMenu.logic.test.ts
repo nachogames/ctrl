@@ -189,4 +189,9 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "open-group-panel")?.disabled).toBeUndefined();
     expect(items.find((item) => item.id === "pin-group")?.disabled).toBe(true);
   });
+
+  it("disables only rename where no inline title editor exists", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, canRename: false });
+    expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(["rename"]);
+  });
 });

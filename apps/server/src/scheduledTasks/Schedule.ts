@@ -2,7 +2,9 @@ import { MIN_SCHEDULED_TASK_INTERVAL_MS, type ScheduledTaskSchedule } from "@t3t
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
-function parseTimeOfDay(value: string): { hour: number; minute: number } | null {
+const MINUTE_MS = 60_000;
+
+export function parseTimeOfDay(value: string): { hour: number; minute: number } | null {
   const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(value.trim());
   if (!match) return null;
   return { hour: Number(match[1]), minute: Number(match[2]) };
@@ -66,4 +68,16 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
     aTime.minute === bTime.minute &&
     weekdayKey(a.weekdays) === weekdayKey(b.weekdays)
   );
+}
+
+// Scheduled tasks fire missed fixed-time runs on wake (Ctrl); upstream's workflow triggers still skip them.
+const MISSED_FIXED_TIME_GRACE_MS = 10 * MINUTE_MS;
+
+export function isMissedFixedTimeRun(
+  schedule: ScheduledTaskSchedule,
+  dueAt: DateTime.DateTime,
+  now: DateTime.DateTime,
+): boolean {
+  if (schedule.type !== "fixed_time") return false;
+  return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_FIXED_TIME_GRACE_MS;
 }

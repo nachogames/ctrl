@@ -9,7 +9,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { useGT } from "gt-react-native";
 import { use, useMemo, useRef, useState, type ReactNode } from "react";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { Keyboard, Platform, Pressable, View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
@@ -34,7 +34,8 @@ import {
   pullRequestListItemsAreEqual,
   type PullRequestListItem,
 } from "./pullRequestStackItems";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { liveReviewKey, useLiveReviews } from "./review/useLiveReviews";
 import {
   PullRequestListFilters,
@@ -113,7 +114,7 @@ export function PullRequestsScreen(
   const { environments } = useWorkspaceState();
   const configs = useAtomValue(environmentServerConfigsAtom);
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const insets = useSafeAreaInsets();
   const contentTopInset = useContentTopInset();
   // UIKit insets the list by its column's safe area, which this context can report as 0.

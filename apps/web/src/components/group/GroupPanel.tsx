@@ -112,7 +112,7 @@ function useProjectScripts(
 /** Scrolls to the section an `openGroup` asked for; each call writes a fresh descriptor. */
 function useScrollToSection(surface: GroupSurface) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- scrolling the DOM to a requested section is a post-commit side effect
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolling the DOM to a requested section is a post-commit side effect
   useEffect(() => {
     if (surface.section === null) return;
     scrollRef.current
@@ -326,7 +326,7 @@ function SoloPanelContent(props: {
    */
   const pendingCreate = useRef<Promise<ThreadGroupId | null> | null>(null);
   // Once the group shows up it is the source of truth; a stale id must not outlive it.
-  // oxlint-disable-next-line t3code/react-effect-budget -- clears a ref, which render must not write
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears a ref, which render must not write
   useEffect(() => {
     if (hiddenGroup !== null) pendingCreate.current = null;
   }, [hiddenGroup]);
