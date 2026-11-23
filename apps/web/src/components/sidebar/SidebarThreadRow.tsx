@@ -92,6 +92,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { SidebarMachineIcon } from "./SidebarMachineIcon";
 import {
   animateSidebarLayoutChanges,
   hasUnseenCompletion,
@@ -1291,8 +1292,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
       {props.environmentLabel !== null ? (
         <>
-          <EnvironmentMachineIcon
-            aria-hidden
+          <SidebarMachineIcon
+            environmentId={thread.environmentId}
             kind={props.environmentMachine}
             className="size-3.5 shrink-0 text-icon-muted"
           />
