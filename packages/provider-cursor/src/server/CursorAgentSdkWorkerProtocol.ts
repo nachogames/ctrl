@@ -3,6 +3,10 @@ import type {
   AgentOptions,
   InteractionUpdate,
   RunResult,
+  SDKCustomTool,
+  SDKCustomToolContext,
+  SDKCustomToolResult,
+  SDKJsonValue,
   SDKUserMessage,
   SendOptions,
   SteerAckOutcome,
@@ -123,6 +127,14 @@ export type CursorWorkerRequest =
       readonly type: "cancelTextGenerate";
       readonly textGenerateId: number;
     }
+  | ({
+      readonly id: number;
+      readonly type: "customToolResult";
+      readonly callId: number;
+    } & (
+      | { readonly ok: true; readonly result: SDKCustomToolResult }
+      | { readonly ok: false; readonly error: SerializedWorkerError }
+    ))
   | {
       /** Closes every session and exits the worker. */
       readonly id: number;
@@ -188,6 +200,15 @@ export type CursorWorkerMessage =
       readonly type: "backgroundShell";
       readonly sessionId: number;
       readonly event: SerializedBackgroundShellEvent;
+    }
+  | {
+      /** Custom tool callbacks stay in the server; the worker asks it to run one. */
+      readonly type: "customToolCall";
+      readonly sendId: number;
+      readonly callId: number;
+      readonly toolName: string;
+      readonly args: Record<string, SDKJsonValue>;
+      readonly context: SDKCustomToolContext;
     };
 
 const MAX_ERROR_CAUSE_DEPTH = 8;
@@ -306,4 +327,56 @@ export function encodeWorkerFrame(frame: CursorWorkerRequest | CursorWorkerMessa
 
 export function decodeWorkerFrame(line: string): unknown {
   return JSON.parse(line);
+}
+
+type CustomToolResultRequest = Extract<CursorWorkerRequest, { type: "customToolResult" }>;
+type WorkerSendOptions = NonNullable<Extract<CursorWorkerRequest, { type: "send" }>["options"]>;
+
+/**
+ * Worker half of custom tools. `execute` does not survive the JSON frame, so each bridged tool
+ * posts a `customToolCall` and waits for the server's `customToolResult`.
+ */
+export function makeCustomToolBridge(writeMessage: (message: CursorWorkerMessage) => void) {
+  const pending = new Map<
+    number,
+    {
+      readonly resolve: (result: SDKCustomToolResult) => void;
+      readonly reject: (error: Error) => void;
+    }
+  >();
+  let nextCallId = 0;
+
+  const bridgeTools = (
+    sendId: number,
+    tools: Record<string, SDKCustomTool>,
+  ): Record<string, SDKCustomTool> =>
+    Object.fromEntries(
+      Object.entries(tools).map(([toolName, tool]) => [
+        toolName,
+        {
+          ...tool,
+          execute: (args, context) =>
+            new Promise<SDKCustomToolResult>((resolve, reject) => {
+              const callId = ++nextCallId;
+              pending.set(callId, { resolve, reject });
+              writeMessage({ type: "customToolCall", sendId, callId, toolName, args, context });
+            }),
+        } satisfies SDKCustomTool,
+      ]),
+    );
+
+  return {
+    bridgeSendOptions: (sendId: number, options: WorkerSendOptions): WorkerSendOptions => {
+      const tools = options.local?.customTools;
+      if (tools === undefined) return options;
+      return { ...options, local: { ...options.local, customTools: bridgeTools(sendId, tools) } };
+    },
+    settle: (req: CustomToolResultRequest): void => {
+      const call = pending.get(req.callId);
+      pending.delete(req.callId);
+      if (call === undefined) return;
+      if (req.ok) call.resolve(req.result);
+      else call.reject(deserializeWorkerError(req.error));
+    },
+  };
 }

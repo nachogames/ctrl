@@ -19,6 +19,7 @@ import {
   type SerializedRunnerFailure,
   decodeWorkerFrame,
   encodeWorkerFrame,
+  makeCustomToolBridge,
   serializeRunResult,
   serializeWorkerError,
 } from "./CursorAgentSdkWorkerProtocol.ts";
@@ -84,6 +85,7 @@ const runCursorSdkWorkerWithStdio = Effect.fn("CursorAgentSdkWorker.run")(functi
   const pendingCancelledSendIds = new Set<number>();
   const sessionIdByOptions = new WeakMap<object, number>();
   let shuttingDown = false;
+  const customTools = makeCustomToolBridge(writeMessage);
 
   const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner((input) => {
     const boundSessionId = sessionIdByOptions.get(input.options);
@@ -216,7 +218,9 @@ const runCursorSdkWorkerWithStdio = Effect.fn("CursorAgentSdkWorker.run")(functi
         const exit = yield* Effect.exit(
           session.send({
             message: req.message,
-            ...(req.options === undefined ? {} : { options: req.options }),
+            ...(req.options === undefined
+              ? {}
+              : { options: customTools.bridgeSendOptions(req.id, req.options) }),
             ...(req.summarize === undefined ? {} : { summarize: req.summarize }),
             ...(req.resume === undefined ? {} : { resume: req.resume }),
             onDelta: (update) =>
@@ -324,6 +328,12 @@ const runCursorSdkWorkerWithStdio = Effect.fn("CursorAgentSdkWorker.run")(functi
           Effect.asVoid,
           Effect.forkIn(workerScope),
         );
+        return;
+      }
+
+      case "customToolResult": {
+        customTools.settle(req);
+        writeMessage({ type: "response", id: req.id, ok: true, result: null });
         return;
       }
 
