@@ -625,6 +625,8 @@ export function HomeScreen(props: HomeScreenProps) {
     ? buildHomeProjectSections({
         items: threadListV2Items,
         showProjectHeaders: v2ScopedProjectGroup === null,
+        // The Working shelf is off in project sections, so its return order applies here instead.
+        newestReturnFirst: workingShelfPreferred,
         projectOf: (thread) =>
           projectScopeByProjectKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
           null,
