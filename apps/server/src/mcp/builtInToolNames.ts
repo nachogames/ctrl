@@ -68,6 +68,7 @@ export const BUILT_IN_MCP_TOOL_NAMES: ReadonlyArray<string> = [
   "t3_environment_preferences_update",
   "t3_environment_read",
   "t3_environment_unlink",
+  "t3_feedback",
   "t3_group_create",
   "t3_group_handoff",
   "t3_group_move_thread",
