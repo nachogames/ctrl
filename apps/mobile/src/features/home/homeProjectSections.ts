@@ -1,4 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { sortInboxThreadsByReturn } from "@t3tools/client-runtime/state/thread-inbox";
 
 import {
   resolveThreadListV2Status,
@@ -68,6 +69,8 @@ export interface HomeProjectSectionsInput {
   readonly projectOrder?: ReadonlyArray<string>;
   /** Arranged row keys (groups and threads) inside projects; see `arrangeInSlots`. */
   readonly rowOrder?: ReadonlyArray<string>;
+  /** Rows inside a project put the latest finished or started thread first; projects keep their order. */
+  readonly newestReturnFirst?: boolean;
   /** While a row is dragged in Edit mode: its sibling set in the order under the finger. */
   readonly liveOrder?: { readonly siblings: string; readonly order: ReadonlyArray<string> };
 }
@@ -90,6 +93,13 @@ export interface HomeProjectSections {
 function needsUser(thread: EnvironmentThreadShell): boolean {
   const status = resolveThreadListV2Status(thread);
   return status === "approval" || status === "input";
+}
+
+function byReturn(entries: ReadonlyArray<ThreadListV2ThreadListItem>) {
+  const entryByThread = new Map(entries.map((entry) => [entry.item.thread, entry]));
+  return sortInboxThreadsByReturn(entries.map((entry) => entry.item.thread)).map((thread) =>
+    entryByThread.get(thread)!,
+  );
 }
 
 function withMoves(
@@ -213,7 +223,11 @@ export function buildHomeProjectSections(input: HomeProjectSectionsInput): HomeP
     bucket.entries.push(entry);
   }
   const projects = arrange(
-    [...buckets].map(([key, bucket]) => ({ key, title: bucket.title, entries: bucket.entries })),
+    [...buckets].map(([key, bucket]) => ({
+      key,
+      title: bucket.title,
+      entries: input.newestReturnFirst === true ? byReturn(bucket.entries) : bucket.entries,
+    })),
     (project) => project.key,
     input.projectOrder,
   );
