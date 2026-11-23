@@ -13,7 +13,8 @@ import type {
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { lazy, Suspense } from "react";
-import SideChatPane from "./SideChatPane";
+import { LinkedThreadPane } from "./LinkedThreadPane";
+import SideThreadPane from "./SideThreadPane";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
@@ -74,6 +75,8 @@ export function RightPanelSurfaceContent(props: {
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly configuredPreviewUrls: ReadonlyArray<string>;
   readonly workspaceMutationId: string | null;
+  /** What the diff is read under, as the Changes totals are; see `useWorkspaceRevision`. */
+  readonly workspaceRevision: string | null;
   readonly getShortcutContext: () => ShortcutMatchContext;
   readonly onSendAnnotation: (
     annotation: PreviewAnnotationPayload,
@@ -119,7 +122,7 @@ export function RightPanelSurfaceContent(props: {
             key={scopedThreadKey(threadRef)}
             mode="embedded"
             composerDraftTarget={props.composerDraftTarget}
-            workspaceMutationId={props.workspaceMutationId}
+            workspaceMutationId={props.workspaceRevision}
             visible={visible}
           />
         </Suspense>
@@ -140,9 +143,14 @@ export function RightPanelSurfaceContent(props: {
           getShortcutContext={props.getShortcutContext}
           shortcutsEnabled={visible && props.activeSurfaceId === surface.id}
           key={`${scopedThreadKey(threadRef)}:${surface.id}`}
-          environmentId={props.environmentId}
+          environmentId={
+            (surface.environmentId as EnvironmentId | undefined) ?? props.environmentId
+          }
           onSelectPullRequest={(reference) => {
             useRightPanelStore.getState().openPullRequest(threadRef, {
+              ...(surface.environmentId === undefined
+                ? {}
+                : { environmentId: surface.environmentId }),
               projectId: reference.projectId,
               repository: reference.repository,
               number: reference.number,
@@ -204,10 +212,22 @@ export function RightPanelSurfaceContent(props: {
           threadRef={threadRef}
           onSelectPullRequest={(reference) => {
             useRightPanelStore.getState().openPullRequest(threadRef, {
+              ...(surface.environmentId === undefined
+                ? {}
+                : { environmentId: surface.environmentId }),
               projectId: reference.projectId,
               repository: reference.repository,
               number: reference.number,
               ...(reference.host ? { host: reference.host } : {}),
+            });
+          }}
+          onSelectIssue={({ host, ...reference }) => {
+            useRightPanelStore.getState().openIssue(threadRef, {
+              ...(surface.environmentId === undefined
+                ? {}
+                : { environmentId: surface.environmentId }),
+              ...reference,
+              ...(host ? { host } : {}),
             });
           }}
         />
@@ -225,15 +245,24 @@ export function RightPanelSurfaceContent(props: {
           surface={surface}
         />
       );
-    case "side-chat":
+    case "thread":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (
-        <SideChatPane
+        <SideThreadPane
           key={surface.id}
           parentRef={threadRef}
-          threadId={surface.threadId}
+          surface={surface}
           parentPanel={props.sideChatParentPanel}
           onClose={() => onCloseSurface(surface)}
+        />
+      );
+    case "linked-thread":
+      return (
+        <LinkedThreadPane
+          key={surface.id}
+          panelRef={threadRef}
+          surface={surface}
+          visible={visible && props.activeSurfaceId === surface.id}
         />
       );
     case "device":

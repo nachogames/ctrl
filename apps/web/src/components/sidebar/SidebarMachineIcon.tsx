@@ -13,20 +13,22 @@ const connectionPhaseAtom = Atom.family((environmentId: EnvironmentId) =>
   ),
 );
 
-/** A remote machine's icon, with a dot only while that machine is not connected. */
+/** A machine's icon, with a dot only while that machine is not connected. */
 export function SidebarMachineIcon({
   environmentId,
   kind,
+  className,
 }: {
   readonly environmentId: EnvironmentId;
   readonly kind: EnvironmentMachineKind;
+  readonly className: string;
 }) {
   const phase = useAtomValue(connectionPhaseAtom(environmentId));
   return (
     <MachineStatusIcon
       kind={kind}
       phase={phase === "connected" ? null : phase}
-      className="size-3.5"
+      className={className}
     />
   );
 }

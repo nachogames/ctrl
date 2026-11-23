@@ -4,7 +4,7 @@ import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 import * as DateTime from "effect/DateTime";
 import { EllipsisIcon, PlugIcon, PlusIcon, QrCodeIcon } from "lucide-react";
-import { type ReactNode, memo, useId, useState } from "react";
+import { type ReactNode, memo, useId, useRef, useState } from "react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import {
   AuthAccessWriteScope,
@@ -798,6 +798,8 @@ function AddDeviceDialog({
   const terminalSelected = selectedScopes.includes(AuthTerminalOperateScope);
   const relayAdminSelected = selectedScopes.includes(AuthRelayConfigureScope);
   const nowMs = useNowSecond();
+  // A code that arrives after the dialog closed belongs to that earlier opening.
+  const dialogSessionRef = useRef(0);
 
   const makeCode = async (input: {
     readonly label: string;
@@ -811,6 +813,7 @@ function AddDeviceDialog({
       setError(gt("This connection cannot add devices here."));
       return;
     }
+    const dialogSession = dialogSessionRef.current;
     setCreating(true);
     setError(null);
     const trimmed = input.label.trim();
@@ -818,6 +821,10 @@ function AddDeviceDialog({
       environmentId,
       input: { ...(trimmed ? { label: trimmed } : {}), scopes: input.scopes },
     });
+    if (dialogSession !== dialogSessionRef.current) {
+      if (result._tag === "Success") onPairingLinkCreated(result.value);
+      return;
+    }
     setCreating(false);
     if (result._tag === "Success") {
       setIssued(result.value);
@@ -837,6 +844,8 @@ function AddDeviceDialog({
     if (next) {
       void makeCode({ label: "", scopes: standardScopes });
     } else {
+      dialogSessionRef.current += 1;
+      setCreating(false);
       setIssued(null);
       setError(null);
       setIntent({ chats: true, agents: true });

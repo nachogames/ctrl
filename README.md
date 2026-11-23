@@ -155,4 +155,4 @@ vp i
 vp run dev
 ```
 
-The [development runbook](./docs/operations/development.md#first-checkout) has the details. Start at [docs/internals/overview.md](./docs/internals/overview.md) for how it fits together. Ctrl is a personal fork and isn't looking for contributions. Bugs that also happen in T3 Code belong [upstream](https://github.com/pingdotgg/t3code/issues).
+The [development runbook](./docs/operations/00_development.md#first-checkout) has the details. Start at [docs/internals/01_architecture.md](./docs/internals/01_architecture.md) for how it fits together. Ctrl is a personal fork and isn't looking for contributions. Bugs that also happen in T3 Code belong [upstream](https://github.com/pingdotgg/t3code/issues).

@@ -3,7 +3,7 @@ import {
   type DirectPushAlertKind,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { settleAsyncResult } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
@@ -19,7 +19,8 @@ import {
 } from "../agent-awareness/directPushRegistration";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import { runtime } from "../../lib/runtime";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -45,7 +46,7 @@ const ALERT_KIND_ROWS: ReadonlyArray<{
 /** Alerts pushed by the connected servers themselves, with no T3 Connect account. */
 export function DirectPushSettingsSection() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const { savedConnectionsById } = useSavedRemoteConnections();
   const statuses = useSyncExternalStore(
     subscribeDirectPushStatuses,
@@ -63,8 +64,8 @@ export function DirectPushSettingsSection() {
       const next = ALERT_KIND_ROWS.map((row) => row.kind).filter((candidate) =>
         candidate === kind ? on : alertOn.includes(candidate),
       );
-      await savePreferences({ directPushAlertOn: next });
-      requestDirectPushRegistration();
+      const saved = await savePreferences({ directPushAlertOn: next });
+      if (saved._tag === "Success") requestDirectPushRegistration();
     },
     [alertOn, savePreferences],
   );
@@ -89,8 +90,8 @@ export function DirectPushSettingsSection() {
         }
       }
       // Registration reads the stored preference, so wait for the write.
-      await savePreferences({ directPushEnabled: next });
-      requestDirectPushRegistration();
+      const saved = await savePreferences({ directPushEnabled: next });
+      if (saved._tag === "Success") requestDirectPushRegistration();
     },
     [savePreferences],
   );

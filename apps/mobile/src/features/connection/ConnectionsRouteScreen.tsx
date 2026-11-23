@@ -12,6 +12,7 @@ import { useRemoteConnections } from "../../state/use-remote-environment-registr
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
 import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
+import { LinkSeveralEnvironmentsAction } from "./LinkSeveralEnvironments";
 import { TailnetDevicesSection } from "./TailnetDevicesSection";
 
 export function ConnectionsRouteScreen() {
@@ -68,6 +69,10 @@ export function ConnectionsRouteScreen() {
           .map((environment) => (
             <Fragment key={environment.environmentId}>
               <LinkedEnvironmentsSection
+                environmentId={environment.environmentId}
+                environmentLabel={environment.environmentLabel}
+              />
+              <LinkSeveralEnvironmentsAction
                 environmentId={environment.environmentId}
                 environmentLabel={environment.environmentLabel}
               />

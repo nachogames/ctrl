@@ -21,7 +21,7 @@ import {
   type SidebarProjectGroupingMode,
   type ThreadId,
 } from "@t3tools/contracts";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { planGroupMemberReorder } from "@t3tools/client-runtime/state/thread-sort";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -133,7 +133,7 @@ import {
 } from "./homeProjectSections";
 import { ListFilterChip } from "../layout/workspace/ListFilterMenu";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { homeArrangesInPlaceAtom, threadArrangementOpenAtom } from "../../state/thread-order";
 import { environmentThreadGroups, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -535,7 +535,7 @@ export function HomeScreen(props: HomeScreenProps) {
   // Search results stay one flat list ranked by match.
   const sectionedByProject = byProject && !hasSearchQuery;
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const projectOrder = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value.threadListProjectOrder
     : undefined;
@@ -625,6 +625,8 @@ export function HomeScreen(props: HomeScreenProps) {
     ? buildHomeProjectSections({
         items: threadListV2Items,
         showProjectHeaders: v2ScopedProjectGroup === null,
+        // The Working shelf is off in project sections, so its return order applies here instead.
+        newestReturnFirst: workingShelfPreferred,
         projectOf: (thread) =>
           projectScopeByProjectKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
           null,
@@ -892,7 +894,7 @@ export function HomeScreen(props: HomeScreenProps) {
     .map((scope) => ({ key: scope.key, label: scope.title }));
 
   const shortcutItems = homeListItems.filter(isThreadListV2ListItem);
-  useThreadJumpShortcuts(shortcutItems, selectThread);
+  useThreadJumpShortcuts(shortcutItems, selectThread, props.onSelectPendingTask);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(homeListItems);

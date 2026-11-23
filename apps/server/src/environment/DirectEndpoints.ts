@@ -29,6 +29,7 @@ import {
   isPrivateNetworkAddress,
   isTailscaleInterface,
   isVirtualInterface,
+  WINDOWS_HOST_ADAPTER_MAC,
 } from "../startupAccess.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
@@ -48,9 +49,6 @@ export class DirectEndpoints extends Context.Service<
 // Wildcard binds stay IPv4: the private-network listener check accepts only IPv4 peers.
 const isAdvertisableAddress = (address: string): boolean =>
   NodeNet.isIPv4(address) && !address.startsWith("127.") && isPrivateNetworkAddress(address);
-
-// Windows adapter names are mutable; Linux bridges can inherit these MACs.
-const WINDOWS_HOST_ADAPTER_MAC = /^(0a:00:27|00:50:56:c0:00):/i;
 
 export function resolveBoundEndpoints(input: {
   readonly platform: NodeJS.Platform;

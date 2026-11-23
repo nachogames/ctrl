@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { APP_ICONS } from "@t3tools/contracts";
 import { APP_ICON_ARTWORK } from "@t3tools/shared/appIcons";
 import { AsyncResult } from "effect/reactivity";
@@ -7,13 +7,14 @@ import { Platform, View } from "react-native";
 import { AppIconMark } from "../../../../components/AppIconMark";
 import { AppText as Text } from "../../../../components/ui/AppText";
 import { resolveAppIconPreference } from "../../../../lib/appIconPreference";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../../../state/preferences";
+import { useAtomCommand } from "../../../../state/use-atom-command";
 import { ListChoiceRow as SettingsChoiceRow } from "../../../../components/ui/ListChoiceRow";
 import { SettingsSection } from "../../components/SettingsSection";
 
 export function AppIconAppearanceSection() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const ready = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const selected = AsyncResult.isSuccess(preferencesResult)
     ? resolveAppIconPreference(preferencesResult.value.appIcon)

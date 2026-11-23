@@ -1,5 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadShellFixture } from "../../test-fixtures";
@@ -38,7 +38,10 @@ function thread(
 function sections(
   threads: ReadonlyArray<EnvironmentThreadShell>,
   options: Partial<
-    Pick<HomeProjectSectionsInput, "showProjectHeaders" | "projectOrder" | "rowOrder" | "liveOrder">
+    Pick<
+      HomeProjectSectionsInput,
+      "showProjectHeaders" | "projectOrder" | "rowOrder" | "liveOrder" | "newestReturnFirst"
+    >
   > & {
     readonly expanded?: ReadonlyArray<string>;
     readonly collapsed?: ReadonlyArray<string>;
@@ -88,6 +91,7 @@ function sections(
     ...(options.projectOrder ? { projectOrder: options.projectOrder } : {}),
     ...(options.rowOrder ? { rowOrder: options.rowOrder } : {}),
     ...(options.liveOrder ? { liveOrder: options.liveOrder } : {}),
+    ...(options.newestReturnFirst ? { newestReturnFirst: true } : {}),
   });
 }
 
@@ -180,6 +184,38 @@ describe("buildHomeProjectSections", () => {
       "a",
       "# Project ember",
       "b",
+    ]);
+  });
+
+  it("lifts a finished thread to the top of its project without moving projects", () => {
+    const finished = (at: string) => ({
+      latestRun: {
+        runId: RunId.make(`run-${at}`),
+        status: "completed" as const,
+        requestedAt: at,
+        startedAt: at,
+        completedAt: at,
+        assistantMessageId: null,
+      },
+    });
+    const threads = [
+      thread("e", "ember", { createdAt: "2026-10-03T00:00:00.000Z" }),
+      thread("a", "ctrl", { createdAt: "2026-10-02T00:00:00.000Z" }),
+      thread("done", "ctrl", finished("2026-10-05T00:00:00.000Z")),
+    ];
+    expect(describeItems(sections(threads).items)).toEqual([
+      "# Project ember",
+      "e",
+      "# Project ctrl",
+      "a",
+      "done",
+    ]);
+    expect(describeItems(sections(threads, { newestReturnFirst: true }).items)).toEqual([
+      "# Project ember",
+      "e",
+      "# Project ctrl",
+      "done",
+      "a",
     ]);
   });
 
