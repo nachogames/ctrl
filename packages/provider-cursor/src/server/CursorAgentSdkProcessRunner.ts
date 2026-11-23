@@ -1,4 +1,10 @@
-import type { AgentMessage, InteractionUpdate, RunResult, SteerAckOutcome } from "@cursor/sdk";
+import type {
+  AgentMessage,
+  InteractionUpdate,
+  RunResult,
+  SDKCustomTool,
+  SteerAckOutcome,
+} from "@cursor/sdk";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -29,6 +35,7 @@ import {
   deserializeRunResult,
   deserializeWorkerError,
   encodeWorkerFrame,
+  serializeWorkerError,
 } from "./CursorAgentSdkWorkerProtocol.ts";
 
 const WORKER_CLOSE_TIMEOUT = Duration.seconds(3);
@@ -56,6 +63,7 @@ interface ActiveWorkerRun {
   readonly queue: Queue.Queue<RunQueueItem>;
   readonly waitDeferred: Deferred.Deferred<RunResult, CursorAgentSdk.CursorAgentSdkRunnerError>;
   readonly onStartupPhase: ((phase: string) => Effect.Effect<void>) | undefined;
+  readonly customTools: Record<string, SDKCustomTool> | undefined;
   doneEnqueued: boolean;
 }
 
@@ -109,6 +117,7 @@ interface SpawnedCursorWorker {
     sessionId: number,
     sendId: number,
     onStartupPhase: ActiveWorkerRun["onStartupPhase"],
+    customTools: ActiveWorkerRun["customTools"],
   ) => Effect.Effect<ActiveWorkerRun>;
   readonly unregisterRun: (sendId: number) => Effect.Effect<void>;
   readonly failSessionRuns: (sessionId: number) => Effect.Effect<void>;
@@ -365,6 +374,37 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
             }
             case "startupPhase":
               return activeRuns.get(parsed.sendId)?.onStartupPhase?.(parsed.phase) ?? Effect.void;
+            case "customToolCall": {
+              const { callId, toolName, args, context } = parsed;
+              const run = activeRuns.get(parsed.sendId);
+              const tool = run?.customTools?.[toolName];
+              // Forked: a tool such as ask_user waits on the user while frames keep flowing.
+              return Effect.tryPromise({
+                try: async () => {
+                  if (run === undefined) throw new Error(`The run calling ${toolName} has ended.`);
+                  if (tool === undefined) throw new Error(`Unknown custom tool: ${toolName}`);
+                  return await tool.execute(args, context);
+                },
+                catch: (cause) => toRunnerError("customTool.execute", cause),
+              }).pipe(
+                Effect.match({
+                  onSuccess: (result) => ({ ok: true as const, result }),
+                  onFailure: (error) => ({
+                    ok: false as const,
+                    error: serializeWorkerError(error.cause),
+                  }),
+                }),
+                Effect.flatMap((outcome) =>
+                  request(
+                    (id) => ({ id, type: "customToolResult", callId, ...outcome }),
+                    "customTool.result",
+                  ),
+                ),
+                Effect.ignore,
+                Effect.forkIn(workerScope),
+                Effect.asVoid,
+              );
+            }
             case "runDone": {
               const run = activeRuns.get(parsed.sendId);
               if (run !== undefined && !run.doneEnqueued) {
@@ -610,6 +650,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           sessionId: number,
           sendId: number,
           onStartupPhase: ActiveWorkerRun["onStartupPhase"],
+          customTools: ActiveWorkerRun["customTools"],
         ) {
           const queue = yield* Queue.unbounded<RunQueueItem>();
           const waitDeferred = yield* Deferred.make<
@@ -621,6 +662,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
             queue,
             waitDeferred,
             onStartupPhase,
+            customTools,
             doneEnqueued: false,
           };
           activeRuns.set(sendId, state);
@@ -773,6 +815,14 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           },
         });
 
+        // Only send-time tools are forwarded back to the server; open-time ones would lose `execute`.
+        if (input.options.local?.customTools !== undefined) {
+          return yield* toRunnerError(
+            "agent.open",
+            new Error("Pass Cursor custom tools when sending, not when opening the agent."),
+          );
+        }
+
         const lease = yield* acquireWorker;
         const { worker } = lease;
         const sessionId = worker.nextId();
@@ -884,6 +934,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                 sessionId,
                 sendId,
                 sendInput.onStartupPhase,
+                sendInput.options?.local?.customTools,
               );
               let transmitted = false;
               let acknowledged = false;

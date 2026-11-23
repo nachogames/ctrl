@@ -1,3 +1,4 @@
+import type { SDKCustomTool } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
@@ -13,8 +14,10 @@ import * as Path from "effect/Path";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorAgentSdkProcessRunner from "./CursorAgentSdkProcessRunner.ts";
 import {
+  type CursorWorkerMessage,
   deserializeRunResult,
   deserializeWorkerError,
+  makeCustomToolBridge,
   serializeRunResult,
   serializeWorkerError,
 } from "./CursorAgentSdkWorkerProtocol.ts";
@@ -26,6 +29,8 @@ const readline = require("node:readline");
 const rawWrite = process.stdout.write.bind(process.stdout);
 const send = (msg) => rawWrite(JSON.stringify(msg) + "\\n");
 const mode = process.env.FAKE_WORKER_MODE || "ok";
+let toolSendId;
+const toolResults = [];
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on("line", (line) => {
@@ -55,6 +60,13 @@ rl.on("line", (line) => {
   if (req.type === "send") {
     if (mode === "hang-send") {
       send({ type: "protocolLog", providerSessionId: "provider-session-worker-test", event: { direction: "incoming", stage: "decoded", payload: { type: "run.started", runId: "pending", agentId: "agent-worker-1" } } });
+      return;
+    }
+    if (mode === "custom-tool") {
+      toolSendId = req.id;
+      send({ type: "response", id: req.id, ok: true, result: { runId: "run-tool", agentId: "agent-worker-1" } });
+      send({ type: "customToolCall", sendId: req.id, callId: 7, toolName: "ask_user", args: { question: "Pick one?" }, context: { toolCallId: "tc-7" } });
+      send({ type: "customToolCall", sendId: req.id, callId: 8, toolName: "missing", args: {}, context: {} });
       return;
     }
     if (mode === "crash-mid-run") {
@@ -91,6 +103,26 @@ rl.on("line", (line) => {
       send({ type: "backgroundShell", sessionId: req.sessionId, event: { type: "started", id: "sh-1", pid: 4101, command: "sleep 60" } });
       send({ type: "backgroundShell", sessionId: req.sessionId, event: { type: "started", id: "sh-2", pid: 4102, command: "tail -f" } });
     }
+    return;
+  }
+  if (req.type === "customToolResult") {
+    send({ type: "response", id: req.id, ok: true, result: null });
+    toolResults.push(req);
+    if (toolResults.length < 2) return;
+    toolResults.sort((a, b) => a.callId - b.callId);
+    send({
+      type: "runDone",
+      sendId: toolSendId,
+      ok: true,
+      result: {
+        id: "run-tool",
+        requestId: "req-tool",
+        status: "finished",
+        result: JSON.stringify(toolResults.map(({ callId, ok, result, error }) => ({ callId, ok, result, error: error && error.message }))),
+        model: { id: "default" },
+        durationMs: 1,
+      },
+    });
     return;
   }
   if (req.type === "stopBackgroundShell") {
@@ -242,6 +274,71 @@ describe("CursorAgentSdkWorkerProtocol", () => {
     const restoredNullProto = deserializeWorkerError(serializeWorkerError(nullProto));
     assert.equal(restoredNullProto.message, "[Unserializable error]");
   });
+
+  it.effect(
+    "forwards a custom tool call from the worker and settles it with the server's answer",
+    () =>
+      Effect.gen(function* () {
+        const written: Array<CursorWorkerMessage> = [];
+        const bridge = makeCustomToolBridge((message) => written.push(message));
+        // The tool as it arrives in the worker: its `execute` was lost in the JSON frame.
+        const received = JSON.parse(
+          JSON.stringify({
+            local: { customTools: { ask_user: { description: "Ask", execute: () => "never" } } },
+          }),
+        ) as { local: { customTools: Record<string, SDKCustomTool> } };
+        const tool = bridge.bridgeSendOptions(42, received).local!.customTools!.ask_user!;
+
+        const answered = Effect.promise(async () =>
+          tool.execute({ question: "Pick?" }, { toolCallId: "tc-1" }),
+        );
+        const failed = Effect.promise(() =>
+          Promise.resolve(tool.execute({ question: "Again?" }, {})).then(
+            () => "resolved",
+            (error: Error) => error.message,
+          ),
+        );
+        const [first, second] = yield* Effect.all(
+          [
+            answered,
+            failed,
+            Effect.sync(() => {
+              assert.deepEqual(
+                written.map((message) =>
+                  message.type === "customToolCall" ? [message.sendId, message.callId] : null,
+                ),
+                [
+                  [42, 1],
+                  [42, 2],
+                ],
+              );
+              assert.deepInclude(written[0], {
+                toolName: "ask_user",
+                args: { question: "Pick?" },
+                context: { toolCallId: "tc-1" },
+              });
+              bridge.settle({
+                id: 1,
+                type: "customToolResult",
+                callId: 1,
+                ok: true,
+                result: "blue",
+              });
+              bridge.settle({
+                id: 2,
+                type: "customToolResult",
+                callId: 2,
+                ok: false,
+                error: { name: "Error", message: "dismissed" },
+              });
+            }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        assert.equal(first, "blue");
+        assert.equal(second, "dismissed");
+      }),
+  );
 });
 
 describe("CursorAgentSdkProcessRunner", () => {
@@ -390,6 +487,59 @@ describe("CursorAgentSdkProcessRunner", () => {
           assert.isTrue(unregistered);
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("runs the server's custom tool when the worker calls it and returns the answer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scriptPath = yield* writeFakeWorker;
+        const executable = yield* HostProcess.ExecutablePath;
+        const runner = yield* CursorAgentSdkProcessRunner.makeCursorAgentSdkProcessRunner({
+          resolveLaunch: Effect.succeed({
+            command: executable,
+            args: [scriptPath],
+            env: { FAKE_WORKER_MODE: "custom-tool" },
+          }),
+          protocolLoggerFor: () => undefined,
+        });
+        const openError = yield* Effect.flip(
+          runner.open({
+            ...openInput,
+            options: {
+              ...openInput.options,
+              local: { customTools: { ask_user: { execute: () => "" } } },
+            },
+          }),
+        );
+        assert.equal(openError.method, "agent.open");
+        const calls: Array<unknown> = [];
+        const session = yield* runner.open(openInput);
+        const run = yield* session.send({
+          message: "ask me",
+          options: {
+            local: {
+              customTools: {
+                ask_user: {
+                  execute: (args, context) => {
+                    calls.push({ args, context });
+                    return "blue";
+                  },
+                },
+              },
+            },
+          },
+        });
+        const result = yield* run.wait;
+        assert.deepEqual(calls, [
+          { args: { question: "Pick one?" }, context: { toolCallId: "tc-7" } },
+        ]);
+        assert.deepEqual(JSON.parse(result.result ?? ""), [
+          { callId: 7, ok: true, result: "blue" },
+          { callId: 8, ok: false, error: "Unknown custom tool: missing" },
+        ]);
+        yield* session.close;
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("fails run.wait with exit code and stderr when the worker crashes mid-run", () =>
