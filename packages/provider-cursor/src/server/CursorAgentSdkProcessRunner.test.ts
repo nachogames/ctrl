@@ -502,6 +502,16 @@ describe("CursorAgentSdkProcessRunner", () => {
           }),
           protocolLoggerFor: () => undefined,
         });
+        const openError = yield* Effect.flip(
+          runner.open({
+            ...openInput,
+            options: {
+              ...openInput.options,
+              local: { customTools: { ask_user: { execute: () => "" } } },
+            },
+          }),
+        );
+        assert.equal(openError.method, "agent.open");
         const calls: Array<unknown> = [];
         const session = yield* runner.open(openInput);
         const run = yield* session.send({
