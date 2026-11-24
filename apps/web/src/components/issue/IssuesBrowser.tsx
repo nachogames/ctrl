@@ -1,9 +1,9 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { IssueProgress } from "@t3tools/client-runtime/issue-board";
 import type { EnvironmentIssueEntry } from "@t3tools/client-runtime/issue-list";
-import type { ScopedThreadRef } from "@t3tools/contracts";
-import { T, useGT, useMessages } from "gt-react";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { T, useGT, useMessages, Var } from "gt-react";
+import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -92,6 +92,10 @@ export function IssuesBrowser({
   memoryKey,
   loading,
   notices,
+  footer,
+  hasMore = false,
+  isSelected,
+  environmentLabel,
   onSelect,
 }: {
   rows: ReadonlyArray<EnvironmentIssueEntry>;
@@ -101,6 +105,14 @@ export function IssuesBrowser({
   memoryKey: string;
   loading: boolean;
   notices?: ReactNode;
+  /** Under the list, such as a tracker's next page. */
+  footer?: ReactNode;
+  /** More issues exist than are loaded, so an empty list is not the whole answer. */
+  hasMore?: boolean;
+  /** The row open beside the list, highlighted. */
+  isSelected?: (entry: EnvironmentIssueEntry) => boolean;
+  /** Which server a row came from, when several are listed. */
+  environmentLabel?: (entry: EnvironmentIssueEntry) => string | undefined;
   onSelect: (entry: EnvironmentIssueEntry) => void;
 }) {
   const [remembered] = useState(() => issuesPanelMemory(memoryKey));
@@ -128,7 +140,8 @@ export function IssuesBrowser({
     <IssueRow
       key={`${row.environmentId}:${row.url}`}
       entry={row}
-      selected={false}
+      selected={isSelected?.(row) ?? false}
+      environmentLabel={environmentLabel?.(row)}
       showScope={false}
       showTracker={false}
       showParent={depth === 0}
@@ -155,7 +168,13 @@ export function IssuesBrowser({
         <PullRequestListGhost />
       ) : !anyShown ? (
         <p className="px-3 py-2 text-sm text-muted-foreground">
-          {loading ? <T>Loading…</T> : <T>No issues under these filters.</T>}
+          {loading ? (
+            <T>Loading…</T>
+          ) : hasMore ? (
+            <T>None of the issues loaded so far match these filters.</T>
+          ) : (
+            <T>No issues under these filters.</T>
+          )}
         </p>
       ) : view === "board" ? (
         <IssueBoard rows={rows} visible={visible} onSelect={onSelect} />
@@ -168,6 +187,53 @@ export function IssuesBrowser({
           onFoldedChange={setFolded}
         />
       )}
+      {footer}
+    </div>
+  );
+}
+
+/** A button per tracker that has issues past what is loaded, with why its last try failed. */
+export function IssueLoadMore({
+  more,
+  loadingMore,
+  onLoadMore,
+}: {
+  more: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly host: string;
+    readonly failure: string | null;
+  }>;
+  loadingMore: string | null;
+  onLoadMore: (environmentId: EnvironmentId, host: string) => void;
+}) {
+  if (more.length === 0) return null;
+  return (
+    <div className="sticky left-0 flex w-fit flex-col items-start gap-1 px-2 py-2">
+      {more.map(({ environmentId, host, failure }) => (
+        <Fragment key={`${environmentId} ${host}`}>
+          {failure === null ? null : <p className="text-xs text-destructive">{failure}</p>}
+          <Button
+            size="sm"
+            variant="ghost-muted"
+            disabled={loadingMore !== null}
+            onClick={() => onLoadMore(environmentId, host)}
+          >
+            {loadingMore === `${environmentId} ${host}` ? (
+              <T>Loading…</T>
+            ) : failure === null ? (
+              more.length > 1 ? (
+                <T>
+                  Load more from <Var>{host}</Var>
+                </T>
+              ) : (
+                <T>Load more</T>
+              )
+            ) : (
+              <T>Retry</T>
+            )}
+          </Button>
+        </Fragment>
+      ))}
     </div>
   );
 }
@@ -260,6 +326,14 @@ export function ThreadIssuesPanel({ threadRef }: { threadRef: ScopedThreadRef })
         memoryKey={threadKey}
         loading={data.list.isPending || data.resolvingInvolvement}
         notices={<IssueBrowserNotices error={data.list.error} errors={data.errors} />}
+        hasMore={data.more.length > 0}
+        footer={
+          <IssueLoadMore
+            more={data.more}
+            loadingMore={data.loadingMore}
+            onLoadMore={(environmentId, host) => void data.loadMore(environmentId, host)}
+          />
+        }
         onSelect={(entry) => useRightPanelStore.getState().openIssue(threadRef, entry)}
       />
     </div>

@@ -19,6 +19,7 @@ import { IssueDetailPanel } from "~/components/issue/IssueDetailPanel";
 import { type IssueRowTarget } from "~/components/issue/IssueRow";
 import {
   IssueBrowserNotices,
+  IssueLoadMore,
   IssuesBrowser,
   IssuesViewToggle,
   type IssuesView,
@@ -445,6 +446,26 @@ export function IssuesPage() {
         ) : (
           <IssueBrowserNotices error={null} errors={data.errors} />
         )
+      }
+      hasMore={data.more.length > 0}
+      footer={
+        <IssueLoadMore
+          more={data.more}
+          loadingMore={data.loadingMore}
+          onLoadMore={(environmentId, host) => void data.loadMore(environmentId, host)}
+        />
+      }
+      isSelected={(row) =>
+        renderedSurface?.kind === "issue" &&
+        renderedSurface.environmentId === row.environmentId &&
+        issueEntryKey({
+          ...renderedSurface,
+          host: renderedSurface.host ?? "",
+          projectId: renderedSurface.projectId as ProjectId,
+        }) === issueEntryKey(row)
+      }
+      environmentLabel={(row) =>
+        capableEnvironments.length > 1 ? environmentLabels.get(row.environmentId) : undefined
       }
       onSelect={selectEntry}
     />

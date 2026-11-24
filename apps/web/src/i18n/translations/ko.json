@@ -6158,7 +6158,17 @@
   "d44aed6ee67982dd": "이슈 새로 고침",
   "76f59583c5a99b58": "Tree",
   "ff1f14e16d4093f9": "Board",
+  "0c50f4a18c09b717": "None of the issues loaded so far match these filters.",
   "50d0eefcbc70f840": "이 필터에 해당하는 이슈가 없습니다.",
+  "ffa3dcd88cc2e3d0": [
+    "Load more from ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "c9cae7bac5f42342": "더 불러오기",
   "844f6c8d82ecce5d": "최근 업데이트순",
   "f77af0fd4c6acea1": "최신순",
   "c9735ce17719123b": "전체",
@@ -6186,6 +6196,8 @@
   "327dac9345397460": "내가 작성",
   "5a9ffea109fc6990": "나를 멘션함",
   "01e7836447bcad93": "나에게 할당된 이슈",
+  "fc18975e50af8dca": "다음 페이지를 불러오지 못했습니다.",
+  "a7cc467348b1b6ab": "Your issues",
   "6b459de40eeeea8a": "Could not open a chat in this project.",
   "3a883fbaed8d7561": "앱",
   "3cc7159b902f36ec": "액세스",

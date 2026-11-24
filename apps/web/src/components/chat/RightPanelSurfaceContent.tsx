@@ -89,7 +89,7 @@ export function RightPanelSurfaceContent(props: {
   readonly issuesSupported: boolean;
   readonly files: RightPanelFileProps;
   /** Sends a message to this thread's agent, for panels that talk to it. */
-  readonly onAskAgent?: (text: string) => Promise<void>;
+  readonly onAskAgent?: ((text: string) => Promise<void>) | undefined;
   readonly sideChatParentPanel: SideChatParentPanel;
 }) {
   const { surface, threadRef, visible, onCloseSurface } = props;

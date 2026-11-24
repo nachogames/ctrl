@@ -130,6 +130,8 @@ export const IssueParentRef = Schema.Struct({
   displayKey: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
   url: Schema.optional(TrimmedNonEmptyString),
+  /** The tracker scope it lives in, when that can differ from the child's (a Linear team). */
+  scope: Schema.optional(TrimmedNonEmptyString),
 });
 export type IssueParentRef = typeof IssueParentRef.Type;
 
@@ -276,6 +278,8 @@ export const IssueSubIssue = Schema.Struct({
   title: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,
   state: IssueState,
+  /** The tracker scope it lives in, when that can differ from its parent's (a Linear team). */
+  scope: Schema.optional(TrimmedNonEmptyString),
 });
 export type IssueSubIssue = typeof IssueSubIssue.Type;
 

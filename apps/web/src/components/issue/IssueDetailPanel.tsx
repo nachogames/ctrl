@@ -486,7 +486,9 @@ export function IssueDetailPanel({
   const [saving, setSaving] = useState(false);
   const [changingState, setChangingState] = useState(false);
   const [descriptionOpen, setDescriptionOpen] = useState(false);
-  const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(null);
+  // `id` is the comment the reply posts under; `anchor` is the one on screen the box opens beneath,
+  // which differs for a reply whose own comment is on an older page.
+  const [replyTo, setReplyTo] = useState<{ id: string; anchor: string; name: string } | null>(null);
 
   if (detail === null) {
     if (detailQuery.error !== null && !detailQuery.isPending) {
@@ -528,6 +530,7 @@ export function IssueDetailPanel({
   // Long specs push the conversation off screen; they open on request.
   const parentUrl = detail.parent?.url;
   const parentKey = detail.parent?.key;
+  const parentScope = detail.parent?.scope ?? reference.scope;
   const longDescription = detail.body.length > 900 || detail.body.split("\n").length > 18;
   const currentState = issueStatePresentation(detail.state);
 
@@ -648,6 +651,10 @@ export function IssueDetailPanel({
               onClick={() =>
                 setReplyTo({
                   id: comment.parentId ?? comment.id,
+                  anchor:
+                    comment.parentId !== undefined && loadedIds.has(comment.parentId)
+                      ? comment.parentId
+                      : comment.id,
                   name: comment.author?.login ?? gt("this comment"),
                 })
               }
@@ -657,10 +664,10 @@ export function IssueDetailPanel({
           ) : null}
         </div>
       ) : null}
-      {(repliesTo.get(comment.id) ?? []).length > 0 || replyTo?.id === comment.id ? (
+      {(repliesTo.get(comment.id) ?? []).length > 0 || replyTo?.anchor === comment.id ? (
         <div className="flex flex-col gap-2 border-l-2 border-border/60 pl-3">
           {(repliesTo.get(comment.id) ?? []).map((reply) => renderComment(reply))}
-          {replyTo?.id === comment.id ? (
+          {replyTo?.anchor === comment.id ? (
             <IssueReplyBox
               environmentId={environmentId}
               reference={reference}
@@ -925,7 +932,13 @@ export function IssueDetailPanel({
                   title={detail.parent.title}
                   onSelect={
                     onSelectIssue && parentUrl && parentKey
-                      ? () => onSelectIssue({ ...reference, key: parentKey, url: parentUrl })
+                      ? () =>
+                          onSelectIssue({
+                            ...reference,
+                            scope: parentScope,
+                            key: parentKey,
+                            url: parentUrl,
+                          })
                       : null
                   }
                 />
@@ -968,7 +981,13 @@ export function IssueDetailPanel({
                     }
                     onSelect={
                       onSelectIssue
-                        ? () => onSelectIssue({ ...reference, key: sub.key, url: sub.url })
+                        ? () =>
+                            onSelectIssue({
+                              ...reference,
+                              scope: sub.scope ?? reference.scope,
+                              key: sub.key,
+                              url: sub.url,
+                            })
                         : null
                     }
                   />

@@ -6178,7 +6178,17 @@
   "d44aed6ee67982dd": "Issues aktualisieren",
   "76f59583c5a99b58": "Tree",
   "ff1f14e16d4093f9": "Board",
+  "0c50f4a18c09b717": "None of the issues loaded so far match these filters.",
   "50d0eefcbc70f840": "Keine Issues mit diesen Filtern.",
+  "ffa3dcd88cc2e3d0": [
+    "Load more from ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "c9cae7bac5f42342": "Mehr laden",
   "844f6c8d82ecce5d": "Kürzlich aktualisiert",
   "f77af0fd4c6acea1": "Neueste",
   "c9735ce17719123b": "Alle",
@@ -6206,6 +6216,8 @@
   "327dac9345397460": "Von mir eröffnet",
   "5a9ffea109fc6990": "Erwähnt mich",
   "01e7836447bcad93": "Mir zugewiesene Issues",
+  "fc18975e50af8dca": "Die nächste Seite konnte nicht geladen werden.",
+  "a7cc467348b1b6ab": "Your issues",
   "6b459de40eeeea8a": "Could not open a chat in this project.",
   "3a883fbaed8d7561": "App",
   "3cc7159b902f36ec": "Zugriff",

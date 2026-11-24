@@ -6184,7 +6184,17 @@
   "d44aed6ee67982dd": "刷新 issue",
   "76f59583c5a99b58": "Tree",
   "ff1f14e16d4093f9": "Board",
+  "0c50f4a18c09b717": "None of the issues loaded so far match these filters.",
   "50d0eefcbc70f840": "这些筛选条件下没有 issue。",
+  "ffa3dcd88cc2e3d0": [
+    "Load more from ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "c9cae7bac5f42342": "加载更多",
   "844f6c8d82ecce5d": "最近更新",
   "f77af0fd4c6acea1": "最新",
   "c9735ce17719123b": "全部",
@@ -6212,6 +6222,8 @@
   "327dac9345397460": "由我创建",
   "5a9ffea109fc6990": "提及我",
   "01e7836447bcad93": "分配给我的 issue",
+  "fc18975e50af8dca": "下一页加载失败。",
+  "a7cc467348b1b6ab": "Your issues",
   "6b459de40eeeea8a": "Could not open a chat in this project.",
   "3a883fbaed8d7561": "应用",
   "3cc7159b902f36ec": "访问权限",

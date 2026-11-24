@@ -272,6 +272,7 @@ describe("LinearIssueTracker", () => {
                     identifier: "ENG-9",
                     title: "Payments",
                     url: "https://linear.app/acme/issue/ENG-9",
+                    team: { key: "OPS" },
                   },
                 }),
               ],
@@ -328,6 +329,7 @@ describe("LinearIssueTracker", () => {
           displayKey: "ENG-9",
           title: "Payments",
           url: "https://linear.app/acme/issue/ENG-9",
+          scope: "OPS",
         },
       });
       // The stored key goes in as-is, not as a bearer token.
@@ -526,6 +528,7 @@ describe("LinearIssueTracker", () => {
                   identifier: "ENG-9",
                   title: "Child",
                   url: "https://linear.app/acme/issue/ENG-9",
+                  team: { key: "OPS" },
                   state: state("Done", "completed", 2),
                 },
               ],
@@ -590,6 +593,7 @@ describe("LinearIssueTracker", () => {
           displayKey: "ENG-9",
           title: "Child",
           url: "https://linear.app/acme/issue/ENG-9",
+          scope: "OPS",
           state: {
             category: "closed",
             name: "Done",

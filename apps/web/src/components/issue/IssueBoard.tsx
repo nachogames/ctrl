@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
   DndContext,
   PointerSensor,
@@ -51,13 +52,28 @@ export function IssueBoard({
 }) {
   const gt = useGT();
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
-  // Moves the tracker has not confirmed yet, by card, so the card shows where it was dropped.
-  const [moves, setMoves] = useState<ReadonlyMap<string, string>>(() => new Map());
+  // Drops the list has not caught up with, by card: each holds only while the row still reads the
+  // state it was dragged from, so a refresh or a change made elsewhere takes over.
+  const [moves, setMoves] = useState<ReadonlyMap<string, { from: string; to: string }>>(
+    () => new Map(),
+  );
+  // A move is done once its row stops reading the state it left; forget it so a later return to
+  // that state is not overridden.
+  const settled = [...moves].filter(([id, move]) =>
+    rows.some((row) => entryId(row) === id && row.state.name !== move.from),
+  );
+  if (settled.length > 0) {
+    setMoves((current) => {
+      const next = new Map(current);
+      for (const [id] of settled) next.delete(id);
+      return next;
+    });
+  }
   const shown = rows.map((row) => {
     const moved = moves.get(entryId(row));
-    return moved === undefined || moved === row.state.name
-      ? row
-      : { ...row, state: { ...row.state, name: moved } };
+    if (moved === undefined || moved.from !== row.state.name) return row;
+    const target = rows.find((other) => other.state.name === moved.to)?.state;
+    return { ...row, state: target ?? { ...row.state, name: moved.to } };
   });
   const board = issueBoard(shown, visible);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -67,7 +83,9 @@ export function IssueBoard({
     const column = over === null ? undefined : board.columns[Number(over.data.current?.column)];
     if (entry === undefined || column === undefined || column.name === entry.state.name) return;
     const id = entryId(entry);
-    setMoves((current) => new Map(current).set(id, column.name));
+    // The state the list itself reads, so a second drag before the refresh still holds.
+    const from = rows.find((row) => entryId(row) === id)?.state.name ?? entry.state.name;
+    setMoves((current) => new Map(current).set(id, { from, to: column.name }));
     const result = await setState({
       environmentId: entry.environmentId as EnvironmentId,
       input: {
@@ -141,6 +159,7 @@ export function IssueBoard({
                   {lanes.map((lane) => (
                     <BoardLane
                       key={lane.parent ? entryId(lane.parent) : "loose"}
+                      section={`${group.project?.id ?? ""}|${milestone?.id ?? ""}`}
                       lane={lane}
                       columns={board.columns}
                       onSelect={onSelect}
@@ -165,15 +184,18 @@ const columnCount = (group: IssueBoardProject, position: number) =>
   );
 
 function BoardLane({
+  section,
   lane,
   columns,
   onSelect,
 }: {
+  /** The project and milestone the lane sits in; each has its own no-parent lane. */
+  section: string;
   lane: IssueBoardLane;
   columns: ReadonlyArray<IssueBoardColumn>;
   onSelect: (entry: EnvironmentIssueEntry) => void;
 }) {
-  const laneKey = lane.parent ? entryId(lane.parent) : "loose";
+  const laneKey = lane.parent ? entryId(lane.parent) : `${section}|loose`;
   return (
     <>
       {/* Spans the whole row and covers what scrolls under it; the card inside stays in view. */}
@@ -249,8 +271,13 @@ function BoardCard({
   showParent: boolean;
   onSelect: (entry: EnvironmentIssueEntry) => void;
 }) {
+  // Only someone who may change the state can drag; others still open the card.
+  const canMove = useAtomValue(
+    issueEnvironment.setState.permissionAtom(entry.environmentId as EnvironmentId),
+  );
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: entryId(entry),
+    disabled: !canMove,
   });
   return (
     <button

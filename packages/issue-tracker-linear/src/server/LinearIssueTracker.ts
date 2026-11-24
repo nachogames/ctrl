@@ -210,6 +210,7 @@ function toSummary(issue: LinearApi.LinearIssue, commentCount = 0): TrackerIssue
             displayKey: issue.parent.identifier,
             title: issue.parent.title,
             url: issue.parent.url,
+            scope: issue.parent.team.key,
           },
         }
       : {}),
@@ -565,6 +566,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
               title: child.title,
               url: child.url,
               state: toState(child.state),
+              scope: child.team.key,
             })),
         };
       }),

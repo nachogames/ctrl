@@ -100,6 +100,9 @@ fragment LinearIssue on Issue {
     identifier
     title
     url
+    team {
+      key
+    }
   }
 }
 
@@ -144,6 +147,9 @@ query T3Issue($id: String!, $comments: Int!) {
         identifier
         title
         url
+        team {
+          key
+        }
         state {
           ...LinearWorkflowState
         }

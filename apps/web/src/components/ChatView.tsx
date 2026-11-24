@@ -3513,7 +3513,7 @@ export default function ChatView(props: ChatViewProps) {
       getShortcutContext={getShortcutContextStable}
       onSendAnnotation={sendPreviewAnnotationStable}
       onCloseSurface={closeRightPanelSurface}
-      onAskAgent={sendAppMessageStable}
+      onAskAgent={isServerThread ? sendAppMessageStable : undefined}
       sideChatParentPanel={sideChatParentPanel}
       terminal={{
         launchContext: activeTerminalLaunchContext ?? null,
