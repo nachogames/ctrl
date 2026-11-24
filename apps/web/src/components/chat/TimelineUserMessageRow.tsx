@@ -24,8 +24,10 @@ import {
   formatHandoffDisplayLabel,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+import { parseIssueTag } from "@t3tools/shared/issueTag";
 import { parseReviewPointTag } from "@t3tools/shared/reviewPointTag";
 import { APP_BASE_NAME } from "~/branding";
+import { IssueMessageTag } from "../issue/IssueMessageTag";
 import { ReviewPointMessageTag } from "../pullRequest/review/ReviewPointMessageTag";
 import { memo, use, useState, type ReactNode } from "react";
 import {
@@ -568,7 +570,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     userMessage.attribution === null ? parseReviewPointTag(resolvedContext.text) : null;
   // The bubble, copy and prompt links leave the tag line out, so pasting into the review
   // chat never sends a second tag.
-  const messageBodyText = reviewTag === null ? resolvedContext.text : reviewTag.body;
+  const issueTag =
+    userMessage.attribution === null && reviewTag === null
+      ? parseIssueTag(resolvedContext.text)
+      : null;
+  const messageBodyText = reviewTag?.body ?? issueTag?.body ?? resolvedContext.text;
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const handoffRecords = resolvedContext.records.flatMap((candidate) => {
     const record = asKnownContextRecord(candidate);
@@ -1009,6 +1015,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       {reviewTag === null ? null : (
         <ReviewPointMessageTag threadRef={ctx.threadRef ?? null} tag={reviewTag} />
+      )}
+      {issueTag === null ? null : (
+        <IssueMessageTag threadRef={ctx.threadRef ?? null} tag={issueTag} />
       )}
       {mediaAboveText ? (
         <div className="flex max-w-[80%] justify-end">

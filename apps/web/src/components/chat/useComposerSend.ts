@@ -21,6 +21,7 @@ import {
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { withAttachedReviewPoint } from "../pullRequest/review/reviewPointFocusStore";
+import { withFocusedIssue } from "../issue/issueFocus";
 import { readLiveDraftGroup } from "../../state/threadGroups";
 import { resolveDraftLaunchWorkspace } from "../../lib/draftGroupLaunch";
 import {
@@ -1102,7 +1103,10 @@ export function useComposerSend(input: ComposerSendInput) {
         model: ctxSelectedModel,
         models: ctxSelectedProviderModels,
         effort: ctxSelectedPromptEffort,
-        text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        text: withFocusedIssue(
+          composerDraftTarget,
+          messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        ),
       }),
     );
     if (

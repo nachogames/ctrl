@@ -1,3 +1,4 @@
+import type { IssueProgress } from "@t3tools/client-runtime/issue-board";
 import type { EnvironmentIssueEntry } from "@t3tools/client-runtime/issue-list";
 import { MessageSquareIcon } from "lucide-react";
 import { memo } from "react";
@@ -14,6 +15,7 @@ import {
   PullRequestLabelChip,
   PullRequestActorAvatar,
 } from "../pullRequest/pullRequestPresentation";
+import { IssueProgressBadge } from "./IssueProgressBadge";
 import { IssueStateGlyph, issueTrackerPresentation } from "./issuePresentation";
 
 export type IssueRowTarget = Pick<
@@ -27,6 +29,8 @@ function IssueRowImpl({
   selected,
   showScope,
   showTracker,
+  showParent,
+  progress,
   environmentLabel,
   onSelect,
 }: {
@@ -36,6 +40,10 @@ function IssueRowImpl({
   showScope: boolean;
   /** Only when the list spans more than one tracker or host. */
   showTracker: boolean;
+  /** Names the parent issue, where the row is not already nested under it. */
+  showParent: boolean;
+  /** How many of its sub-issues are closed, where it has any. */
+  progress?: IssueProgress | null | undefined;
   /** Names the server this row was read from, where the list spans more than one. */
   environmentLabel?: string | undefined;
   onSelect: (entry: IssueRowTarget) => void;
@@ -71,6 +79,7 @@ function IssueRowImpl({
                   ))}
                 </span>
               ) : null}
+              {progress ? <IssueProgressBadge progress={progress} /> : null}
               {entry.commentCount > 0 ? (
                 <span className="inline-flex items-center gap-0.5 tabular-nums">
                   <MessageSquareIcon aria-hidden className="size-3" />
@@ -86,6 +95,11 @@ function IssueRowImpl({
                 <span className="inline-flex shrink-0 items-center gap-1">
                   <tracker.Icon aria-hidden className="size-3" />
                   <span className="sr-only">{tracker.providerName}</span>
+                </span>
+              ) : null}
+              {showParent && entry.parent ? (
+                <span className="truncate">
+                  ↳ {entry.parent.displayKey} {entry.parent.title}
                 </span>
               ) : null}
               {showScope ? <span className="truncate">{entry.scope}</span> : null}

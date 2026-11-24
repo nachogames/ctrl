@@ -15,6 +15,7 @@ import type {
   IssueInvolvement,
   IssueListSort,
   IssueLinkedPullRequest,
+  IssueSubIssue,
   IssueListState,
   IssueReaction,
   IssueReactionContent,
@@ -93,6 +94,7 @@ export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly commentsCursor: string | null;
   readonly events: ReadonlyArray<IssueEvent>;
   readonly linkedPullRequests: ReadonlyArray<IssueLinkedPullRequest>;
+  readonly subIssues?: ReadonlyArray<IssueSubIssue>;
 }
 
 /**
@@ -157,7 +159,7 @@ export interface IssueTrackerApi {
 
   /** Only called when `capabilities.comment` is true. */
   readonly comment?: (
-    input: IssueTarget & { readonly body: string },
+    input: IssueTarget & { readonly body: string; readonly parentId?: string },
   ) => Effect.Effect<void, IssueTrackerError>;
 
   /**

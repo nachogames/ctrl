@@ -253,6 +253,11 @@ describe("IssueService", () => {
         _tag: "Failure",
         failure: { _tag: "IssueOperationError", reason: "read-only" },
       });
+      // A tracker without threads refuses a reply rather than posting it as a plain comment.
+      const reply = yield* service
+        .comment({ ...own, body: "re", parentId: "c1" })
+        .pipe(Effect.result);
+      expect(reply).toMatchObject({ _tag: "Failure", failure: { _tag: "IssueOperationError" } });
       expect(writes).toEqual(["acme/web#1"]);
 
       // A link's port picks the server: the project bound with it, not a default-port namesake.

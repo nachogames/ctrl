@@ -1433,9 +1433,12 @@ function OpenCommandPaletteDialog(props: {
         value: "action:new-chat-in-group",
         searchTerms: ["new chat", "new thread", "group", "chat", "create"],
         title: (
-          <>
-            New chat in <span className="font-semibold">{group.title}</span>
-          </>
+          <T>
+            New chat in{" "}
+            <span className="font-semibold">
+              <Var>{group.title}</Var>
+            </span>
+          </T>
         ),
         icon: <LayersIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.newInGroup",
@@ -1450,7 +1453,7 @@ function OpenCommandPaletteDialog(props: {
         kind: "action",
         value: "action:hand-off-thread",
         searchTerms: ["hand off", "handoff", "continue", "new chat", "group", "summary"],
-        title: "Hand off to new chat",
+        title: gt("Hand off to new chat"),
         ...(canHandOff ? {} : { description: THREAD_HANDOFF_BUSY_HINT, disabled: true }),
         icon: <SendIcon className={ITEM_ICON_CLASS} />,
         run: () => handOffThread(thread),
@@ -1595,6 +1598,20 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (activeThread !== null && activeThreadServerConfig?.environment.capabilities.issues === true) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:open-thread-issues",
+      searchTerms: ["issues", "tickets", "linear", "board", "tree"],
+      title: gt("Show issues beside the chat"),
+      icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore.getState().open(threadRef, "issues");
+      },
+    });
+  }
+
   if (
     activeThread !== null &&
     threadPullRequestLinkMode(activeThreadServerConfig?.environment.capabilities) !== "unsupported"
@@ -1636,7 +1653,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:open-group-panel",
       searchTerms: ["group", "panel", "workspace", "handoff", "chats"],
-      title: "Open group panel",
+      title: gt("Open group panel"),
       ...(activeGroup?.visible === true ? { description: activeGroup.title } : {}),
       icon: <LayersIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
@@ -1711,7 +1728,7 @@ function OpenCommandPaletteDialog(props: {
         kind: "action",
         value: "action:voice-start",
         searchTerms: ["voice", "talk", "speak", "conversation", "microphone", "realtime"],
-        title: "Start voice conversation",
+        title: gt("Start voice conversation"),
         description:
           voiceAvailability.kind === "unavailable" ? voiceAvailability.reason : undefined,
         disabled: voiceAvailability.kind === "unavailable",
@@ -1730,7 +1747,7 @@ function OpenCommandPaletteDialog(props: {
         kind: "action",
         value: "action:voice-stop",
         searchTerms: ["voice", "stop", "end", "conversation", "hang up"],
-        title: "Stop voice conversation",
+        title: gt("Stop voice conversation"),
         icon: <AudioLinesIcon className={ITEM_ICON_CLASS} />,
         // F8 toggles the current thread, so it only stops a conversation held here.
         ...(voiceOnActiveThread ? { shortcutCommand: "voice.toggle" as const } : {}),
@@ -1742,7 +1759,7 @@ function OpenCommandPaletteDialog(props: {
         kind: "action",
         value: "action:voice-mute",
         searchTerms: ["voice", "mute", "unmute", "microphone"],
-        title: voiceState.muted ? "Unmute voice" : "Mute voice",
+        title: voiceState.muted ? gt("Unmute voice") : gt("Mute voice"),
         icon: voiceState.muted ? (
           <MicIcon className={ITEM_ICON_CLASS} />
         ) : (
@@ -1950,7 +1967,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:home",
       searchTerms: ["shift", "fleet", "all projects"],
-      title: "Open Shift",
+      title: gt("Open Shift"),
       icon: <ShiftKeyIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "home.open",
       run: async () => {

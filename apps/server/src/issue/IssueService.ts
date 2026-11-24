@@ -645,6 +645,9 @@ const make = Effect.gen(function* () {
             new IssueOperationError({ operation: "comment", detail: "A comment needs some text." }),
           );
         }
+        if (input.parentId !== undefined && project.api.capabilities.replies !== true) {
+          return Effect.fail(unsupported("comment", "replies"));
+        }
         return project.api.comment === undefined || !project.api.capabilities.comment
           ? Effect.fail(unsupported("comment", "comments"))
           : project.api
@@ -654,6 +657,7 @@ const make = Effect.gen(function* () {
                 scope: project.scope,
                 key: input.key,
                 body: input.body,
+                ...(input.parentId === undefined ? {} : { parentId: input.parentId }),
               })
               .pipe(Effect.mapError(toIssueError("comment")));
       }),

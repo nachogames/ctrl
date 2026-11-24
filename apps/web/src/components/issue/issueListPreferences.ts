@@ -25,6 +25,8 @@ export interface IssueListPreferences {
   readonly label?: ReadonlyArray<string> | undefined;
   readonly assignee?: string | undefined;
   readonly order?: "created" | undefined;
+  /** Tree (`project`) or board view. Not `groupBy`: the pull-request page has other values. */
+  readonly nest?: "project" | "board" | undefined;
 }
 
 const DEFAULT_ISSUE_LIST_PREFERENCES = {
@@ -48,6 +50,7 @@ export const IssueListPreferencesSchema = Schema.Struct({
   label: Schema.optional(Schema.Array(BoundedPreference).check(Schema.isMaxLength(20))),
   assignee: Schema.optional(BoundedPreference),
   order: Schema.optional(Schema.Literal("created")),
+  nest: Schema.optional(Schema.Literals(["project", "board"])),
 });
 const decodePreferences = Schema.decodeUnknownOption(IssueListPreferencesSchema);
 
@@ -67,6 +70,7 @@ export function issueListPreferences(search: {
   readonly label?: ReadonlyArray<string> | undefined;
   readonly assignee?: string | undefined;
   readonly order?: "created" | undefined;
+  readonly nest?: "project" | "board" | undefined;
 }): IssueListPreferences {
   return {
     who: search.who,
@@ -79,6 +83,7 @@ export function issueListPreferences(search: {
     ...(search.label?.length ? { label: search.label } : {}),
     ...(search.assignee ? { assignee: search.assignee } : {}),
     ...(search.order ? { order: search.order } : {}),
+    ...(search.nest ? { nest: search.nest } : {}),
   };
 }
 

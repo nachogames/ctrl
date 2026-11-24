@@ -96,6 +96,13 @@ export const LinearReaction = Schema.Struct({
 })
 export interface LinearReaction extends Schema.Struct.Type<typeof LinearReaction.fields> {}
 
+/** A comment associated with an issue, project update, initiative update, document content, post, project, or initiative. Comments support rich text (ProseMirror), emoji reactions, and threaded replies via parentId. Comments can be created by workspace users or by external users through integrations (e.g., Slack, Intercom). Each comment belongs to exactly one parent entity. */
+export const ParentComment = Schema.Struct({
+  /** The unique identifier of the entity. */
+  id: Shared.ID
+})
+export interface ParentComment extends Schema.Struct.Type<typeof ParentComment.fields> {}
+
 /**
  * `fragment LinearComment on Comment`
  *
@@ -104,6 +111,8 @@ export interface LinearReaction extends Schema.Struct.Type<typeof LinearReaction
 export const LinearComment = Schema.Struct({
   /** The unique identifier of the entity. */
   id: Shared.ID,
+  /** The parent comment under which the current comment is nested. Null for top-level comments that are not replies. */
+  parent: Schema.NullOr(ParentComment),
   /** The comment content in markdown format. This is a derived representation of the canonical bodyData ProseMirror content. */
   body: Schema.String,
   /** The time at which the entity was created. */
@@ -130,6 +139,37 @@ export const LinearIssueLabelsIssueLabelConnection = Schema.Struct({
   nodes: Schema.Array(LinearLabel)
 })
 export interface LinearIssueLabelsIssueLabelConnection extends Schema.Struct.Type<typeof LinearIssueLabelsIssueLabelConnection.fields> {}
+
+/** A project is a collection of issues working toward a shared goal. Projects have start and target dates, milestones, status tracking, and progress metrics. They can span multiple teams and be grouped under initiatives. */
+export const Project = Schema.Struct({
+  /** The unique identifier of the entity. */
+  id: Shared.ID,
+  /** The name of the project. */
+  name: Schema.String,
+  /** Project URL. */
+  url: Schema.String
+})
+export interface Project extends Schema.Struct.Type<typeof Project.fields> {}
+
+/** A milestone within a project. Milestones break a project into phases or target checkpoints, each with its own target date and set of issues. Issues can be assigned to a milestone to track progress toward that checkpoint. */
+export const ProjectMilestone = Schema.Struct({
+  /** The unique identifier of the entity. */
+  id: Shared.ID,
+  /** The name of the project milestone. */
+  name: Schema.String
+})
+export interface ProjectMilestone extends Schema.Struct.Type<typeof ProjectMilestone.fields> {}
+
+/** An issue is the core work item in Linear. Issues belong to a team, have a workflow status, can be assigned to users, carry a priority level, and can be organized into projects and cycles. Issues support sub-issues (parent-child hierarchy up to 10 levels deep), labels, due dates, estimates, and SLA tracking. They can also be linked to other issues via relations, attached to releases, and tracked through their full history of changes. */
+export const ParentIssue = Schema.Struct({
+  /** Issue's human readable identifier (e.g. ENG-123). */
+  identifier: Schema.String,
+  /** The issue's title. This is the primary human-readable summary of the work item. */
+  title: Schema.String,
+  /** Issue URL. */
+  url: Schema.String
+})
+export interface ParentIssue extends Schema.Struct.Type<typeof ParentIssue.fields> {}
 
 /**
  * `fragment LinearIssue on Issue`
@@ -169,7 +209,13 @@ export const LinearIssue = Schema.Struct({
   /** The user to whom the issue is assigned. Null if the issue is unassigned. */
   assignee: Schema.NullOr(LinearUser),
   /** Labels associated with this issue. */
-  labels: LinearIssueLabelsIssueLabelConnection
+  labels: LinearIssueLabelsIssueLabelConnection,
+  /** The project that the issue is associated with. Null if the issue is not part of any project. */
+  project: Schema.NullOr(Project),
+  /** The project milestone that the issue is associated with. Null if the issue is not assigned to a specific milestone within its project. */
+  projectMilestone: Schema.NullOr(ProjectMilestone),
+  /** The parent of the issue. */
+  parent: Schema.NullOr(ParentIssue)
 })
 export interface LinearIssue extends Schema.Struct.Type<typeof LinearIssue.fields> {}
 
@@ -232,11 +278,11 @@ export declare namespace T3Viewer {
   export type Result = typeof T3Viewer.result.Type
 }
 
-export const IssueConnection = Schema.Struct({
+export const IssuesIssueConnection = Schema.Struct({
   nodes: Schema.Array(LinearIssue),
   pageInfo: LinearPageInfo
 })
-export interface IssueConnection extends Schema.Struct.Type<typeof IssueConnection.fields> {}
+export interface IssuesIssueConnection extends Schema.Struct.Type<typeof IssuesIssueConnection.fields> {}
 
 /** `query T3Issues` */
 export const T3Issues = GraphQL.query("T3Issues", {
@@ -251,7 +297,7 @@ export const T3Issues = GraphQL.query("T3Issues", {
       { name: "issues", body: ["(first:$", "first", " after:$", "after", " filter:$", "filter", " orderBy:$", "orderBy", "){nodes{...LinearIssue}pageInfo{...LinearPageInfo}}"] }
     ],
     fragments: [
-      { name: "LinearIssue", body: ["on Issue{id identifier number title url createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
+      { name: "LinearIssue", body: ["on Issue{id identifier number title url createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}project{id name url}projectMilestone{id name}parent{identifier title url}}"] },
       { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] },
       { name: "LinearWorkflowState", body: ["on WorkflowState{id name type position}"] },
       { name: "LinearUser", body: ["on User{id name displayName email avatarUrl}"] },
@@ -267,7 +313,7 @@ export const T3Issues = GraphQL.query("T3Issues", {
   },
   result: Schema.Struct({
     /** All issues. Returns a paginated list of issues visible to the authenticated user. Can be filtered by various criteria including team, assignee, state, labels, project, and cycle. */
-    issues: IssueConnection
+    issues: IssuesIssueConnection
   })
 })
 export declare namespace T3Issues {
@@ -288,6 +334,24 @@ export const IssueTeamTeam = Schema.Struct({
   states: TeamStatesWorkflowStateConnection
 })
 export interface IssueTeamTeam extends Schema.Struct.Type<typeof IssueTeamTeam.fields> {}
+
+/** An issue is the core work item in Linear. Issues belong to a team, have a workflow status, can be assigned to users, carry a priority level, and can be organized into projects and cycles. Issues support sub-issues (parent-child hierarchy up to 10 levels deep), labels, due dates, estimates, and SLA tracking. They can also be linked to other issues via relations, attached to releases, and tracked through their full history of changes. */
+export const NodesIssue = Schema.Struct({
+  /** Issue's human readable identifier (e.g. ENG-123). */
+  identifier: Schema.String,
+  /** The issue's title. This is the primary human-readable summary of the work item. */
+  title: Schema.String,
+  /** Issue URL. */
+  url: Schema.String,
+  /** The workflow state (issue status) that the issue is currently in. Workflow states represent the issue's progress through the team's workflow, such as Triage, Todo, In Progress, Done, or Canceled. */
+  state: LinearWorkflowState
+})
+export interface NodesIssue extends Schema.Struct.Type<typeof NodesIssue.fields> {}
+
+export const ChildrenIssueConnection = Schema.Struct({
+  nodes: Schema.Array(NodesIssue)
+})
+export interface ChildrenIssueConnection extends Schema.Struct.Type<typeof ChildrenIssueConnection.fields> {}
 
 export const CommentConnection = Schema.Struct({
   nodes: Schema.Array(LinearComment),
@@ -382,8 +446,16 @@ export const T3IssueIssueIssue = Schema.Struct({
   assignee: Schema.NullOr(LinearUser),
   /** Labels associated with this issue. */
   labels: LinearIssueLabelsIssueLabelConnection,
+  /** The project that the issue is associated with. Null if the issue is not part of any project. */
+  project: Schema.NullOr(Project),
+  /** The project milestone that the issue is associated with. Null if the issue is not assigned to a specific milestone within its project. */
+  projectMilestone: Schema.NullOr(ProjectMilestone),
+  /** The parent of the issue. */
+  parent: Schema.NullOr(ParentIssue),
   /** The issue's description in markdown format. */
   description: Schema.NullOr(Schema.String),
+  /** Children of the issue. */
+  children: ChildrenIssueConnection,
   /** Comments associated with the issue, including inline comments on the issue's description. */
   comments: CommentConnection,
   /** Reactions associated with the issue. */
@@ -403,12 +475,12 @@ export const T3Issue = GraphQL.query("T3Issue", {
       { name: "comments", body: "Int!" }
     ],
     selections: [
-      { name: "issue", body: ["(id:$", "id", "){...LinearIssue description team{states(first:100){nodes{...LinearWorkflowState}}}comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}botActor{...LinearBot}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
+      { name: "issue", body: ["(id:$", "id", "){...LinearIssue description children(first:100){nodes{identifier title url state{...LinearWorkflowState}}}team{states(first:100){nodes{...LinearWorkflowState}}}comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}botActor{...LinearBot}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
     ],
     fragments: [
-      { name: "LinearIssue", body: ["on Issue{id identifier number title url createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
+      { name: "LinearIssue", body: ["on Issue{id identifier number title url createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}project{id name url}projectMilestone{id name}parent{identifier title url}}"] },
       { name: "LinearWorkflowState", body: ["on WorkflowState{id name type position}"] },
-      { name: "LinearComment", body: ["on Comment{id body createdAt url user{...LinearUser}botActor{...LinearBot}reactions{...LinearReaction}}"] },
+      { name: "LinearComment", body: ["on Comment{id parent{id}body createdAt url user{...LinearUser}botActor{...LinearBot}reactions{...LinearReaction}}"] },
       { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] },
       { name: "LinearReaction", body: ["on Reaction{id emoji user{...LinearUser}}"] },
       { name: "LinearUser", body: ["on User{id name displayName email avatarUrl}"] },
@@ -449,7 +521,7 @@ export const T3Comments = GraphQL.query("T3Comments", {
       { name: "issue", body: ["(id:$", "id", "){comments(first:$", "first", " after:$", "after", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}}"] }
     ],
     fragments: [
-      { name: "LinearComment", body: ["on Comment{id body createdAt url user{...LinearUser}botActor{...LinearBot}reactions{...LinearReaction}}"] },
+      { name: "LinearComment", body: ["on Comment{id parent{id}body createdAt url user{...LinearUser}botActor{...LinearBot}reactions{...LinearReaction}}"] },
       { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] },
       { name: "LinearUser", body: ["on User{id name displayName email avatarUrl}"] },
       { name: "LinearBot", body: ["on ActorBot{name userDisplayName avatarUrl}"] },
@@ -780,13 +852,13 @@ export const CommentIssueIssue = Schema.Struct({
 export interface CommentIssueIssue extends Schema.Struct.Type<typeof CommentIssueIssue.fields> {}
 
 /** A comment associated with an issue, project update, initiative update, document content, post, project, or initiative. Comments support rich text (ProseMirror), emoji reactions, and threaded replies via parentId. Comments can be created by workspace users or by external users through integrations (e.g., Slack, Intercom). Each comment belongs to exactly one parent entity. */
-export const Comment = Schema.Struct({
+export const CommentComment = Schema.Struct({
   /** The issue that the comment is associated with. Null if the comment belongs to a different parent entity type. */
   issue: Schema.NullOr(CommentIssueIssue),
   /** Reactions associated with the comment. */
   reactions: Schema.Array(LinearReaction)
 })
-export interface Comment extends Schema.Struct.Type<typeof Comment.fields> {}
+export interface CommentComment extends Schema.Struct.Type<typeof CommentComment.fields> {}
 
 /** `query T3CommentReactions` */
 export const T3CommentReactions = GraphQL.query("T3CommentReactions", {
@@ -807,7 +879,7 @@ export const T3CommentReactions = GraphQL.query("T3CommentReactions", {
   },
   result: Schema.Struct({
     /** A specific comment. */
-    comment: Comment
+    comment: CommentComment
   })
 })
 export declare namespace T3CommentReactions {

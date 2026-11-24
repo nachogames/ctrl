@@ -8,6 +8,7 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+import { parseIssueTag } from "@t3tools/shared/issueTag";
 import { parseReviewPointTag } from "@t3tools/shared/reviewPointTag";
 import { Schema } from "effect";
 import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
@@ -102,7 +103,11 @@ export function recallableComposerPrompt(
   keptContextIds: ReadonlySet<string> = new Set(),
 ): string {
   // The review chat's composer adds the point tag outside everything else, so it goes first.
-  let prompt = (parseReviewPointTag(messageText.trim())?.body ?? messageText).trim();
+  let prompt = (
+    parseReviewPointTag(messageText.trim())?.body ??
+    parseIssueTag(messageText.trim())?.body ??
+    messageText
+  ).trim();
   if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
     prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
   }

@@ -164,6 +164,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
   };
   const addPullRequestsSurfaceStable = useStableCallback(addPullRequestsSurface);
+  const addIssuesSurface = () => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().open(activeThreadRef, "issues");
+  };
+  const addIssuesSurfaceStable = useStableCallback(addIssuesSurface);
   const addGroupSurface = () => {
     if (!activeThreadRef || !groupSurfaceAvailable) return;
     useRightPanelStore.getState().openGroup(activeThreadRef);
@@ -358,6 +363,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     addDiffSurfaceStable,
     addFilesSurfaceStable,
     addGroupSurfaceStable,
+    addIssuesSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
     closePreviewPanelStable,

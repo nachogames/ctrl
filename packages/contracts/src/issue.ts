@@ -55,11 +55,24 @@ export type IssueLabel = typeof IssueLabel.Type;
 export const IssueStateCategory = Schema.Literals(["open", "closed"]);
 export type IssueStateCategory = typeof IssueStateCategory.Type;
 
+/** Where a state sits in a workflow, for trackers that say: ordered left to right on a board. */
+export const IssueStateStage = Schema.Literals([
+  "backlog",
+  "unstarted",
+  "started",
+  "completed",
+  "canceled",
+]);
+export type IssueStateStage = typeof IssueStateStage.Type;
+
 export const IssueState = Schema.Struct({
   category: IssueStateCategory,
   name: TrimmedNonEmptyString,
   /** How a closed state ended, where the tracker says: `completed`, or its word for not done. */
   closeReason: Schema.optional(TrimmedNonEmptyString),
+  stage: Schema.optional(IssueStateStage),
+  /** The state's place within its stage in the team's workflow. */
+  order: Schema.optional(Schema.Finite),
 });
 export type IssueState = typeof IssueState.Type;
 
@@ -103,6 +116,23 @@ export const IssueScopeRef = Schema.Struct({
 });
 export type IssueScopeRef = typeof IssueScopeRef.Type;
 
+/** A tracker's own grouping above issues, such as a Linear project or milestone. */
+export const IssueGroupRef = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  url: Schema.optional(TrimmedNonEmptyString),
+});
+export type IssueGroupRef = typeof IssueGroupRef.Type;
+
+/** The issue this one is a sub-issue of, in the same scope. */
+export const IssueParentRef = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  displayKey: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  url: Schema.optional(TrimmedNonEmptyString),
+});
+export type IssueParentRef = typeof IssueParentRef.Type;
+
 /** One row of a listing. Carries everything a list needs and nothing a detail needs. */
 export const IssueSummary = Schema.Struct({
   tracker: IssueTrackerKind,
@@ -121,6 +151,10 @@ export const IssueSummary = Schema.Struct({
   assignees: Schema.Array(IssueActor),
   labels: Schema.Array(IssueLabel),
   commentCount: NonNegativeInt,
+  /** Absent where the tracker has no such grouping or the issue is in none. */
+  trackerProject: Schema.optional(IssueGroupRef),
+  milestone: Schema.optional(IssueGroupRef),
+  parent: Schema.optional(IssueParentRef),
 });
 export type IssueSummary = typeof IssueSummary.Type;
 
@@ -139,6 +173,8 @@ export const IssueComment = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   /** Absent from a tracker with no reactions, which differs from none on this comment. */
   reactions: Schema.optional(Schema.Array(IssueReaction)),
+  /** The comment this one replies to, on a tracker that threads its conversation. */
+  parentId: Schema.optional(TrimmedNonEmptyString),
 });
 export type IssueComment = typeof IssueComment.Type;
 
@@ -214,6 +250,8 @@ export const IssueCapabilities = Schema.Struct({
   events: Schema.Boolean,
   /** The tracker narrows a listing by free text itself. */
   search: Schema.Boolean,
+  /** A comment can reply to another one, which threads under it. */
+  replies: Schema.optional(Schema.Boolean),
 });
 export type IssueCapabilities = typeof IssueCapabilities.Type;
 
@@ -230,6 +268,16 @@ export const IssueViewerPermissions = Schema.Struct({
   assignees: Schema.Boolean,
 });
 export type IssueViewerPermissions = typeof IssueViewerPermissions.Type;
+
+/** An issue filed under another, as its parent's detail lists it. */
+export const IssueSubIssue = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  displayKey: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  state: IssueState,
+});
+export type IssueSubIssue = typeof IssueSubIssue.Type;
 
 export const IssueDetail = Schema.Struct({
   ...IssueSummary.fields,
@@ -253,6 +301,8 @@ export const IssueDetail = Schema.Struct({
   commentsCursor: Schema.NullOr(TrimmedNonEmptyString),
   events: Schema.Array(IssueEvent),
   linkedPullRequests: Schema.Array(IssueLinkedPullRequest),
+  /** Issues filed under this one; absent where the tracker has no sub-issues. */
+  subIssues: Schema.optional(Schema.Array(IssueSubIssue)),
 });
 export type IssueDetail = typeof IssueDetail.Type;
 
@@ -371,6 +421,8 @@ export type IssueCreateResult = typeof IssueCreateResult.Type;
 export const IssueCommentInput = Schema.Struct({
   ...IssueRef.fields,
   body: CommentBody,
+  /** Replies to this comment; only for a tracker whose capabilities include `replies`. */
+  parentId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
 });
 export type IssueCommentInput = typeof IssueCommentInput.Type;
 
