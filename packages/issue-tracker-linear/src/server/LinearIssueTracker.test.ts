@@ -59,6 +59,9 @@ const issue = (
   botActor: null,
   assignee: THEO,
   labels: { nodes: [{ id: "lbl_bug", name: "Bug", color: "#f00" }] },
+  project: null,
+  projectMilestone: null,
+  parent: null,
   ...overrides,
 });
 
@@ -69,6 +72,7 @@ const bareDetail = (identifier: string) =>
     reactions: [],
     attachments: { nodes: [] },
     history: { nodes: [] },
+    children: { nodes: [] },
   });
 
 /** Answers each GraphQL document by its operation name, the way Linear would. */
@@ -257,7 +261,20 @@ describe("LinearIssueTracker", () => {
                   state: state("Done", "completed"),
                   completedAt: "2026-07-03T00:00:00.000Z",
                 }),
-                issue("ENG-1"),
+                issue("ENG-1", {
+                  project: {
+                    id: "prj_1",
+                    name: "Checkout",
+                    url: "https://linear.app/acme/project/checkout",
+                  },
+                  projectMilestone: { id: "ms_1", name: "Beta" },
+                  parent: {
+                    identifier: "ENG-9",
+                    title: "Payments",
+                    url: "https://linear.app/acme/issue/ENG-9",
+                    team: { key: "OPS" },
+                  },
+                }),
               ],
               pageInfo: { hasNextPage: true, endCursor: "cur_2" },
             },
@@ -280,8 +297,18 @@ describe("LinearIssueTracker", () => {
       });
       expect(page.nextCursor).toBe("cur_2");
       expect(page.items.map((item) => [item.key, item.displayKey, item.state])).toEqual([
-        ["ENG-2", "ENG-2", { category: "closed", name: "Done", closeReason: "completed" }],
-        ["ENG-1", "ENG-1", { category: "open", name: "In Progress" }],
+        [
+          "ENG-2",
+          "ENG-2",
+          {
+            category: "closed",
+            name: "Done",
+            closeReason: "completed",
+            stage: "completed",
+            order: 0,
+          },
+        ],
+        ["ENG-1", "ENG-1", { category: "open", name: "In Progress", stage: "started", order: 0 }],
       ]);
       // A listing carries no comment totals, whatever the row's position.
       expect(page.items.map((item) => item.commentCount)).toEqual([0, 0]);
@@ -290,6 +317,20 @@ describe("LinearIssueTracker", () => {
         author: { login: "julius", name: "julius" },
         assignees: [{ login: "theo", name: "theo" }],
         labels: [{ name: "Bug", color: "#f00" }],
+      });
+      // Groupings come through where Linear has them and stay absent where it has none.
+      expect(page.items[0]).not.toHaveProperty("trackerProject");
+      expect(page.items[0]).not.toHaveProperty("parent");
+      expect(page.items[1]).toMatchObject({
+        trackerProject: { id: "prj_1", name: "Checkout" },
+        milestone: { id: "ms_1", name: "Beta" },
+        parent: {
+          key: "ENG-9",
+          displayKey: "ENG-9",
+          title: "Payments",
+          url: "https://linear.app/acme/issue/ENG-9",
+          scope: "OPS",
+        },
       });
       // The stored key goes in as-is, not as a bearer token.
       expect(requests.map((request) => request.authorization)).toEqual(["lin_api_stored"]);
@@ -368,6 +409,26 @@ describe("LinearIssueTracker", () => {
     }),
   );
 
+  it.effect("posts a reply under the comment it answers", () =>
+    Effect.gen(function* () {
+      const created: Array<unknown> = [];
+      const { tracker } = fakeLinear({
+        T3Issue: (variables) => ({ issue: bareDetail(String(variables.id)) }),
+        T3CommentCreate: (variables) => {
+          created.push(variables.input);
+          return { commentCreate: { success: true } };
+        },
+      });
+      const api = yield* tracker;
+      yield* api.comment!({ ...target, key: "ENG-1", body: "top" });
+      yield* api.comment!({ ...target, key: "ENG-1", body: "reply", parentId: "cmt_1" });
+      expect(created).toEqual([
+        { issueId: "iss_ENG-1", body: "top" },
+        { issueId: "iss_ENG-1", body: "reply", parentId: "cmt_1" },
+      ]);
+    }),
+  );
+
   it.effect("reads the viewer only for comment pages with reactions", () =>
     Effect.gen(function* () {
       const { tracker, requests } = fakeLinear({
@@ -377,6 +438,7 @@ describe("LinearIssueTracker", () => {
               nodes: [
                 {
                   id: "cmt_1",
+                  parent: null,
                   body: "hi",
                   createdAt: "2026-07-02T01:00:00.000Z",
                   url: "https://linear.app/acme/issue/ENG-7#comment-cmt_1",
@@ -423,12 +485,23 @@ describe("LinearIssueTracker", () => {
               nodes: [
                 {
                   id: "cmt_1",
+                  parent: null,
                   body: "hi",
                   createdAt: "2026-07-02T01:00:00.000Z",
                   url: "https://linear.app/acme/issue/ENG-7#comment-cmt_1",
                   user: THEO,
                   botActor: null,
                   reactions: [{ id: "r1", emoji: "+1", user: JULIUS }],
+                },
+                {
+                  id: "cmt_2",
+                  parent: { id: "cmt_1" },
+                  body: "reply",
+                  createdAt: "2026-07-02T02:00:00.000Z",
+                  url: "https://linear.app/acme/issue/ENG-7#comment-cmt_2",
+                  user: JULIUS,
+                  botActor: null,
+                  reactions: [],
                 },
               ],
               pageInfo: { hasNextPage: true, endCursor: "cmt_cur" },
@@ -447,6 +520,17 @@ describe("LinearIssueTracker", () => {
                   metadata: { status: "merged" },
                 },
                 { url: "https://example.test/doc", title: "Doc", sourceType: null, metadata: {} },
+              ],
+            },
+            children: {
+              nodes: [
+                {
+                  identifier: "ENG-9",
+                  title: "Child",
+                  url: "https://linear.app/acme/issue/ENG-9",
+                  team: { key: "OPS" },
+                  state: state("Done", "completed", 2),
+                },
               ],
             },
             history: {
@@ -484,6 +568,7 @@ describe("LinearIssueTracker", () => {
         ["Canceled", "closed"],
       ]);
       expect(detail.commentsCursor).toBe("cmt_cur");
+      expect(detail.comments.map((comment) => comment.parentId)).toEqual([undefined, "cmt_1"]);
       expect(detail.comments[0]?.reactions).toEqual([
         { content: "thumbs-up", count: 1, actors: [], viewerHasReacted: true },
       ]);
@@ -502,6 +587,22 @@ describe("LinearIssueTracker", () => {
         name: "GitHub",
         avatarUrl: null,
       });
+      expect(detail.subIssues).toEqual([
+        {
+          key: "ENG-9",
+          displayKey: "ENG-9",
+          title: "Child",
+          url: "https://linear.app/acme/issue/ENG-9",
+          scope: "OPS",
+          state: {
+            category: "closed",
+            name: "Done",
+            closeReason: "completed",
+            stage: "completed",
+            order: 2,
+          },
+        },
+      ]);
       expect(detail.linkedPullRequests).toEqual([
         expect.objectContaining({ repository: "acme/web", number: 12, state: "merged" }),
       ]);

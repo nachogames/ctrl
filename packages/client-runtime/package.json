@@ -679,6 +679,14 @@
       "types": "./src/issueList.ts",
       "default": "./src/issueList.ts"
     },
+    "./issue-tree": {
+      "types": "./src/issueTree.ts",
+      "default": "./src/issueTree.ts"
+    },
+    "./issue-board": {
+      "types": "./src/issueBoard.ts",
+      "default": "./src/issueBoard.ts"
+    },
     "./pull-request-query": {
       "types": "./src/pullRequestQuery.ts",
       "default": "./src/pullRequestQuery.ts"

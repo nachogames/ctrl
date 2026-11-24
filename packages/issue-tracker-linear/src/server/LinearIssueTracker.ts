@@ -15,6 +15,7 @@ import {
   type IssueReaction,
   type IssueReactionContent,
   type IssueState,
+  type IssueStateStage,
   type IssueTemplate,
   type IssueViewerPermissions,
   type StandaloneIssueTrackerDescriptor,
@@ -57,6 +58,7 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: true,
   events: true,
   search: true,
+  replies: true,
 };
 
 /** Everything granted: Linear's API reports no per-issue permissions and refuses with a message. */
@@ -126,10 +128,22 @@ function parseIdentifier(key: string): string | null {
   return /^[A-Za-z][A-Za-z0-9]*-[1-9]\d*$/.test(key.trim()) ? key.trim().toUpperCase() : null;
 }
 
+const STAGES: Record<string, IssueStateStage> = {
+  triage: "backlog",
+  backlog: "backlog",
+  unstarted: "unstarted",
+  started: "started",
+  completed: "completed",
+  canceled: "canceled",
+  duplicate: "canceled",
+};
+
 function toState(state: LinearApi.LinearWorkflowState): IssueState {
+  const stage = STAGES[state.type];
+  const placed = { ...(stage ? { stage } : {}), order: state.position };
   return CLOSED_STATE_TYPES.includes(state.type)
-    ? { category: "closed", name: state.name, closeReason: state.type }
-    : { category: "open", name: state.name };
+    ? { category: "closed", name: state.name, closeReason: state.type, ...placed }
+    : { category: "open", name: state.name, ...placed };
 }
 
 /**
@@ -177,6 +191,29 @@ function toSummary(issue: LinearApi.LinearIssue, commentCount = 0): TrackerIssue
     assignees: issue.assignee === null ? [] : [toActor(issue.assignee)],
     labels: issue.labels.nodes.map((label) => ({ name: label.name, color: label.color })),
     commentCount,
+    ...(issue.project?.name.trim()
+      ? {
+          trackerProject: {
+            id: issue.project.id,
+            name: issue.project.name,
+            url: issue.project.url,
+          },
+        }
+      : {}),
+    ...(issue.projectMilestone?.name.trim()
+      ? { milestone: { id: issue.projectMilestone.id, name: issue.projectMilestone.name } }
+      : {}),
+    ...(issue.parent?.title.trim()
+      ? {
+          parent: {
+            key: issue.parent.identifier,
+            displayKey: issue.parent.identifier,
+            title: issue.parent.title,
+            url: issue.parent.url,
+            scope: issue.parent.team.key,
+          },
+        }
+      : {}),
   };
 }
 
@@ -214,6 +251,7 @@ function toComment(comment: LinearApi.LinearComment, viewerId: string | null): I
     createdAt: comment.createdAt,
     url: comment.url,
     reactions: toReactions(comment.reactions, viewerId),
+    ...(comment.parent ? { parentId: comment.parent.id } : {}),
   };
 }
 
@@ -520,6 +558,16 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
             : null,
           events: toEvents(issue.history.nodes),
           linkedPullRequests: toLinkedPullRequests(issue.attachments.nodes),
+          subIssues: issue.children.nodes
+            .filter((child) => child.title.trim().length > 0)
+            .map((child) => ({
+              key: child.identifier,
+              displayKey: child.identifier,
+              title: child.title,
+              url: child.url,
+              state: toState(child.state),
+              scope: child.team.key,
+            })),
         };
       }),
 
@@ -555,7 +603,11 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
 
       comment: Effect.fn("LinearIssueTracker.comment")(function* (input) {
         const issue = yield* requireTeamIssue("comment", input);
-        yield* linear.createComment({ issueId: issue.id, body: input.body });
+        yield* linear.createComment({
+          issueId: issue.id,
+          body: input.body,
+          ...(input.parentId === undefined ? {} : { parentId: input.parentId }),
+        });
       }),
 
       update: Effect.fn("LinearIssueTracker.update")(function* (input) {

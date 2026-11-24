@@ -2568,6 +2568,7 @@ export default function ChatView(props: ChatViewProps) {
     addGroupSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
+    addIssuesSurfaceStable,
     closePreviewPanelStable,
     copyRightPanelFilePathStable,
     createBrowserSurface,
@@ -3512,6 +3513,7 @@ export default function ChatView(props: ChatViewProps) {
       getShortcutContext={getShortcutContextStable}
       onSendAnnotation={sendPreviewAnnotationStable}
       onCloseSurface={closeRightPanelSurface}
+      onAskAgent={isServerThread ? sendAppMessageStable : undefined}
       sideChatParentPanel={sideChatParentPanel}
       terminal={{
         launchContext: activeTerminalLaunchContext ?? null,
@@ -4346,6 +4348,11 @@ export default function ChatView(props: ChatViewProps) {
           onAddFiles={addFilesSurfaceStable}
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
+          onAddIssues={
+            serverConfig?.environment.capabilities.issues === true
+              ? addIssuesSurfaceStable
+              : undefined
+          }
           onAddDevice={addDeviceSurfaceStable}
           onAddGroup={addGroupSurfaceStable}
           groupAvailable={groupSurfaceAvailable}

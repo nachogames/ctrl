@@ -40,6 +40,9 @@ fragment LinearReaction on Reaction {
 
 fragment LinearComment on Comment {
   id
+  parent {
+    id
+  }
   body
   createdAt
   url
@@ -84,6 +87,23 @@ fragment LinearIssue on Issue {
       ...LinearLabel
     }
   }
+  project {
+    id
+    name
+    url
+  }
+  projectMilestone {
+    id
+    name
+  }
+  parent {
+    identifier
+    title
+    url
+    team {
+      key
+    }
+  }
 }
 
 fragment LinearPageInfo on PageInfo {
@@ -122,6 +142,19 @@ query T3Issue($id: String!, $comments: Int!) {
   issue(id: $id) {
     ...LinearIssue
     description
+    children(first: 100) {
+      nodes {
+        identifier
+        title
+        url
+        team {
+          key
+        }
+        state {
+          ...LinearWorkflowState
+        }
+      }
+    }
     team {
       states(first: 100) {
         nodes {

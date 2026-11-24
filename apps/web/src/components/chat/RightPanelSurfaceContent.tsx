@@ -1,4 +1,5 @@
 import { PluginViewPanel } from "../plugins/PluginViewPanel";
+import { ThreadIssuesPanel } from "~/components/issue/IssuesBrowser";
 import { useGT } from "gt-react";
 import type {
   EditorId,
@@ -87,6 +88,8 @@ export function RightPanelSurfaceContent(props: {
   readonly pullRequest: RightPanelPullRequestProps;
   readonly issuesSupported: boolean;
   readonly files: RightPanelFileProps;
+  /** Sends a message to this thread's agent, for panels that talk to it. */
+  readonly onAskAgent?: ((text: string) => Promise<void>) | undefined;
   readonly sideChatParentPanel: SideChatParentPanel;
 }) {
   const { surface, threadRef, visible, onCloseSurface } = props;
@@ -210,6 +213,7 @@ export function RightPanelSurfaceContent(props: {
             key: surface.key,
           }}
           threadRef={threadRef}
+          onAskAgent={props.onAskAgent}
           onSelectPullRequest={(reference) => {
             useRightPanelStore.getState().openPullRequest(threadRef, {
               ...(surface.environmentId === undefined
@@ -234,6 +238,8 @@ export function RightPanelSurfaceContent(props: {
       );
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
+    case "issues":
+      return <ThreadIssuesPanel threadRef={threadRef} />;
     case "group":
       return <GroupPanel threadRef={threadRef} surface={surface} />;
     case "plugin":

@@ -21,6 +21,8 @@ import {
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { withAttachedReviewPoint } from "../pullRequest/review/reviewPointFocusStore";
+import { withFocusedIssue } from "../issue/issueFocus";
+import { formatIssueTag, parseIssueTag } from "@t3tools/shared/issueTag";
 import { readLiveDraftGroup } from "../../state/threadGroups";
 import { resolveDraftLaunchWorkspace } from "../../lib/draftGroupLaunch";
 import {
@@ -1092,18 +1094,24 @@ export function useComposerSend(input: ComposerSendInput) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
-    // A point attached in the review chat's composer rides on its own first line, so the agent,
-    // the decision guard and the timeline all know which point the message is about. It is read
-    // under the composer's own key, the same one its chip shows under.
+    const typedIssue = parseIssueTag(messageTextForSend);
+    const formattedPrompt = formatOutgoingPrompt({
+      provider: ctxSelectedProvider,
+      model: ctxSelectedModel,
+      models: ctxSelectedProviderModels,
+      effort: ctxSelectedPromptEffort,
+      text: (typedIssue?.body ?? messageTextForSend) || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+    });
+    // The review point and issue lines go outermost, first in the text, where the agent, the
+    // decision guard and the timeline read them; a pre-typed issue line is lifted out first. An
+    // attachment-only send keeps its placeholder bare, which is how it is recognised later.
     const outgoingMessageText = withAttachedReviewPoint(
       composerTargetKey(composerDraftTarget),
-      formatOutgoingPrompt({
-        provider: ctxSelectedProvider,
-        model: ctxSelectedModel,
-        models: ctxSelectedProviderModels,
-        effort: ctxSelectedPromptEffort,
-        text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-      }),
+      typedIssue !== null
+        ? formatIssueTag({ key: typedIssue.key, url: typedIssue.url }, formattedPrompt)
+        : messageTextForSend
+          ? withFocusedIssue(composerDraftTarget, formattedPrompt)
+          : formattedPrompt,
     );
     if (
       isCurrentRouteThread() &&

@@ -29,6 +29,7 @@ const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "pull-requests",
+  "issues",
   "group",
   "plugin",
   "issue",
@@ -91,6 +92,8 @@ export type RightPanelSurface =
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" }
+  /** Every issue the thread's environment can read, nested by tracker project and parent. */
+  | { id: "issues"; kind: "issues" }
   /**
    * An issue opened in the issues list's shared panel, or beside a thread. Like `pull-request`,
    * the reference lives in the id so several issues can stay open as peer tabs.
@@ -324,6 +327,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "pull-requests":
       return { id: "pull-requests", kind };
+    case "issues":
+      return { id: "issues", kind };
     case "device":
       return { id: "device", kind };
     case "group":

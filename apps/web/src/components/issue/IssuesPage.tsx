@@ -1,44 +1,32 @@
 import { useAtomValue } from "@effect/atom-react";
-import {
-  continueIssuePage,
-  groupIssues,
-  holdIssuePages,
-  issueCursorsForHost,
-  issueFilterScopes,
-  issueTrackerKey,
-  type HeldIssuePage,
-} from "@t3tools/client-runtime/issue-list";
+import { issueTrackerKey } from "@t3tools/client-runtime/issue-list";
 import { issueTrackerDetailText } from "@t3tools/client-runtime/state/issue-trackers";
 import { issueEntryKey } from "@t3tools/client-runtime/state/issues";
 import type {
   EnvironmentId,
-  IssueInvolvement,
-  IssueListInput,
   IssueListSort,
-  IssueListState,
   IssueTrackerKind,
   IssueTrackerSummary,
   ProjectId,
 } from "@t3tools/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import {
-  ArrowDownUpIcon,
-  AtSignIcon,
-  CalendarArrowDownIcon,
-  CircleCheckIcon,
-  ClockIcon,
-  LayersIcon,
-  PenLineIcon,
-  Plug2Icon,
-  UserCheckIcon,
-  UsersIcon,
-} from "lucide-react";
+import { ArrowDownUpIcon, CalendarArrowDownIcon, ClockIcon, Plug2Icon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { Fragment, useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { IssueDetailPanel } from "~/components/issue/IssueDetailPanel";
-import { IssueRow, type IssueRowTarget } from "~/components/issue/IssueRow";
+import { type IssueRowTarget } from "~/components/issue/IssueRow";
+import {
+  IssueBrowserNotices,
+  IssueLoadMore,
+  IssuesBrowser,
+  IssuesViewToggle,
+  type IssuesView,
+} from "~/components/issue/IssuesBrowser";
+import { useIssueBrowserData } from "./useIssueBrowserData";
+import { useStartIssueChat } from "./useStartIssueChat";
+import { ISSUE_INVOLVEMENT_OPTIONS, ISSUE_STATE_OPTIONS } from "./issueFilterOptions";
 import {
   issueListPreferences,
   writeIssueListPreferences,
@@ -54,10 +42,10 @@ import {
   PullRequestSearchInput,
   type PullRequestFilterOption,
 } from "~/components/pullRequest/PullRequestListFilters";
-import { m, type MessageResolver } from "~/i18n/messages";
+import { type MessageResolver } from "~/i18n/messages";
 import { resolveFilterOptions } from "../pullRequest/pullRequestListOptions";
 import { IssueFiltersMenu } from "./IssueListFilterPickers";
-import { issueFilterProjects, issueListTargets, issueProjectKeys } from "./issuesSearch.logic";
+import { issueFilterProjects, issueProjectKeys } from "./issuesSearch.logic";
 import { ISSUE_SAVED_VIEWS } from "./issueSavedViews";
 import { SavedViewsMenu } from "~/components/SavedViewsMenu";
 import { PullRequestCompactFilterMenu } from "../pullRequest/PullRequestCompactFilterMenu";
@@ -80,7 +68,6 @@ import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/c
 import { SidebarInset } from "~/components/ui/sidebar";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
-import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { usePanelAnimationSettings, usePanelPresence } from "~/panelAnimations";
@@ -93,11 +80,8 @@ import {
   type PullRequestSurface,
   type RightPanelSurface,
 } from "~/rightPanelStore";
-import { useAtomCommand } from "~/state/use-atom-command";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useProjects } from "~/state/entities";
 import { useEnvironments, useIssuesSupported } from "~/state/environments";
-import { issueEnvironment, useIssueList } from "~/state/issues";
 import { useDebouncedValue } from "~/state/queries";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -111,18 +95,8 @@ export interface IssuesSearch extends IssueListPreferences {
   readonly key?: string | undefined;
 }
 
-const STATE_TABS = [
-  { value: "open", label: msg("Open", { $context: "issue state" }), Icon: IssueGlyph.issue },
-  { value: "closed", label: msg("Closed", { $context: "issue state" }), Icon: CircleCheckIcon },
-  { value: "all", label: msg("All", { $context: "issue filter" }), Icon: LayersIcon },
-] as const satisfies ReadonlyArray<PullRequestFilterOption<IssueListState>>;
-
-const INVOLVEMENT_TABS = [
-  { value: "all", label: msg("Everyone", { $context: "issue filter" }), Icon: UsersIcon },
-  { value: "assigned", label: msg("Assigned to me"), Icon: UserCheckIcon },
-  { value: "authored", label: msg("Opened by me"), Icon: PenLineIcon },
-  { value: "mentioned", label: msg("Mentioning me"), Icon: AtSignIcon },
-] as const satisfies ReadonlyArray<PullRequestFilterOption<IssueInvolvement>>;
+const STATE_TABS = ISSUE_STATE_OPTIONS;
+const INVOLVEMENT_TABS = ISSUE_INVOLVEMENT_OPTIONS;
 
 const SORT_OPTIONS = [
   { value: "updated", label: msg("Recently updated"), Icon: ClockIcon },
@@ -133,7 +107,6 @@ const SORT_OPTIONS = [
   },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<IssueListSort>>;
 
-const PAGE_SIZE = 50;
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const EMPTY_RECORD = {} as const;
 const EMPTY_MAP = new Map<string, string>();
@@ -193,6 +166,7 @@ export function IssuesPage() {
   const gt = useGT();
   const resolve = useMessages();
   const navigate = useNavigate({ from: "/issues" });
+  const startIssueChat = useStartIssueChat();
   const search = useSearch({ from: "/_chat/issues" });
   const { environments } = useEnvironments();
   const projects = useProjects();
@@ -212,117 +186,19 @@ export function IssuesPage() {
   const hiddenProjects = issueProjectKeys(search.hideProjects);
 
   const debouncedQuery = useDebouncedValue(search.q ?? "", 300);
-  const listInput: IssueListInput = {
-    state: search.status,
-    involvement: search.who,
-    limit: PAGE_SIZE,
-    ...(search.host ? { host: search.host } : {}),
-    ...(debouncedQuery ? { query: debouncedQuery } : {}),
-    ...(search.label?.length ? { labels: search.label } : {}),
-    ...(search.assignee ? { assignee: search.assignee } : {}),
-    ...(search.order ? { sort: search.order } : {}),
-  };
   const everyProjectHidden =
     filterProjects.length > 0 &&
     filterProjects.every((project) => hiddenProjects.has(pullRequestProjectKey(project)));
-  const targets = everyProjectHidden
-    ? []
-    : issueListTargets(
-        capableEnvironments.map((e) => e.environmentId),
-        filterProjects,
-        search.hideProjects,
-        listInput,
-      );
-  const list = useIssueList(targets);
-  // Refreshing a list still loading would cancel it and start over, losing the scopes already read.
-  useLiveRefresh(
-    () => {
-      if (!list.isPending) list.reload();
-    },
-    { key: JSON.stringify(targets) },
-  );
-
-  const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
-  const held = holdIssuePages(list.answers, pages);
-  const loadPage = useAtomCommand(issueEnvironment.listPage, { reportFailure: false });
-  const [loadingMore, setLoadingMore] = useState<string | null>(null);
-  // One tracker group's button carries on that tracker's scopes only.
-  const loadMore = async (environmentId: EnvironmentId, host: string) => {
-    const page = held.get(environmentId);
-    const cursors = page ? issueCursorsForHost(page.nextCursors, host) : {};
-    if (!page || Object.keys(cursors).length === 0 || loadingMore !== null) return;
-    setLoadingMore(`${environmentId} ${host}`);
-    const input = targets.find((target) => target.environmentId === environmentId)?.input;
-    if (!input) return;
-    const result = await loadPage({ environmentId, input: { ...input, cursors } });
-    setLoadingMore(null);
-    const failure = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
-    setPages((current) => {
-      const next = new Map(current);
-      next.set(
-        environmentId,
-        continueIssuePage(
-          page,
-          result._tag === "Failure"
-            ? {
-                failure:
-                  failure instanceof Error ? failure.message : m(msg("The next page failed.")),
-              }
-            : result.value,
-          cursors,
-        ),
-      );
-      return next;
-    });
-  };
-
-  // Rows grouped per tracker account, so a tracker that cannot be read says so where its rows
-  // would be, and each tracker's rows carry on from their own cursors.
-  // The server names every tracker so the menu can switch hosts, but reads only the chosen one.
-  const chosenHost = search.host?.toLowerCase();
-  // A server older than `excludeProjectIds` still answers for hidden projects.
-  const shown =
-    chosenHost || hiddenProjects.size > 0
-      ? new Map(
-          [...held].map(([environmentId, page]) => [
-            environmentId,
-            {
-              ...page,
-              entries: page.entries.filter(
-                (entry) =>
-                  !hiddenProjects.has(
-                    pullRequestProjectKey({ environmentId, id: entry.projectId }),
-                  ),
-              ),
-              errors: page.errors.filter(
-                (error) =>
-                  !hiddenProjects.has(
-                    pullRequestProjectKey({ environmentId, id: error.projectId }),
-                  ),
-              ),
-              answer: {
-                ...page.answer,
-                scopes: page.answer.scopes?.filter(
-                  (scope) =>
-                    !hiddenProjects.has(
-                      pullRequestProjectKey({ environmentId, id: scope.projectId }),
-                    ),
-                ),
-                trackers: chosenHost
-                  ? page.answer.trackers.filter(
-                      (tracker) => tracker.host.toLowerCase() === chosenHost,
-                    )
-                  : page.answer.trackers,
-              },
-            },
-          ]),
-        )
-      : held;
-  const groups = groupIssues(shown, debouncedQuery, projects, search.order ?? "updated");
-  const filterScopes = issueFilterScopes(
-    shown,
-    projects.filter((project) => !hiddenProjects.has(pullRequestProjectKey(project))),
-  );
+  const data = useIssueBrowserData({
+    environmentIds: everyProjectHidden ? [] : capableEnvironments.map((e) => e.environmentId),
+    projects: projects.filter((project) =>
+      capableEnvironments.some((e) => e.environmentId === project.environmentId),
+    ),
+    filters: search,
+    query: debouncedQuery,
+  });
+  const { list, held, filterScopes } = data;
+  const view = search.nest === "board" ? "board" : "tree";
 
   const hostOptions = hostOptionsFor(
     [...held.values()].flatMap((page) => page.answer.trackers),
@@ -341,6 +217,7 @@ export function IssuesPage() {
       ...(merged.label?.length ? { label: merged.label } : {}),
       ...(merged.assignee ? { assignee: merged.assignee } : {}),
       ...(merged.order ? { order: merged.order } : {}),
+      ...(merged.nest ? { nest: merged.nest } : {}),
       ...(merged.selectedEnvironmentId
         ? { selectedEnvironmentId: merged.selectedEnvironmentId }
         : {}),
@@ -391,18 +268,16 @@ export function IssuesPage() {
 
   const panelListEntry =
     renderedSurface?.kind === "issue"
-      ? (groups
-          .flatMap((group) => group.rows)
-          .find(
-            (row) =>
-              row.environmentId === panelEnvironmentId &&
-              issueEntryKey(row) ===
-                issueEntryKey({
-                  ...renderedSurface,
-                  host: renderedSurface.host ?? row.host,
-                  projectId: renderedSurface.projectId as ProjectId,
-                }),
-          ) ?? null)
+      ? (data.rows.find(
+          (row) =>
+            row.environmentId === panelEnvironmentId &&
+            issueEntryKey(row) ===
+              issueEntryKey({
+                ...renderedSurface,
+                host: renderedSurface.host ?? row.host,
+                projectId: renderedSurface.projectId as ProjectId,
+              }),
+        ) ?? null)
       : null;
 
   const selectSurfaceInUrl = (surface: RightPanelSurface | null) =>
@@ -418,6 +293,9 @@ export function IssuesPage() {
           }
         : clearedSelection,
     );
+
+  const changeView = (next: IssuesView) =>
+    updateSearch({ nest: next === "board" ? "board" : undefined });
 
   const selectEntry = (entry: Omit<IssueRowTarget, "host"> & { readonly host?: string }) => {
     if (rightPanelRef === null) return;
@@ -501,7 +379,6 @@ export function IssuesPage() {
 
   // Every writable scope the workspace has, for the composer.
 
-  const showTracker = groups.length > 1;
   const noneAnswered = list.answers.length === 0;
 
   const listBody: ReactNode = !issuesSupported ? (
@@ -533,7 +410,7 @@ export function IssuesPage() {
         </Button>
       </EmptyContent>
     </Empty>
-  ) : groups.length === 0 ? (
+  ) : data.trackers.length === 0 && !list.isPending ? (
     <Empty>
       <EmptyMedia variant="icon">
         <IssueGlyph.issue />
@@ -548,114 +425,50 @@ export function IssuesPage() {
       </EmptyHeader>
     </Empty>
   ) : (
-    <div className="flex flex-col gap-6">
-      {list.error ? (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
-          <span>
-            <T>
-              <Var>{list.error}</Var> Showing the issues that loaded.
-            </T>
-          </span>
-          <Button size="xs" variant="outline" onClick={list.retry}>
-            <T>Retry</T>
-          </Button>
-        </div>
-      ) : null}
-      {groups.map((group) => {
-        const presentation = issueTrackerPresentation(group.tracker.tracker);
-        const showScope = new Set(group.rows.map((row) => row.scope.toLowerCase())).size > 1;
-        return (
-          <section key={issueTrackerKey(group.tracker)} className="flex flex-col gap-1">
-            <h2 className="flex items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground">
-              <presentation.Icon aria-hidden className="size-3.5" />
-              {presentation.providerName}
-              {presentation.providerName.toLowerCase() !== group.tracker.host ? (
-                <span className="font-normal">· {group.tracker.host}</span>
-              ) : null}
-              <span className="font-normal">
-                ·{" "}
-                {gt("{count, plural, one {{count} project} other {{count} projects}}", {
-                  count: group.tracker.projectCount,
-                })}
-              </span>
-            </h2>
-            {!group.tracker.configured ? (
-              <p className="px-3 text-sm text-muted-foreground">
-                {group.tracker.detail === null
-                  ? gt("This tracker cannot be read right now.")
-                  : issueTrackerDetailText(group.tracker.detail, resolve)}
-              </p>
-            ) : null}
-            {group.errors.map((error) => (
-              <p
-                key={`${error.environmentId}:${error.projectTitle}`}
-                className="px-3 text-xs text-destructive"
-              >
-                {error.projectTitle}: {error.message}
-              </p>
-            ))}
-            {group.tracker.configured && group.rows.length === 0 && group.errors.length === 0 ? (
-              <p className="px-3 text-sm text-muted-foreground">
-                {debouncedQuery ? (
-                  <T>Nothing matches that.</T>
-                ) : (
-                  <T>No issues under these filters.</T>
-                )}
-              </p>
-            ) : null}
-            {group.rows.map((row) => {
-              const key = issueEntryKey(row);
-              const selected =
-                renderedSurface?.kind === "issue" &&
-                renderedSurface.environmentId === row.environmentId &&
-                issueEntryKey({
-                  ...renderedSurface,
-                  host: renderedSurface.host ?? "",
-                  projectId: renderedSurface.projectId as ProjectId,
-                }) === key;
-              return (
-                <IssueRow
-                  key={`${row.environmentId}:${key}`}
-                  entry={row}
-                  selected={selected}
-                  showScope={showScope}
-                  showTracker={showTracker}
-                  {...(capableEnvironments.length > 1 && environmentLabels.has(row.environmentId)
-                    ? { environmentLabel: environmentLabels.get(row.environmentId) }
-                    : {})}
-                  onSelect={selectEntry}
-                />
-              );
-            })}
-            {group.more.map((environmentId) => {
-              const moreFailure = held.get(environmentId)?.moreFailure ?? null;
-              return (
-                <Fragment key={environmentId}>
-                  {moreFailure === null ? null : (
-                    <p className="px-3 text-xs text-destructive">{moreFailure}</p>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost-muted"
-                    className="self-start"
-                    disabled={loadingMore !== null}
-                    onClick={() => void loadMore(environmentId, group.tracker.host)}
-                  >
-                    {loadingMore === `${environmentId} ${group.tracker.host}` ? (
-                      <T>Loading…</T>
-                    ) : moreFailure === null ? (
-                      <T>Load more</T>
-                    ) : (
-                      <T>Retry</T>
-                    )}
-                  </Button>
-                </Fragment>
-              );
-            })}
-          </section>
-        );
-      })}
-    </div>
+    <IssuesBrowser
+      rows={data.rows}
+      visible={data.visible}
+      view={view}
+      memoryKey="issues-page"
+      loading={list.isPending || data.resolvingInvolvement}
+      notices={
+        list.error ? (
+          <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
+            <span>
+              <T>
+                <Var>{list.error}</Var> Showing the issues that loaded.
+              </T>
+            </span>
+            <Button size="xs" variant="outline" onClick={list.retry}>
+              <T>Retry</T>
+            </Button>
+          </div>
+        ) : (
+          <IssueBrowserNotices error={null} errors={data.errors} />
+        )
+      }
+      hasMore={data.more.length > 0}
+      footer={
+        <IssueLoadMore
+          more={data.more}
+          loadingMore={data.loadingMore}
+          onLoadMore={(environmentId, host) => void data.loadMore(environmentId, host)}
+        />
+      }
+      isSelected={(row) =>
+        renderedSurface?.kind === "issue" &&
+        renderedSurface.environmentId === row.environmentId &&
+        issueEntryKey({
+          ...renderedSurface,
+          host: renderedSurface.host ?? "",
+          projectId: renderedSurface.projectId as ProjectId,
+        }) === issueEntryKey(row)
+      }
+      environmentLabel={(row) =>
+        capableEnvironments.length > 1 ? environmentLabels.get(row.environmentId) : undefined
+      }
+      onSelect={selectEntry}
+    />
   );
 
   return (
@@ -699,8 +512,8 @@ export function IssuesPage() {
             </div>
           </WorkspacePageHeader>
 
-          <div className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
-            <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <WorkspacePageContainer width="expanded" className="shrink-0 gap-4 pb-0">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="min-w-0 basis-full @lg/issue-list:min-w-48 @lg/issue-list:basis-0 @lg/issue-list:flex-1">
                   <PullRequestSearchInput
@@ -726,6 +539,7 @@ export function IssuesPage() {
                     updateSearch({ order: order === "created" ? "created" : undefined })
                   }
                 />
+                <IssuesViewToggle view={view} onView={changeView} />
                 <IssueFiltersMenu
                   state={search.status}
                   stateOptions={resolveFilterOptions(STATE_TABS, resolve)}
@@ -756,6 +570,7 @@ export function IssuesPage() {
                       label: view.label,
                       assignee: view.assignee,
                       order: view.order,
+                      nest: view.nest,
                     })
                   }
                 />
@@ -777,8 +592,8 @@ export function IssuesPage() {
                   <RefreshIcon size="md" refreshing={list.isPending} />
                 </Button>
               </div>
-              {listBody}
             </WorkspacePageContainer>
+            {listBody}
           </div>
         </div>
 
@@ -864,6 +679,21 @@ export function IssuesPage() {
                       environmentId: panelEnvironmentId,
                     });
                   }}
+                  askAgentStartsChat
+                  onAskAgent={(text) =>
+                    startIssueChat(
+                      panelEnvironmentId,
+                      {
+                        projectId: renderedSurface.projectId,
+                        tracker: renderedSurface.tracker,
+                        ...(renderedSurface.host ? { host: renderedSurface.host } : {}),
+                        scope: renderedSurface.scope,
+                        key: renderedSurface.key,
+                        ...(renderedSurface.url ? { url: renderedSurface.url } : {}),
+                      },
+                      text,
+                    )
+                  }
                   onSelectIssue={({ host, ...reference }) =>
                     selectEntry({
                       ...reference,

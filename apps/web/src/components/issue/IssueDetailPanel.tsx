@@ -30,7 +30,11 @@ import type {
 import {
   CheckIcon,
   ChevronDownIcon,
+  CircleDotIcon,
+  CornerLeftUpIcon,
   ExternalLinkIcon,
+  FlagIcon,
+  FolderIcon,
   TagIcon,
   UserPlusIcon,
   UsersIcon,
@@ -69,6 +73,8 @@ import {
 } from "../pullRequest/pullRequestPresentation";
 import { IssueCommentComposer } from "./IssueCommentComposer";
 import { IssueDetailGhost } from "./IssueDetailGhost";
+import { IssueProgressBadge } from "./IssueProgressBadge";
+import { IssueReplyBox } from "./IssueReplyBox";
 import { IssueThreadLinks } from "./IssueThreadLinks";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
@@ -377,6 +383,32 @@ function LinkedPullRequestRow({
   );
 }
 
+/** A row naming another issue by key and title; opens it beside this one when it can. */
+function IssueRefButton({
+  displayKey,
+  title,
+  icon,
+  onSelect,
+}: {
+  displayKey: string;
+  title: string;
+  icon?: ReactNode;
+  onSelect: (() => void) | null;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={onSelect === null}
+      onClick={onSelect ?? undefined}
+      className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm enabled:cursor-pointer enabled:hover:bg-accent"
+    >
+      {icon}
+      <span className="shrink-0 font-mono text-xs text-muted-foreground">{displayKey}</span>
+      <span className="min-w-0 flex-1 truncate">{title}</span>
+    </button>
+  );
+}
+
 /** The sentence for an event, its source shown as a link where the tracker named one. */
 function IssueEventText({
   event,
@@ -415,9 +447,15 @@ export function IssueDetailPanel({
   listEntry = null,
   onSelectPullRequest,
   onSelectIssue,
+  onAskAgent,
+  askAgentStartsChat = false,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
+  /** Sends a message to the chat this issue is shown beside; absent outside a chat. */
+  onAskAgent?: ((text: string) => Promise<void>) | undefined;
+  /** `onAskAgent` opens a new chat instead of messaging one already open. */
+  askAgentStartsChat?: boolean;
   /** The list row this issue was opened from, shown until the detail arrives. */
   listEntry?: IssueListEntry | null;
   threadRef?: ScopedThreadRef | null;
@@ -447,6 +485,10 @@ export function IssueDetailPanel({
   const [titleDraft, setTitleDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [changingState, setChangingState] = useState(false);
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
+  // `id` is the comment the reply posts under; `anchor` is the one on screen the box opens beneath,
+  // which differs for a reply whose own comment is on an older page.
+  const [replyTo, setReplyTo] = useState<{ id: string; anchor: string; name: string } | null>(null);
 
   if (detail === null) {
     if (detailQuery.error !== null && !detailQuery.isPending) {
@@ -461,8 +503,17 @@ export function IssueDetailPanel({
     return <IssueDetailGhost seed={listEntry} />;
   }
 
+  // A reply whose comment is loaded sits under it; one whose comment is on an older page stands alone.
+  const loadedIds = new Set(comments.map((c) => c.id));
+  const repliesTo = new Map<string, IssueComment[]>();
+  for (const c of comments) {
+    if (c.parentId === undefined || !loadedIds.has(c.parentId)) continue;
+    repliesTo.set(c.parentId, [...(repliesTo.get(c.parentId) ?? []), c]);
+  }
   const timeline: ReadonlyArray<TimelineItem> = [
-    ...comments.map((c): TimelineItem => ({ kind: "comment", at: c.createdAt, comment: c })),
+    ...comments
+      .filter((c) => c.parentId === undefined || !loadedIds.has(c.parentId))
+      .map((c): TimelineItem => ({ kind: "comment", at: c.createdAt, comment: c })),
     ...detail.events.map((e): TimelineItem => ({ kind: "event", at: e.createdAt, event: e })),
   ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 
@@ -474,7 +525,13 @@ export function IssueDetailPanel({
   const canAssign = access.assignees;
   const canReact = access.react;
   const otherStates = access.states;
+  const canReply = canComment && detail.capabilities.replies === true;
   const tracker = issueTrackerPresentation(detail.tracker);
+  // Long specs push the conversation off screen; they open on request.
+  const parentUrl = detail.parent?.url;
+  const parentKey = detail.parent?.key;
+  const parentScope = detail.parent?.scope ?? reference.scope;
+  const longDescription = detail.body.length > 900 || detail.body.split("\n").length > 18;
   const currentState = issueStatePresentation(detail.state);
 
   const host = reference.host === undefined ? {} : { host: reference.host };
@@ -551,6 +608,79 @@ export function IssueDetailPanel({
     refreshIssueLists(environmentId);
   };
 
+  const renderComment = (comment: IssueComment): ReactNode => (
+    <article
+      key={`c:${comment.id}`}
+      className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
+    >
+      <h3>
+        <PullRequestMetaLine className="text-xs text-muted-foreground">
+          <PullRequestActorLabel actor={comment.author} />
+          {comment.url ? (
+            <InlineButton
+              tone="muted"
+              render={<a href={comment.url} target="_blank" rel="noopener noreferrer" />}
+            >
+              {formatRelativeTimeLabel(comment.createdAt, undefined, messages)}
+            </InlineButton>
+          ) : (
+            <span>{formatRelativeTimeLabel(comment.createdAt, undefined, messages)}</span>
+          )}
+        </PullRequestMetaLine>
+      </h3>
+      <PullRequestCommentBody
+        text={comment.body}
+        cwd={cwd}
+        environmentId={environmentId}
+        threadRef={threadRef}
+      />
+      {comment.reactions !== undefined || canReply ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {comment.reactions !== undefined ? (
+            <IssueReactionBar
+              reactions={comment.reactions}
+              canReact={canReact}
+              subjectId={comment.id}
+              environmentId={environmentId}
+              reference={reference}
+            />
+          ) : null}
+          {canReply ? (
+            <InlineButton
+              tone="muted"
+              onClick={() =>
+                setReplyTo({
+                  id: comment.parentId ?? comment.id,
+                  anchor:
+                    comment.parentId !== undefined && loadedIds.has(comment.parentId)
+                      ? comment.parentId
+                      : comment.id,
+                  name: comment.author?.login ?? gt("this comment"),
+                })
+              }
+            >
+              <T context="verb, answer a comment">Reply</T>
+            </InlineButton>
+          ) : null}
+        </div>
+      ) : null}
+      {(repliesTo.get(comment.id) ?? []).length > 0 || replyTo?.anchor === comment.id ? (
+        <div className="flex flex-col gap-2 border-l-2 border-border/60 pl-3">
+          {(repliesTo.get(comment.id) ?? []).map((reply) => renderComment(reply))}
+          {replyTo?.anchor === comment.id ? (
+            <IssueReplyBox
+              environmentId={environmentId}
+              reference={reference}
+              parentId={replyTo.id}
+              name={replyTo.name}
+              onDone={() => setReplyTo(null)}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </article>
+  );
+
   const currentStateIcon = (
     <currentState.Icon
       aria-hidden
@@ -602,7 +732,7 @@ export function IssueDetailPanel({
         className={cn(
           "min-h-0 flex-1 overflow-y-auto",
           // Room for the floating composer, so the last comment can scroll clear of it.
-          detail.capabilities.comment && "pb-32",
+          (detail.capabilities.comment || onAskAgent) && "pb-32",
         )}
         data-pull-request-summary-scroll
       >
@@ -623,7 +753,6 @@ export function IssueDetailPanel({
               <ExternalLinkIcon aria-hidden className="size-2.5" />
             </InlineButton>
             <span className="flex-1" />
-            {stateControl}
             <IssueThreadLinks
               key={`${environmentId}:${detail.url}`}
               environmentId={environmentId}
@@ -726,7 +855,34 @@ export function IssueDetailPanel({
             )}
           </PullRequestMetaLine>
 
-          <div className="mt-4 space-y-2">
+          <div className="mt-4 space-y-1.5">
+            <PullRequestMetaRow icon={<CircleDotIcon className="size-3.5" />} label={gt("Status")}>
+              <span className="flex min-w-0 items-center">{stateControl}</span>
+            </PullRequestMetaRow>
+            <PullRequestMetaRow icon={<UsersIcon className="size-3.5" />} label={gt("Assignees")}>
+              <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                {detail.assignees.length === 0 ? (
+                  <span className="text-muted-foreground">
+                    <T context="no assignees">None</T>
+                  </span>
+                ) : (
+                  detail.assignees.map((actor) => (
+                    <PullRequestActorLabel key={actor.login} actor={actor} />
+                  ))
+                )}
+                {detail.capabilities.assignees ? (
+                  <IssueAssigneePicker
+                    environmentId={environmentId}
+                    reference={reference}
+                    detail={detail}
+                    allowed={canAssign}
+                    disabledReason={
+                      blocked ?? gt("Changing assignees needs triage access on this tracker.")
+                    }
+                  />
+                ) : null}
+              </span>
+            </PullRequestMetaRow>
             <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label={gt("Labels")}>
               <span className="flex min-w-0 flex-wrap items-center gap-1">
                 {detail.labels.length === 0 ? (
@@ -756,32 +912,90 @@ export function IssueDetailPanel({
                 ) : null}
               </span>
             </PullRequestMetaRow>
-            <PullRequestMetaRow icon={<UsersIcon className="size-3.5" />} label={gt("Assignees")}>
-              <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                {detail.assignees.length === 0 ? (
-                  <span className="text-muted-foreground">
-                    <T context="no assignees">None</T>
-                  </span>
-                ) : (
-                  detail.assignees.map((actor) => (
-                    <PullRequestActorLabel key={actor.login} actor={actor} />
-                  ))
-                )}
-                {detail.capabilities.assignees ? (
-                  <IssueAssigneePicker
-                    environmentId={environmentId}
-                    reference={reference}
-                    detail={detail}
-                    allowed={canAssign}
-                    disabledReason={
-                      blocked ?? gt("Changing assignees needs triage access on this tracker.")
-                    }
-                  />
-                ) : null}
-              </span>
-            </PullRequestMetaRow>
+            {detail.trackerProject ? (
+              <PullRequestMetaRow icon={<FolderIcon className="size-3.5" />} label={gt("Project")}>
+                <span className="block truncate">{detail.trackerProject.name}</span>
+              </PullRequestMetaRow>
+            ) : null}
+            {detail.milestone ? (
+              <PullRequestMetaRow icon={<FlagIcon className="size-3.5" />} label={gt("Milestone")}>
+                <span className="block truncate">{detail.milestone.name}</span>
+              </PullRequestMetaRow>
+            ) : null}
+            {detail.parent ? (
+              <PullRequestMetaRow
+                icon={<CornerLeftUpIcon className="size-3.5" />}
+                label={gt("Parent", { $context: "the issue this one is filed under" })}
+              >
+                <IssueRefButton
+                  displayKey={detail.parent.displayKey}
+                  title={detail.parent.title}
+                  onSelect={
+                    onSelectIssue && parentUrl && parentKey
+                      ? () =>
+                          onSelectIssue({
+                            ...reference,
+                            scope: parentScope,
+                            key: parentKey,
+                            url: parentUrl,
+                          })
+                      : null
+                  }
+                />
+              </PullRequestMetaRow>
+            ) : null}
           </div>
         </div>
+
+        {detail.subIssues && detail.subIssues.length > 0 ? (
+          <PullRequestSection
+            key={`sub-issues:${detail.url}`}
+            title={gt("Sub-issues ({done}/{total})", {
+              done: detail.subIssues.filter((sub) => sub.state.category === "closed").length,
+              total: detail.subIssues.length,
+            })}
+            actions={
+              <span className="text-xs text-muted-foreground">
+                <IssueProgressBadge
+                  progress={{
+                    done: detail.subIssues.filter((sub) => sub.state.category === "closed").length,
+                    total: detail.subIssues.length,
+                  }}
+                />
+              </span>
+            }
+          >
+            <div className="flex flex-col">
+              {detail.subIssues.map((sub) => {
+                const presentation = issueStatePresentation(sub.state);
+                return (
+                  <IssueRefButton
+                    key={sub.key}
+                    displayKey={sub.displayKey}
+                    title={sub.title}
+                    icon={
+                      <presentation.Icon
+                        aria-label={presentation.label}
+                        className={cn("size-3.5 shrink-0", presentation.toneClassName)}
+                      />
+                    }
+                    onSelect={
+                      onSelectIssue
+                        ? () =>
+                            onSelectIssue({
+                              ...reference,
+                              scope: sub.scope ?? reference.scope,
+                              key: sub.key,
+                              url: sub.url,
+                            })
+                        : null
+                    }
+                  />
+                );
+              })}
+            </div>
+          </PullRequestSection>
+        ) : null}
 
         <PullRequestSection
           key={`description:${detail.url}`}
@@ -811,14 +1025,31 @@ export function IssueDetailPanel({
                 onCancel={() => setEditing(null)}
               />
             ) : (
-              <PullRequestMarkdown
-                text={
-                  detail.body.trim().length > 0 ? detail.body : gt("_No description provided._")
-                }
-                cwd={cwd}
-                environmentId={environmentId}
-                threadRef={threadRef}
-              />
+              <>
+                <div
+                  className={cn(
+                    longDescription &&
+                      !descriptionOpen &&
+                      "max-h-60 overflow-hidden mask-b-from-60% mask-b-to-100%",
+                  )}
+                >
+                  <PullRequestMarkdown
+                    text={
+                      detail.body.trim().length > 0 ? detail.body : gt("_No description provided._")
+                    }
+                    cwd={cwd}
+                    environmentId={environmentId}
+                    threadRef={threadRef}
+                  />
+                </div>
+                {longDescription ? (
+                  <p className="text-xs">
+                    <InlineButton onClick={() => setDescriptionOpen(!descriptionOpen)}>
+                      {descriptionOpen ? <T>Show less</T> : <T>Show full description</T>}
+                    </InlineButton>
+                  </p>
+                ) : null}
+              </>
             )}
             {detail.reactions !== undefined ? (
               <IssueReactionBar
@@ -883,45 +1114,7 @@ export function IssueDetailPanel({
             ) : null}
             {timeline.map((item) =>
               item.kind === "comment" ? (
-                <article
-                  key={`c:${item.comment.id}`}
-                  className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
-                >
-                  <h3>
-                    <PullRequestMetaLine className="text-xs text-muted-foreground">
-                      <PullRequestActorLabel actor={item.comment.author} />
-                      {item.comment.url ? (
-                        <InlineButton
-                          tone="muted"
-                          render={
-                            <a href={item.comment.url} target="_blank" rel="noopener noreferrer" />
-                          }
-                        >
-                          {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
-                        </InlineButton>
-                      ) : (
-                        <span>
-                          {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
-                        </span>
-                      )}
-                    </PullRequestMetaLine>
-                  </h3>
-                  <PullRequestCommentBody
-                    text={item.comment.body}
-                    cwd={cwd}
-                    environmentId={environmentId}
-                    threadRef={threadRef}
-                  />
-                  {item.comment.reactions !== undefined ? (
-                    <IssueReactionBar
-                      reactions={item.comment.reactions}
-                      canReact={canReact}
-                      subjectId={item.comment.id}
-                      environmentId={environmentId}
-                      reference={reference}
-                    />
-                  ) : null}
-                </article>
+                renderComment(item.comment)
               ) : (
                 <PullRequestMetaLine
                   key={`e:${item.event.id}`}
@@ -941,11 +1134,18 @@ export function IssueDetailPanel({
         </PullRequestSection>
       </div>
 
-      {detail.capabilities.comment ? (
+      {detail.capabilities.comment || onAskAgent ? (
         <IssueCommentComposer
           environmentId={environmentId}
           reference={reference}
-          blocked={canComment ? null : (blocked ?? gt("You cannot comment here."))}
+          issue={{ displayKey: detail.displayKey, url: detail.url }}
+          onAskAgent={onAskAgent}
+          agentStartsChat={askAgentStartsChat}
+          blocked={
+            canComment && detail.capabilities.comment
+              ? null
+              : (blocked ?? gt("You cannot comment here."))
+          }
         />
       ) : null}
     </div>

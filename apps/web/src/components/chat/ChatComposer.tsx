@@ -1,4 +1,5 @@
 import { closeSkillTokenAtCursor, replaceSpokenSkills } from "@t3tools/shared/inlineSkills";
+import { IssueFocusComposerChip } from "../issue/IssueFocusComposerChip";
 import { copySnapshot } from "./copySnapshot";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
@@ -1191,7 +1192,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // when you stop, and the reply is read aloud.
   const voiceTalk = voiceMode
     ? {
-        label: "Talk",
+        label: gt("Talk", { $context: "voice mode: hold to speak" }),
         start: () => {
           // The press is the gesture that lets the reply's audio start later.
           replySpeaker.prime();
@@ -2580,8 +2581,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (activeThreadId === null) {
         toastManager.add({
           type: "info",
-          title: `/${item.command.name} needs a thread`,
-          description: "Send a first message, then run it again.",
+          title: gt("/{command} needs a thread", { command: item.command.name }),
+          description: gt("Send a first message, then run it again."),
         });
         return;
       }
@@ -4209,6 +4210,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ) : null}
           {/* A draft's key is a draft id, never a registered review chat. */}
           <ReviewPointComposerChip threadKey={composerDraftTargetKey} />
+          {typeof composerDraftTarget === "string" ? null : (
+            <IssueFocusComposerChip threadRef={composerDraftTarget} />
+          )}
         </ComposerBanner.Column>
         <ComposerStashBadge
           count={stashQueue.length}

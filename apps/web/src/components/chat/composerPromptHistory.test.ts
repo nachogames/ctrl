@@ -58,6 +58,11 @@ describe("recallableComposerPrompt", () => {
       "why not hash the patch?",
     );
     expect(recallableComposerPrompt("[#2 build cache key]\nUltrathink:\nwhy?")).toBe("why?");
+    expect(
+      recallableComposerPrompt(
+        "About issue ENG-7 (https://linear.app/acme/issue/ENG-7):\nUltrathink:\nwhy?",
+      ),
+    ).toBe("why?");
   });
 
   it("strips legacy send-time context blocks and the ultrathink prefix", () => {
