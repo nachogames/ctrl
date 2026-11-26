@@ -1675,7 +1675,8 @@ describe("DesktopWindow", () => {
           });
           return callback.mock.lastCall?.[0];
         });
-        assert.deepEqual(answers, [false, true]);
+        // Media goes only to the app shell, not to an asset page in a frame.
+        assert.deepEqual(answers, [false, false]);
       }).pipe(Effect.provide(layer));
     }),
   );

@@ -798,11 +798,6 @@ export const make = Effect.gen(function* () {
       }
       return { action: "deny" };
     });
-    // Chromium asks this before handing a navigation to an OS protocol handler, and grants it
-    // when nothing answers. External links are opened through ElectronShell only.
-    window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) =>
-      callback(permission !== "openExternal"),
-    );
     window.webContents.on("will-navigate", (event, url) => {
       if (
         isSameOriginRendererNavigation({

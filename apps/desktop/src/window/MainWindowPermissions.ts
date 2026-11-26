@@ -37,7 +37,9 @@ export function isMainWindowPermissionAllowed(
   return permission === "media"
     ? isAppUrl(origin, appUrl) &&
         (media?.platform !== "darwin" || media.microphoneStatus() !== "not-determined")
-    : permission !== "deprecated-sync-clipboard-read";
+    : // Chromium asks for openExternal before handing a navigation to an OS protocol handler.
+      // External links are opened through ElectronShell only.
+      permission !== "deprecated-sync-clipboard-read" && permission !== "openExternal";
 }
 
 /**
