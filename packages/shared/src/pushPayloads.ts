@@ -9,6 +9,7 @@ import type {
   PushClearMessage,
   PushRelayMessage,
 } from "@t3tools/contracts";
+import { hashTelemetryId } from "./telemetryId.ts";
 
 const STATUS: Record<DirectPushAlertKind, string> = {
   approval: "Approval",
@@ -45,6 +46,15 @@ export function apnsAlertPayload(alert: PushAlertMessage) {
   };
 }
 
+// Builds from the 20261125 upstream sync match `user_hash`; older ones only `user_id`.
+function androidRecipientData(userId: string, deviceId: string) {
+  return {
+    device_id: deviceId,
+    user_id: userId,
+    user_hash: hashTelemetryId(`${userId}:${deviceId}`),
+  };
+}
+
 /** Data message handled natively by the app's AgentMessagingService. */
 export function fcmAlertData(input: {
   readonly alert: PushAlertMessage;
@@ -57,8 +67,7 @@ export function fcmAlertData(input: {
   return {
     t3_kind: "agent_activity",
     updated_at: String(input.nowMs),
-    device_id: input.deviceId,
-    user_id: input.userId,
+    ...androidRecipientData(input.userId, input.deviceId),
     alert_id: JSON.stringify([alert.environmentId, alert.threadId, alert.kind, alert.updatedAt]),
     alert_group: threadGroup(alert),
     alert_title: text.title,
@@ -85,8 +94,7 @@ export function fcmClearData(input: {
   return {
     t3_kind: "agent_alert_clear",
     updated_at: String(input.nowMs),
-    device_id: input.deviceId,
-    user_id: input.userId,
+    ...androidRecipientData(input.userId, input.deviceId),
     alert_group: threadGroup(input.clear),
   };
 }

@@ -1,4 +1,5 @@
 import type { PushAlertMessage } from "@t3tools/contracts";
+import { hashTelemetryId } from "./telemetryId.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -50,6 +51,7 @@ describe("pushPayloads", () => {
       updated_at: "5",
       device_id: "d",
       user_id: "u",
+      user_hash: hashTelemetryId("u:d"),
       alert_id: JSON.stringify(["env-1", "thread-1", "approval", "2026-10-12T00:00:00.000Z"]),
       alert_group: JSON.stringify(["env-1", "thread-1"]),
       alert_title: "Fix the build",
@@ -69,6 +71,7 @@ describe("pushPayloads", () => {
       updated_at: "5",
       device_id: "d",
       user_id: "u",
+      user_hash: hashTelemetryId("u:d"),
       alert_group: fcmAlertData({ alert, deviceId: "d", userId: "u", nowMs: 5 }).alert_group,
     });
   });

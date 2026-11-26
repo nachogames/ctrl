@@ -7,6 +7,7 @@ import {
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -59,6 +60,7 @@ export function resolveBoundEndpoints(input: {
   readonly onCloudVm?: boolean;
   /** The listener refuses LAN peers, so a LAN route would never answer. */
   readonly tailscaleOnly?: boolean;
+  readonly isolatedBridges?: ReadonlySet<string>;
 }): ReadonlyArray<ServerDirectEndpoint> {
   if (isLoopbackHost(input.host)) return [];
   const tailscaleAddresses = new Set(
@@ -69,7 +71,9 @@ export function resolveBoundEndpoints(input: {
   const addresses = isWildcardHost(input.host)
     ? Object.entries(input.interfaces)
         .flatMap(([name, entries]) =>
-          isVirtualInterface(name, input.platform) ? [] : (entries ?? []),
+          isVirtualInterface(name, input.platform) || input.isolatedBridges?.has(name)
+            ? []
+            : (entries ?? []),
         )
         .filter(
           (entry) =>
@@ -92,6 +96,47 @@ export function resolveBoundEndpoints(input: {
       httpBaseUrl: `http://${formatHostForUrl(address)}:${input.port}/`,
     }));
 }
+
+const SYSFS_NET = "/sys/class/net";
+
+/**
+ * Linux bridges with no port leading to a NIC, such as a container network
+ * under any name. A host bridge like `br0` enslaves the NIC, directly or
+ * through a bond or VLAN, and stays listed.
+ */
+export const readIsolatedLinuxBridges = Effect.fn("DirectEndpoints.readIsolatedLinuxBridges")(
+  function* (names: ReadonlyArray<string>, root = SYSFS_NET) {
+    const fs = yield* FileSystem.FileSystem;
+    const exists = (path: string) => fs.exists(path).pipe(Effect.orElseSucceed(() => false));
+    const list = (path: string) =>
+      fs.readDirectory(path).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const reachesHardware: (name: string, depth: number) => Effect.Effect<boolean> =
+      Effect.fnUntraced(function* (name: string, depth: number) {
+        if (yield* exists(`${root}/${name}/device`)) return true;
+        if (depth === 0) return false;
+        const lowers = (yield* list(`${root}/${name}`)).flatMap((entry) =>
+          entry.startsWith("lower_") ? [entry.slice("lower_".length)] : [],
+        );
+        for (const lower of lowers) {
+          if (yield* reachesHardware(lower, depth - 1)) return true;
+        }
+        return false;
+      });
+    const isolated = new Set<string>();
+    for (const name of names) {
+      if (!(yield* exists(`${root}/${name}/bridge`))) continue;
+      let uplinked = false;
+      for (const port of yield* list(`${root}/${name}/brif`)) {
+        if (yield* reachesHardware(port, 3)) {
+          uplinked = true;
+          break;
+        }
+      }
+      if (!uplinked) isolated.add(name);
+    }
+    return isolated;
+  },
+);
 
 /**
  * AWS, GCP, Azure, DigitalOcean, Hetzner, Linode, Vultr, and Oracle all serve
@@ -127,6 +172,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const platform = yield* HostProcess.Platform;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+  const fileSystem = yield* FileSystem.FileSystem;
   // Only the service default listens on every interface without being asked,
   // so only it checks once whether it runs in a cloud. The check starts now so
   // the first client does not wait for its timeout.
@@ -137,14 +183,22 @@ export const make = Effect.gen(function* () {
 
   const servedEndpoint = yield* Ref.make<Option.Option<string>>(Option.none());
   const resolveAvailable = Effect.fn("DirectEndpoints.resolveAvailable")(function* () {
+    const interfaces = NodeOS.networkInterfaces();
+    const isolatedBridges =
+      platform === "linux" && isWildcardHost(config.host)
+        ? yield* readIsolatedLinuxBridges(Object.keys(interfaces)).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+          )
+        : undefined;
     const endpoints = [
       ...resolveBoundEndpoints({
         platform,
         host: config.host,
         port: config.port,
-        interfaces: NodeOS.networkInterfaces(),
+        interfaces,
         onCloudVm: yield* onCloudVm,
         tailscaleOnly: config.tailscaleOnly === true,
+        ...(isolatedBridges === undefined ? {} : { isolatedBridges }),
       }),
     ];
     const servedUrl = yield* Ref.get(servedEndpoint);

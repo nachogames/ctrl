@@ -94,7 +94,7 @@ export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly commentsCursor: string | null;
   readonly events: ReadonlyArray<IssueEvent>;
   readonly linkedPullRequests: ReadonlyArray<IssueLinkedPullRequest>;
-  readonly subIssues?: ReadonlyArray<IssueSubIssue>;
+  readonly subIssues?: ReadonlyArray<IssueSubIssue> | undefined;
 }
 
 /**

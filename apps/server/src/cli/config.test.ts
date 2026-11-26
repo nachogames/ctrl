@@ -919,15 +919,16 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const baseDir = yield* FileSystem.FileSystem.pipe(
         Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-auto-port-" })),
       );
-      const selected: number[] = [];
-      const selectAutomaticPort = (preferred: number) =>
+      const selected: Array<readonly [number, string | undefined]> = [];
+      const selectAutomaticPort = (preferred: number, host: string | undefined) =>
         Effect.sync(() => {
-          selected.push(preferred);
+          selected.push([preferred, host]);
           return 50_123;
         });
       const resolvePort = (flags: {
         readonly mode?: Option.Option<"web" | "desktop">;
         readonly port: Option.Option<number>;
+        readonly host?: Option.Option<string>;
       }) =>
         resolveServerConfig({ ...minimalWebFlags(baseDir), ...flags }, Option.none(), {
           selectAutomaticPort,
@@ -942,12 +943,18 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         );
 
       expect(yield* resolvePort({ port: Option.none() })).toBe(50_123);
-      expect(selected).toEqual([3774]);
+      expect(yield* resolvePort({ port: Option.none(), host: Option.some("100.64.0.7") })).toBe(
+        50_123,
+      );
+      expect(selected).toEqual([
+        [3774, undefined],
+        [3774, "100.64.0.7"],
+      ]);
       expect(yield* resolvePort({ port: Option.some(8788) })).toBe(8788);
       expect(
         yield* resolvePort({ mode: Option.some("desktop" as const), port: Option.none() }),
       ).toBe(3774);
-      expect(selected).toEqual([3774]);
+      expect(selected).toHaveLength(2);
     }),
   );
 

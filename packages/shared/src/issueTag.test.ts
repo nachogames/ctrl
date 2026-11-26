@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
-import { formatIssueTag, parseIssueTag } from "./issueTag";
+import { formatIssueTag, parseIssueTag } from "./issueTag.ts";
 
 describe("issue tag", () => {
   it("round-trips the key, link and message", () => {

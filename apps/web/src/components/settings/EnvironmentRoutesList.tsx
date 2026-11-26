@@ -19,6 +19,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AVAILABLE_CONNECTION_STATE,
+  canRemoveRoute,
   type ConnectionRoute,
   type ConnectionRouteOutcome,
   connectionRouteAddress,
@@ -136,7 +137,7 @@ export function EnvironmentRoutesList({
                 outcome={outcomes.get(connectionRouteId(route.target))}
                 unused={unusedWithTailnetSignIn(environment.entry, route)}
                 refused={environment.refusedRouteIds.includes(connectionRouteId(route.target))}
-                removable={routes.length > 1 && !isLearned(route)}
+                removable={canRemoveRoute(routes, route)}
                 onRemove={() => void confirmRemove(route)}
               />
             ))}
