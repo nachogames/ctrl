@@ -216,6 +216,15 @@ export const loopbackUrlHostForAddress = (address: NetAddress.InetAddress): stri
 const normalizeHost = (host: string): string =>
   host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 
+// A startup URL names the address the server bound; `localhost` can resolve to the other
+// address family, where this server is not listening.
+const loopbackAddressFor = (host: string | undefined): string =>
+  host !== undefined && normalizeHost(host) === "::" ? "::1" : "127.0.0.1";
+
+/** The origin a browser on this machine uses to reach a server bound to `host`. */
+export const resolveLocalOrigin = (host: string | undefined, port: number): string =>
+  `http://${formatHostForUrl(host && !isWildcardHost(host) ? normalizeHost(host) : loopbackAddressFor(host))}:${port}`;
+
 const resolveHeadlessConnectionHost = (
   host: string | undefined,
   interfaces: NetworkInterfacesMap,
@@ -224,7 +233,7 @@ const resolveHeadlessConnectionHost = (
   platform: NodeJS.Platform,
 ): string => {
   if (!host) {
-    return "localhost";
+    return loopbackAddressFor(host);
   }
 
   if (!isWildcardHost(host)) {
@@ -255,13 +264,13 @@ const resolveHeadlessConnectionHost = (
     return externalIpv4.address;
   }
   if (privateNetworkOnly) {
-    return "localhost";
+    return loopbackAddressFor(host);
   }
 
   const externalIpv6 = interfaceEntries.find(
     (entry) => !entry.internal && isIpv6Family(entry.family),
   );
-  return externalIpv6 ? normalizeHost(externalIpv6.address) : "localhost";
+  return externalIpv6 ? normalizeHost(externalIpv6.address) : loopbackAddressFor(host);
 };
 
 export const resolveHeadlessConnectionString = (

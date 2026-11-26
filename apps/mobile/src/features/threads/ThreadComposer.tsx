@@ -462,6 +462,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
     selection: composerMenu.selection,
     disabled: voiceConversationLive,
+    hidden: props.hidden,
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     onChangeSelection: composerMenu.onSelectionChange,
   });

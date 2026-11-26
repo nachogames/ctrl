@@ -174,14 +174,14 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   // timeout on another route must not hide it.
   return yield* (
     expired ??
-      transient ??
-      blocked ??
-      new ConnectionTransientError({
-        reason: "endpoint-unavailable",
-        ...translatableDetail(
-          msg("{host} did not answer on any saved route.", { host: entry.target.label }),
-        ),
-      })
+    transient ??
+    blocked ??
+    new ConnectionTransientError({
+      reason: "endpoint-unavailable",
+      ...translatableDetail(
+        msg("{host} did not answer on any saved route.", { host: entry.target.label }),
+      ),
+    })
   );
 });
 

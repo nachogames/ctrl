@@ -47,6 +47,7 @@ import { m } from "~/i18n/messages";
 import { issueEnvironment, refreshIssueLists } from "~/state/issues";
 import { useProjects } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
@@ -76,6 +77,7 @@ import { IssueDetailGhost } from "./IssueDetailGhost";
 import { IssueProgressBadge } from "./IssueProgressBadge";
 import { IssueReplyBox } from "./IssueReplyBox";
 import { IssueThreadLinks } from "./IssueThreadLinks";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { issueTrackerPresentation, issueStatePresentation } from "./issuePresentation";
@@ -481,6 +483,7 @@ export function IssueDetailPanel({
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
+  const openLink = useOpenLink(threadRef);
   const [editing, setEditing] = useState<"title" | "body" | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -620,6 +623,10 @@ export function IssueDetailPanel({
             <InlineButton
               tone="muted"
               render={<a href={comment.url} target="_blank" rel="noopener noreferrer" />}
+              onClick={(event) => {
+                event.preventDefault();
+                void openLink(comment.url!, { event }).catch(console.error);
+              }}
             >
               {formatRelativeTimeLabel(comment.createdAt, undefined, messages)}
             </InlineButton>
@@ -748,6 +755,10 @@ export function IssueDetailPanel({
                 provider: tracker.providerName,
               })}
               render={<a href={detail.url} target="_blank" rel="noopener noreferrer" />}
+              onClick={(event) => {
+                event.preventDefault();
+                void openLink(detail.url, { event }).catch(console.error);
+              }}
             >
               {detail.displayKey}
               <ExternalLinkIcon aria-hidden className="size-2.5" />
@@ -854,6 +865,14 @@ export function IssueDetailPanel({
               </span>
             )}
           </PullRequestMetaLine>
+
+          <WorkflowRunsAbout
+            environmentId={environmentId}
+            item={{
+              subject: detail.url,
+              issue: { ...reference, host: reference.host ?? detail.host },
+            }}
+          />
 
           <div className="mt-4 space-y-1.5">
             <PullRequestMetaRow icon={<CircleDotIcon className="size-3.5" />} label={gt("Status")}>
